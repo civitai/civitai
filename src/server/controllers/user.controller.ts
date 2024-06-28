@@ -119,6 +119,7 @@ import {
 } from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { BlockedUsers } from '~/server/services/user-preferences.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -594,10 +595,10 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
   try {
     const { username } = input;
 
-    const user = await getUserByUsername({ username, select: { createdAt: true } });
+    const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
-    const [userFollowing, userFollowers, userHidden] = await Promise.all([
+    const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
       getUserByUsername({
         username,
         select: {
@@ -628,6 +629,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           },
         },
       }),
+      BlockedUsers.getCached({ userId: user.id }),
     ]);
 
     return {
@@ -637,6 +639,8 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
       followersCount: userFollowers?._count.engagedUsers ?? 0,
       hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
       hiddenCount: userHidden?._count.engagingUsers ?? 0,
+      blocked: userBlocked ?? [],
+      blockedCount: userBlocked?.length ?? 0,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

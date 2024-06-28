@@ -47,6 +47,7 @@ import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -57,7 +58,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { env } from '~/env/client.mjs';
-import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -164,9 +164,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       });
     },
   });
-  const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.some((u) => u.id === user?.id && !!u.hidden);
-  const toggleHiddenMutation = useToggleHiddenPreferences();
 
   const theme = useMantineTheme();
 
@@ -184,28 +181,6 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           confirmProps: { color: 'red' },
           onConfirm: () => toggleBanMutation.mutate({ id: user.id }),
         });
-    }
-  };
-  const handleToggleBlock = () => {
-    if (user) {
-      if (alreadyBlocked)
-        toggleHiddenMutation.mutate({
-          kind: 'blockedUser',
-          data: [{ id: user.id, username: user.username }],
-        });
-      else {
-        openConfirmModal({
-          title: 'Block User',
-          children: `Are you sure you want to block this user? Once a user is blocked, you won't see their content again and they won't see yours.`,
-          labels: { confirm: 'Yes, block the user', cancel: 'Cancel' },
-          confirmProps: { color: 'red' },
-          onConfirm: () =>
-            toggleHiddenMutation.mutate({
-              kind: 'blockedUser',
-              data: [{ id: user.id, username: user.username }],
-            }),
-        });
-      }
     }
   };
   const handleToggleLeaderboardEligibility = () => {
@@ -370,15 +345,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
             </>
           )}
-          {!isSameUser && (
-            <Menu.Item
-              icon={<IconBan size={14} stroke={1.5} />}
-              color="red"
-              onClick={handleToggleBlock}
-            >
-              {alreadyBlocked ? 'Unblock user' : 'Block user'}
-            </Menu.Item>
-          )}
+          {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={NextLink} href={`/user/${user.username}/manage-categories`}>
               Manage model categories
