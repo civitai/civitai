@@ -116,6 +116,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValues,
   });
 
+  const selectedResources = form.watch('resources');
+  const hasMinorResource = selectedResources.some(resource => resource.minor);
+
   const { limits, ...status } = useGenerationStatus();
 
   function getSteps(steps: number, limit: number) {
@@ -566,7 +569,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
           <Group position="apart" my="xs">
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" disabled={hasMinorResource} checked={hasMinorResource ? false : undefined}/>
             {features.draftMode && (
               <InputSwitch
                 name="draft"
@@ -949,9 +952,8 @@ const useStyles = createStyles((theme) => ({
   generationContainer: {},
   generationArea: {
     borderRadius: theme.radius.md,
-    boxShadow: `inset 0 2px ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
+    boxShadow: `inset 0 2px ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+      }`,
   },
   generateButtonContainer: {
     width: '100%',
@@ -1032,9 +1034,8 @@ const useStyles = createStyles((theme) => ({
 
     '&[data-active]': {
       borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
+      borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+        }`,
     },
   },
   accordionContent: {
