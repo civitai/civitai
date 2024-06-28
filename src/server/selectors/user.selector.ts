@@ -64,6 +64,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
           source: true,
           name: true,
           description: true,
+          videoUrl: true,
         },
       },
     },

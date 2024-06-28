@@ -129,23 +129,25 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
         ...((shopItem?.meta as MixedObject) ?? {}),
       },
       archived: shopItem?.archivedAt !== null,
+      videoUrl: shopItem?.cosmetic?.videoUrl ?? '',
     },
     shouldUnregister: false,
   });
 
-  const [title, description, cosmeticId, paidToUserIds, availableQuantity] = form.watch([
+  const [title, description, videoUrl, cosmeticId, paidToUserIds, availableQuantity] = form.watch([
     'title',
     'description',
+    'videoUrl',
     'cosmeticId',
     'meta.paidToUserIds',
     'availableQuantity',
   ]);
   const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
-
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
+
       await upsertShopItem({
         ...data,
         availableQuantity: data.availableQuantity ?? null, // Ensures we clear it out
@@ -164,10 +166,11 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
   };
 
   useEffect(() => {
-    if (!shopItem && cosmetic && (!title || !description)) {
+    if (!shopItem && cosmetic && (!title || !description || !videoUrl)) {
       // Resource changed, change our data. Fallback to current data if resource data is not available
       form.setValue('title', cosmetic.name || title);
       form.setValue('description', `<p>${cosmetic.description || description || ''}</p>`);
+      form.setValue('videoUrl', cosmetic.videoUrl || videoUrl || '');
     }
   }, [cosmetic, shopItem]);
 
@@ -230,6 +233,12 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
             withAsterisk
             stickyToolbar
+          />
+          <InputText
+            name="videoUrl"
+            label="Video Tutorial"
+            description="The link to the YouTube video that walks through how this badge was made :D"
+            placeholder='e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ'
           />
           <Group spacing="md" grow>
             <InputNumber

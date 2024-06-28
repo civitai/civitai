@@ -401,6 +401,7 @@ export function ImageDetail2() {
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
+                isModerator={currentUser?.isModerator}
               />
               <ImageExternalMeta imageId={image.id} />
             </div>

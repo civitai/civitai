@@ -1,4 +1,3 @@
-import { TextProps } from '@mantine/core';
 import { Prisma } from '@prisma/client';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 
@@ -13,7 +12,7 @@ export const cosmeticShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSe
   archivedAt: true,
   createdAt: true,
   cosmetic: {
-    select: simpleCosmeticSelect,
+    select: { ...simpleCosmeticSelect, videoUrl: true },
   },
   cosmeticId: true,
   meta: true,

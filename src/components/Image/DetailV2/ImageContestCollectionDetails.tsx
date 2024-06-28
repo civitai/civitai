@@ -8,16 +8,20 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 export const ImageContestCollectionDetails = ({
   imageId,
   isOwner,
+  isModerator,
 }: {
   imageId: number;
   isOwner: boolean;
+  isModerator?: boolean;
 }) => {
+  const isOwnerOrMod = isOwner || isModerator;
   const { collectionItems } = useImageContestCollectionDetails({ id: imageId });
   const { shareUrl } = useImageDetailContext();
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =
-    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwner) ?? [];
+    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod) ??
+    [];
 
   if (displayedItems.length === 0) return null;
 
@@ -31,7 +35,18 @@ export const ImageContestCollectionDetails = ({
       </div>
       <div className="flex flex-col gap-3">
         {collectionItems?.map((item) => {
-          if (isOwner) {
+          const tagDisplay = item?.tag ? (
+            <>
+              {' '}
+              for the{' '}
+              <Text component="span" tt="capitalize" weight="bold">
+                {item?.tag.name}
+              </Text>{' '}
+              category
+            </>
+          ) : null;
+
+          if (isOwnerOrMod) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -40,7 +55,7 @@ export const ImageContestCollectionDetails = ({
                   <Text weight="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
-                  contest.
+                  Contest{tagDisplay}.
                 </Text>
 
                 {item.status === CollectionItemStatus.REVIEW && (
@@ -96,7 +111,7 @@ export const ImageContestCollectionDetails = ({
                 <Text weight="bold" component="span">
                   {item.collection.name}
                 </Text>{' '}
-                contest.{' '}
+                contest{tagDisplay}.{' '}
               </Text>
               <Anchor href={`/collections/${item.collection.id}`} className="text-center" size="xs">
                 View and vote on all contest entries
