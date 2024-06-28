@@ -126,6 +126,7 @@ const useStyles = createStyles((theme) => ({
       theme.colorScheme === 'dark'
         ? theme.fn.rgba(theme.colors.dark[6], 0.6)
         : theme.colors.gray[0],
+    color: theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[4],
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
