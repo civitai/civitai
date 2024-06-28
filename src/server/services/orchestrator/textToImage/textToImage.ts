@@ -393,6 +393,10 @@ export async function formatTextToImageResponses(
         ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0))
         : 0;
 
+      const sampler = Object.entries(samplersToSchedulers).find(
+        ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
+      )?.[0];
+
       return removeNulls({
         $type: 'textToImage',
         name: step.name ?? '$0',
@@ -402,7 +406,7 @@ export async function formatTextToImageResponses(
           negativePrompt,
           quantity,
           controlNets: input.controlNets,
-          scheduler: input.scheduler,
+          sampler,
           steps: input.steps,
           cfgScale: input.cfgScale,
           width: input.width,

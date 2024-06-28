@@ -206,7 +206,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   limits?: GenerationLimits
 ) {
   if (params.sampler) {
-    params.sampler = generation.samplers.includes(params.sampler as any)
+    params.sampler = (generation.samplers as string[]).includes(params.sampler)
       ? params.sampler
       : generation.defaultValues.sampler;
   }
