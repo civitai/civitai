@@ -1,12 +1,13 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
-import { Sampler, generation } from '~/server/common/constants';
+import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
   TEXT_TO_IMAGE: 'textToImage',
@@ -164,6 +165,11 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
+export function getBaseModelSet(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSets[baseModelSetType] ?? [];
+}
+
 export function getIsSdxl(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return (
@@ -211,6 +217,8 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
+  params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
+
   // handle SDXL ClipSkip
   // I was made aware that SDXL only works with clipSkip 2
   // if that's not the case anymore, we can rollback to just setting
@@ -224,6 +232,16 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   }
   return params;
 }
+
+export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
+  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
+  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
+  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+  const ratios = aspectRatios.map((x) => x.width / x.height);
+  const closest = findClosest(ratios, width / height);
+  const index = ratios.indexOf(closest);
+  return `${index ?? 0}`;
+};
 // #endregion
 
 // #region [comfy]

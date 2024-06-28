@@ -32,6 +32,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { maxDate } from '~/utils/date-helpers';
 import { env } from '~/env/server.mjs';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { getBaseModelSet } from '~/shared/constants/generation.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -536,7 +537,7 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = baseModelSets[baseModel as BaseModelSetType] ?? [];
+    const baseModelSet = getBaseModelSet(baseModel);
     if (baseModelSet.length)
       sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
   }

@@ -49,6 +49,7 @@ import {
   defaultCheckpoints,
   formatGenerationResources,
   GenerationResource,
+  getBaseModelSet,
   getBaseModelSetType,
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
@@ -151,7 +152,7 @@ export const getGenerationResources = async (
       }
       if (baseModel) {
         // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-        const baseModelSet = baseModelSets[baseModel as BaseModelSetType] ?? [];
+        const baseModelSet = getBaseModelSet(baseModel);
         if (baseModelSet.length)
           sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
       }

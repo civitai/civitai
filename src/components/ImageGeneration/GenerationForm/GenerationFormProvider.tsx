@@ -212,7 +212,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (storeData) {
       const data = formatGenerationData(storeData);
-      console.log({ storeData, data });
       setValues(data);
     } else if (responseData && !isFetching) {
       if (!input) return;

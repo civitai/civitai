@@ -66,7 +66,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
-import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { getBaseModelSet, getIsSdxl } from '~/shared/constants/generation.constants';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -116,7 +116,7 @@ export default function ResourceSelectModal({
   const { resources = [], canGenerate } = options;
   const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
     let aggregate: BaseModel[] = [];
-    if (baseModelSet) aggregate = baseModelSets[baseModelSet] ?? [];
+    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet);
     if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
     return { type, baseModels: aggregate };
   });

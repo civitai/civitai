@@ -327,7 +327,15 @@ export async function formatTextToImageResponses(
     const formattedSteps = steps.map((step) => {
       const airs = getTextToImageAirs([step.input]);
       const versionIds = airs.map((x) => x.version);
-      const stepResources = resourcesData.filter((x) => versionIds.includes(x.id));
+      const stepResources = resourcesData
+        .filter((x) => versionIds.includes(x.id))
+        .map((resource) => {
+          const networkParams = airs.find((x) => x.version === resource.id)?.networkParams;
+          return {
+            ...resource,
+            ...networkParams,
+          };
+        });
 
       const resources = formatGenerationResources(stepResources);
 
@@ -425,12 +433,13 @@ export async function formatTextToImageResponses(
 }
 
 function getTextToImageAirs(inputs: TextToImageInput[]) {
-  return Object.keys(
-    inputs.reduce<Record<string, boolean>>((acc, input) => {
-      acc[input.model] = true;
-      for (const key in input.additionalNetworks ?? {}) acc[key] = true;
+  return Object.entries(
+    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+      acc[input.model] = {};
+      const additionalNetworks = input.additionalNetworks ?? {};
+      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
       return acc;
     }, {})
-  ).map((air) => parseAIR(air));
+  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 // #endregion

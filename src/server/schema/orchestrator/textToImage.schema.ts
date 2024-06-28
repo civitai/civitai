@@ -25,6 +25,8 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().optional(),
   aspectRatio: z.string(),
   baseModel: z.enum(baseModelSetTypes),
+  width: z.number().optional(),
+  height: z.number().optional(),
 });
 
 export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSchema).extend({
