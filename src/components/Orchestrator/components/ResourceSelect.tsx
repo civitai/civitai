@@ -81,7 +81,7 @@ export function ResourceSelect<T extends SupportedBaseModel>({
   }
 
   function openResourceSelect({ canGenerate, title }: ResourceSelectProps = {}) {
-    const test = baseModelResourceTypes[baseModel].filter((x) => modelTypes.includes(x.type));
+    // const test = baseModelResourceTypes[baseModel].filter((x) => modelTypes.includes(x.type));
     // openResourceSelectModal({
     //   title,
     //   onSelect: addResource,
