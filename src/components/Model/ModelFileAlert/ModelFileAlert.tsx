@@ -46,10 +46,12 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
           </Text>
         </AlertWithIcon>
       )}
-      {onlyPickle && modelType !== 'TextualInversion' && (
+      {onlyPickle && (
         <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
           <Text>
-            This asset is only available as a PickleTensor which is a deprecated and insecure format. We caution against using this asset until it can be converted to the modern SafeTensor format.
+            {modelType === 'TextualInversion' || modelType === 'Hypernetwork'
+              ? "This asset is only available as a PickleTensor which is an insecure format. We've taken precautions to ensure the safety of these files but please be aware that some may harbor malicious code."
+              : 'This asset is only available as a PickleTensor which is a deprecated and insecure format. We caution against using this asset until it can be converted to the modern SafeTensor format.'}
           </Text>
         </AlertWithIcon>
       )}
@@ -130,7 +132,7 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 };
 
 type ModelFileAlertProps = {
-  files: { type: string; metadata: { format?: ModelFileFormat; } }[];
+  files: { type: string; metadata: { format?: ModelFileFormat } }[];
   baseModel: BaseModel;
   modelType: ModelType;
   versionId: number;

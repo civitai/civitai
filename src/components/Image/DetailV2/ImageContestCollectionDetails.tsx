@@ -4,6 +4,7 @@ import { IconTournament } from '@tabler/icons-react';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { formatDate } from '~/utils/date-helpers';
 
 export const ImageContestCollectionDetails = ({
   imageId,
@@ -57,6 +58,16 @@ export const ImageContestCollectionDetails = ({
                   </Text>{' '}
                   Contest{tagDisplay}.
                 </Text>
+
+                {!!item.collection.metadata?.votingPeriodStart && (
+                  <Text>
+                    The ability to react/vote for this film will go live starting at{' '}
+                    <Text weight="bold" component="span">
+                      {formatDate(item.collection.metadata?.votingPeriodStart)}
+                    </Text>{' '}
+                    when the Community Voting period begins
+                  </Text>
+                )}
 
                 {item.status === CollectionItemStatus.REVIEW && (
                   <Text>
@@ -113,6 +124,15 @@ export const ImageContestCollectionDetails = ({
                 </Text>{' '}
                 contest{tagDisplay}.{' '}
               </Text>
+              {!!item.collection.metadata?.votingPeriodStart && (
+                <Text>
+                  The ability to react/vote for this film will go live starting at{' '}
+                  <Text weight="bold" component="span">
+                    {formatDate(item.collection.metadata?.votingPeriodStart)}
+                  </Text>{' '}
+                  when the Community Voting period begins
+                </Text>
+              )}
               <Anchor href={`/collections/${item.collection.id}`} className="text-center" size="xs">
                 View and vote on all contest entries
               </Anchor>
