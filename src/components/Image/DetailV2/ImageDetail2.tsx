@@ -113,9 +113,14 @@ export function ImageDetail2() {
     navigate,
   } = useImageDetailContext();
   const { collectionItems = [], isLoading: loadingCollectionDetails } =
-    useImageContestCollectionDetails({
-      id: image?.id as number,
-    });
+    useImageContestCollectionDetails(
+      {
+        id: image?.id as number,
+      },
+      {
+        enabled: !!image?.id,
+      }
+    );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,

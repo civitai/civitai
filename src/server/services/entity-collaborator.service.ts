@@ -162,7 +162,7 @@ export const getEntityCollaborators = async ({
     case EntityType.Post:
       const entity = await dbRead.post.findUnique({ where: { id: entityId } });
       if (!entity) {
-        throw throwBadRequestError('Entity not found');
+        return [];
       }
 
       const collaborators = await dbRead.entityCollaborator.findMany({
