@@ -197,7 +197,7 @@ export function useReportCsamImages(
 }
 
 export const useImageContestCollectionDetails = (
-  filters: { id?: number },
+  filters: { id: number },
   options?: { enabled: boolean }
 ) => {
   const { data: collectionItems, ...rest } = trpc.image.getContestCollectionDetails.useQuery(
