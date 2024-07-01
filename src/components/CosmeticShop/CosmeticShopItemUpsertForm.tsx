@@ -237,7 +237,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
           <InputText
             name="videoUrl"
             label="Video Tutorial"
-            description="The link to the YouTube video that walks through how this badge was made :D"
+            description="The link to the YouTube video that walks through how this cosmetic was made :D"
             placeholder='e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ'
           />
           <Group spacing="md" grow>
