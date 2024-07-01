@@ -167,12 +167,6 @@ function formatGenerationData(data: GenerationData): PartialFormData {
 type GenerationFormProps = Omit<UsePersistFormReturn<TypeOf<typeof formSchema>>, 'reset'> & {
   setValues: (data: PartialFormData) => void;
   reset: () => void;
-  // metadata?: {
-  //   remix?: {
-  //     imageId?: number;
-  //     versionId?: number;
-  //   };
-  // };
 };
 
 const GenerationFormContext = createContext<GenerationFormProps | null>(null);
@@ -248,6 +242,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }, []);
   // #endregion
 
+  // #region [handlers]
   function setValues(data: PartialFormData) {
     // don't overwrite quantity
     const { quantity, ...params } = data;
@@ -272,6 +267,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   function reset() {
     form.reset(getDefaultValues(form.getValues()));
   }
+  // #endregion
 
   return (
     <GenerationFormContext.Provider value={{ ...form, setValues, reset }}>

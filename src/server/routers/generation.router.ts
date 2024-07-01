@@ -33,6 +33,12 @@ import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { TRPCError } from '@trpc/server';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
+import {
+  getWorkflowDefinition,
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { z } from 'zod';
 
 export const generationRouter = router({
   // #region [requests related]
@@ -78,6 +84,25 @@ export const generationRouter = router({
   //   deleteAllGenerationRequests({ userId: ctx.user.id })
   // ),
   // #endregion
+  getWorkflowDefinitions: publicProcedure.query(() =>
+    getWorkflowDefinitions().then((res) =>
+      res.filter((x) => x.enabled !== false).map(({ key, name }) => ({ key, name }))
+    )
+  ),
+  getWorkflowDefinition: publicProcedure.input(z.object({ key: z.string() })).query(({ input }) =>
+    getWorkflowDefinition(input.key).then(({ key, name, features, inputs, description }) => {
+      return {
+        key,
+        name,
+        features,
+        inputs,
+        description,
+      };
+    })
+  ),
+  setWorkflowDefinition: moderatorProcedure
+    .input(z.any())
+    .mutation(({ input }) => setWorkflowDefinition(input.key, input)),
   getResources: publicProcedure
     .input(getGenerationResourcesSchema)
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),

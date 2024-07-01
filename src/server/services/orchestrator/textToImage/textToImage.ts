@@ -1,15 +1,15 @@
 import { ModelType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import { Sampler, getGenerationConfig } from '~/server/common/constants';
+import { getGenerationConfig } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  generationParamsToOrchestrator,
   getGenerationStatus,
   getResourceDataWithInjects,
 } from '~/server/services/orchestrator/common';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -18,10 +18,8 @@ import {
   WorkflowStatus,
   WorkflowTemplate,
   type ImageJobNetworkParams,
-  type Scheduler,
 } from '@civitai/client';
 import {
-  InjectableResource,
   WORKFLOW_TAGS,
   draftInjectableResources,
   formatGenerationResources,
@@ -34,13 +32,13 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
 import { queryWorkflows, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import {
-  TextToImageStepParamsMetadata,
   textToImageCreateSchema,
   textToImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { deepOmit, removeNulls } from '~/utils/object-helpers';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
+import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 
 export async function textToImage({
   user,
@@ -53,11 +51,13 @@ export async function textToImage({
   token: string;
 }) {
   const parsedInput = textToImageCreateSchema.parse(input);
-  const { tags, metadata = {} } = parsedInput;
+  const { tags, metadata = {}, workflowKey } = parsedInput;
 
   const status = await getGenerationStatus();
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
+
+  const workflowDefinition = await getWorkflowDefinition(workflowKey);
 
   const limits = status.limits[user.tier ?? 'free'];
   const params = sanitizeTextToImageParams(parsedInput.params, limits);
@@ -115,7 +115,7 @@ export async function textToImage({
   // #endregion
 
   const config = getGenerationConfig(params.baseModel);
-  const { height, width } = config.aspectRatios[Number(params.aspectRatio)];
+  // const { height, width } = config.aspectRatios[Number(params.aspectRatio)];
   const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const additionalNetworks: { [key: string]: ImageJobNetworkParams } = {};
   function addAdditionalNetwork(resource: ResourceData) {
@@ -130,94 +130,29 @@ export async function textToImage({
     addAdditionalNetwork(resource);
   }
 
-  const hasMinorResource = resources.some((resource) => resource.model.minor);
-  if (hasMinorResource) params.nsfw = false;
+  const mapped = generationParamsToOrchestrator({
+    workflowDefinition,
+    params: parsedInput.params,
+    resources,
+    injectable: allInjectable,
+    status,
+  });
 
-  // Disable nsfw if the prompt contains poi/minor words
-  const hasPoi = includesPoi(params.prompt) || resources.some((x) => x.model.poi);
-  if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;
-
-  // Set nsfw to true if the prompt contains nsfw words
-  const isPromptNsfw = includesNsfw(params.prompt);
-  params.nsfw ??= isPromptNsfw !== false;
-
-  const stepMetadata: TextToImageStepParamsMetadata = {};
-  if (params.nsfw) stepMetadata.nsfw = true;
-  if (params.draft) stepMetadata.draft = true;
-
-  const injectableResources = getInjectablResources(params.baseModel);
-
-  const injectable: InjectableResource[] = [];
-  if (params.draft && injectableResources.draft) {
-    injectable.push(injectableResources.draft);
-  }
-  if (isPromptNsfw && status.minorFallback) {
-    injectable.push(injectableResources.safe_pos);
-    injectable.push(injectableResources.safe_neg);
-  }
-  if (!params.nsfw && status.sfwEmbed) {
-    injectable.push(injectableResources.civit_nsfw);
-  }
-
-  const positivePrompts = [params.prompt];
-  const negativePrompts = [params.negativePrompt];
-  for (const item of injectable) {
-    const resource = allInjectable.find((x) => x.id === item.id);
-    if (!resource) continue;
-
-    addAdditionalNetwork(resource);
-
-    const triggerWord = resource.trainedWords?.[0];
-    if (triggerWord) {
-      if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
-      if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
-    }
-
-    if (item.sanitize) {
-      const sanitized = item.sanitize(params);
-      for (const key in sanitized) {
-        const _key = key as keyof TextToImageStepParamsMetadata;
-        // only assign to step metadata if no value has already been assigned
-        if (!stepMetadata[_key]) Object.assign(stepMetadata, { [_key]: params[_key] });
-        Object.assign(params, { [_key]: sanitized[_key] });
-      }
-    }
-  }
-
-  // adjust quantity/batchSize for draft mode
-  let quantity = params.quantity;
-  let batchSize = 1;
-  if (params.draft) {
-    // quantity = Math.ceil(params.quantity / 4) * 4;
-    quantity = Math.ceil(params.quantity / 4); // TODO - test
-    batchSize = 4;
-  }
-
-  metadata.params = stepMetadata;
+  for (const resource of mapped.additionalNetworkResources) addAdditionalNetwork(resource);
+  metadata.params = mapped.metadataParams;
 
   const step: TextToImageStepTemplate = {
     $type: 'textToImage',
     metadata: deepOmit(metadata),
     input: {
       model: checkpoint.air,
-      quantity,
-      batchSize,
       additionalNetworks,
-      // providers: params.draft ? (env.DRAFT_MODE_PROVIDERS as Provider[] | undefined) : undefined,
-      prompt: positivePrompts.join(', '),
-      negativePrompt: negativePrompts.join(', '),
-      scheduler: samplersToSchedulers[params.sampler as Sampler] as Scheduler,
-      steps: params.steps,
-      cfgScale: params.cfgScale,
-      seed: params.seed,
-      clipSkip: params.clipSkip,
-      width,
-      height,
+      ...mapped.params,
     },
   };
 
   const body: WorkflowTemplate = {
-    tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...tags],
+    tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.TEXT_TO_IMAGE, ...tags],
     steps: [step],
     callbacks: !whatIf
       ? [
@@ -255,6 +190,7 @@ export async function whatIfTextToImage({
   resources,
   user,
   token,
+  workflowKey,
   ...params
 }: z.input<typeof textToImageWhatIfSchema> & { user: SessionUser; token: string }) {
   const { workflow } = await textToImage({
@@ -263,6 +199,7 @@ export async function whatIfTextToImage({
     whatIf: true,
     user,
     token,
+    workflowKey,
   });
 
   let cost = 0,
@@ -299,7 +236,7 @@ export async function getTextToImageRequests(
 ) {
   const { nextCursor, items } = await queryWorkflows({
     ...props,
-    tags: [WORKFLOW_TAGS.TEXT_TO_IMAGE, ...(props.tags ?? [])],
+    tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.TEXT_TO_IMAGE, ...(props.tags ?? [])],
   });
 
   return {

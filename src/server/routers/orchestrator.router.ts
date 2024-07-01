@@ -10,7 +10,13 @@ import {
   getTextToImageRequests,
 } from '~/server/services/orchestrator/textToImage/textToImage';
 import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
-import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
+import {
+  guardedProcedure,
+  middleware,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { TRPCError } from '@trpc/server';
@@ -21,6 +27,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
 import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
+import { getWorkflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.utils';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();

@@ -27,22 +27,21 @@ export const textToImageParamsSchema = z.object({
   baseModel: z.enum(baseModelSetTypes),
   width: z.number().optional(),
   height: z.number().optional(),
+  // temp props?
+  denoise: z.number().optional(), // tODO - determine if this should go elsewhere
+  image: z.string().optional(),
+  upscale: z.number().optional(),
 });
 
 export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSchema).extend({
   resources: z.number().array().min(1),
+  workflowKey: z.string().default('txt2img'),
 });
 // #endregion
 
 // #region [step metadata]
 export type TextToImageStepParamsMetadata = z.infer<typeof textToImageStepParamsMetadataSchema>;
-const textToImageStepParamsMetadataSchema = z.object({
-  nsfw: z.boolean().optional(),
-  draft: z.boolean().optional(),
-  steps: z.number().optional(),
-  cfgScale: z.number().optional(),
-  sampler: z.string().optional(),
-});
+const textToImageStepParamsMetadataSchema = textToImageParamsSchema.partial();
 
 export type TextToImageStepRemixMetadata = z.infer<typeof textToImageStepRemixMetadataSchema>;
 const textToImageStepRemixMetadataSchema = z.object({
@@ -72,6 +71,7 @@ export const textToImageStepMetadataSchema = z.object({
 // #endregion
 
 export const textToImageCreateSchema = z.object({
+  workflowKey: z.string().default('txt2img'),
   params: textToImageParamsSchema,
   resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),

@@ -7,10 +7,14 @@ import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import { AirResourceData } from '~/server/services/orchestrator/common';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { findClosest } from '~/utils/number-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
-  TEXT_TO_IMAGE: 'textToImage',
+  IMAGE: 'img',
+  TEXT_TO_IMAGE: 'txt2img',
 };
 
 export const generationServiceCookie = {
@@ -217,6 +221,9 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
+  // let width = params.width;
+  // let height = params.height;
+  // if(params.upscale)
   params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
 
   // handle SDXL ClipSkip
@@ -242,144 +249,20 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   const index = ratios.indexOf(closest);
   return `${index ?? 0}`;
 };
-// #endregion
 
-// #region [comfy]
-export const hiresWorkflow = {
-  '3': {
-    inputs: {
-      seed: 89848141647836,
-      steps: 12,
-      cfg: 8,
-      sampler_name: 'dpmpp_sde',
-      scheduler: 'normal',
-      denoise: 1,
-      model: ['16', 0],
-      positive: ['6', 0],
-      negative: ['7', 0],
-      latent_image: ['5', 0],
-    },
-    class_type: 'KSampler',
-    _meta: {
-      title: 'KSampler',
-    },
-  },
-  '5': {
-    inputs: {
-      width: 768,
-      height: 768,
-      batch_size: 1,
-    },
-    class_type: 'EmptyLatentImage',
-    _meta: {
-      title: 'Empty Latent Image',
-    },
-  },
-  '6': {
-    inputs: {
-      text: 'masterpiece HDR victorian portrait painting of woman, blonde hair, mountain nature, blue sky\n',
-      clip: ['16', 1],
-    },
-    class_type: 'CLIPTextEncode',
-    _meta: {
-      title: 'CLIP Text Encode (Prompt)',
-    },
-  },
-  '7': {
-    inputs: {
-      text: 'bad hands, text, watermark\n',
-      clip: ['16', 1],
-    },
-    class_type: 'CLIPTextEncode',
-    _meta: {
-      title: 'CLIP Text Encode (Prompt)',
-    },
-  },
-  '8': {
-    inputs: {
-      samples: ['3', 0],
-      vae: ['16', 2],
-    },
-    class_type: 'VAEDecode',
-    _meta: {
-      title: 'VAE Decode',
-    },
-  },
-  '9': {
-    inputs: {
-      filename_prefix: 'ComfyUI',
-      images: ['8', 0],
-    },
-    class_type: 'SaveImage',
-    _meta: {
-      title: 'Save Image',
-    },
-  },
-  '10': {
-    inputs: {
-      upscale_method: 'nearest-exact',
-      width: 1152,
-      height: 1152,
-      crop: 'disabled',
-      samples: ['3', 0],
-    },
-    class_type: 'LatentUpscale',
-    _meta: {
-      title: 'Upscale Latent',
-    },
-  },
-  '11': {
-    inputs: {
-      seed: 469771404043268,
-      steps: 14,
-      cfg: 8,
-      sampler_name: 'dpmpp_2m',
-      scheduler: 'simple',
-      denoise: 0.5,
-      model: ['16', 0],
-      positive: ['6', 0],
-      negative: ['7', 0],
-      latent_image: ['10', 0],
-    },
-    class_type: 'KSampler',
-    _meta: {
-      title: 'KSampler',
-    },
-  },
-  '12': {
-    inputs: {
-      filename_prefix: 'ComfyUI',
-      images: ['13', 0],
-    },
-    class_type: 'SaveImage',
-    _meta: {
-      title: 'Save Image',
-    },
-  },
-  '13': {
-    inputs: {
-      samples: ['11', 0],
-      vae: ['16', 2],
-    },
-    class_type: 'VAEDecode',
-    _meta: {
-      title: 'VAE Decode',
-    },
-  },
-  '16': {
-    inputs: {
-      ckpt_name: 'v2-1_768-ema-pruned.ckpt',
-    },
-    class_type: 'CheckpointLoaderSimple',
-    _meta: {
-      title: 'Load Checkpoint',
-    },
-  },
-};
+export function getWorkflowDefinitionFeatures(workflow?: {
+  features?: WorkflowDefinition['features'];
+}) {
+  return {
+    draft: workflow?.features?.includes('draft') ?? false,
+    denoise: workflow?.features?.includes('denoise') ?? false,
+    upscale: workflow?.features?.includes('upscale') ?? false,
+    image: workflow?.features?.includes('image') ?? false,
+  };
+}
 // #endregion
 
 // #region [config]
-
 // pixel upscaler vs latent upscaler
 // pixel upscalers trained on a style
 // latent upscalers trained on a base model type
@@ -422,16 +305,5 @@ export const baseModelResourceTypes = {
     },
   ],
 };
-
-/*
-<ResourcePicker>{({segments}) => {
-  const [segment1, segment2, segment3] = segments;
-
-  each segment has controls, changing any value updates the resource picker `resources` value
-
-  return <></>
-}}</ResourcePicker>
-
-*/
 
 // #endregion

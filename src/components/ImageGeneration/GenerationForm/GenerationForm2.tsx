@@ -17,6 +17,7 @@ import {
   Divider,
   useMantineTheme,
   LoadingOverlay,
+  Select,
 } from '@mantine/core';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -60,7 +61,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { getIsSdxl, getWorkflowDefinitionFeatures } from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -81,12 +82,28 @@ import {
   TextToImageWhatIfProvider,
   useTextToImageWhatIfContext,
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
+import { workflowDefinitions } from '~/server/services/orchestrator/types';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
+  const utils = trpc.useUtils();
+  const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
+    onSuccess: () => {
+      utils.generation.getWorkflowDefinition.invalidate();
+    },
+  });
+  const handleSetDefinitions = () => {
+    for (const item of workflowDefinitions) {
+      mutate(item);
+    }
+  };
+
   return (
     <IsClient>
+      <Button onClick={handleSetDefinitions}>Set</Button>
+
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
           <GenerationFormContent />
@@ -100,7 +117,7 @@ export function GenerationForm2() {
 export function GenerationFormContent() {
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
-  const features = useFeatureFlags();
+  const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
   const status = useGenerationStatus();
@@ -114,6 +131,17 @@ export function GenerationFormContent() {
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
+
+  const [key, setKey] = useLocalStorage({ key: 'workflow-definition', defaultValue: 'txt2img' });
+  const { data: workflowDefinitions, isLoading: loadingWorkflows } =
+    trpc.generation.getWorkflowDefinitions.useQuery();
+  const { data: workflowDefinition } = trpc.generation.getWorkflowDefinition.useQuery(
+    { key },
+    { enabled: !!key }
+  );
+
+  const features = getWorkflowDefinitionFeatures(workflowDefinition);
+  features.draft = features.draft && featureFlags.draftMode;
 
   const { errors } = form.formState;
 
@@ -177,6 +205,7 @@ export function GenerationFormContent() {
     if (!cost) return;
 
     const { model, resources: additionalResources, vae, metadata, ...params } = data;
+
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.covered !== false);
@@ -184,7 +213,7 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        await mutateAsync({ resources, params, metadata });
+        await mutateAsync({ resources, params, metadata, workflowKey: key });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
@@ -226,6 +255,13 @@ export function GenerationFormContent() {
         pt={0}
         className="flex flex-col gap-2 px-3"
       >
+        <SelectWrapper
+          value={key}
+          onChange={(value) => setKey(value)}
+          data={workflowDefinitions?.map(({ key, name }) => ({ label: name, value: key })) ?? []}
+          loading={loadingWorkflows}
+        />
+
         <div className="mb-1 flex items-center gap-1">
           <Input.Label style={{ fontWeight: 590 }} required>
             Model
@@ -512,7 +548,7 @@ export function GenerationFormContent() {
 
         <div className="my-2 flex justify-between gap-3">
           <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
-          {features.draftMode && (
+          {features.draft && (
             <InputSwitch
               name="draft"
               labelPosition="left"
@@ -711,6 +747,15 @@ export function GenerationFormContent() {
                               marks: clipSkipMarks,
                             }}
                             numberProps={sharedNumberProps}
+                          />
+                        )}
+                        {features.denoise && (
+                          <InputNumberSlider
+                            name="denoise"
+                            label="Denoise"
+                            min={0}
+                            max={1}
+                            step={0.05}
                           />
                         )}
                         <InputResourceSelect

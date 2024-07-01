@@ -1,5 +1,39 @@
 import { ComfyNode } from '~/shared/types/generation.types';
 import { parseAIR } from '~/utils/string-helpers';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+
+export async function getWorkflowDefinitions() {
+  const workflowsJsons = await redis.hGetAll(REDIS_KEYS.GENERATION.WORKFLOWS);
+  if (!workflowsJsons) throw new Error('No workflows found');
+  const workflows = Object.values(workflowsJsons).map(
+    (json) => JSON.parse(json) as WorkflowDefinition
+  );
+
+  return workflows;
+}
+
+export async function getWorkflowDefinition(key: string) {
+  const workflowJson = await redis.hGet(REDIS_KEYS.GENERATION.WORKFLOWS, key);
+  if (!workflowJson) throw new Error('Workflow not found');
+  return JSON.parse(workflowJson) as WorkflowDefinition;
+}
+
+export async function setWorkflowDefinition(key: string, data: WorkflowDefinition) {
+  await redis.hSet(REDIS_KEYS.GENERATION.WORKFLOWS, key, JSON.stringify(data));
+}
+
+export async function populateWorkflowDefinition(key: string, data: any) {
+  const { template } = await getWorkflowDefinition(key);
+  const populated = template.replace(/{{(.*?)}}/g, (_: any, match: any) => {
+    return data[match];
+  });
+  try {
+    return JSON.parse(populated);
+  } catch {
+    throw new Error('Failed to populate workflow');
+  }
+}
 
 const CHECKPOINT_LOADERS = ['CheckpointLoaderSimple', 'CheckpointLoader'];
 const ADDITIONAL_LOADERS = ['LoraLoader'];

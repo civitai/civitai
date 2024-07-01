@@ -544,6 +544,8 @@ export const generation = {
     negativePrompt: '',
     nsfw: false,
     baseModel: 'SD1',
+    denoise: 1,
+    upscale: 2,
     model: {
       id: 128713,
       name: '8',
