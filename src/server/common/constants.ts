@@ -300,14 +300,14 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
+  supporterBadge: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
   memberships: {
     tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
-      founder: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
-      bronze: '376e8db1-f91a-46ed-93a2-85efe6dd391f',
-      silver: '1827f80a-b80c-4c55-8c67-dd2a384f4f9b',
-      gold: 'b6883947-df3e-46c9-b490-46ed7c0766a3',
+      founder: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
+      bronze: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
+      silver: '392d474d-8745-416e-9aac-26ff5273974c',
+      gold: 'd47d01b6-fceb-495a-8e26-08eb062c040f',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
