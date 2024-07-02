@@ -69,6 +69,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -112,22 +113,20 @@ export function ImageDetail2() {
     shareUrl,
     navigate,
   } = useImageDetailContext();
-  const { collectionItems = [], isLoading: loadingCollectionDetails } =
-    useImageContestCollectionDetails(
-      {
-        id: image?.id as number,
-      },
-      {
-        enabled: !!image?.id,
-      }
-    );
+  const { collectionItems = [] } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+
   if (isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
+  if (!image || alreadyBlocked) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -210,7 +209,7 @@ export function ImageDetail2() {
       <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
         <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
           <ImageGuard2 image={image} explain={false}>
-            {(safe) => (
+            {() => (
               <>
                 {/* HEADER */}
                 <div className="flex justify-between gap-8 p-3">

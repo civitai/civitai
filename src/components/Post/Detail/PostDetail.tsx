@@ -65,6 +65,7 @@ import { trpc } from '~/utils/trpc';
 import { Fragment } from 'react';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 type Props = { postId: number };
 
@@ -77,10 +78,9 @@ export function PostDetail(props: Props) {
 }
 
 export function PostDetailContent({ postId }: Props) {
-  const { classes } = useStyles();
+  const { classes, theme } = useStyles();
   const currentUser = useCurrentUser();
   const { query } = useBrowserRouter();
-  const theme = useMantineTheme();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const {
     flatData: unfilteredImages,
@@ -89,12 +89,8 @@ export function PostDetailContent({ postId }: Props) {
   } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
   const { collectionItems = [] } = usePostContestCollectionDetails(
-    {
-      id: postId,
-    },
-    {
-      enabled: !!post?.collectionId,
-    }
+    { id: postId },
+    { enabled: !!post?.collectionId }
   );
 
   const isOwnerOrMod = currentUser?.id === post?.user.id || currentUser?.isModerator;
@@ -112,6 +108,8 @@ export function PostDetailContent({ postId }: Props) {
   });
 
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === post?.user.id);
 
   const meta = (
     <Meta
@@ -128,7 +126,7 @@ export function PostDetailContent({ postId }: Props) {
   );
 
   if (postLoading) return <PageLoader />;
-  if (!post) return <NotFound />;
+  if (!post || alreadyBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(post.nsfwLevel))
     return (

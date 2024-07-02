@@ -83,6 +83,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -207,6 +208,7 @@ export const getModelsRaw = async ({
     clubId,
     modelVersionIds,
     browsingLevel,
+    excludedUserIds,
   } = input;
 
   let pending = input.pending;
@@ -455,6 +457,11 @@ export const getModelsRaw = async ({
     );
 
     isPrivate = !permissions.publicCollection;
+  }
+
+  // Exclude user content
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
@@ -962,6 +969,10 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   if (Object.keys(modelVersionWhere).length === 0) {
     modelVersionWhere = undefined;
+  }
+  const blockedBy = user ? await BlockedByUsers.getCached({ userId: user.id }) : [];
+  if (blockedBy.length > 0) {
+    input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedBy.map((u) => u.id)];
   }
 
   const { items, isPrivate, nextCursor } = await getModelsRaw({

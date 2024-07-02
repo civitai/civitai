@@ -81,6 +81,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -99,6 +100,7 @@ export const getServerSideProps = createServerSideProps({
     if (ssg) {
       await ssg.bounty.getById.prefetch({ id: result.data.id });
       await ssg.bountyEntry.getById.prefetch({ id: result.data.entryId });
+      await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
     return { props: removeEmpty(result.data) };
@@ -181,9 +183,14 @@ export default function BountyEntryDetailsPage({
   const { data: files = [], isLoading: isLoadingFiles } = trpc.bountyEntry.getFiles.useQuery({
     id: entryId,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [activeImage, setActiveImage] = useState<BountyEntryGetById['images'][number] | null>(
     bountyEntry?.images[0] || null
+  );
+
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find(
+    (u) => u.id === bountyEntry?.user?.id || bounty?.user?.id
   );
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
@@ -210,7 +217,7 @@ export default function BountyEntryDetailsPage({
     return <PageLoader />;
   }
 
-  if (!bounty || !bountyEntry) {
+  if (!bounty || !bountyEntry || alreadyBlocked) {
     return <NotFound />;
   }
 
@@ -831,9 +838,9 @@ export function BountyEntryCarousel({
                 width: width,
               }}
             >
-              <ImageGuard2.BlurToggle radius="sm" className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle radius="sm" className="absolute left-2 top-2 z-10" />
 
-              <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+              <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
               {!safe ? (
                 <MediaHash {...image} />
               ) : (

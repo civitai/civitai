@@ -70,6 +70,7 @@ export const profilePictureSchema = z.object({
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
+  excludedUserIds: z.array(z.number()).optional(),
 });
 
 export const creatorCardStatsPreferences = z.array(z.string()).max(3);

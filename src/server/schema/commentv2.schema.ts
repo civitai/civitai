@@ -19,6 +19,7 @@ export const commentConnectorSchema = z.object({
   ]),
   hidden: z.boolean().optional(),
   parentThreadId: z.number().optional(),
+  excludedUserIds: z.array(z.number()).optional(),
 });
 
 export type GetCommentsV2Input = z.infer<typeof getCommentsV2Schema>;

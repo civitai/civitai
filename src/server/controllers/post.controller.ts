@@ -57,6 +57,8 @@ import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -66,6 +68,12 @@ export const getPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const blockedByUsers = ctx.user
+      ? (await BlockedByUsers.getCached({ userId: ctx.user.id })).map((u) => u.id)
+      : [];
+    if (blockedByUsers.length)
+      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedByUsers];
+
     return await getPostsInfinite({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -341,6 +349,11 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
   try {
     const post = await getPostDetail({ ...input, user: ctx.user });
     if (!post) throw throwNotFoundError();
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: post.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
 
     return post;
   } catch (error) {

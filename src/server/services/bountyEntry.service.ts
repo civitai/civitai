@@ -23,7 +23,7 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
   select,
   sort = 'createdAt',
 }: {
-  input: { bountyId: number; userId?: number };
+  input: { bountyId: number; userId?: number; excludedUserIds?: number[] };
   select: TSelect;
   sort?: 'createdAt' | 'benefactorCount';
 }) => {
@@ -42,7 +42,11 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
   }
 
   return dbRead.bountyEntry.findMany({
-    where: { bountyId: input.bountyId, userId: input.userId },
+    where: {
+      bountyId: input.bountyId,
+      userId: input.userId,
+      AND: input.excludedUserIds ? [{ userId: { notIn: input.excludedUserIds } }] : undefined,
+    },
     select,
     orderBy,
   });

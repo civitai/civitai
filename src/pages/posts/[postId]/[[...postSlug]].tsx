@@ -29,6 +29,7 @@ export const getServerSideProps = createServerSideProps({
       pending: true,
     });
     await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });
+    await ssg?.hiddenPreferences.getHidden.prefetch();
 
     return { props: { postId } };
   },

@@ -23,6 +23,7 @@ export const getInfiniteBountySchema = infiniteQuerySchema.merge(
     userId: z.number().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
     limit: z.coerce.number().min(1).max(200).default(60),
+    excludedUserIds: z.number().array().optional(),
   })
 );
 

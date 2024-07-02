@@ -61,6 +61,7 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { constants } from '~/server/common/constants';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -76,7 +77,10 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
-    if (ssg) await ssg.article.getById.prefetch({ id: result.data.id });
+    if (ssg) {
+      await ssg.article.getById.prefetch({ id: result.data.id });
+      await ssg.hiddenPreferences.getHidden.prefetch();
+    }
 
     return { props: removeEmpty(result.data) };
   },
@@ -95,6 +99,9 @@ export default function ArticleDetailsPage({
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === article?.user.id);
+
   const meta = article ? (
     <Meta
       title={`${article.title} | Civitai`}
@@ -111,7 +118,7 @@ export default function ArticleDetailsPage({
   ) : null;
 
   if (isLoading) return <PageLoader />;
-  if (!article) return <NotFound />;
+  if (!article || alreadyBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(article.nsfwLevel))
     return (

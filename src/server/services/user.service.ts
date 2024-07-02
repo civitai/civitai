@@ -44,7 +44,7 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { HiddenModels } from '~/server/services/user-preferences.service';
+import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
 import {
   handleLogError,
   throwBadRequestError,
@@ -1325,3 +1325,34 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
     },
   });
 };
+
+export async function amIBlockedByUser({
+  userId,
+  targetUserId,
+  targetUsername,
+}: {
+  userId: number;
+  targetUserId?: number;
+  targetUsername?: string;
+}) {
+  if (!(targetUserId || targetUsername)) return false;
+
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId || user.username === targetUsername))
+    return true;
+
+  if (!targetUserId && targetUsername)
+    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
+  if (!targetUserId) return false;
+  if (targetUserId === userId) return false;
+
+  const engagement = await dbRead.userEngagement.findFirst({
+    where: {
+      userId: targetUserId,
+      targetUserId: userId,
+      type: 'Block',
+    },
+  });
+
+  return !!engagement;
+}

@@ -25,6 +25,7 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 
 const useStyles = createStyles((theme) => ({
   striped: {
@@ -83,9 +84,14 @@ export default function UserLists() {
                 data?.followersCount ?? 0
               )})`}</Tabs.Tab>
               {isSameUser && (
-                <Tabs.Tab value="hidden">{`Hidden (${abbreviateNumber(
-                  data?.hiddenCount ?? 0
-                )})`}</Tabs.Tab>
+                <>
+                  <Tabs.Tab value="hidden">
+                    {`Hidden (${abbreviateNumber(data?.hiddenCount ?? 0)})`}
+                  </Tabs.Tab>
+                  <Tabs.Tab value="blocked">
+                    {`Blocked (${abbreviateNumber(data?.blockedCount ?? 0)})`}
+                  </Tabs.Tab>
+                </>
               )}
             </Tabs.List>
             {loadingLists && !data ? (
@@ -159,38 +165,72 @@ export default function UserLists() {
                   </List>
                 </Tabs.Panel>
                 {isSameUser && (
-                  <Tabs.Panel value="hidden">
-                    <List
-                      listStyleType="none"
-                      styles={{ itemWrapper: { width: '100%' } }}
-                      className={classes.striped}
-                    >
-                      {data.hidden.length > 0 ? (
-                        data.hidden.map((user) => (
-                          <List.Item key={user.id} p={8}>
-                            <Link href={`/user/${user.username}`} passHref>
-                              <Anchor variant="text">
-                                <Group position="apart">
-                                  <UserAvatar user={user} withUsername />
-                                  <HideUserButton userId={user.id} compact />
-                                </Group>
-                              </Anchor>
-                            </Link>
+                  <>
+                    <Tabs.Panel value="hidden">
+                      <List
+                        listStyleType="none"
+                        styles={{ itemWrapper: { width: '100%' } }}
+                        className={classes.striped}
+                      >
+                        {data.hidden.length > 0 ? (
+                          data.hidden.map((user) => (
+                            <List.Item key={user.id} p={8}>
+                              <Link href={`/user/${user.username}`} passHref>
+                                <Anchor variant="text">
+                                  <Group position="apart">
+                                    <UserAvatar user={user} withUsername />
+                                    <HideUserButton userId={user.id} compact />
+                                  </Group>
+                                </Anchor>
+                              </Link>
+                            </List.Item>
+                          ))
+                        ) : (
+                          <List.Item>
+                            <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                              <Center>
+                                <Text size="lg" weight="bold">
+                                  There are no hidden users to show
+                                </Text>
+                              </Center>
+                            </Paper>
                           </List.Item>
-                        ))
-                      ) : (
-                        <List.Item>
-                          <Paper p="xl" sx={{ width: '100%' }} withBorder>
-                            <Center>
-                              <Text size="lg" weight="bold">
-                                There are no hidden users to show
-                              </Text>
-                            </Center>
-                          </Paper>
-                        </List.Item>
-                      )}
-                    </List>
-                  </Tabs.Panel>
+                        )}
+                      </List>
+                    </Tabs.Panel>
+                    <Tabs.Panel value="blocked">
+                      <List
+                        listStyleType="none"
+                        styles={{ itemWrapper: { width: '100%' } }}
+                        className={classes.striped}
+                      >
+                        {data.blocked.length > 0 ? (
+                          data.blocked.map((user) => (
+                            <List.Item key={user.id} p={8}>
+                              <Link href={`/user/${user.username}`} passHref>
+                                <Anchor variant="text">
+                                  <Group position="apart">
+                                    <Text>{user.username}</Text>
+                                    <BlockUserButton userId={user.id} compact />
+                                  </Group>
+                                </Anchor>
+                              </Link>
+                            </List.Item>
+                          ))
+                        ) : (
+                          <List.Item>
+                            <Paper p="xl" sx={{ width: '100%' }} withBorder>
+                              <Center>
+                                <Text size="lg" weight="bold">
+                                  There are no blocked users to show
+                                </Text>
+                              </Center>
+                            </Paper>
+                          </List.Item>
+                        )}
+                      </List>
+                    </Tabs.Panel>
+                  </>
                 )}
               </>
             )}

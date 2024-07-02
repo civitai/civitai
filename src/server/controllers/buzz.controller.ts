@@ -34,6 +34,7 @@ import { getEntityCollaborators } from '~/server/services/entity-collaborator.se
 import { getImageById } from '~/server/services/image.service';
 import { v4 as uuid } from 'uuid';
 import { isDefined } from '~/utils/type-guards';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -128,6 +129,14 @@ export async function createBuzzTipTransactionHandler({
 
     if (input.toAccountId === -1) {
       throw throwBadRequestError('You cannot send buzz to the system account');
+    }
+
+    const blocked = await amIBlockedByUser({
+      userId: fromAccountId,
+      targetUserId: input.toAccountId,
+    });
+    if (blocked) {
+      throw throwBadRequestError('You cannot send buzz to a user that has blocked you');
     }
 
     const { entityType, entityId } = input;

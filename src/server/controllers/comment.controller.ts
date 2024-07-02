@@ -29,6 +29,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -209,6 +210,14 @@ export const getCommentHandler = async ({ input, ctx }: { input: GetByIdInput; c
       user: ctx.user,
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({
+        userId: ctx.user.id,
+        targetUserId: comment.user.id,
+      });
+      if (blocked) throw throwNotFoundError();
+    }
 
     return comment;
   } catch (error) {

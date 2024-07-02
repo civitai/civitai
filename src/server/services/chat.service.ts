@@ -15,6 +15,7 @@ import { linkifyOptions } from '~/components/Chat/util';
 // We should not be using /types/router here, but it's a bit too much to refactor right now.
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { unfurl } from 'unfurl.js';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 export const maxChats = 200;
 export const maxChatsPerDay = 10;
@@ -27,6 +28,13 @@ export const upsertChat = async ({
   userId,
 }: CreateChatInput & { userId: number; isModerator?: boolean; isSupporter?: boolean }) => {
   const hash = getChatHash(userIds);
+  // filter out blocked users from userIds
+  const blockedUsers = await Promise.all([
+    BlockedUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+  ]);
+  const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
+  userIds = userIds.filter((u) => !blockedUserIds.includes(u));
 
   const existing = await dbWrite.chat.findFirst({
     where: { hash },
@@ -198,6 +206,17 @@ export const createMessage = async ({
       if (!isModeratorChat) {
         throw throwBadRequestError(`Unable to post in this chat`);
       }
+    }
+
+    const otherMembers = chat.chatMembers.filter((cm) => cm.userId !== userId);
+    const blockedUsers = await Promise.all([
+      BlockedUsers.getCached({ userId }),
+      BlockedByUsers.getCached({ userId }),
+    ]);
+    const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
+    const blockedByAll = otherMembers.every((cm) => blockedUserIds.includes(cm.userId));
+    if (blockedByAll) {
+      throw throwBadRequestError(`Unable to post in this chat`);
     }
   }
 
