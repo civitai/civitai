@@ -9,16 +9,14 @@ import {
   Group,
   Stack,
   Text,
-  ThemeIcon,
   Title,
   createStyles,
-  useMantineTheme,
   Paper,
   Center,
   Tooltip,
 } from '@mantine/core';
 import { Availability, CollectionType, EntityCollaboratorStatus, EntityType } from '@prisma/client';
-import { IconCheck, IconPhotoOff, IconTrash, IconX } from '@tabler/icons-react';
+import { IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
@@ -54,10 +52,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import {
-  getIsSafeBrowsingLevel,
-  hasPublicBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { toStringList } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { removeTags } from '~/utils/string-helpers';

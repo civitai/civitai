@@ -21,7 +21,6 @@ import {
 } from '~/server/metrics';
 import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userCosmeticCache } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -56,7 +55,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
-import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
+import { profileImageSelect } from '../selectors/image.selector';
 import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
