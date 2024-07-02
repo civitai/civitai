@@ -1,12 +1,9 @@
 import { NumberInput, NumberInputProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import { useEffect, useState } from 'react';
-import {
-  useGenerationFormStore,
-  useGenerationStatus,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { useEffect } from 'react';
+import { useWatch } from 'react-hook-form';
+import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { withController } from '~/libs/form/hoc/withController';
 
 type Props = Omit<NumberInputProps, 'limit' | 'min' | 'max'> & {
@@ -17,7 +14,8 @@ type Props = Omit<NumberInputProps, 'limit' | 'min' | 'max'> & {
 };
 
 function QuantityInput({ value, onChange, ...inputWrapperProps }: Props) {
-  const draft = useGenerationFormStore((x) => x.draft);
+  const form = useGenerationForm();
+  const draft = useWatch({ ...form, name: 'draft' });
   const { limits } = useGenerationStatus();
 
   useDidUpdate(() => {

@@ -1,17 +1,22 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
-import { IconCalendar, IconClock, IconInbox } from '@tabler/icons-react';
+import { Alert, Button, Center, Loader, Stack, Text } from '@mantine/core';
+import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { formatDate } from '~/utils/date-helpers';
+import { useSchedulerDownloadingStore } from '~/store/scheduler-download.store';
 
 export function Queue() {
-  const { requests, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetGenerationRequests();
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+    useGetTextToImageRequests();
+
+  const { downloading } = useSchedulerDownloadingStore();
+  const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
 
   if (isError)
     return (
@@ -27,9 +32,34 @@ export function Queue() {
       </Center>
     );
 
-  if (!requests.length)
+  const RetentionPolicyUpdate = (
+    <div className="flex flex-col items-center justify-center gap-3 ">
+      <div className="flex flex-col items-center justify-center">
+        <Text color="dimmed">
+          <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
+          Images are kept in the generator for 30 days
+        </Text>
+        <Text color="dimmed">
+          {
+            'To download images created before this policy took effect, click the download button below'
+          }
+        </Text>
+      </div>
+      <Button
+        component="a"
+        href="/api/generation/history"
+        download
+        disabled={downloading}
+        onClick={handleSetDownloading}
+      >
+        Download past images
+      </Button>
+    </div>
+  );
+
+  if (!data.length)
     return (
-      <Center h="100%">
+      <div className="flex h-full flex-col items-center justify-center gap-3">
         <Stack spacing="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
           <Stack spacing={0}>
@@ -50,7 +80,8 @@ export function Queue() {
             </Text>
           </Stack>
         </Stack>
-      </Center>
+        {RetentionPolicyUpdate}
+      </div>
     );
 
   return (
@@ -58,22 +89,35 @@ export function Queue() {
       <Stack>
         <Text size="xs" color="dimmed" my={-10}>
           <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-          Starting soon we will be applying a 30-day retention policy.{' '}
-          <Text variant="link" td="underline" component="a" target="_blank" href="/articles/5604">
-            More news soon
-          </Text>
+          Images are kept in the generator for 30 days{' '}
+          {!downloading && (
+            <Text
+              variant="link"
+              td="underline"
+              component="a"
+              href="/api/generation/history"
+              download
+              onClick={handleSetDownloading}
+            >
+              Download images created before {formatDate(new Date('6-24-2024'))}
+            </Text>
+          )}
         </Text>
-        {requests.map((request) => (
-          <div key={request.id} id={request.id.toString()}>
-            {createRenderElement(QueueItem, request.id, request)}
-          </div>
-        ))}
-        {hasNextPage && (
+        {data.map((request) =>
+          request.steps.map((step) => (
+            <div key={request.id} id={request.id.toString()}>
+              {createRenderElement(QueueItem, request.id, request, step)}
+            </div>
+          ))
+        )}
+        {hasNextPage ? (
           <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
             <Center sx={{ height: 60 }}>
               <Loader />
             </Center>
           </InViewLoader>
+        ) : (
+          <div className="p-6">{RetentionPolicyUpdate}</div>
         )}
       </Stack>
     </ScrollArea>
@@ -82,6 +126,8 @@ export function Queue() {
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, request) => <RenderComponent index={index} request={request} />
+  [OneKeyMap, {}, WeakMap, WeakMap],
+  (RenderComponent, index, request, step) => (
+    <RenderComponent index={index} request={request} step={step} />
+  )
 );

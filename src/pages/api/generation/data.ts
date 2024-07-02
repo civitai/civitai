@@ -1,13 +1,5 @@
-import {
-  createGenerationRequestSchema,
-  getGenerationDataSchema,
-  getGenerationRequestsSchema,
-} from '~/server/schema/generation.schema';
-import {
-  createGenerationRequest,
-  getGenerationData,
-  getGenerationRequests,
-} from '~/server/services/generation/generation.service';
+import { getGenerationDataSchema } from '~/server/schema/generation.schema';
+import { getGenerationData } from '~/server/services/generation/generation.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(

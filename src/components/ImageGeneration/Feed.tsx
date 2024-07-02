@@ -1,7 +1,7 @@
 import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { useGetGenerationRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
@@ -9,8 +9,8 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export function Feed() {
   const { classes } = useStyles();
-  const { requests, images, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetGenerationRequests();
+  const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+    useGetTextToImageRequestsImages();
 
   if (isError)
     return (
@@ -26,7 +26,7 @@ export function Feed() {
       </Center>
     );
 
-  if (!images.length)
+  if (!steps.flatMap((x) => x.images).length)
     return (
       <Center h="100%">
         <Stack spacing="xs" align="center" py="16">
@@ -56,16 +56,23 @@ export function Feed() {
     <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid}>
-        {images
-          .map((image) => {
-            const request = requests.find((request) =>
-              request.images?.some((x) => x.id === image.id)
-            );
-            if (!request) return null;
+        {steps.map((step) =>
+          step.images
+            .map((image) => {
+              const request = requests.find((request) => request.id === image.workflowId);
+              if (!request) return null;
 
-            return <GeneratedImage key={image.id} request={request} image={image} />;
-          })
-          .filter(isDefined)}
+              return (
+                <GeneratedImage
+                  key={`${image.workflowId}_${image.id}`}
+                  request={request}
+                  step={step}
+                  image={image}
+                />
+              );
+            })
+            .filter(isDefined)
+        )}
       </div>
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>

@@ -1,3 +1,4 @@
+import { ApiKeyType } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import {
   AddAPIKeyInput,
@@ -22,7 +23,7 @@ export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { u
   return dbRead.apiKey.findMany({
     take,
     skip,
-    where: { userId },
+    where: { userId, type: 'User' },
     select: {
       id: true,
       scope: true,
@@ -32,9 +33,16 @@ export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { u
   });
 }
 
-export async function addApiKey({ name, scope, userId }: AddAPIKeyInput & { userId: number }) {
+export async function addApiKey({
+  name,
+  scope,
+  userId,
+  maxAge,
+  type,
+}: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }) {
   const key = generateKey();
   const secret = generateSecretHash(key);
+  const expiresAt = maxAge ? new Date(new Date().getTime() + maxAge * 1000) : undefined;
 
   await dbWrite.apiKey.create({
     data: {
@@ -42,8 +50,24 @@ export async function addApiKey({ name, scope, userId }: AddAPIKeyInput & { user
       name,
       userId,
       key: secret,
+      expiresAt,
+      type,
     },
   });
+
+  return key;
+}
+
+export async function getTemporaryUserApiKey(
+  args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
+) {
+  const key = await addApiKey(args);
+
+  if (args.maxAge) {
+    const { userId, type, name } = args;
+    const date = new Date();
+    await dbWrite.apiKey.deleteMany({ where: { userId, type, name, expiresAt: { lt: date } } });
+  }
 
   return key;
 }

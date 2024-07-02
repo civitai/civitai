@@ -1,5 +1,4 @@
 import { ModelType } from '@prisma/client';
-import { JobStatus } from '~/libs/orchestrator/jobs';
 import { GenerationRequestStatus } from '~/server/common/enums';
 
 export namespace Generation {
@@ -18,7 +17,7 @@ export namespace Generation {
     requestId: number;
     seed?: number; // TODO.generation - check if this prop will be set
     status?: ImageStatus;
-    type?: JobStatus;
+    type?: any;
     removedForSafety: boolean;
     jobToken?: string;
     duration?: number | null;

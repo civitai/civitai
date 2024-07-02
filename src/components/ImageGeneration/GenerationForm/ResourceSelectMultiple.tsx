@@ -7,6 +7,7 @@ import { ResourceSelectOptions } from './resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
+import { ModelType } from '@prisma/client';
 
 type ResourceSelectMultipleProps = {
   limit?: number;

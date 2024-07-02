@@ -1,13 +1,13 @@
 import { Badge, Text, Button, createStyles, useMantineTheme, Progress, Card } from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
-import { IconBolt, IconHandStop } from '@tabler/icons-react';
+import { IconHandStop } from '@tabler/icons-react';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
-import { GenerationRequestStatus } from '~/server/common/enums';
 import { NextLink } from '@mantine/next';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
+import { WorkflowStatus } from '@civitai/client';
+import React from 'react';
 
 export function QueueSnackbar() {
   const router = useRouter();
@@ -41,6 +41,37 @@ export function QueueSnackbar() {
 
   if (requestsLoading) return null;
 
+  const dictionary: Record<WorkflowStatus, () => React.ReactNode> = {
+    unassigned: renderQueuePendingProcessing,
+    preparing: renderQueuePendingProcessing,
+    scheduled: renderQueuePendingProcessing,
+    processing: renderQueuePendingProcessing,
+    succeeded: () => 'All jobs complete',
+    failed: () => 'All jobs complete',
+    expired: () => 'All jobs expired',
+    canceled: () => 'All jobs cancelled',
+  };
+
+  function renderQueuePendingProcessing() {
+    return (
+      <>
+        <span>{`${queued.length} job${queued.length > 0 && 's'} in `}</span>
+        {includeQueueLink ? (
+          <Text
+            inline
+            variant="link"
+            className="cursor-pointer"
+            onClick={() => generationPanel.setView('queue')}
+          >
+            queue
+          </Text>
+        ) : (
+          <span>queue</span>
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="flex w-full flex-col gap-2 ">
       <Card
@@ -60,32 +91,9 @@ export function QueueSnackbar() {
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
           <Text weight={500} className="flex items-center gap-1 text-sm">
-            {!!queued.length ? (
-              <>
-                {(queueStatus === GenerationRequestStatus.Pending ||
-                  queueStatus === GenerationRequestStatus.Processing) && (
-                  <>
-                    <span>{`${queued.length} job${queued.length > 0 && 's'} in `}</span>
-                    {includeQueueLink ? (
-                      <Text
-                        inline
-                        variant="link"
-                        className="cursor-pointer"
-                        onClick={() => generationPanel.setView('queue')}
-                      >
-                        queue
-                      </Text>
-                    ) : (
-                      <span>queue</span>
-                    )}
-                  </>
-                )}
-                {queueStatus === GenerationRequestStatus.Succeeded && 'All jobs complete'}
-                {queueStatus === GenerationRequestStatus.Error && 'Error with job'}
-              </>
-            ) : (
-              `${requestsRemaining} jobs available`
-            )}
+            {!!queued.length && queueStatus
+              ? dictionary[queueStatus]()
+              : `${requestsRemaining} jobs available`}
           </Text>
           <div className="flex w-full justify-center gap-2">
             {slots.map((slot, i) => {

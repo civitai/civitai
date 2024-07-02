@@ -61,6 +61,7 @@ import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
 import { toolRouter } from '~/server/routers/tool.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
+import { orchestratorRouter } from '~/server/routers/orchestrator.router';
 import { modRouter } from '~/server/routers/moderator';
 import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
 import { gamesRouter } from '~/server/routers/games.router';
@@ -127,6 +128,7 @@ export const appRouter = router({
   tool: toolRouter,
   cosmeticShop: cosmeticShopRouter,
   technique: techniqueRouter,
+  orchestrator: orchestratorRouter,
   moderator: modRouter,
   entityCollaborator: entityCollaboratorRouter,
   games: gamesRouter,

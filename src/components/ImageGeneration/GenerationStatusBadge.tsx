@@ -1,7 +1,7 @@
+import { WorkflowStatus } from '@civitai/client';
 import { Badge, BadgeProps, Progress, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
 import { useState } from 'react';
-import { GenerationRequestStatus } from '~/server/common/enums';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
 
 export function GenerationStatusBadge({
@@ -13,7 +13,7 @@ export function GenerationStatusBadge({
   progress,
   ...badgeProps
 }: {
-  status: GenerationRequestStatus;
+  status: WorkflowStatus;
   processing?: number;
   complete: number;
   quantity: number;
@@ -48,9 +48,9 @@ export function GenerationStatusBadge({
         <div className="flex items-center gap-1">
           <IconPhoto size={16} />
           <Text size="sm" inline weight={500}>
-            {status !== GenerationRequestStatus.Succeeded ? `${complete}/${quantity}` : complete}
+            {status !== 'succeeded' ? `${complete}/${quantity}` : complete}
           </Text>
-          {progress && status === GenerationRequestStatus.Processing && (
+          {progress && status === 'processing' && (
             <Progress
               value={(complete / quantity) * 100}
               animate

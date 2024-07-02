@@ -2,7 +2,7 @@ import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
-import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { BaseModel, BaseModelSetType, baseModelSets, constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -24,7 +24,6 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateModelLastVersionAt } from './model.service';
-import { prepareModelInOrchestrator } from './generation/generation.service';
 import { isDefined } from '~/utils/type-guards';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
@@ -32,6 +31,8 @@ import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { maxDate } from '~/utils/date-helpers';
 import { env } from '~/env/server.mjs';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { getBaseModelSet } from '~/shared/constants/generation.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -396,7 +397,7 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await prepareModelInOrchestrator({ id: version.id });
+  await bustOrchestratorModelCache([version.id]);
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
@@ -528,7 +529,6 @@ export const deleteExplorationPrompt = async ({
   }
 };
 
-const baseModelSetsArray = Object.values(baseModelSets);
 export const getModelVersionsByModelType = async ({
   type,
   query,
@@ -537,8 +537,8 @@ export const getModelVersionsByModelType = async ({
 }: GetModelVersionByModelTypeProps) => {
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
-    const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
-    if (baseModelSet)
+    const baseModelSet = getBaseModelSet(baseModel);
+    if (baseModelSet.length)
       sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
   }
   if (query) {

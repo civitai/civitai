@@ -3,8 +3,6 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { GenerationDrawer } from '~/components/ImageGeneration/GenerationDrawer';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
@@ -24,6 +22,10 @@ export function GenerationSidebar() {
   }, []);
 
   useEffect(() => {
+    if (isGeneratePage) generationPanel.open();
+  }, [isGeneratePage]);
+
+  useEffect(() => {
     if (opened) {
       updateShowDrawer();
       useResizeStore.subscribe((state) => {
@@ -34,16 +36,6 @@ export function GenerationSidebar() {
   }, [opened, updateShowDrawer]);
 
   useWindowEvent('resize', updateShowDrawer);
-
-  // useEffect(() => {
-  //   opened && showDrawer
-  //     ? dialogStore.trigger({
-  //         component: GenerationDrawer,
-  //         id: 'generation-drawer',
-  //         options: { onClose: generationPanel.close },
-  //       })
-  //     : dialogStore.closeById('generation-drawer');
-  // }, [showDrawer, opened]);
 
   if (!opened) return null;
 
