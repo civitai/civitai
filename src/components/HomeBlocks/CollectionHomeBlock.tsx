@@ -40,6 +40,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { CollectionMode } from '@prisma/client';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 
 const icons = {
   model: IconCategory,
@@ -250,7 +251,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             }
           >
             <ReactionSettingsProvider
-              settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
+              settings={{
+                hideReactionCount: collection?.mode === CollectionMode.Contest,
+                hideReactions: collection && contestCollectionReactionsHidden(collection),
+              }}
             >
               {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
               {items.map((item) => (

@@ -70,7 +70,17 @@ export const BadgeDisplay = ({
   const filter = `drop-shadow(${shadowDistance}px ${shadowDistance}px 1px rgba(0, 0, 0, 0.8))`;
 
   return (
-    <Tooltip color="dark" label={badge.name} withArrow withinPortal>
+    <Tooltip
+      color="dark"
+      label={
+        <div style={{ textAlign: 'center', padding: 4 }}>
+          <div>{badge.name}</div>
+          <div style={{ fontSize: 'small', color: 'gray' }}>{badge.description}</div>
+        </div>
+      }
+      withArrow
+      withinPortal
+    >
       {badge.data.animated ? (
         <div
           style={{
@@ -80,7 +90,7 @@ export const BadgeDisplay = ({
             filter,
           }}
         >
-          <EdgeMedia src={badge.data.url} alt={badge.name}  />
+          <EdgeMedia src={badge.data.url} alt={badge.name} />
         </div>
       ) : (
         <div style={{ display: 'flex', zIndex, filter }}>

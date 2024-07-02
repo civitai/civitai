@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import {
   ActionIcon,
   Button,
@@ -27,7 +28,6 @@ import { ChoppedLayout } from '~/components/Chopped/chopped.components';
 import { useChoppedServer } from '~/components/Chopped/chopped.connection';
 
 export function Landing() {
-  const server = useChoppedServer();
   const setGameState = useChoppedStore((state) => state.setGame);
   const startNewGame = () => {
     setGameState({ ...defaultGameState, status: 'setup' });
@@ -39,7 +39,8 @@ export function Landing() {
   return (
     <ChoppedLayout>
       <Stack>
-        <Title align="center">Civitai Chopped</Title>
+        <img src="/images/civitai_chopped_dark.png" alt="civitai chopped logo" />
+        {/* <Title align="center">Civitai Chopped</Title> */}
         <Button onClick={startNewGame}>New Game</Button>
         <Button onClick={joinGame}>Join Game</Button>
       </Stack>

@@ -10,6 +10,7 @@ import {
   GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
+  UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';

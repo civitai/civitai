@@ -166,7 +166,7 @@ export function Setup() {
               ) : (
                 <IconX size={14} strokeWidth={2.5} />
               )}
-              Speach
+              Speech
             </Group>
           </Button>
         </Group>

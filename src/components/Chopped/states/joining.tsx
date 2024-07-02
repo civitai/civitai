@@ -39,7 +39,6 @@ export function Joining() {
 
   const server = useChoppedServer();
   const joinGame = async () => {
-    console.log('Joining game', joinState.code, joinState.name);
     server.join(joinState);
   };
 

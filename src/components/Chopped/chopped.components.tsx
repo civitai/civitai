@@ -37,7 +37,7 @@ import {
   IconVolume,
   IconVolumeOff,
 } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import React, { Component, ErrorInfo, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import {
@@ -85,12 +85,12 @@ export function ChoppedLayoutOld({
   const setGameState = useChoppedStore((state) => state.setGame);
 
   return (
-    <main className="flex flex-col h-full w-full">
+    <main className="flex size-full flex-col">
       {title && (
         <div className="bg-dark-6 p-3">
-          <div className="flex gap-3 justify-between container max-w-xs">
+          <div className="container flex max-w-xs justify-between gap-3">
             <div
-              className={`flex flex-1 gap-3 items-center ${
+              className={`flex flex-1 items-center gap-3 ${
                 !canBack && !canCreate ? 'justify-center' : ''
               }`}
             >
@@ -104,7 +104,7 @@ export function ChoppedLayoutOld({
           </div>
         </div>
       )}
-      <ScrollArea className="flex flex-col justify-center items-center">
+      <ScrollArea className="flex flex-col items-center justify-center">
         <div className="container max-w-xs">{children}</div>
       </ScrollArea>
       {footer && (
@@ -156,9 +156,9 @@ export function ChoppedLayout({
     <main className="flex flex-col">
       {title && (
         <div className="bg-dark-6 p-3">
-          <div className="flex gap-3 justify-between container max-w-xs">
+          <div className="container flex max-w-xs justify-between gap-3">
             <div
-              className={`flex flex-1 gap-3 items-center ${
+              className={`flex flex-1 items-center gap-3 ${
                 !canBack && !canCreate ? 'justify-center' : ''
               }`}
             >
@@ -190,7 +190,7 @@ export function ChoppedLayout({
           </div>
         </div>
       )}
-      <ScrollArea className="flex flex-col justify-center items-center">
+      <ScrollArea className="flex flex-col items-center justify-center">
         <div className="container max-w-xs">{children}</div>
       </ScrollArea>
       {footer && (
@@ -244,16 +244,16 @@ export function ChoppedUserSubmission({
 
   return (
     <div
-      className={`card flex flex-col shadow-lg shadow-black rounded-md overflow-hidden ${className}`}
+      className={`flex flex-col overflow-hidden rounded-md shadow-lg shadow-black card ${className}`}
     >
-      <div className="flex justify-center gap-3 items-center bg-gray-8 text-white font-bold uppercase px-4 py-1 relative">
+      <div className="relative flex items-center justify-center gap-3 bg-gray-8 px-4 py-1 font-bold uppercase text-white">
         <Text size="lg">{user.name}</Text>
       </div>
       <img src={submission.image} alt={user.name} />
       {decisionType ? (
         <ChoppedJudgeDecision
           decisionType={decisionType}
-          className="rounded-none rounded-tl-md absolute bottom-0 right-0 shadow-xl shadow-black aspect-square"
+          className="absolute bottom-0 right-0 aspect-square rounded-none rounded-tl-md shadow-xl shadow-black"
           size={64}
         />
       ) : submission.judgeScore ? (
@@ -261,7 +261,7 @@ export function ChoppedUserSubmission({
           score={submission.judgeScore}
           size={64}
           radius={0}
-          className=" rounded-none rounded-tl-md absolute bottom-0 right-0 shadow-xl shadow-black aspect-square"
+          className=" absolute bottom-0 right-0 aspect-square rounded-none rounded-tl-md shadow-xl shadow-black"
         />
       ) : null}
     </div>
@@ -347,9 +347,9 @@ export function ChoppedJudgeComment({
   return (
     <div>
       <div className="mb-4 flex items-start">
-        <div className="bg-black p-4 pl-2 pt-2 rounded-md flex gap-4 items-start">
+        <div className="flex items-start gap-4 rounded-md bg-black p-4 pl-2 pt-2">
           <div className="flex flex-col items-center gap-4">
-            <div className="w-[100px] rounded-md relative overflow-hidden">
+            <div className="relative w-[100px] overflow-hidden rounded-md">
               <EdgeMedia src={judge.avatar} width={400} />
               {indicator}
             </div>
@@ -360,9 +360,9 @@ export function ChoppedJudgeComment({
             )}
           </div>
           <div className="flex-1">
-            <h2 className="text-white text-md font-bold mb-1">
+            <h2 className="text-md mb-1 font-bold text-white">
               {judge.name}
-              <span className="opacity-60 italic font-normal ml-2 text-sm">
+              <span className="ml-2 text-sm font-normal italic opacity-60">
                 {judge.shortDescription}
               </span>
             </h2>
@@ -383,3 +383,70 @@ const decisionDict = {
   elimination: { Icon: IconX, color: 'red' },
   winner: { Icon: IconCrown, color: 'gold' },
 };
+
+// #region [Error Boundary]
+interface Props {
+  children: ReactNode;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ChoppedErrorBoundary extends Component<Props, State> {
+  state: State = {
+    hasError: false,
+  };
+
+  static getDerivedStateFromError(error: Error) {
+    // Update state so the next render will show the fallback UI
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    // You can use your own error logging service here
+    console.error({ error, errorInfo });
+  }
+  render() {
+    if (!this.state.hasError) return this.props.children;
+
+    return (
+      <div className="flex size-full items-center justify-center">
+        <div className="flex flex-col gap-3">
+          <ErrorBoundaryContent
+            {...this.state}
+            onClick={() => this.setState({ hasError: false, error: undefined })}
+          />
+        </div>
+      </div>
+    );
+  }
+}
+
+function ErrorBoundaryContent({
+  hasError,
+  error,
+  onClick,
+}: {
+  hasError: boolean;
+  error?: Error;
+  onClick: () => void;
+}) {
+  const { leave } = useChoppedServer();
+
+  const handleClick = () => {
+    leave();
+    onClick();
+  };
+
+  return (
+    <Alert color="yellow" title="An error has occurred">
+      <div className="flex flex-col gap-3">
+        {error && <Text color="red">{error.message}</Text>}
+        <Text>To continue, try reloading your webpage.</Text>
+        <Button onClick={handleClick}>Leave game</Button>
+      </div>
+    </Alert>
+  );
+}
+// #endregion

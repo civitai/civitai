@@ -59,9 +59,10 @@ import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
+  contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
   useCollection,
 } from '~/components/Collections/collection.utils';
@@ -234,13 +235,21 @@ const ImageCollection = ({
           {isContestCollection && collection.tags.length > 0 && (
             <Select
               label="Collection Categories"
-              value={query.collectionTagId?.toString() ?? null}
-              onChange={(x) => replace({ collectionTagId: x ? parseInt(x, 10) : undefined })}
+              value={query.collectionTagId?.toString() ?? 'all'}
+              onChange={(x) =>
+                replace({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
+              }
               placeholder="All"
-              data={collection.tags.map((tag) => ({
-                value: tag.id.toString(),
-                label: tag.name,
-              }))}
+              data={[
+                {
+                  value: 'all',
+                  label: 'All',
+                },
+                ...collection.tags.map((tag) => ({
+                  value: tag.id.toString(),
+                  label: tag.name,
+                })),
+              ]}
               tt="capitalize"
               clearable
               styles={{
@@ -250,7 +259,12 @@ const ImageCollection = ({
               }}
             />
           )}
-          <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
+          <ReactionSettingsProvider
+            settings={{
+              hideReactionCount: isContestCollection,
+              hideReactions: contestCollectionReactionsHidden(collection),
+            }}
+          >
             <ImagesInfinite
               filters={{
                 ...filters,

@@ -7,13 +7,16 @@ export const PostContestCollectionInfoAlert = ({
   isOwner,
   collectionItem,
   itemLabel = 'post',
+  isModerator,
 }: {
   isOwner?: boolean;
+  isModerator?: boolean;
   collectionItem?: PostContestCollectionItem;
   itemLabel?: string;
 }) => {
   const showDetails =
-    collectionItem && (isOwner || collectionItem.status === CollectionItemStatus.ACCEPTED);
+    collectionItem &&
+    (isOwner || isModerator || collectionItem.status === CollectionItemStatus.ACCEPTED);
 
   if (!showDetails) return null;
 
@@ -23,23 +26,34 @@ export const PostContestCollectionInfoAlert = ({
     </Text>
   );
 
-  if (isOwner) {
+  const tagDisplay = collectionItem?.tag ? (
+    <>
+      {' '}
+      for the{' '}
+      <Text component="span" tt="capitalize" weight="bold">
+        {collectionItem?.tag.name}
+      </Text>{' '}
+      category
+    </>
+  ) : null;
+
+  if (isOwner || isModerator) {
     return (
       <Alert>
         <Stack>
           {collectionItem.status === CollectionItemStatus.REVIEW ? (
             <Stack>
               <Text>
-                Thank you for your submission to the {collectionName} contest! We will review your
-                submission and let you know if it is accepted so that it appears in the contest
-                collection within 24 to 48 hours.
+                Thank you for your submission to the {collectionName} contest{tagDisplay}! We will
+                review your submission and let you know if it is accepted so that it appears in the
+                contest collection within 24 to 48 hours.
               </Text>
               <Text>You will receive a notification when your submission is reviewed.</Text>
             </Stack>
           ) : collectionItem.status === CollectionItemStatus.ACCEPTED ? (
             <Text>
               Your submission to the {collectionName} contest has been accepted and is now visible
-              in the contest collection.
+              in the contest collection{tagDisplay}.
             </Text>
           ) : (
             <Text>
@@ -76,7 +90,7 @@ export const PostContestCollectionInfoAlert = ({
         <Text>
           This {itemLabel} is an entry in the{' '}
           <Anchor href={`/collections/${collectionItem.collection.id}`}>{collectionName}</Anchor>{' '}
-          contest.
+          contest{tagDisplay}.
         </Text>
       </Stack>
     </Alert>

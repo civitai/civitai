@@ -1,8 +1,9 @@
+import { MediaType } from '@prisma/client';
 import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
-export function Meta<TImage extends { nsfwLevel: number; url: string }>({
+export function Meta<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
   title,
   description,
   links = [],
@@ -21,7 +22,9 @@ export function Meta<TImage extends { nsfwLevel: number; url: string }>({
 }) {
   const _images = images ? ([] as TImage[]).concat(images) : undefined;
   const _image = _images?.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
-  const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200 }) : imageUrl;
+  const _imageProps =
+    _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
+  const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps }) : imageUrl;
 
   return (
     <Head>

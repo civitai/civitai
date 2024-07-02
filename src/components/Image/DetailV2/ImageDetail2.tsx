@@ -67,6 +67,8 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -110,6 +112,15 @@ export function ImageDetail2() {
     shareUrl,
     navigate,
   } = useImageDetailContext();
+  const { collectionItems = [], isLoading: loadingCollectionDetails } =
+    useImageContestCollectionDetails(
+      {
+        id: image?.id as number,
+      },
+      {
+        enabled: !!image?.id,
+      }
+    );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
@@ -190,7 +201,7 @@ export function ImageDetail2() {
   return (
     <>
       <Meta
-        title={`Image posted by ${image.user.username}`}
+        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
         images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
@@ -276,6 +287,9 @@ export function ImageDetail2() {
                     <ReactionSettingsProvider
                       settings={{
                         hideReactionCount: false,
+                        hideReactions: collectionItems.some((ci) =>
+                          contestCollectionReactionsHidden(ci.collection)
+                        ),
                         buttonStyling: (reaction, hasReacted) => ({
                           radius: 'xl',
                           variant: 'light',
@@ -382,6 +396,13 @@ export function ImageDetail2() {
                   {`This image won't be visible to other users until it's reviewed by our moderators.`}
                 </AlertWithIcon>
               )}
+              <VotableTags
+                entityType="image"
+                entityId={image.id}
+                canAdd
+                collapsible
+                nsfwLevel={image.nsfwLevel}
+              />
               <ImageProcess imageId={image.id} />
               <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
@@ -394,13 +415,7 @@ export function ImageDetail2() {
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
-              />
-              <VotableTags
-                entityType="image"
-                entityId={image.id}
-                canAdd
-                collapsible
-                nsfwLevel={image.nsfwLevel}
+                isModerator={currentUser?.isModerator}
               />
               <ImageExternalMeta imageId={image.id} />
             </div>
