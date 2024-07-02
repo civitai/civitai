@@ -16,7 +16,10 @@ export const ImageContestCollectionDetails = ({
   isModerator?: boolean;
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
-  const { collectionItems } = useImageContestCollectionDetails({ id: imageId });
+  const { collectionItems } = useImageContestCollectionDetails(
+    { id: imageId },
+    { enabled: !!imageId }
+  );
   const { shareUrl } = useImageDetailContext();
   if ((collectionItems?.length ?? 0) === 0) return null;
 

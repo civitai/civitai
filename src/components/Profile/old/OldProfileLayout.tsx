@@ -318,13 +318,13 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                   ? 'Include in leaderboards'
                   : 'Exclude from leaderboards'}
               </Menu.Item>
-              <Menu.Item
+              {/* <Menu.Item
                 color="red"
                 icon={<IconTrash size={14} stroke={1.5} />}
                 onClick={handleRemoveContent}
               >
                 Remove all content
-              </Menu.Item>
+              </Menu.Item> */}
               {/* <Menu.Item
                 color="red"
                 icon={<IconUserMinus size={14} stroke={1.5} />}
