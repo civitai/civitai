@@ -1,14 +1,16 @@
-import { useMemo } from 'react';
-import { trpc } from '~/utils/trpc';
-import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
+import { NotificationCategory } from '@prisma/client';
 import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { NotificationCategory } from '@prisma/client';
+import { useCallback, useMemo } from 'react';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { SignalMessages } from '~/server/common/enums';
+import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
+import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
+import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
-import { NotificationGetAll } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
 const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Comment]: 'Comments',
@@ -118,4 +120,26 @@ export const useNotificationSettings = (enabled = true) => {
   }, [userNotificationSettings]);
 
   return { hasNotifications, hasCategory, notificationSettings, isLoading };
+};
+
+export const useNotificationSignal = () => {
+  const queryClient = useQueryClient();
+
+  const onUpdate = useCallback(
+    (updated: NotificationGetAllItem) => {
+      const queryKey = getQueryKey(trpc.notification.getAllByUser);
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+        { queryKey, exact: false },
+        produce((old) => {
+          if (!old || !old.pages || !old.pages.length) return;
+
+          const firstPage = old.pages[0];
+          firstPage.items.unshift(updated);
+        })
+      );
+    },
+    [queryClient]
+  );
+
+  useSignalConnection(SignalMessages.NotificationNew, onUpdate);
 };

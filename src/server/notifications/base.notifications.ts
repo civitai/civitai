@@ -13,7 +13,7 @@ export type NotificationProcessor = {
 };
 
 export type BareNotification = {
-  id: string;
+  id: number;
   type: string;
   details: MixedObject;
 };

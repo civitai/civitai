@@ -15,7 +15,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 type NotificationsRaw = {
-  id: string;
+  id: number;
   type: string;
   category: NotificationCategory;
   details: MixedObject;

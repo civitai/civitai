@@ -16,7 +16,7 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    "noUncheckedIndexedAccess": false,
+    "noUncheckedIndexedAccess": false, // TODO swap to true
     "baseUrl": "src",
     "paths": {
       "~/*": ["./*"]

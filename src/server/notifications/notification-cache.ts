@@ -4,68 +4,68 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 // #region Notification Counter
-export type NotificationAddedRow = { category: NotificationCategory; userId: number };
-type NotificationCategoryCounts = Partial<Record<NotificationCategory, number>>;
-export function createNotificationCounter() {
-  let increments: Record<number, NotificationCategoryCounts> = {};
+// export type NotificationAddedRow = { category: NotificationCategory; userId: number };
+// type NotificationCategoryCounts = Partial<Record<NotificationCategory, number>>;
+// export function createNotificationCounter() {
+//   let increments: Record<number, NotificationCategoryCounts> = {};
+//
+//   function add(data: { userId: number; category: NotificationCategory }[]) {
+//     for (const { userId, category } of data) {
+//       increments[userId] ??= {};
+//       increments[userId][category] ??= 0;
+//       increments[userId][category]!++;
+//     }
+//   }
+//
+//   async function save() {
+//     const toIncrement: [number, NotificationCategory, number][] = [];
+//     for (const [userIdString, categoryCounts] of Object.entries(increments)) {
+//       const userId = Number(userIdString);
+//       const isCached = await hasUser(userId);
+//       if (!isCached) continue;
+//
+//       for (const [category, count] of Object.entries(categoryCounts))
+//         toIncrement.push([userId, category as NotificationCategory, count]);
+//     }
+//
+//     // Do it here so that we can capture it all in a single pipeline
+//     // node-redis pipelines are automatic when it can be
+//     // and so to make that happen we need to do this here
+//     // since we did an `exists` check above
+//     for (const args of toIncrement) await incrementUser(...args);
+//
+//     increments = {};
+//   }
+//
+//   return {
+//     add,
+//     save,
+//   };
+// }
 
-  function add(data: { userId: number; category: NotificationCategory }[]) {
-    for (const { userId, category } of data) {
-      increments[userId] ??= {};
-      increments[userId][category] ??= 0;
-      increments[userId][category]!++;
-    }
-  }
-
-  async function save() {
-    const toIncrement: [number, NotificationCategory, number][] = [];
-    for (const [userIdString, categoryCounts] of Object.entries(increments)) {
-      const userId = Number(userIdString);
-      const isCached = await hasUser(userId);
-      if (!isCached) continue;
-
-      for (const [category, count] of Object.entries(categoryCounts))
-        toIncrement.push([userId, category as NotificationCategory, count]);
-    }
-
-    // Do it here so that we can capture it all in a single pipeline
-    // node-redis pipelines are automatic when it can be
-    // and so to make that happen we need to do this here
-    // since we did an `exists` check above
-    for (const args of toIncrement) await incrementUser(...args);
-
-    increments = {};
-  }
-
-  return {
-    add,
-    save,
-  };
-}
-
-export async function withNotificationCounter(
-  fn: (counter: ReturnType<typeof createNotificationCounter>) => Promise<any> | any,
-  onError?: (e: Error) => void
-) {
-  const counter = createNotificationCounter();
-  try {
-    return await fn(counter);
-  } catch (e) {
-    onError?.(e as Error);
-  } finally {
-    const start = Date.now();
-    await counter.save();
-    logToAxiom(
-      {
-        name: 'notification-counter',
-        type: 'info',
-        message: 'Save notification counts',
-        duration: Date.now() - start,
-      },
-      'webhooks'
-    ).catch();
-  }
-}
+// export async function withNotificationCounter(
+//   fn: (counter: ReturnType<typeof createNotificationCounter>) => Promise<any> | any,
+//   onError?: (e: Error) => void
+// ) {
+//   const counter = createNotificationCounter();
+//   try {
+//     return await fn(counter);
+//   } catch (e) {
+//     onError?.(e as Error);
+//   } finally {
+//     const start = Date.now();
+//     await counter.save();
+//     logToAxiom(
+//       {
+//         name: 'notification-counter',
+//         type: 'info',
+//         message: 'Save notification counts',
+//         duration: Date.now() - start,
+//       },
+//       'webhooks'
+//     ).catch();
+//   }
+// }
 // #endregion
 
 // #region Notification Cache

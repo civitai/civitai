@@ -3,7 +3,6 @@ import { isPromise } from 'util/types';
 import { clickhouse } from '~/server/clickhouse/client';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
-import { withNotificationCounter } from '~/server/notifications/notification-cache';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
@@ -23,55 +22,52 @@ export type NotificationPendingRow = Omit<NotificationSingleRow, 'userId'> & {
   category: NotificationCategory;
 };
 
-export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', (e) =>
-  withNotificationCounter(
-    async (counter) => {
-      const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
+export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async (e) => {
+  try {
+    const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
 
-      // Run batches
-      for (const batch of notificationBatches) {
+    // Run batches
+    for (const batch of notificationBatches) {
+      e.checkIfCanceled();
+      const promises = batch.map(({ prepareQuery, key, category }) => async () => {
         e.checkIfCanceled();
-        const promises = batch.map(({ prepareQuery, key, category }) => async () => {
-          e.checkIfCanceled();
-          log('sending', key, 'notifications');
-          const [lastSent, setLastSent] = await getJobDate(
-            'last-sent-notification-' + key,
-            lastRun
-          );
-          let query = prepareQuery?.({
-            lastSent: lastSent.toISOString(),
-            clickhouse,
-          });
-          if (query) {
-            const start = Date.now();
-            if (isPromise(query)) query = await query;
+        log('sending', key, 'notifications');
+        const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
+        let query = prepareQuery?.({
+          lastSent: lastSent.toISOString(),
+          clickhouse,
+        });
+        if (query) {
+          const start = Date.now();
+          if (isPromise(query)) query = await query;
 
-            const request = await pgDbRead.cancellableQuery<NotificationSingleRow>(query);
-            e.on('cancel', request.cancel);
-            const additions = await request.result();
+          const request = await pgDbRead.cancellableQuery<NotificationSingleRow>(query);
+          e.on('cancel', request.cancel);
+          const additions = await request.result();
 
-            const pendingData: { [k: string]: NotificationPendingRow } = {};
-            for (const r of additions) {
-              if (!r.key) {
-                console.error('missing key for ', key);
-                continue;
-              }
-              if (!pendingData.hasOwnProperty(r.key)) {
-                pendingData[r.key] = {
-                  key: r.key,
-                  type: r.type,
-                  category: category,
-                  details: r.details,
-                  users: [r.userId],
-                };
-              } else {
-                pendingData[r.key]['users'].push(r.userId);
-              }
+          const pendingData: { [k: string]: NotificationPendingRow } = {};
+          for (const r of additions) {
+            if (!r.key) {
+              console.error('missing key for ', key);
+              continue;
             }
+            if (!pendingData.hasOwnProperty(r.key)) {
+              pendingData[r.key] = {
+                key: r.key,
+                type: r.type,
+                category: category,
+                details: r.details,
+                users: [r.userId],
+              };
+            } else {
+              pendingData[r.key]['users'].push(r.userId);
+            }
+          }
 
-            await notifDbWrite.cancellableQuery(Prisma.sql`
+          await notifDbWrite.cancellableQuery(Prisma.sql`
               INSERT INTO "PendingNotification" (key, type, category, users, details)
-              VALUES ${Prisma.join(
+              VALUES
+              ${Prisma.join(
                 Object.values(pendingData).map(
                   (d) =>
                     Prisma.sql`(${d.key}, ${d.type}, ${d.category}, ${d.users}, ${JSON.stringify(
@@ -79,26 +75,26 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                     )}::jsonb)`
                 )
               )}
-              ON CONFLICT DO NOTHING
+              ON CONFLICT
+              DO NOTHING
             `);
 
-            // if (additions.length > 0) {
-            //   counter.add(additions);
-            // }
+          // if (additions.length > 0) {
+          //   counter.add(additions);
+          // }
 
-            await setLastSent();
-            log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
-          }
-        });
-        await limitConcurrency(promises, 4);
-      }
-      log('sent notifications');
-
-      await setLastRun();
-    },
-    (e) => {
-      log('failed to send notifications');
-      throw e;
+          await setLastSent();
+          log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
+        }
+      });
+      await limitConcurrency(promises, 4);
     }
-  )
-);
+
+    log('sent notifications');
+
+    await setLastRun();
+  } catch (e) {
+    log('failed to send notifications');
+    throw e;
+  }
+});
