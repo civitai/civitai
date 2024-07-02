@@ -922,17 +922,23 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 export const GenerationForm = (args: { onSuccess?: () => void }) => {
   const currentUser = useCurrentUser();
 
-  if (currentUser?.muted)
+  if (true)
     return (
       <Center h="100%" w="75%" mx="auto">
-        <Stack spacing="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
+        <Stack spacing="xs" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow" mb="xl">
             <IconLock />
           </ThemeIcon>
-          <Text align="center">
+          <Text size="xl" weight={500}>
+            Account Restricted
+          </Text>
+          <Text className="leading-snug text-center">
             Your account has been restricted due to potential Terms of Service violations, and has
             been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 48 hours. You do not need to contact us.
+            determination notification within 48 hours.
+          </Text>
+          <Text weight="bold">
+            You do <u>not</u> need to contact us.
           </Text>
         </Stack>
       </Center>
