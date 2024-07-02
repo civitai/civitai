@@ -18,5 +18,6 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.resourceReview.get.prefetch({ id });
+    await ssg?.hiddenPreferences.getHidden.prefetch();
   },
 });

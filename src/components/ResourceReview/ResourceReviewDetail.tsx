@@ -34,6 +34,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();
@@ -51,6 +52,9 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
     { enabled: !!data }
   );
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === data?.user.id);
+
   const getModelUrl = (data: ResourceReviewDetailModel) =>
     `/models/${data.model.id}/${slugit(data.model.name)}`;
   const getModelWithVersionUrl = (data: ResourceReviewDetailModel) =>
@@ -62,7 +66,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         <Loader />
       </Center>
     );
-  if (!data) return <NoContent />;
+  if (!data || alreadyBlocked) return <NoContent />;
 
   const commentCount = data.thread?._count.comments ?? 0;
 

@@ -65,6 +65,7 @@ import { trpc } from '~/utils/trpc';
 import { Fragment } from 'react';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 type Props = { postId: number };
 
@@ -107,6 +108,8 @@ export function PostDetailContent({ postId }: Props) {
   });
 
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === post?.user.id);
 
   const meta = (
     <Meta
@@ -123,7 +126,7 @@ export function PostDetailContent({ postId }: Props) {
   );
 
   if (postLoading) return <PageLoader />;
-  if (!post) return <NotFound />;
+  if (!post || alreadyBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(post.nsfwLevel))
     return (

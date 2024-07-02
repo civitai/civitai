@@ -17,7 +17,7 @@ export const useQueryHiddenPreferences = () => {
       },
     [data]
   );
-  return { data: _data, isLoading: isLoading };
+  return { data: _data, isLoading };
 };
 
 export const useHiddenPreferencesData = () => {

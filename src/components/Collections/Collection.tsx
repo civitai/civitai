@@ -75,6 +75,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { removeTags } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -405,7 +406,10 @@ export function Collection({
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
 
-  if (!isLoading && !collection) {
+  const { blockedUsers } = useHiddenPreferencesData();
+  const alreadyBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
+
+  if (!isLoading && (!collection || alreadyBlocked)) {
     return (
       <Stack w="100%" align="center">
         <Stack spacing="md" align="center" maw={800}>

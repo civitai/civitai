@@ -15,6 +15,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { v4 as uuid } from 'uuid';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 type NotificationsRaw = {
   id: string;
@@ -166,7 +167,14 @@ export const createNotification = async (
   const userNotificationSettings = await dbWrite.userNotificationSettings.findMany({
     where: { userId: { in: data.userIds }, type: data.type },
   });
-  const targets = data.userIds.filter((x) => !userNotificationSettings.some((y) => y.userId === x));
+  const [blockedUsers, blockedByUsers] = await Promise.all([
+    BlockedUsers.getCached({ userId: data.userId }),
+    BlockedByUsers.getCached({ userId: data.userId }),
+  ]);
+  const blocked = [...new Set([...blockedUsers, ...blockedByUsers])].map((x) => x.id);
+  const targets = data.userIds.filter(
+    (x) => !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x)
+  );
   // If the user has this notification type disabled, don't create a notification.
   if (targets.length === 0) return;
 
