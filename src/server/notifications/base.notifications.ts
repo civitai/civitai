@@ -25,7 +25,6 @@ type NotificationMessage = {
 export type NotificationProcessorRunInput = {
   lastSent: string;
   clickhouse: ClickHouseClient | undefined;
-  category: NotificationCategory;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {

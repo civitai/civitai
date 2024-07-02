@@ -1,7 +1,7 @@
 import { NotificationCategory } from '@prisma/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 // #region Notification Counter
 export type NotificationAddedRow = { category: NotificationCategory; userId: number };
@@ -70,10 +70,10 @@ export async function withNotificationCounter(
 
 // #region Notification Cache
 const NOTIFICATION_CACHE_TIME = CacheTTL.week;
-export type NotificationCategoryArray = {
+export type NotificationCategoryCount = {
   category: NotificationCategory;
   count: number;
-}[];
+};
 
 function getUserKey(userId: number) {
   return `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}`;
@@ -89,10 +89,10 @@ async function getUser(userId: number) {
       category: category as NotificationCategory,
       count: castedCount > 0 ? castedCount : 0,
     };
-  }) as NotificationCategoryArray;
+  }) as NotificationCategoryCount[];
 }
 
-async function setUser(userId: number, counts: NotificationCategoryArray) {
+async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const key = getUserKey(userId);
   for (const { category, count } of counts) await redis.hSetNX(key, category, count.toString());
   await slideExpiration(userId);
@@ -108,7 +108,7 @@ async function incrementUser(userId: number, category: NotificationCategory, by 
 }
 
 async function decrementUser(userId: number, category: NotificationCategory, by = 1) {
-  if (!hasUser(userId)) return;
+  if (!(await hasUser(userId))) return;
   logToAxiom({ type: 'decrementUser', userId, category }, 'webhooks').catch();
   await incrementUser(userId, category, -by);
   await slideExpiration(userId);

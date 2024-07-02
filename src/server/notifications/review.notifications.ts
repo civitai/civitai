@@ -1,6 +1,7 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const reviewNotifications = createNotificationProcessor({
+  // Moveable
   'new-review': {
     displayName: 'New reviews',
     category: 'Update',
@@ -20,7 +21,7 @@ export const reviewNotifications = createNotificationProcessor({
         url: `/redirect?to=review&reviewId=${details.reviewId}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_reviews AS (
       SELECT DISTINCT
         m."userId" "ownerId",
@@ -39,7 +40,7 @@ export const reviewNotifications = createNotificationProcessor({
               JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
               WHERE i."userId" = r."userId"
           )
-        ) "details",
+        ) as "details",
         r.details AS "content",
         r.id
       FROM "ResourceReview" r
@@ -52,18 +53,16 @@ export const reviewNotifications = createNotificationProcessor({
         r."createdAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
         r."createdAt" <= NOW() - INTERVAL '5 minutes'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-review',':',id) "id",
+        CONCAT('new-review:',id) as "key",
         "ownerId" "userId",
         'new-review' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_reviews
       WHERE
         (CAST(details->'imageCount' as int) > 0 OR content IS NOT NULL) AND
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review')
-      ON CONFLICT (id) DO NOTHING;`,
+    `,
   },
   'review-reminder': {
     displayName: 'Review reminders',
@@ -72,7 +71,7 @@ export const reviewNotifications = createNotificationProcessor({
       message: `Remember to review "${details.modelName} - ${details.modelVersionName}"`,
       url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH pending_reviews AS (
         SELECT DISTINCT
           ua."userId" "ownerId",
@@ -92,16 +91,13 @@ export const reviewNotifications = createNotificationProcessor({
             '${lastSent}'::timestamp - INTERVAL '72 hour' AND NOW() - INTERVAL '72 hour'
           AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("ownerId",':','review-reminder',':',"modelVersionId") "id",
+        CONCAT('review-reminder',':',"modelVersionId",':','${lastSent}') "key",
         "ownerId"    "userId",
         'review-reminder' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM pending_reviews
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
 });

@@ -77,7 +77,7 @@ export const holiday2023 = createEvent('holiday2023', {
     if (!milestoneCosmeticId) return;
     await createNotification({
       userId,
-      id: `holiday2023:${userId}:${milestone}lights`,
+      key: `holiday2023:${userId}:${milestone}lights`,
       type: 'system-announcement',
       category: 'System',
       details: {
@@ -146,7 +146,7 @@ async function handleDonationMilestones(buzzEvent: BuzzEventContext) {
     if (!milestoneCosmeticId) return;
     await createNotification({
       userId: buzzEvent.userId,
-      id: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
+      key: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
       type: 'system-announcement',
       category: 'System',
       details: {

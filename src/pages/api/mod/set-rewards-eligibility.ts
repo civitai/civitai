@@ -1,5 +1,6 @@
 import { RewardsEligibility } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
+import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';
@@ -34,6 +35,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     userId,
     category: 'System',
     type: 'system-announcement',
+    key: `system-announcement:rewards:${uuid()}`,
     details: {
       message: `Your Buzz rewards have been ${eligibilityMessage[eligibility]}.`,
       url: '/user/buzz-dashboard',

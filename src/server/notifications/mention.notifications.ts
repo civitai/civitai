@@ -1,5 +1,7 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import { commentDedupeKey, threadUrlMap } from '~/server/notifications/comment.notifications';
+
+// Moveable (possibly)
 
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
@@ -29,7 +31,7 @@ export const mentionNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
@@ -142,23 +144,16 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        -- this technically can have a collision with comment <-> model IDs
+        -- it would be better to split out model mentions here
+        concat('${commentDedupeKey}', coalesce(details->>'commentId', details->>'modelId')) "key",
         "ownerId"    "userId",
         'new-mention' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
-        AND NOT EXISTS (
-          SELECT 1 FROM "Notification" n
-          WHERE "userId" = "ownerId" AND type = 'new-mention'
-          AND (
-            (n.details->>'mentionedIn' = 'model' AND r.details->>'modelId' = n.details->>'modelId') OR
-            (n.details->>'mentionedIn' = 'comment' AND r.details->>'commentId' = n.details->>'commentId')
-          )
-        );`,
+    `,
   },
 });

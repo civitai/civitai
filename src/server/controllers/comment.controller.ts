@@ -1,6 +1,6 @@
 import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-
+import { v4 as uuid } from 'uuid';
 import { Context } from '~/server/createContext';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -322,6 +322,7 @@ export const setTosViolationHandler = async ({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: 'System',
+      key: `tos-violation:comment:${uuid()}`,
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors
