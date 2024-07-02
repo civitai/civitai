@@ -12,8 +12,8 @@ import {
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
-import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 type NotificationsRaw = {
   id: number;
@@ -37,7 +37,7 @@ export const createNotification = async (
   const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
     where: { userId: { in: data.userIds }, type: data.type },
   });
-   const blockedUsers = await Promise.all([
+  const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId: data.userId }),
     BlockedByUsers.getCached({ userId: data.userId }),
   ]);
