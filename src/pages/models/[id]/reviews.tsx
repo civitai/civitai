@@ -38,6 +38,7 @@ import { getAverageRating, getRatingCount } from '~/components/ResourceReview/re
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -59,6 +60,7 @@ export const getServerSideProps = createServerSideProps({
       ssg?.model.getSimple.prefetch({ id: modelId }),
       ssg?.model.getVersions.prefetch({ id: modelId }),
       ssg?.resourceReview.getRatingTotals.prefetch({ modelId, modelVersionId }),
+      ssg?.hiddenPreferences.getHidden.prefetch(),
     ]);
   },
 });
@@ -90,6 +92,9 @@ export default function ModelReviews() {
     modelVersionId,
   });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === model?.user.id);
+
   const handleModelVersionChange = (value: string | null) => {
     router.replace(
       {
@@ -108,7 +113,7 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
-  if (!loadingModel && (!model || model?.status !== 'Published')) return <NotFound />;
+  if (!loadingModel && (!model || model?.status !== 'Published' || isBlocked)) return <NotFound />;
 
   const Model = loadingModel ? (
     <Skeleton height={44} />

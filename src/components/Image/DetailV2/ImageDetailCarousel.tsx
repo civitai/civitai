@@ -1,5 +1,5 @@
 import { Carousel, Embla } from '@mantine/carousel';
-import { useHotkeys, useOs } from '@mantine/hooks';
+import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
 
 import { truncate } from 'lodash-es';
 import { useState, useEffect, useRef } from 'react';
@@ -20,7 +20,6 @@ export function ImageDetailCarousel() {
 
   const [embla, setEmbla] = useState<Embla | null>(null);
   const [slidesInView, setSlidesInView] = useState<number[]>([index]);
-
   const handleSlideChange = (slide: number) => {
     const imageId = images[slide]?.id;
     if (imageId) navigateRef.current(imageId);
@@ -92,6 +91,12 @@ export function ImageDetailCarousel() {
 }
 
 function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) {
+  const [defaultMuted, setDefaultMuted] = useLocalStorage({
+    getInitialValueInEffect: false,
+    key: 'detailView_defaultMuted',
+    defaultValue: true,
+  });
+
   const { setRef, height, width } = useAspectRatioFit({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
@@ -125,9 +130,11 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               controls
               quality={90}
               original={image.type === 'video' ? true : undefined}
-              // For those vids with HTML5 controls, we'll assume audio-on by defualt
-              muted={!shouldDisplayHtmlControls(image)}
               html5Controls={shouldDisplayHtmlControls(image)}
+              muted={defaultMuted}
+              onMutedChange={(isMuted) => {
+                setDefaultMuted(isMuted);
+              }}
             />
           )}
         </div>

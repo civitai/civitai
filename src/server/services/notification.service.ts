@@ -13,6 +13,7 @@ import {
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 type NotificationsRaw = {
   id: number;
@@ -36,7 +37,14 @@ export const createNotification = async (
   const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
     where: { userId: { in: data.userIds }, type: data.type },
   });
-  const targets = data.userIds.filter((x) => !userNotificationSettings.some((y) => y.userId === x));
+   const blockedUsers = await Promise.all([
+    BlockedUsers.getCached({ userId: data.userId }),
+    BlockedByUsers.getCached({ userId: data.userId }),
+  ]);
+  const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
+  const targets = data.userIds.filter(
+    (x) => !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x)
+  );
   // If the user has this notification type disabled, don't create a notification.
   if (targets.length === 0) return;
 

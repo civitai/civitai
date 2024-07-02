@@ -21,7 +21,6 @@ import {
 } from '~/server/metrics';
 import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userCosmeticCache } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -44,7 +43,7 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { HiddenModels } from '~/server/services/user-preferences.service';
+import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
 import {
   handleLogError,
   throwBadRequestError,
@@ -56,7 +55,7 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
-import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
+import { profileImageSelect } from '../selectors/image.selector';
 import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
@@ -160,7 +159,14 @@ type GetUsersRow = {
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
-export const getUsers = async ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+export const getUsers = async ({
+  limit,
+  query,
+  email,
+  ids,
+  include,
+  excludedUserIds,
+}: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
     select.push(`
@@ -185,6 +191,11 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
+      AND ${
+        excludedUserIds && excludedUserIds.length > 0
+          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.sql`TRUE`
+      }
       AND u."deletedAt" IS NULL
       AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')} ${Prisma.raw(
     limit ? 'LIMIT ' + limit : ''
@@ -1325,3 +1336,34 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
     },
   });
 };
+
+export async function amIBlockedByUser({
+  userId,
+  targetUserId,
+  targetUsername,
+}: {
+  userId: number;
+  targetUserId?: number;
+  targetUsername?: string;
+}) {
+  if (!(targetUserId || targetUsername)) return false;
+
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId || user.username === targetUsername))
+    return true;
+
+  if (!targetUserId && targetUsername)
+    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
+  if (!targetUserId) return false;
+  if (targetUserId === userId) return false;
+
+  const engagement = await dbRead.userEngagement.findFirst({
+    where: {
+      userId: targetUserId,
+      targetUserId: userId,
+      type: 'Block',
+    },
+  });
+
+  return !!engagement;
+}

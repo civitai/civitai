@@ -94,6 +94,7 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -191,6 +192,8 @@ export default function ModelDetailsV2({
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const gallerySectionRef = useRef<HTMLDivElement | null>(null);
+
+  const { blockedUsers } = useHiddenPreferencesData();
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
     { id },
@@ -449,6 +452,9 @@ export default function ModelDetailsV2({
     !isModerator &&
     // Check if published or has any model versions
     (model.status !== ModelStatus.Published || !model.modelVersions.length);
+
+  const isBlocked = blockedUsers.find((u) => u.id === model?.user.id);
+
   if (modelDeleted && !isOwner && !isModerator)
     return (
       <Center p="xl">
@@ -458,8 +464,9 @@ export default function ModelDetailsV2({
       </Center>
     );
 
-  if (modelDoesntExist || (modelDeleted && !isModerator) || (modelNotVisible && !isModerator))
+  if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
     return <NotFound />;
+  }
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
