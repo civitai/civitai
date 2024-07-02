@@ -1,11 +1,12 @@
 import { Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { ModelType } from '@prisma/client';
+import { Currency, ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Countdown } from '~/components/Countdown/Countdown';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -68,15 +69,14 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
   if (!inEarlyAccess || currentUser?.isMember) return null;
 
   return (
-    <AlertWithIcon color="green" iconColor="green" icon={<IconAlertCircle />}>
-      {`This ${getDisplayName(
-        modelType
-      ).toLowerCase()} is in "Early Access" to collect feedback from `}{' '}
-      <Text variant="link" component={NextLink} href="/pricing">
-        Civitai Members
-      </Text>
-      {`. It will be publicly available in `}
-      <Countdown endTime={deadline} />
+    <AlertWithIcon
+      color="yellow"
+      iconColor="yellow.1"
+      icon={<CurrencyIcon currency={Currency.BUZZ} />}
+    >
+      This {getDisplayName(modelType).toLowerCase()} is in &rsquo;Early Access&rsquo; and as such,
+      is only available for people who buy it with Buzz. It will be available to download for free
+      in <Countdown endTime={deadline} />
       {'. '}
       <LoginRedirect reason="notify-version">
         <Text

@@ -23,7 +23,6 @@ const defaultBenefits = [
   },
   // { content: 'Can equip special cosmetics' },
   { content: 'Exclusive Discord channels' },
-  { content: 'Early access content' },
   { content: 'Early access to new features' },
 ];
 

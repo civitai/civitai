@@ -298,4 +298,14 @@ export const modelNotifications = createNotificationProcessor({
       WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,
   },
+
+  'early-access-failed-to-publish': {
+    displayName: 'Model version failed to publish.',
+    category: 'System',
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more buzz to publish.`,
+      url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
+    }),
+  },
 });

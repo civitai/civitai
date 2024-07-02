@@ -45,10 +45,14 @@ export function PostUpsertForm2({
   }
 
   function onError(error: any) {
+    const reason = error?.message?.includes('Insufficient funds')
+      ? 'You do not have enough funds to publish this model. You can remove early access or purchase more buzz in order to publish.'
+      : 'Something went wrong while publishing your model. Please try again later.';
+
     showErrorNotification({
       title: 'Failed to publish',
       error: new Error(error.message),
-      reason: 'Something went wrong while publishing your model. Please try again later.',
+      reason,
     });
   }
   const publishModelMutation = trpc.model.publish.useMutation({ onError, onSuccess });
@@ -75,7 +79,7 @@ export function PostUpsertForm2({
   // #endregion
 
   return (
-    <div className={`flex flex-col gap-3 container ${isCreatePage ? 'max-w-sm' : 'max-w-lg'}`}>
+    <div className={`container flex flex-col gap-3 ${isCreatePage ? 'max-w-sm' : 'max-w-lg'}`}>
       <Title order={3}>{isCreatePage ? 'Create your post' : 'Edit post'}</Title>
       <PostEditProvider
         post={data}

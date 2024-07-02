@@ -249,3 +249,10 @@ export enum GenerationRequestStatus {
   Error = 'Error',
   Succeeded = 'Succeeded',
 }
+
+export enum EntityAccessPermission {
+  None = 0, // Generally won't be used, but can be used to indicate no access
+  EarlyAccessGeneration = 1,
+  EarlyAccessDownload = 2,
+  All = 1 + 2, // Sum of all prev. permissions.
+}

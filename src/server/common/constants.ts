@@ -353,6 +353,9 @@ export const constants = {
   entityCollaborators: {
     maxCollaborators: 15,
   },
+  earlyAccess: {
+    buzzChargedPerDay: 100,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

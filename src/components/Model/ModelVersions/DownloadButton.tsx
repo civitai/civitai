@@ -43,6 +43,10 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       </Button>
     );
 
+    if (true) {
+      return button;
+    }
+
     return canDownload || downloadRequiresPurchase ? button : <JoinPopover>{button}</JoinPopover>;
   }
 );
