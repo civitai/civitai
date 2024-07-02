@@ -922,7 +922,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
 export const GenerationForm = (args: { onSuccess?: () => void }) => {
   const currentUser = useCurrentUser();
 
-  if (true)
+  if (currentUser?.muted)
     return (
       <Center h="100%" w="75%" mx="auto">
         <Stack spacing="xs" align="center">
@@ -934,7 +934,7 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
           </Text>
           <Text className="leading-snug text-center">
             Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
+            been flagged for review. A Community Manager will investigate and you will receive a
             determination notification within 48 hours.
           </Text>
           <Text weight="bold">
