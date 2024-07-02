@@ -126,6 +126,38 @@ export const samplersToSchedulers: Record<Sampler, string> = {
   LCM: 'LCM',
 };
 
+export const samplersToComfySamplers: Record<
+  Sampler,
+  { sampler: string; scheduler: 'normal' | 'karras' | 'exponential' }
+> = {
+  'Euler a': { sampler: 'euler_ancestral', scheduler: 'normal' },
+  Euler: { sampler: 'euler', scheduler: 'normal' },
+  LMS: { sampler: 'lms', scheduler: 'normal' },
+  Heun: { sampler: 'heun', scheduler: 'normal' },
+  DPM2: { sampler: 'dpmpp_2', scheduler: 'normal' },
+  'DPM2 a': { sampler: 'dpmpp_2_ancestral', scheduler: 'normal' },
+  'DPM++ 2S a': { sampler: 'dpmpp_2s_ancestral', scheduler: 'normal' },
+  'DPM++ 2M': { sampler: 'dpmpp_2m', scheduler: 'normal' },
+  'DPM++ 2M SDE': { sampler: 'dpmpp_2m_sde', scheduler: 'normal' },
+  'DPM++ SDE': { sampler: 'dpmpp_sde', scheduler: 'normal' },
+  'DPM fast': { sampler: 'dpm_fast', scheduler: 'normal' },
+  'DPM adaptive': { sampler: 'dpm_adaptive', scheduler: 'normal' },
+  'LMS Karras': { sampler: 'lms', scheduler: 'karras' },
+  'DPM2 Karras': { sampler: 'dpm_2', scheduler: 'karras' },
+  'DPM2 a Karras': { sampler: 'dpm_2_ancestral', scheduler: 'karras' },
+  'DPM++ 2S a Karras': { sampler: 'dpmpp_2s_ancestral', scheduler: 'karras' },
+  'DPM++ 2M Karras': { sampler: 'dpmpp_2m', scheduler: 'karras' },
+  'DPM++ 2M SDE Karras': { sampler: 'dpmpp_2m_sde', scheduler: 'karras' },
+  'DPM++ SDE Karras': { sampler: 'dpmpp_sde', scheduler: 'karras' },
+  'DPM++ 3M SDE': { sampler: 'dpmpp_3m_sde', scheduler: 'normal' },
+  'DPM++ 3M SDE Karras': { sampler: 'dpmpp_3m_sde', scheduler: 'karras' },
+  'DPM++ 3M SDE Exponential': { sampler: 'dpmpp_3m_sde', scheduler: 'exponential' },
+  DDIM: { sampler: 'ddim', scheduler: 'normal' },
+  PLMS: { sampler: 'plms', scheduler: 'normal' },
+  UniPC: { sampler: 'uni_pc', scheduler: 'normal' },
+  LCM: { sampler: 'lcm', scheduler: 'normal' },
+};
+
 // TODO - improve this
 export const defaultCheckpoints: Record<
   string,
@@ -221,10 +253,8 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  // let width = params.width;
-  // let height = params.height;
-  // if(params.upscale)
-  params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
+  if (!params.aspectRatio)
+    params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
 
   // handle SDXL ClipSkip
   // I was made aware that SDXL only works with clipSkip 2

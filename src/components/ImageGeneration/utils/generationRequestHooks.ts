@@ -80,7 +80,7 @@ function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => vo
   );
 }
 
-export function useSubmitTextToImageRequest() {
+export function useSubmitCreateImage() {
   return trpc.orchestrator.createTextToImage.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests((old) => {

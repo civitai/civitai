@@ -1,13 +1,15 @@
-import { Scheduler, createCivitaiClient } from '@civitai/client';
+import { createCivitaiClient } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
   InjectableResource,
   allInjectableResourceIds,
+  getBaseModelSetType,
   getInjectablResources,
   getWorkflowDefinitionFeatures,
   samplersToSchedulers,
+  sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { env } from '~/env/server.mjs';
@@ -15,10 +17,17 @@ import { isDefined } from '~/utils/type-guards';
 import {
   TextToImageParams,
   TextToImageStepParamsMetadata,
+  textToImageCreateSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { getGenerationConfig } from '~/server/common/constants';
+import { SessionUser } from 'next-auth';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { z } from 'zod';
+import { extModeration } from '~/server/integrations/moderation';
+import { logToAxiom } from '~/server/logging/client';
+import { ModelType } from '@prisma/client';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -67,9 +76,70 @@ export async function getResourceDataWithInjects<T extends AirResourceData>(
   };
 }
 
-// export function
+export async function validateGenerationResources({
+  user,
+  params,
+  ...parsedInput
+}: z.infer<typeof textToImageCreateSchema> & {
+  user: SessionUser;
+}) {
+  const status = await getGenerationStatus();
+  const limits = status.limits[user.tier ?? 'free'];
 
-export function generationParamsToOrchestrator<
+  if (!status.available && !user.isModerator)
+    throw throwBadRequestError('Generation is currently disabled');
+
+  if (parsedInput.resources.length > limits.resources)
+    throw throwBadRequestError('You have exceed the number of allowed resources.');
+
+  const resourceDataWithInjects = await getResourceDataWithInjects(
+    parsedInput.resources.map((x) => x.id),
+    (resource) => ({
+      ...resource,
+      ...parsedInput.resources.find((x) => x.id === resource.id),
+      triggerWord: resource.trainedWords?.[0],
+    })
+  );
+  const { resources, injectable } = resourceDataWithInjects;
+
+  const checkpoint = resources.find((x) => x.model.type === ModelType.Checkpoint);
+  if (!checkpoint)
+    throw throwBadRequestError('A checkpoint is required to make a generation request');
+  if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
+    throw throwBadRequestError(
+      `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
+    );
+
+  const injectableResources = getInjectablResources(params.baseModel);
+
+  // handle missing draft resource
+  if (params.draft && !injectableResources.draft)
+    throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
+
+  // handle missing coverage
+  if (!resources.every((x) => !!x.covered))
+    throw throwBadRequestError(
+      `Some of your resources are not available for generation: ${resources
+        .filter((x) => !x.covered)
+        .map((x) => x.air)
+        .join(', ')}`
+    );
+
+  const config = getGenerationConfig(params.baseModel);
+  const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
+
+  return {
+    checkpoint,
+    resources: [
+      checkpoint,
+      ...resources.filter((x) => availableResourceTypes.includes(x.model.type)),
+    ],
+    injectable,
+    status,
+  };
+}
+
+export async function generationParamsToOrchestrator<
   T extends TextToImageParams,
   TResource extends AirResourceData
 >({
@@ -78,17 +148,34 @@ export function generationParamsToOrchestrator<
   workflowDefinition,
   injectable: allInjectable,
   status,
+  user,
 }: {
   params: T;
   resources: TResource[];
   workflowDefinition: WorkflowDefinition;
   injectable: TResource[];
   status: GenerationStatus;
+  user: SessionUser;
 }) {
+  const limits = status.limits[user.tier ?? 'free'];
+  params = sanitizeTextToImageParams(params, limits);
+
   // remove data not allowed by workflow features
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   for (const key in features) {
     if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
+  }
+
+  // handle moderate prompt
+  try {
+    const moderationResult = await extModeration.moderatePrompt(params.prompt);
+    if (moderationResult.flagged) {
+      throw throwBadRequestError(
+        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+      );
+    }
+  } catch (error: any) {
+    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
   }
 
   const hasMinorResource = resources.some((resource) => resource.model.minor);
@@ -120,11 +207,11 @@ export function generationParamsToOrchestrator<
 
   const positivePrompts = [params.prompt];
   const negativePrompts = [params.negativePrompt];
-  const additionalNetworkResources: TResource[] = [];
+  const resourcesToInject: TResource[] = [];
   for (const item of injectable) {
     const resource = allInjectable.find((x) => x.id === item.id);
     if (!resource) continue;
-    additionalNetworkResources.push(resource);
+    resourcesToInject.push(resource);
 
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
@@ -152,23 +239,21 @@ export function generationParamsToOrchestrator<
   }
 
   const config = getGenerationConfig(params.baseModel);
-  let { width, height } = config.aspectRatios[Number(params.aspectRatio)];
-  if (params.upscale) {
-    width = width * params.upscale;
-    height = height * params.upscale;
+  const { width, height } = config.aspectRatios[Number(params.aspectRatio)];
+
+  function getSize(size: number) {
+    return params.upscale ? Math.ceil((size * params.upscale) / 64) * 64 : undefined;
   }
 
   return {
-    additionalNetworkResources,
+    resourcesToInject,
     metadataParams,
     params: {
       quantity,
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
-      scheduler: samplersToSchedulers[
-        params.sampler as keyof typeof samplersToSchedulers
-      ] as Scheduler,
+      sampler: params.sampler,
       steps: params.steps,
       cfgScale: params.cfgScale,
       seed: params.seed,
@@ -176,11 +261,14 @@ export function generationParamsToOrchestrator<
       denoise: params.denoise,
       width,
       height,
+      // temp
+      upscaleWidth: getSize(width),
+      upscaleHeight: getSize(height),
     },
   };
 }
 
-function generationParamsFromOrchestrator<T extends Partial<TextToImageParams>>({
+export function generationParamsFromOrchestrator<T extends Partial<TextToImageParams>>({
   params,
   metadataParams = {},
   versionIds,

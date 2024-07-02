@@ -27,7 +27,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
 import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
-import { getWorkflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.utils';
+import { createComfy } from '~/server/services/orchestrator/comfy/comfy';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -69,6 +69,30 @@ export const orchestratorRouter = router({
       .input(z.object({ data: updateWorkflowStepSchema.array() }))
       .mutation(({ ctx, input }) => updateWorkflowSteps({ input: input.data, token: ctx.token })),
   }),
+  // #endregion
+
+  // #region [image]
+  createImage: orchestratorGuardedProcedure
+    .input(textToImageCreateSchema)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const args = { ...input, user: ctx.user, token: ctx.token };
+        if (input.workflowKey === 'text2img') return await createTextToImage(args);
+        else return await createComfy(args);
+      } catch (e) {
+        if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
+          await reportProhibitedRequestHandler({
+            input: {
+              prompt: input.params.prompt,
+              negativePrompt: input.params.negativePrompt,
+              source: 'External',
+            },
+            ctx,
+          });
+        }
+        throw e;
+      }
+    }),
   // #endregion
 
   // #region [textToImage]

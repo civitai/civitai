@@ -14,7 +14,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
-import { useSubmitTextToImageRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { isDefined } from '~/utils/type-guards';
 import {
   Form,

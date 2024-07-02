@@ -1,6 +1,6 @@
 import { DeepPartial } from 'react-hook-form';
 import { ModelType } from '@prisma/client';
-import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useCallback, useContext, useEffect } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -156,7 +156,7 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     model: checkpoint,
     resources,
     vae,
-    metadata: data.metadata,
+    // metadata: data.metadata,
     ...data.metadata?.params,
   };
 }

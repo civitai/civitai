@@ -1,18 +1,14 @@
-import { ModelType } from '@prisma/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import { getGenerationConfig } from '~/server/common/constants';
-import { extModeration } from '~/server/integrations/moderation';
-import { logToAxiom } from '~/server/logging/client';
 import {
   generationParamsToOrchestrator,
-  getGenerationStatus,
   getResourceDataWithInjects,
+  validateGenerationResources,
 } from '~/server/services/orchestrator/common';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import {
+  Scheduler,
   TextToImageInput,
   TextToImageStepTemplate,
   WorkflowStatus,
@@ -21,12 +17,10 @@ import {
 } from '@civitai/client';
 import {
   WORKFLOW_TAGS,
-  draftInjectableResources,
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
   samplersToSchedulers,
-  sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
@@ -51,94 +45,35 @@ export async function textToImage({
   token: string;
 }) {
   const parsedInput = textToImageCreateSchema.parse(input);
-  const { tags, metadata = {}, workflowKey } = parsedInput;
-
-  const status = await getGenerationStatus();
-  if (!status.available && !user.isModerator)
-    throw throwBadRequestError('Generation is currently disabled');
-
-  const workflowDefinition = await getWorkflowDefinition(workflowKey);
-
-  const limits = status.limits[user.tier ?? 'free'];
-  const params = sanitizeTextToImageParams(parsedInput.params, limits);
-
-  if (parsedInput.resources.length > limits.resources)
-    throw throwBadRequestError('You have exceed the number of allowed resources.');
-
-  const resourceDataWithInjects = await getResourceDataWithInjects(
-    parsedInput.resources.map((x) => x.id),
-    (resource) => ({
-      ...resource,
-      ...parsedInput.resources.find((x) => x.id === resource.id),
-      triggerWord: resource.trainedWords?.[0],
-    })
-  );
-
-  type ResourceData = (typeof resources)[number];
-  const { resources, injectable: allInjectable } = resourceDataWithInjects;
-
-  // #region [error handling]
-  // handle missing checkpoint
-  const checkpoint = resources.find((x) => x.model.type === ModelType.Checkpoint);
-  if (!checkpoint)
-    throw throwBadRequestError('A checkpoint is required to make a generation request');
-  if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
-    throw throwBadRequestError(
-      `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
-    );
-
-  // handle missing draft resource
-  const allInjectableIds = allInjectable.map((x) => x.id);
-  if (params.draft && !draftInjectableResources.some((x) => allInjectableIds.includes(x.id)))
-    throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
-
-  // handle missing coverage
-  if (!resources.every((x) => !!x.covered))
-    throw throwBadRequestError(
-      `Some of your resources are not available for generation: ${resources
-        .filter((x) => !x.covered)
-        .map((x) => x.air)
-        .join(', ')}`
-    );
-
-  // handle moderate prompt
-  try {
-    const moderationResult = await extModeration.moderatePrompt(params.prompt);
-    if (moderationResult.flagged) {
-      throw throwBadRequestError(
-        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-      );
-    }
-  } catch (error: any) {
-    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-  }
-  // #endregion
-
-  const config = getGenerationConfig(params.baseModel);
-  // const { height, width } = config.aspectRatios[Number(params.aspectRatio)];
-  const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
-  const additionalNetworks: { [key: string]: ImageJobNetworkParams } = {};
-  function addAdditionalNetwork(resource: ResourceData) {
-    additionalNetworks[resource.air] = {
-      type: resource.model.type,
-      strength: resource.strength,
-      triggerWord: resource.trainedWords?.[0],
-    };
-  }
-
-  for (const resource of resources.filter((x) => availableResourceTypes.includes(x.model.type))) {
-    addAdditionalNetwork(resource);
-  }
-
-  const mapped = generationParamsToOrchestrator({
-    workflowDefinition,
-    params: parsedInput.params,
-    resources,
-    injectable: allInjectable,
-    status,
+  const { tags, metadata = {}, workflowKey, params } = parsedInput;
+  const { checkpoint, resources, injectable, status } = await validateGenerationResources({
+    user,
+    ...parsedInput,
   });
 
-  for (const resource of mapped.additionalNetworkResources) addAdditionalNetwork(resource);
+  const workflowDefinition = await getWorkflowDefinition(workflowKey);
+  const mapped = await generationParamsToOrchestrator({
+    workflowDefinition,
+    params,
+    resources,
+    injectable,
+    status,
+    user,
+  });
+
+  const additionalNetworks = [...resources, ...mapped.resourcesToInject]
+    .filter((x) => x.model.type !== 'Checkpoint')
+    .reduce<Record<string, ImageJobNetworkParams>>(
+      (acc, resource) => ({
+        ...acc,
+        [resource.air]: {
+          type: resource.model.type,
+          strength: resource.strength,
+          triggerWord: resource.trainedWords?.[0],
+        },
+      }),
+      {}
+    );
   metadata.params = mapped.metadataParams;
 
   const step: TextToImageStepTemplate = {
@@ -147,6 +82,9 @@ export async function textToImage({
     input: {
       model: checkpoint.air,
       additionalNetworks,
+      scheduler: samplersToSchedulers[
+        params.sampler as keyof typeof samplersToSchedulers
+      ] as Scheduler,
       ...mapped.params,
     },
   };
@@ -172,16 +110,16 @@ export async function textToImage({
     },
   })) as TextToImageResponse;
 
-  return { workflow, resourceDataWithInjects };
+  return { workflow, resources, injectable };
 }
 
 export async function createTextToImage(
   args: z.input<typeof textToImageCreateSchema> & { user: SessionUser; token: string }
 ) {
-  const { workflow, resourceDataWithInjects } = await textToImage(args);
+  const { workflow, resources, injectable } = await textToImage(args);
 
   // console.dir(workflow, { depth: null });
-  const [formatted] = await formatTextToImageResponses([workflow], resourceDataWithInjects);
+  const [formatted] = await formatTextToImageResponses([workflow], { resources, injectable });
   return formatted;
 }
 
@@ -369,6 +307,7 @@ export async function formatTextToImageResponses(
         workflow.steps?.flatMap((x) => x.jobs ?? [])?.reduce((acc, job) => acc + (job.cost ?? 0), 0)
       ),
       steps: formattedSteps,
+      tags: workflow.tags,
     };
   });
 }

@@ -42,7 +42,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { useSubmitTextToImageRequest } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
@@ -88,21 +88,21 @@ import { workflowDefinitions } from '~/server/services/orchestrator/types';
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
-  const utils = trpc.useUtils();
-  const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
-    onSuccess: () => {
-      utils.generation.getWorkflowDefinition.invalidate();
-    },
-  });
-  const handleSetDefinitions = () => {
-    for (const item of workflowDefinitions) {
-      mutate(item);
-    }
-  };
+  // const utils = trpc.useUtils();
+  // const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
+  //   onSuccess: () => {
+  //     utils.generation.getWorkflowDefinition.invalidate();
+  //   },
+  // });
+  // const handleSetDefinitions = () => {
+  //   for (const item of workflowDefinitions) {
+  //     mutate(item);
+  //   }
+  // };
 
   return (
     <IsClient>
-      <Button onClick={handleSetDefinitions}>Set</Button>
+      {/* <Button onClick={handleSetDefinitions}>Set</Button> */}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
@@ -193,7 +193,7 @@ export function GenerationFormContent() {
     performTransactionOnPurchase: true,
   });
 
-  const { mutateAsync, isLoading } = useSubmitTextToImageRequest();
+  const { mutateAsync, isLoading } = useSubmitCreateImage();
   function handleSubmit(data: GenerationFormOutput) {
     if (!currentUser) {
       requireLogin();
