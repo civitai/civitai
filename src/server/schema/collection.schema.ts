@@ -104,6 +104,7 @@ export const collectionMetadataSchema = z
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
     existingEntriesDisabled: z.coerce.boolean().optional(),
+    votingPeriodStart: z.coerce.date().nullish(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

@@ -91,6 +91,7 @@ import {
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -3121,6 +3122,7 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     ...i,
     collection: {
       ...i.collection,
+      metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
       tags: i.collection.tags.map((t) => t.tag),
     },
   }));

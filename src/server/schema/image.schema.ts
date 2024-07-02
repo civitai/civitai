@@ -11,6 +11,7 @@ import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
+import dayjs from 'dayjs';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -269,7 +270,14 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     limit: z.number().min(0).max(200).default(100),
-    cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
+    cursor: z
+      .union([z.bigint(), z.number(), z.string(), z.date()])
+      .transform((val) =>
+        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+          ? new Date(val)
+          : val
+      )
+      .optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
     postIds: z.number().array().optional(),
