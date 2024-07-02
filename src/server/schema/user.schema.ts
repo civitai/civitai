@@ -55,6 +55,7 @@ export const getAllUsersInput = getAllQuerySchema
     email: z.string(),
     ids: commaDelimitedNumberArray(),
     include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
+    excludedUserIds: z.array(z.number()).optional(),
   })
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;

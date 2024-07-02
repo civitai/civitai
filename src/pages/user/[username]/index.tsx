@@ -1,29 +1,20 @@
 import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
-
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
-
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
-
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-
-import { userPageQuerySchema } from '~/server/schema/user.schema';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-
-import { removeEmpty } from '~/utils/object-helpers';
-
-import { trpc } from '~/utils/trpc';
-
+import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import {
-  getAllAvailableProfileSections,
   ProfileSectionComponent,
+  getAllAvailableProfileSections,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
-import { UserImagesPage } from '~/pages/user/[username]/images';
-import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { userPageQuerySchema } from '~/server/schema/user.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -34,10 +25,7 @@ export const getServerSideProps = createServerSideProps({
     }
 
     return {
-      props: removeEmpty({
-        id,
-        username,
-      }),
+      props: removeEmpty({ id, username }),
     };
   },
 });
