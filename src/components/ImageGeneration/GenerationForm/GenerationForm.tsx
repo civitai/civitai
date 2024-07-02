@@ -933,12 +933,11 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
             Account Restricted
           </Text>
           <Text className="leading-snug text-center">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate and you will receive a
-            determination notification within 48 hours.
+            Your account is under review for potential Terms of Service violations. You will receive
+            a decision within 48 hours.
           </Text>
           <Text weight="bold">
-            You do <u>not</u> need to contact us.
+            Do <u>not</u> contact support.
           </Text>
         </Stack>
       </Center>
