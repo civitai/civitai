@@ -153,7 +153,7 @@ export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAcce
 export const modelVersionEarlyAccessConfigSchema = z.object({
   timeframe: z.number(),
   downloadPrice: z.number(),
-  buzzTransactionId: z.string().optional(),
+  // buzzTransactionId: z.string().optional(),
   chargeForGeneration: z.boolean().default(false),
   generationPrice: z.number().optional(),
   generationTrialLimit: z.number().default(10),
@@ -163,9 +163,10 @@ export const modelVersionEarlyAccessConfigSchema = z.object({
   originalPublishedAt: z.date().optional(),
 });
 
-export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema.omit({
-  buzzTransactionId: true,
-});
+export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema;
+// modelVersionEarlyAccessConfigSchema.omit({
+//   buzzTransactionId: true,
+// });
 
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),

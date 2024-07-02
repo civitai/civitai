@@ -402,18 +402,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
         const earlyAccessConfig =
           currentVersion.earlyAccessConfig as ModelVersionEarlyAccessConfig | null;
 
-        if (earlyAccessConfig && !earlyAccessConfig.buzzTransactionId) {
-          // We should charge for thisL
-          const buzzTransaction = await createBuzzTransaction({
-            fromAccountId: currentVersion.model.userId,
-            toAccountId: 0,
-            amount: earlyAccessConfig.timeframe * constants.earlyAccess.buzzChargedPerDay,
-            type: TransactionType.Purchase,
-            description: `Early access for model: ${currentVersion.model.name} - ${currentVersion.name}`,
-            insufficientFundsErrorMsg: 'Insufficient funds to pay for early access.',
-          });
-
-          earlyAccessConfig.buzzTransactionId = buzzTransaction.transactionId;
+        if (earlyAccessConfig && !earlyAccessConfig.donationGoalId) {
           earlyAccessConfig.originalPublishedAt = publishedAt; // Store the original published at date for future reference.
 
           if (earlyAccessConfig.donationGoalEnabled && earlyAccessConfig.donationGoal) {

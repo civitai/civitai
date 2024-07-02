@@ -130,8 +130,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
   const isEarlyAccessOver =
-    (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt)) &&
-    !!version?.earlyAccessConfig?.buzzTransactionId;
+    !version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt);
 
   const MAX_EARLY_ACCCESS = 15;
 
@@ -429,8 +428,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         />
                       </Stack>
                     )}
-                    {(!version?.earlyAccessConfig?.buzzTransactionId ||
-                      version?.earlyAccessConfig?.donationGoalId) && (
+                    {version?.earlyAccessConfig?.donationGoalId && (
                       <>
                         <InputSwitch
                           name="earlyAccessConfig.donationGoalEnabled"
