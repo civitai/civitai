@@ -123,10 +123,10 @@ export function ImageDetail2() {
   });
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
 
   if (isLoading) return <PageLoader />;
-  if (!image || alreadyBlocked) return <NotFound />;
+  if (!image || isBlocked) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 

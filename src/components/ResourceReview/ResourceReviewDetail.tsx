@@ -53,7 +53,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   );
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === data?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === data?.user.id);
 
   const getModelUrl = (data: ResourceReviewDetailModel) =>
     `/models/${data.model.id}/${slugit(data.model.name)}`;
@@ -66,7 +66,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         <Loader />
       </Center>
     );
-  if (!data || alreadyBlocked) return <NoContent />;
+  if (!data || isBlocked) return <NoContent />;
 
   const commentCount = data.thread?._count.comments ?? 0;
 

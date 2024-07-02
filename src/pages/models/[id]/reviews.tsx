@@ -93,7 +93,7 @@ export default function ModelReviews() {
   });
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === model?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === model?.user.id);
 
   const handleModelVersionChange = (value: string | null) => {
     router.replace(
@@ -113,8 +113,7 @@ export default function ModelReviews() {
     router.replace({ query: { ...router.query, page } }, undefined, { shallow: true });
   };
 
-  if (!loadingModel && (!model || model?.status !== 'Published' || alreadyBlocked))
-    return <NotFound />;
+  if (!loadingModel && (!model || model?.status !== 'Published' || isBlocked)) return <NotFound />;
 
   const Model = loadingModel ? (
     <Skeleton height={44} />

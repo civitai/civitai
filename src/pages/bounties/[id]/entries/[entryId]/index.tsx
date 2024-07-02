@@ -189,9 +189,7 @@ export default function BountyEntryDetailsPage({
   );
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find(
-    (u) => u.id === bountyEntry?.user?.id || bounty?.user?.id
-  );
+  const isBlocked = blockedUsers.find((u) => u.id === bountyEntry?.user?.id || bounty?.user?.id);
 
   const { mutate: deleteEntryMutation, isLoading: isLoadingDelete } =
     trpc.bountyEntry.delete.useMutation({
@@ -217,7 +215,7 @@ export default function BountyEntryDetailsPage({
     return <PageLoader />;
   }
 
-  if (!bounty || !bountyEntry || alreadyBlocked) {
+  if (!bounty || !bountyEntry || isBlocked) {
     return <NotFound />;
   }
 

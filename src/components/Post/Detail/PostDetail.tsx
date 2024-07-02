@@ -104,7 +104,7 @@ export function PostDetailContent({ postId }: Props) {
 
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === post?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
 
   const meta = (
     <Meta
@@ -121,7 +121,7 @@ export function PostDetailContent({ postId }: Props) {
   );
 
   if (postLoading) return <PageLoader />;
-  if (!post || alreadyBlocked) return <NotFound />;
+  if (!post || isBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(post.nsfwLevel))
     return (

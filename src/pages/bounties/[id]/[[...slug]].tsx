@@ -146,7 +146,7 @@ export default function BountyDetailsPage({
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === bounty?.user?.id);
+  const isBlocked = blockedUsers.find((u) => u.id === bounty?.user?.id);
 
   const handleEngagementClick = async (type: BountyEngagementType) => {
     if (toggling || !bounty) return;
@@ -187,7 +187,7 @@ export default function BountyDetailsPage({
   }, [bounty?.id, bounty?.images, setImages]);
 
   if (loading) return <PageLoader />;
-  if (!bounty || alreadyBlocked) return <NotFound />;
+  if (!bounty || isBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(bounty.nsfwLevel)) {
     return (

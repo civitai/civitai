@@ -26,7 +26,7 @@ export function ProfileLayout({
     username,
   });
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.some((x) => x.id === user?.id);
+  const isBlocked = blockedUsers.some((x) => x.id === user?.id);
 
   const stats = user?.stats;
   const { classes } = useStyles();
@@ -67,7 +67,7 @@ export function ProfileLayout({
             <ProfileSidebar username={username} />
           </ScrollArea>
         </div>
-        {alreadyBlocked ? (
+        {isBlocked ? (
           <div className="mx-auto flex h-full items-center">
             <NoContent message="Unable to display content because you have blocked this user" />
           </div>

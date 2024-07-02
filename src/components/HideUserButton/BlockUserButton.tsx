@@ -12,26 +12,24 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
   const currentUser = useCurrentUser();
 
   const users = useHiddenPreferencesData().blockedUsers;
-  const alreadyBlocking = users.some((x) => x.id === userId);
+  const isBlocked = users.some((x) => x.id === userId);
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
   const handleBlockClick: MouseEventHandler<HTMLElement> = async (e) => {
     e.preventDefault();
     e.stopPropagation();
 
-    if (alreadyBlocking) {
+    if (isBlocked) {
       toggleHiddenMutation
         .mutateAsync({
           kind: 'blockedUser',
           data: [{ id: userId }],
-          hidden: !alreadyBlocking,
+          hidden: !isBlocked,
         })
         .then(() => {
           showSuccessNotification({
-            title: alreadyBlocking ? 'User unblocked' : 'blocked',
-            message: `Content from this user will${
-              alreadyBlocking ? ' ' : ' not'
-            } show up in your feed`,
+            title: isBlocked ? 'User unblocked' : 'blocked',
+            message: `Content from this user will${isBlocked ? ' ' : ' not'} show up in your feed`,
           });
         });
     } else {
@@ -45,13 +43,13 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
             .mutateAsync({
               kind: 'blockedUser',
               data: [{ id: userId }],
-              hidden: !alreadyBlocking,
+              hidden: !isBlocked,
             })
             .then(() => {
               showSuccessNotification({
-                title: alreadyBlocking ? 'User unblocked' : 'blocked',
+                title: isBlocked ? 'User unblocked' : 'blocked',
                 message: `Content from this user will${
-                  alreadyBlocking ? ' ' : ' not'
+                  isBlocked ? ' ' : ' not'
                 } show up in your feed`,
               });
             }),
@@ -66,12 +64,12 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
   return as === 'button' ? (
     <LoginRedirect reason="hide-content">
       <Button
-        variant={alreadyBlocking ? 'outline' : 'filled'}
+        variant={isBlocked ? 'outline' : 'filled'}
         onClick={handleBlockClick}
         loading={toggleHiddenMutation.isLoading}
         {...props}
       >
-        {alreadyBlocking ? 'Unblock' : 'Block'}
+        {isBlocked ? 'Unblock' : 'Block'}
       </Button>
     </LoginRedirect>
   ) : (
@@ -80,14 +78,14 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
         onClick={handleBlockClick}
         color={props.color}
         icon={
-          alreadyBlocking ? (
+          isBlocked ? (
             <IconUserCheck size={16} stroke={1.5} />
           ) : (
             <IconUserCancel size={16} stroke={1.5} />
           )
         }
       >
-        {alreadyBlocking ? 'Unblock' : 'Block'} this user
+        {isBlocked ? 'Unblock' : 'Block'} this user
       </Menu.Item>
     </LoginRedirect>
   );

@@ -100,7 +100,7 @@ export default function ArticleDetailsPage({
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
   const { blockedUsers } = useHiddenPreferencesData();
-  const alreadyBlocked = blockedUsers.find((u) => u.id === article?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
 
   const meta = article ? (
     <Meta
@@ -118,7 +118,7 @@ export default function ArticleDetailsPage({
   ) : null;
 
   if (isLoading) return <PageLoader />;
-  if (!article || alreadyBlocked) return <NotFound />;
+  if (!article || isBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(article.nsfwLevel))
     return (

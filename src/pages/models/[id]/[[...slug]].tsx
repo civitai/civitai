@@ -453,7 +453,7 @@ export default function ModelDetailsV2({
     // Check if published or has any model versions
     (model.status !== ModelStatus.Published || !model.modelVersions.length);
 
-  const alreadyBlocked = blockedUsers.find((u) => u.id === model?.user.id);
+  const isBlocked = blockedUsers.find((u) => u.id === model?.user.id);
 
   if (modelDeleted && !isOwner && !isModerator)
     return (
@@ -464,7 +464,7 @@ export default function ModelDetailsV2({
       </Center>
     );
 
-  if (modelDoesntExist || ((modelDeleted || modelNotVisible || alreadyBlocked) && !isModerator)) {
+  if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
     return <NotFound />;
   }
 
