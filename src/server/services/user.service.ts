@@ -160,7 +160,14 @@ type GetUsersRow = {
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
-export const getUsers = async ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+export const getUsers = async ({
+  limit,
+  query,
+  email,
+  ids,
+  include,
+  excludedUserIds,
+}: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
     select.push(`
@@ -185,6 +192,11 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
+      AND ${
+        excludedUserIds && excludedUserIds.length > 0
+          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.sql`TRUE`
+      }
       AND u."deletedAt" IS NULL
       AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')} ${Prisma.raw(
     limit ? 'LIMIT ' + limit : ''

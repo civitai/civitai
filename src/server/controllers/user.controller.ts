@@ -119,7 +119,7 @@ import {
 } from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
-import { BlockedUsers } from '~/server/services/user-preferences.service';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -129,6 +129,14 @@ export const getAllUsersHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const blockedUsersLists = await Promise.all([
+      BlockedUsers.getCached({ userId: ctx.user?.id }),
+      BlockedByUsers.getCached({ userId: ctx.user?.id }),
+    ]);
+    const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
+    if (blockedUsers.length)
+      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
+
     const users = await getUsers({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,

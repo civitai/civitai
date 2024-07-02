@@ -167,11 +167,11 @@ export const createNotification = async (
   const userNotificationSettings = await dbWrite.userNotificationSettings.findMany({
     where: { userId: { in: data.userIds }, type: data.type },
   });
-  const [blockedUsers, blockedByUsers] = await Promise.all([
+  const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId: data.userId }),
     BlockedByUsers.getCached({ userId: data.userId }),
   ]);
-  const blocked = [...new Set([...blockedUsers, ...blockedByUsers])].map((x) => x.id);
+  const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
   const targets = data.userIds.filter(
     (x) => !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x)
   );

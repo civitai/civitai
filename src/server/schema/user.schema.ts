@@ -55,6 +55,7 @@ export const getAllUsersInput = getAllQuerySchema
     email: z.string(),
     ids: commaDelimitedNumberArray(),
     include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
+    excludedUserIds: z.array(z.number()).optional(),
   })
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
@@ -70,7 +71,6 @@ export const profilePictureSchema = z.object({
   mimeType: z.string().optional(),
   metadata: z.object({}).passthrough().optional(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
-  excludedUserIds: z.array(z.number()).optional(),
 });
 
 export const creatorCardStatsPreferences = z.array(z.string()).max(3);
