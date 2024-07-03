@@ -117,7 +117,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
   });
 
   const selectedResources = form.watch('resources');
-  const hasMinorResource = selectedResources.some(resource => resource.minor);
+  const hasMinorResource = selectedResources?.some(resource => resource.minor);
 
   const { limits, ...status } = useGenerationStatus();
 
@@ -436,6 +436,25 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Alert>
               </Card.Section>
             )}
+            {hasMinorResource && (
+              <Card.Section>
+                <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                  <Text size="xs">
+                    {`A resource you selected does not allow the generation of Mature Content. 
+                    If you attempt to generate mature content with this resource, 
+                    the image will not be returned but you `}
+                    <Text span italic inherit>will</Text>
+                    {` be charged Buzz.`}
+                  </Text>                  <List size="xs">
+                    {selectedResources?.filter(resource => resource.minor).map((resource) => (
+                      <List.Item key={resource.id}>
+                        {resource.modelName} - {resource.name}
+                      </List.Item>
+                    ))}
+                  </List>
+                </Alert>
+              </Card.Section>
+            )}
             {ready === false && (
               <Card.Section>
                 <Alert color="yellow" title="Potentially slow generation" radius={0}>
@@ -569,7 +588,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
           <Group position="apart" my="xs">
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" disabled={hasMinorResource} checked={hasMinorResource ? false : undefined}/>
+            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" disabled={hasMinorResource} checked={hasMinorResource ? false : undefined} />
             {features.draftMode && (
               <InputSwitch
                 name="draft"
