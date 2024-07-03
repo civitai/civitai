@@ -133,7 +133,8 @@ export const useNotificationSignal = () => {
         { queryKey, exact: false },
         produce((old) => {
           if (!old || !old.pages || !old.pages.length) return;
-
+          // TODO put this back in, but cant call here, or move to notification-server
+          // await populateNotificationDetails([updated]);
           const firstPage = old.pages[0];
           firstPage.items.unshift(updated);
         })
