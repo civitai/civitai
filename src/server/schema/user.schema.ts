@@ -6,11 +6,12 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import { creatorCardStats, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -85,7 +86,7 @@ export const userUpdateSchema = z.object({
   username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
@@ -112,7 +113,7 @@ export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 export const updateBrowsingModeSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
 });
 
 export const toggleFavoriteInput = z.object({

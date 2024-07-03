@@ -2344,6 +2344,7 @@ type GetImageModerationReviewQueueRaw = {
   reportDetails?: Prisma.JsonValue;
   reportUsername?: string;
   reportUserId?: number;
+  reportCount?: number;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -2407,6 +2408,7 @@ export const getImageModerationReviewQueue = async ({
     report.reason as "reportReason",
     report.status as "reportStatus",
     report.details as "reportDetails",
+    array_length("alsoReportedBy", 1) as "reportCount",
     ur.username as "reportUsername",
     ur.id as "reportUserId",
   `;
@@ -2519,6 +2521,7 @@ export const getImageModerationReviewQueue = async ({
             reason: string;
             details: Prisma.JsonValue;
             status: ReportStatus;
+            count: number;
             user: { id: number; username?: string | null };
           }
         | undefined;
@@ -2540,6 +2543,7 @@ export const getImageModerationReviewQueue = async ({
       reportDetails,
       reportUsername,
       reportUserId,
+      reportCount,
       ...i
     }) => ({
       ...i,
@@ -2562,6 +2566,7 @@ export const getImageModerationReviewQueue = async ({
             reason: reportReason as string,
             details: reportDetails as Prisma.JsonValue,
             status: reportStatus as ReportStatus,
+            count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
           }
         : undefined,

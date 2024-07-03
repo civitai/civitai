@@ -21,7 +21,7 @@ import {
 import { getByIdStringSchema } from '~/server/schema/base.schema';
 
 export const buzzWithdrawalRequestRouter = router({
-  getPaginatedOwned: publicProcedure
+  getPaginatedOwned: protectedProcedure
     .input(getPaginatedOwnedBuzzWithdrawalRequestSchema)
     .use(isFlagProtected('creatorsProgram'))
     .query(getPaginatedOwnedBuzzWithdrawalRequestsHandler),
