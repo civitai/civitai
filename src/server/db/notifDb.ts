@@ -1,3 +1,4 @@
+import { types } from 'pg';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { AugmentedPool, getClient } from '~/server/db/db-helpers';
@@ -8,6 +9,11 @@ declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalNotifWrite: AugmentedPool | undefined;
 }
+
+// Fix Dates
+types.setTypeParser(types.builtins.TIMESTAMP, function (stringValue) {
+  return new Date(stringValue.replace(' ', 'T') + 'Z');
+});
 
 export let notifDbWrite: AugmentedPool;
 export let notifDbRead: AugmentedPool;
