@@ -2,6 +2,7 @@ import { env } from '~/env/server.mjs';
 import { dbWrite } from '~/server/db/client';
 import { removeModelVersionsFromVault } from '~/server/services/vault.service';
 import { createJob } from './job';
+import { bustCacheTag } from '~/server/utils/cache-helpers';
 
 type VaultWithUsedStorage = {
   userId: number;
@@ -12,6 +13,8 @@ type VaultWithUsedStorage = {
 
 // Runs once a day
 export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async () => {
+  await bustCacheTag(`images-modelVersion:272376`);
+  return;
   if (!env.S3_VAULT_BUCKET) {
     throw new Error('S3_VAULT_BUCKET is not defined');
   }

@@ -72,7 +72,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { removeTags } from '~/utils/string-helpers';
+import { removeTags, toPascalCase } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { VideoMetadata } from '~/server/schema/media.schema';
 
@@ -247,16 +247,10 @@ const ImageCollection = ({
                 },
                 ...collection.tags.map((tag) => ({
                   value: tag.id.toString(),
-                  label: tag.name,
+                  label: console.log(toPascalCase(tag.name)) || toPascalCase(tag.name),
                 })),
               ]}
-              tt="capitalize"
               clearable
-              styles={{
-                input: {
-                  textTransform: 'capitalize',
-                },
-              }}
             />
           )}
           <ReactionSettingsProvider
