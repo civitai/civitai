@@ -63,6 +63,7 @@ import {
   UserTier,
 } from './../schema/user.schema';
 import { preventReplicationLag } from '~/server/db/db-helpers';
+import { Flags } from '~/shared/utils';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -247,6 +248,13 @@ export const updateUserById = async ({
   if (data.email) {
     const existingData = await dbWrite.user.findFirst({ where: { id }, select: { email: true } });
     if (existingData?.email) delete data.email;
+  }
+
+  if (
+    typeof data.browsingLevel === 'number' &&
+    Flags.hasFlag(data.browsingLevel, NsfwLevel.Blocked)
+  ) {
+    data.browsingLevel = Flags.removeFlag(data.browsingLevel, NsfwLevel.Blocked);
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
