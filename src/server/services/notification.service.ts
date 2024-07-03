@@ -78,11 +78,19 @@ export async function getUserNotifications({
   if (cursor) AND.push(Prisma.sql`un."createdAt" < ${cursor}`);
   else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationsRaw>(`
-    SELECT un.id, n.type, n.category, n.details, un."createdAt", un.viewed as read 
-    FROM "UserNotification" un
-    JOIN "Notification" n ON n."id" = un."notificationId"
-    WHERE ${Prisma.join(AND, ' AND ')}
+  const query = await notifDbRead.cancellableQuery<NotificationsRaw>(Prisma.sql`
+    SELECT
+      un.id,
+      n.type,
+      n.category,
+      n.details,
+      un."createdAt",
+      un.viewed AS read
+    FROM
+      "UserNotification" un
+        JOIN "Notification" n ON n."id" = un."notificationId"
+    WHERE
+      ${Prisma.join(AND, ' AND ')}
     ORDER BY un."createdAt" DESC
     LIMIT ${limit}
   `);
@@ -111,13 +119,18 @@ export async function getUserNotificationCount({
   if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
   else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
+  // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(`
-    SELECT n.category, count(*) as count
-    FROM "UserNotification" un
-    JOIN "Notification" n ON n."id" = un."notificationId"
-    WHERE ${Prisma.join(AND, ' AND ')}
+  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
+    SELECT
+      n.category,
+      COUNT(*) AS count
+    FROM
+      "UserNotification" un
+        JOIN "Notification" n ON n."id" = un."notificationId"
+    WHERE
+      ${Prisma.join(AND, ' AND ')}
     GROUP BY category
   `);
 
@@ -140,29 +153,41 @@ export const markNotificationsRead = async ({
     ];
     if (category) AND.push(Prisma.sql`n."category" = ${category}::"NotificationCategory"`);
 
-    await notifDbWrite.query(`
+    await notifDbWrite.query(Prisma.sql`
       UPDATE "UserNotification" un
-      SET viewed = true
-      FROM "Notification" n
-      WHERE ${Prisma.join(AND, ' AND ')}
+      SET
+        viewed = TRUE
+      FROM
+        "Notification" n
+      WHERE
+        ${Prisma.join(AND, ' AND ')}
     `);
 
     // Update cache
     if (category) await notificationCache.clearCategory(userId, category);
     else await notificationCache.bustUser(userId);
   } else {
-    const resp = await notifDbWrite.query(`
+    const resp = await notifDbWrite.query(Prisma.sql`
       UPDATE "UserNotification" un
-      SET viewed = true
-      WHERE id = ${id} and viewed IS FALSE
+      SET
+        viewed = TRUE
+      WHERE
+          id = ${id}
+      AND viewed IS FALSE
     `);
 
     // Update cache if the notification was marked read
     if (resp.rowCount) {
-      const catQuery = await notifDbRead.cancellableQuery<{ category: NotificationCategory }>(`
-        SELECT n.category
-        FROM "UserNotification" un JOIN "Notification" n ON un."notificationId" = n.id
-        WHERE un.id = ${id}
+      const catQuery = await notifDbRead.cancellableQuery<{
+        category: NotificationCategory;
+      }>(Prisma.sql`
+        SELECT
+          n.category
+        FROM
+          "UserNotification" un
+            JOIN "Notification" n ON un."notificationId" = n.id
+        WHERE
+          un.id = ${id}
       `);
       const catData = await catQuery.result();
       if (catData && catData.length)
@@ -177,9 +202,11 @@ export const createUserNotificationSetting = async ({
 }: ToggleNotificationSettingInput & { userId: number }) => {
   const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
   return dbWrite.$executeRaw`
-    INSERT INTO "UserNotificationSettings" ("type", "userId") VALUES
+    INSERT INTO "UserNotificationSettings" ("type", "userId")
+    VALUES
     ${Prisma.join(values)}
-    ON CONFLICT DO NOTHING
+    ON CONFLICT
+    DO NOTHING
   `;
 };
 

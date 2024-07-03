@@ -38,9 +38,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       console.log(logKey);
       console.time(logKey);
 
-      const query = await notifDbWrite.cancellableQuery(`
-        DELETE FROM "UserNotification"
-        WHERE "createdAt" BETWEEN '${start.toISOString()}' AND '${end.toISOString()}';
+      const query = await notifDbWrite.cancellableQuery(Prisma.sql`
+        DELETE
+        FROM
+          "UserNotification"
+        WHERE
+          "createdAt" BETWEEN '${start.toISOString()}' AND '${end.toISOString()}';
       `);
       cancelFns.push(query.cancel);
       await query.result();

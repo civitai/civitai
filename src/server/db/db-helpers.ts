@@ -25,7 +25,7 @@ export function getClient(
     isNotification: false,
   }
 ) {
-  log('Creating PG client');
+  log(`Creating ${isNotification ? 'Notif' : 'PG'} client`);
 
   const envUrl = isNotification
     ? readonly

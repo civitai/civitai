@@ -124,6 +124,7 @@ export const useNotificationSettings = (enabled = true) => {
 
 export const useNotificationSignal = () => {
   const queryClient = useQueryClient();
+  const queryUtils = trpc.useUtils();
 
   const onUpdate = useCallback(
     (updated: NotificationGetAllItem) => {
@@ -137,8 +138,17 @@ export const useNotificationSignal = () => {
           firstPage.items.unshift(updated);
         })
       );
+
+      queryUtils.user.checkNotifications.setData(undefined, (old) => {
+        const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
+        newCounts[updated.category.toLowerCase()] =
+          (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
+        newCounts['all']++;
+
+        return newCounts;
+      });
     },
-    [queryClient]
+    [queryClient, queryUtils]
   );
 
   useSignalConnection(SignalMessages.NotificationNew, onUpdate);

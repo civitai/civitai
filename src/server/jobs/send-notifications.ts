@@ -29,8 +29,12 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     // Run batches
     for (const batch of notificationBatches) {
       e.checkIfCanceled();
-      const promises = batch.map(({ prepareQuery, key, category }) => async () => {
+      const promises = batch.map(({ prepareQuery, key, category, displayName }) => async () => {
         e.checkIfCanceled();
+
+        // TODO remove
+        if (displayName !== 'New comments on your models') return;
+
         log('sending', key, 'notifications');
         const [lastSent, setLastSent] = await getJobDate('last-sent-notification-' + key, lastRun);
         let query = prepareQuery?.({
@@ -64,20 +68,22 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             }
           }
 
+          console.log({ pendingData });
+
           await notifDbWrite.cancellableQuery(Prisma.sql`
-              INSERT INTO "PendingNotification" (key, type, category, users, details)
-              VALUES
-              ${Prisma.join(
-                Object.values(pendingData).map(
-                  (d) =>
-                    Prisma.sql`(${d.key}, ${d.type}, ${d.category}, ${d.users}, ${JSON.stringify(
-                      d.details
-                    )}::jsonb)`
-                )
-              )}
+            INSERT INTO "PendingNotification" (key, type, category, users, details)
+            VALUES
+            ${Prisma.join(
+              Object.values(pendingData).map(
+                (d) =>
+                  Prisma.sql`(${d.key}, ${d.type}, ${d.category}, ${
+                    '{' + d.users.join(',') + '}'
+                  }, ${JSON.stringify(d.details)}::jsonb)`
+              )
+            )}
               ON CONFLICT
-              DO NOTHING
-            `);
+            DO NOTHING
+          `);
 
           // if (additions.length > 0) {
           //   counter.add(additions);
