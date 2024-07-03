@@ -35,7 +35,7 @@ export const articleRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('articles'))
     .query(({ input, ctx }) =>
-      getArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+      getArticleById({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
     ),
   getMyDraftArticles: protectedProcedure
     .input(getAllQuerySchema)
