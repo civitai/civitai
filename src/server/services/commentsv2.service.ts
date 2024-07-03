@@ -112,6 +112,7 @@ export const getCommentsThreadDetails = async ({
   entityId,
   entityType,
   hidden = false,
+  excludedUserIds,
 }: CommentConnectorInput) => {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -121,7 +122,7 @@ export const getCommentsThreadDetails = async ({
       rootThreadId: true,
       comments: {
         orderBy: { createdAt: 'asc' },
-        where: { hidden },
+        where: { hidden, userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined },
         select: commentV2Select,
       },
     },

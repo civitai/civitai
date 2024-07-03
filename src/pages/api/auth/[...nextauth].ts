@@ -252,7 +252,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
-      newUserCounter.inc();
+      newUserCounter?.inc();
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
@@ -272,7 +272,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
         });
       }
     } else {
-      loginCounter.inc();
+      loginCounter?.inc();
     }
   };
 

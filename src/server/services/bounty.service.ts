@@ -50,6 +50,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     userId,
     period,
     baseModels,
+    excludedUserIds,
   },
   select,
 }: {
@@ -90,6 +91,10 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
 
       AND.push({ OR });
     }
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push({ userId: { notIn: excludedUserIds } });
   }
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
