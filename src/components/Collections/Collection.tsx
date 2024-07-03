@@ -14,6 +14,7 @@ import {
   Menu,
   Popover,
   Select,
+  Divider,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -75,6 +76,8 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { removeTags, toPascalCase } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -232,6 +235,7 @@ const ImageCollection = ({
               <ImageCategories />
             </>
           )}
+
           {isContestCollection && collection.tags.length > 0 && (
             <Select
               label="Collection Categories"
@@ -247,11 +251,31 @@ const ImageCollection = ({
                 },
                 ...collection.tags.map((tag) => ({
                   value: tag.id.toString(),
-                  label: console.log(toPascalCase(tag.name)) || toPascalCase(tag.name),
+                  label: toPascalCase(tag.name),
                 })),
               ]}
               clearable
             />
+          )}
+          {isContestCollection && (
+            <Group position="right">
+              <AdaptiveFiltersDropdown>
+                <Stack>
+                  <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <ToolSelect
+                    value={(query.tools ?? [])[0]}
+                    onChange={(toolId) => {
+                      if (!toolId) {
+                        replace({ tools: undefined });
+                      } else {
+                        replace({ tools: [toolId as number] });
+                      }
+                    }}
+                    placeholder="Created with..."
+                  />
+                </Stack>
+              </AdaptiveFiltersDropdown>
+            </Group>
           )}
           <ReactionSettingsProvider
             settings={{
