@@ -251,6 +251,8 @@ export const generationRequestTestRunSchema = z.object({
     }),
   resources: z.number().array().nullish(),
   draft: z.boolean().optional(),
+  creatorTip: z.number().min(0).max(1).optional(),
+  civitaiTip: z.number().min(0).max(1).optional(),
 });
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
 export const checkResourcesCoverageSchema = z.object({

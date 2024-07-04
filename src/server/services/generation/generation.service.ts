@@ -1201,6 +1201,8 @@ export const textToImageTestRun = async ({
   aspectRatio,
   draft,
   resources,
+  civitaiTip,
+  creatorTip,
 }: GenerationRequestTestRunSchema) => {
   const { aspectRatios } = getGenerationConfig(baseModel);
 
@@ -1248,6 +1250,8 @@ export const textToImageTestRun = async ({
         clipSkip: 7,
         cfgScale: 7,
       },
+      civitaiTip,
+      creatorTip,
     },
     isTestRun: true,
   });

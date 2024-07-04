@@ -132,7 +132,17 @@ export const useEstimateTextToImageJobCost = () => {
   const input = useGenerationFormStore(
     useCallback(
       (state) => {
-        const { aspectRatio, steps, quantity, sampler, draft, staging, resources } = state;
+        const {
+          aspectRatio,
+          steps,
+          quantity,
+          sampler,
+          draft,
+          staging,
+          resources,
+          creatorTip,
+          civitaiTip,
+        } = state;
         const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
         if (!status.charge || !baseModel) return null;
 
@@ -150,6 +160,8 @@ export const useEstimateTextToImageJobCost = () => {
             : undefined,
           staging,
           draft,
+          creatorTip,
+          civitaiTip,
         };
       },
       [model, status.charge, status.checkResourceAvailability]

@@ -5,6 +5,7 @@ import {
   NumberInputProps,
   Popover,
   PopoverProps,
+  Text,
 } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -13,10 +14,11 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
-  if (value <= 10) return '😐';
-  if (value <= 25) return '😊';
-  if (value <= 50) return '😍';
-  return '🤩';
+  if (value < 5) return '🙂';
+  if (value < 15) return '😃';
+  if (value < 20) return '😁';
+  if (value < 35) return '😍';
+  return '😇';
 };
 
 export function GenerationCostPopover({
@@ -37,10 +39,10 @@ export function GenerationCostPopover({
   };
 
   const items = [
-    { label: 'Base Cost', value: '24 ⚡️' },
-    { label: 'Size Cost', value: '24 ⚡️' },
-    { label: 'Step Cost', value: '24 ⚡️' },
-    { label: 'Workflow Cost', value: '24 ⚡️' },
+    { label: 'Base Cost', value: <Text align="end">24 ⚡️</Text> },
+    { label: 'Size Cost', value: <Text align="end">24 ⚡️</Text> },
+    { label: 'Step Cost', value: <Text align="end">24 ⚡️</Text> },
+    { label: 'Workflow Cost', value: <Text align="end">24 ⚡️</Text> },
     {
       label: (
         <Group position="apart">
@@ -49,8 +51,9 @@ export function GenerationCostPopover({
             {...creatorTipInputOptions}
             min={0}
             max={100}
-            w={120}
+            w={100}
             defaultValue={0}
+            classNames={{ input: 'pr-[30px] text-end' }}
             icon={getEmojiByValue(creatorTipInputOptions?.value ?? 0)}
             formatter={(value) => {
               if (!value) return '0%';
@@ -61,7 +64,7 @@ export function GenerationCostPopover({
           />
         </Group>
       ),
-      value: '24 ⚡️',
+      value: <Text align="end">24 ⚡️</Text>,
     },
     {
       label: (
@@ -71,8 +74,9 @@ export function GenerationCostPopover({
             {...civitaiTipInputOptions}
             min={0}
             max={100}
-            w={120}
+            w={100}
             defaultValue={0}
+            classNames={{ input: 'pr-[30px] text-end' }}
             formatter={(value) => {
               if (!value) return '%';
               const parsedValue = parseFloat(value);
@@ -82,7 +86,7 @@ export function GenerationCostPopover({
           />
         </Group>
       ),
-      value: '24 ⚡️',
+      value: <Text align="end">24 ⚡️</Text>,
     },
   ];
 
@@ -142,6 +146,6 @@ function BreakdownExplanation() {
 }
 
 type Props = PopoverProps & {
-  creatorTipInputOptions: NumberInputProps;
-  civitaiTipInputOptions: NumberInputProps;
+  creatorTipInputOptions: Pick<NumberInputProps, 'value' | 'onChange'>;
+  civitaiTipInputOptions: Pick<NumberInputProps, 'value' | 'onChange'>;
 };
