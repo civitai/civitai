@@ -22,6 +22,11 @@ export const toggleHiddenSchema = z.discriminatedUnion('kind', [
     data: z.object({ id: z.number() }).array().min(1).max(1), // max 1 until we add support for more
     hidden: z.boolean().optional(),
   }),
+  z.object({
+    kind: z.literal('blockedUser'),
+    data: z.object({ id: z.number(), username: z.string().nullish() }).array().min(1).max(1), // max 1 until we add support for more
+    hidden: z.boolean().optional(),
+  }),
 ]);
 
 export const toggleHiddenTagsSchema = z.object({

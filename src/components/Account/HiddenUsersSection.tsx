@@ -11,7 +11,7 @@ export function HiddenUsersSection() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const blockedUsers = useHiddenPreferencesData().hiddenUsers;
+  const hiddenUsers = useHiddenPreferencesData().hiddenUsers;
 
   const { data, isLoading, isFetching } = trpc.user.getAll.useQuery(
     { query: debouncedSearch.trim(), limit: 10 },
@@ -58,9 +58,9 @@ export function HiddenUsersSection() {
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack spacing={5}>
-          {blockedUsers.length > 0 && (
+          {hiddenUsers.length > 0 && (
             <Group spacing={4}>
-              {blockedUsers.map((user) => (
+              {hiddenUsers.map((user) => (
                 <Badge
                   key={user.id}
                   sx={{ paddingRight: 3 }}

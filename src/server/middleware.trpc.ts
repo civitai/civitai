@@ -163,8 +163,11 @@ export function purgeOnSuccess(tags: string[]) {
 
 export function noEdgeCache() {
   return middleware(({ next, ctx }) => {
-    ctx.cache.edgeTTL = 0;
-    ctx.cache.browserTTL = 0;
+    if (ctx.cache) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+
     return next();
   });
 }

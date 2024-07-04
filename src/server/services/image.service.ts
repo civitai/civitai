@@ -551,6 +551,7 @@ export const getAllImages = async ({
   techniques,
   baseModels,
   collectionTagId,
+  excludedUserIds,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -654,7 +655,6 @@ export const getAllImages = async ({
       Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
-    console.log('THIS IS ABOUT TO HAPPEN BUD!');
     cacheTime = 0;
     // if (targetUserId !== userId) {
     //   cacheTime = CacheTTL.day;
@@ -761,6 +761,10 @@ export const getAllImages = async ({
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
         )`
     );
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const isGallery = modelId || modelVersionId || reviewId || username;
@@ -2340,6 +2344,7 @@ type GetImageModerationReviewQueueRaw = {
   reportDetails?: Prisma.JsonValue;
   reportUsername?: string;
   reportUserId?: number;
+  reportCount?: number;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -2403,6 +2408,7 @@ export const getImageModerationReviewQueue = async ({
     report.reason as "reportReason",
     report.status as "reportStatus",
     report.details as "reportDetails",
+    array_length("alsoReportedBy", 1) as "reportCount",
     ur.username as "reportUsername",
     ur.id as "reportUserId",
   `;
@@ -2515,6 +2521,7 @@ export const getImageModerationReviewQueue = async ({
             reason: string;
             details: Prisma.JsonValue;
             status: ReportStatus;
+            count: number;
             user: { id: number; username?: string | null };
           }
         | undefined;
@@ -2536,6 +2543,7 @@ export const getImageModerationReviewQueue = async ({
       reportDetails,
       reportUsername,
       reportUserId,
+      reportCount,
       ...i
     }) => ({
       ...i,
@@ -2558,6 +2566,7 @@ export const getImageModerationReviewQueue = async ({
             reason: reportReason as string,
             details: reportDetails as Prisma.JsonValue,
             status: reportStatus as ReportStatus,
+            count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
           }
         : undefined,

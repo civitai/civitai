@@ -35,8 +35,16 @@ export const HiddenPreferencesProvider = ({ children }: { children: ReactNode })
       data.hiddenImages.filter((x) => !x.tagId || tags.get(x.tagId)).map((x) => [x.id, true])
     );
 
+    const dedupedHiddenUsers = !currentUser?.isModerator
+      ? [
+          ...new Set(
+            [...data.hiddenUsers, ...data.blockedUsers, ...data.blockedByUsers].map((x) => x.id)
+          ),
+        ]
+      : data.hiddenUsers.map((x) => x.id);
+
     return {
-      hiddenUsers: new Map(data.hiddenUsers.map((x) => [x.id, true])),
+      hiddenUsers: new Map(dedupedHiddenUsers.map((id) => [id, true])),
       hiddenModels: new Map(data.hiddenModels.map((x) => [x.id, true])),
       hiddenTags: tags,
       hiddenImages: images,
