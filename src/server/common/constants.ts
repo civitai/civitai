@@ -556,6 +556,8 @@ export const generation = {
     prompt: '',
     negativePrompt: '',
     nsfw: false,
+    civitaiTip: 0,
+    creatorTip: 0.25,
     model: {
       id: 128713,
       name: '8',

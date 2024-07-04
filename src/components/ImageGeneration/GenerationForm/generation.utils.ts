@@ -70,6 +70,10 @@ export const useDerivedGenerationState = () => {
     () => resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [],
     [resources]
   );
+  const { creatorTip, civitaiTip } = useGenerationFormStore((state) => ({
+    creatorTip: state.creatorTip,
+    civitaiTip: state.civitaiTip,
+  }));
 
   const samplerCfgOffset = useGenerationFormStore(({ sampler, cfgScale }) => {
     const castedSampler = sampler as keyof typeof samplerOffsets;
@@ -87,7 +91,7 @@ export const useDerivedGenerationState = () => {
   const draft = useGenerationFormStore((x) => x.draft);
 
   return {
-    cost,
+    cost: cost + cost * (creatorTip ?? 0) + cost * (civitaiTip ?? 0),
     ready,
     baseModel,
     hasResources,

@@ -74,7 +74,7 @@ export function DescriptionTable({
   );
 }
 
-export type Props = TableProps & {
+export type Props = Omit<TableProps, 'title'> & {
   items: Array<{
     label: React.ReactNode;
     value: React.ReactNode;

@@ -54,6 +54,7 @@ import {
   ThemeIcon,
   List,
   LoadingOverlay,
+  Popover,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -65,6 +66,7 @@ import {
   IconArrowAutofitDown,
   IconCheck,
   IconCopy,
+  IconInfoCircle,
   IconPlus,
 } from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -84,6 +86,7 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
 import Link from 'next/link';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostBreakdown';
 
 const BUZZ_CHARGE_NOTICE_END = new Date('2024-04-14T00:00:00Z');
 
@@ -197,7 +200,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       generationPanel.close();
       return;
     }
-    const { model, resources = [], vae, ...params } = data;
+    const { model, resources = [], vae, creatorTip, civitaiTip, ...params } = data;
     const _resources = [model, ...resources, vae].filter(isDefined).map((resource) => {
       if (resource.modelType === 'TextualInversion')
         return { ...resource, triggerWord: resource.trainedWords[0] };
@@ -875,21 +878,38 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                     <Text ta="center">Generate</Text>
                   </Button>
                 ) : (
-                  <BuzzTransactionButton
-                    type="submit"
-                    size="lg"
-                    label="Generate"
-                    loading={isCalculatingCost || isLoading}
-                    className={classes.generateButtonButton}
-                    disabled={disableGenerateButton}
-                    buzzAmount={cost}
-                    showPurchaseModal={false}
-                    error={
-                      costEstimateError
-                        ? 'Error calculating cost. Please try updating your values'
-                        : undefined
-                    }
-                  />
+                  <Button.Group>
+                    <BuzzTransactionButton
+                      type="submit"
+                      size="lg"
+                      label="Generate"
+                      loading={isCalculatingCost || isLoading}
+                      className={classes.generateButtonButton}
+                      disabled={disableGenerateButton}
+                      buzzAmount={cost}
+                      showPurchaseModal={false}
+                      error={
+                        costEstimateError
+                          ? 'Error calculating cost. Please try updating your values'
+                          : undefined
+                      }
+                    />
+                    <GenerationCostPopover
+                      width={300}
+                      creatorTipInputOptions={{
+                        value: (form.getValues('creatorTip') ?? 0) * 100,
+                        onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
+                      }}
+                      civitaiTipInputOptions={{
+                        value: (form.getValues('civitaiTip') ?? 0) * 100,
+                        onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
+                      }}
+                    >
+                      <Button variant="outline" px={8} size="lg" color="yellow.5">
+                        <IconInfoCircle />
+                      </Button>
+                    </GenerationCostPopover>
+                  </Button.Group>
                 )}
 
                 <Button
@@ -932,7 +952,7 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
           <Text size="xl" weight={500}>
             Account Restricted
           </Text>
-          <Text className="leading-snug text-center">
+          <Text className="text-center leading-snug">
             Your account is under review for potential Terms of Service violations. You will receive
             a decision within 48 hours.
           </Text>

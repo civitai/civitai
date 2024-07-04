@@ -208,6 +208,8 @@ export const generateFormSchema = generationFormShapeSchema
     resources: generationResourceSchema.array().default([]),
     vae: generationResourceSchema.optional(),
     tier: userTierSchema.optional().default('free'),
+    creatorTip: z.number().min(0).max(1).optional(),
+    civitaiTip: z.number().min(0).max(1).optional(),
   })
   .superRefine(promptAuditRefiner)
   .refine(
