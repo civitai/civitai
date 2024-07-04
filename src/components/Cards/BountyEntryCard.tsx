@@ -150,7 +150,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
                       anim={shouldAnimateByDefault(image)}
-                      skip={shouldAnimateByDefault(data) === false ? 2 : undefined}
+                      skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                     />
                   ) : (
                     <MediaHash {...image} />
