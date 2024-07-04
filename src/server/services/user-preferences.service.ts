@@ -169,6 +169,30 @@ export const HiddenUsers = createUserCache({
       `,
 });
 
+export const BlockedUsers = createUserCache({
+  key: 'blocked-users',
+  callback: async ({ userId }) =>
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+        SELECT
+          ue."targetUserId" "id",
+          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
+        FROM "UserEngagement" ue
+        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+      `,
+});
+
+export const BlockedByUsers = createUserCache({
+  key: 'blocked-by-users',
+  callback: async ({ userId }) =>
+    await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+        SELECT
+          ue."userId" "id",
+          (SELECT u.username FROM "User" u WHERE u.id = ue."userId") "username"
+        FROM "UserEngagement" ue
+        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+      `,
+});
+
 export interface HiddenPreferenceBase {
   id: number;
   /** the presence of hidden: true indicates that this is a user setting*/
@@ -206,7 +230,8 @@ type HiddenPreferencesKind =
   | ({ kind: 'tag' } & HiddenTag)
   | ({ kind: 'model' } & HiddenModel)
   | ({ kind: 'image' } & HiddenImage)
-  | ({ kind: 'user' } & HiddenUser);
+  | ({ kind: 'user' } & HiddenUser)
+  | ({ kind: 'blockedUser' } & HiddenUser);
 
 interface HiddenPreferencesDiff {
   added: Array<HiddenPreferencesKind>;
@@ -218,6 +243,8 @@ export type HiddenPreferenceTypes = {
   hiddenUsers: HiddenUser[];
   hiddenModels: HiddenModel[];
   hiddenImages: HiddenImage[];
+  blockedUsers: HiddenUser[];
+  blockedByUsers: HiddenUser[];
 };
 
 const getAllHiddenForUsersCached = async ({
@@ -232,6 +259,8 @@ const getAllHiddenForUsersCached = async ({
     cachedHiddenModels,
     cachedHiddenUsers,
     cachedImplicitHiddenImages,
+    cachedBlockedUsers,
+    cachedBlockedByUsers,
   ] = await redis.packed.mGet([
     REDIS_KEYS.SYSTEM.MODERATED_TAGS,
     HiddenTags.getKey({ userId }),
@@ -239,6 +268,8 @@ const getAllHiddenForUsersCached = async ({
     HiddenModels.getKey({ userId }),
     HiddenUsers.getKey({ userId }),
     ImplicitHiddenImages.getKey({ userId }),
+    BlockedUsers.getKey({ userId }),
+    BlockedByUsers.getKey({ userId }),
   ]);
 
   const getModerationTags = async () =>
@@ -273,13 +304,24 @@ const getAllHiddenForUsersCached = async ({
     (cachedImplicitHiddenImages as AsyncReturnType<typeof ImplicitHiddenImages.get>) ??
     (await ImplicitHiddenImages.get({ userId, hiddenTagIds, moderatedTagIds }));
 
-  const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-    getModerationTags(),
-    getHiddenTags({ userId }),
-    getHiddenImages({ userId }),
-    getHiddenModels({ userId }),
-    getHiddenUsers({ userId }),
-  ]);
+  const getBlockedUsers = async ({ userId }: { userId: number }) =>
+    (cachedBlockedUsers as AsyncReturnType<typeof BlockedUsers.get>) ??
+    (await BlockedUsers.get({ userId }));
+
+  const getBlockedByUsers = async ({ userId }: { userId: number }) =>
+    (cachedBlockedByUsers as AsyncReturnType<typeof BlockedByUsers.get>) ??
+    (await BlockedByUsers.get({ userId }));
+
+  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
+    await Promise.all([
+      getModerationTags(),
+      getHiddenTags({ userId }),
+      getHiddenImages({ userId }),
+      getHiddenModels({ userId }),
+      getHiddenUsers({ userId }),
+      getBlockedUsers({ userId }),
+      getBlockedByUsers({ userId }),
+    ]);
 
   const [implicitImages] = await Promise.all([
     getHiddenImplicitImages({
@@ -289,17 +331,29 @@ const getAllHiddenForUsersCached = async ({
     }),
   ]);
 
-  return { moderatedTags, hiddenTags, images, models, users, implicitImages };
+  return {
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    users,
+    implicitImages,
+    blockedUsers,
+    blockedByUsers,
+  };
 };
 
 const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
-  const [moderatedTags, hiddenTags, images, models, users] = await Promise.all([
-    getModeratedTags(),
-    HiddenTags.get({ userId }),
-    HiddenImages.get({ userId }),
-    HiddenModels.get({ userId }),
-    HiddenUsers.get({ userId }),
-  ]);
+  const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
+    await Promise.all([
+      getModeratedTags(),
+      HiddenTags.get({ userId }),
+      HiddenImages.get({ userId }),
+      HiddenModels.get({ userId }),
+      HiddenUsers.get({ userId }),
+      BlockedUsers.get({ userId }),
+      BlockedByUsers.get({ userId }),
+    ]);
 
   const [implicitImages] = await Promise.all([
     ImplicitHiddenImages.get({
@@ -309,7 +363,16 @@ const getAllHiddenForUserFresh = async ({ userId }: { userId: number }) => {
     }),
   ]);
 
-  return { moderatedTags, hiddenTags, images, models, users, implicitImages };
+  return {
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    users,
+    implicitImages,
+    blockedUsers,
+    blockedByUsers,
+  };
 };
 
 export async function getAllHiddenForUser({
@@ -319,15 +382,26 @@ export async function getAllHiddenForUser({
   userId?: number;
   refreshCache?: boolean;
 }): Promise<HiddenPreferenceTypes> {
-  const { moderatedTags, hiddenTags, images, models, users, implicitImages } = refreshCache
+  const {
+    moderatedTags,
+    hiddenTags,
+    images,
+    models,
+    users,
+    implicitImages,
+    blockedUsers,
+    blockedByUsers,
+  } = refreshCache
     ? await getAllHiddenForUserFresh({ userId })
     : await getAllHiddenForUsersCached({ userId });
 
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
-    hiddenModels: [...models.map((id) => ({ id, hidden: true }))],
+    hiddenModels: models.map((id) => ({ id, hidden: true })),
     hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
+    blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
+    blockedByUsers: blockedByUsers.map((user) => ({ ...user, hidden: true })),
   } as HiddenPreferenceTypes;
 
   return result;
@@ -348,6 +422,8 @@ export async function toggleHidden({
       return await toggleHideUser({ userId, targetUserId: data[0].id, setTo: hidden });
     case 'tag':
       return await toggleHiddenTags({ tagIds: data.map((x) => x.id), hidden, userId });
+    case 'blockedUser':
+      return await toggleBlockUser({ targetUserId: data[0].id, userId });
     default:
       throw new Error('unsupported hidden toggle kind');
   }
@@ -508,6 +584,45 @@ async function toggleHideUser({
   // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
 
   await HiddenUsers.refreshCache({ userId });
+
+  return {
+    added: [],
+    removed: [],
+  };
+}
+
+async function toggleBlockUser({
+  userId,
+  targetUserId,
+  setTo,
+}: {
+  userId: number;
+  targetUserId: number;
+  setTo?: boolean;
+}): Promise<HiddenPreferencesDiff> {
+  if (targetUserId === userId) throw new Error('Cannot block yourself');
+  if (targetUserId === -1) throw new Error('Cannot block civitai account');
+
+  const engagement = await dbWrite.userEngagement.findUnique({
+    where: { userId_targetUserId: { userId, targetUserId } },
+    select: { type: true },
+  });
+  if (!engagement)
+    await dbWrite.userEngagement.create({
+      data: { userId, targetUserId, type: 'Block' },
+    });
+  else if (engagement.type === 'Block' && setTo !== true)
+    await dbWrite.userEngagement.delete({
+      where: { userId_targetUserId: { userId, targetUserId } },
+    });
+  else
+    await dbWrite.userEngagement.update({
+      where: { userId_targetUserId: { userId, targetUserId } },
+      data: { type: 'Block' },
+    });
+
+  await BlockedUsers.refreshCache({ userId });
+  await BlockedByUsers.refreshCache({ userId: targetUserId });
 
   return {
     added: [],

@@ -35,7 +35,6 @@ import {
   IconMicrophoneOff,
   IconPhoto,
   IconTrash,
-  IconUserMinus,
   IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -48,13 +47,13 @@ import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import ProfileLayout from '~/components/Profile/ProfileLayout';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
@@ -346,6 +345,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
             </>
           )}
+          {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={NextLink} href={`/user/${user.username}/manage-categories`}>
               Manage model categories
@@ -612,7 +612,6 @@ const useStyles = createStyles((theme) => ({
 function LayoutSelector({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { username } = router.query as { username: string };
-  const features = useFeatureFlags();
 
   return (
     <ProfileLayout username={username}>

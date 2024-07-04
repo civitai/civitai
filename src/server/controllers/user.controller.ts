@@ -119,6 +119,7 @@ import {
 } from '~/server/services/resourceReview.service';
 import { usersSearchIndex } from '~/server/search-index';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -128,6 +129,14 @@ export const getAllUsersHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const blockedUsersLists = await Promise.all([
+      BlockedUsers.getCached({ userId: ctx.user?.id }),
+      BlockedByUsers.getCached({ userId: ctx.user?.id }),
+    ]);
+    const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
+    if (blockedUsers.length)
+      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
+
     const users = await getUsers({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
@@ -594,10 +603,10 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
   try {
     const { username } = input;
 
-    const user = await getUserByUsername({ username, select: { createdAt: true } });
+    const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
-    const [userFollowing, userFollowers, userHidden] = await Promise.all([
+    const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
       getUserByUsername({
         username,
         select: {
@@ -628,6 +637,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           },
         },
       }),
+      BlockedUsers.getCached({ userId: user.id }),
     ]);
 
     return {
@@ -637,6 +647,8 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
       followersCount: userFollowers?._count.engagedUsers ?? 0,
       hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
       hiddenCount: userHidden?._count.engagingUsers ?? 0,
+      blocked: userBlocked ?? [],
+      blockedCount: userBlocked?.length ?? 0,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
