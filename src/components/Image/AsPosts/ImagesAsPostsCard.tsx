@@ -350,6 +350,7 @@ export function ImagesAsPostsCard({
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
                                 anim={shouldAnimateByDefault(image)}
+                                skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                                 fadeIn
                               />
                             )}
@@ -487,6 +488,9 @@ export function ImagesAsPostsCard({
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
                                           anim={shouldAnimateByDefault(image)}
+                                          skip={
+                                            shouldAnimateByDefault(image) === false ? 2 : undefined
+                                          }
                                           fadeIn
                                         />
                                       )}

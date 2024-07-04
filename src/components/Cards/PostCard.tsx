@@ -76,6 +76,7 @@ export function PostCard({ data }: Props) {
                         : image.name ?? undefined
                     }
                     anim={shouldAnimateByDefault(image)}
+                    skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"
