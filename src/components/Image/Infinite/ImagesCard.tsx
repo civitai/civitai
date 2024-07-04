@@ -163,6 +163,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                               : image.name ?? undefined
                           }
                           anim={shouldAnimateByDefault(image)}
+                          skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                           type={image.type}
                           width={450}
                           placeholder="empty"
