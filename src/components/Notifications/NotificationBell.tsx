@@ -50,6 +50,8 @@ export function NotificationBell() {
   const readNotificationMutation = useMarkReadNotification();
   const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
 
+  // TODO loader on category change, "loading more" for infinite
+
   return (
     <>
       <div onClick={() => setOpened((val) => !val)} ref={setToggle} style={{ height: '28px' }}>
