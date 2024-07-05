@@ -16,7 +16,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -88,7 +88,7 @@ export function PostsCard({
                           : image.name ?? undefined
                       }
                       anim={shouldAnimate}
-                      skip={shouldAnimate === false ? 2 : undefined}
+                      skip={getSkipValue(image)}
                       type={image.type}
                       width={450}
                       placeholder="empty"

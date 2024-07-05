@@ -36,7 +36,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { shouldAnimateByDefault, getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_CARD_WIDTH = 450;
@@ -154,7 +154,7 @@ export function BountyCard({ data }: Props) {
                     anim={shouldAnimate}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
-                    skip={shouldAnimate === false ? 2 : undefined}
+                    skip={getSkipValue(image)}
                   />
                 ) : (
                   <MediaHash {...image} />

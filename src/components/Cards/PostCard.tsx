@@ -17,7 +17,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -80,7 +80,7 @@ export function PostCard({ data }: Props) {
                         : image.name ?? undefined
                     }
                     anim={shouldAnimate}
-                    skip={shouldAnimate === false ? 2 : undefined}
+                    skip={getSkipValue(image)}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"

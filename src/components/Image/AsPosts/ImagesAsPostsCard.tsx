@@ -48,7 +48,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showSuccessNotification } from '~/utils/notifications';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesAsPostsCard({
@@ -356,7 +356,7 @@ export function ImagesAsPostsCard({
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
                                 anim={shouldAnimate}
-                                skip={shouldAnimate === false ? 2 : undefined}
+                                skip={getSkipValue(image)}
                                 fadeIn
                               />
                             )}
@@ -499,7 +499,7 @@ export function ImagesAsPostsCard({
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
                                           anim={shouldAnimate}
-                                          skip={shouldAnimate === false ? 2 : undefined}
+                                          skip={getSkipValue(image)}
                                           fadeIn
                                         />
                                       )}
