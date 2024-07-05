@@ -8,8 +8,8 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GenericImageCard({
   image: image,
@@ -25,6 +25,7 @@ export function GenericImageCard({
   const { classes: sharedClasses } = useCardStyles({
     aspectRatio: image.width && image.height ? image.width / image.height : 1,
   });
+  const currentUser = useCurrentUser();
 
   const url = (() => {
     if (!entityType || !entityId) return undefined;
@@ -61,6 +62,11 @@ export function GenericImageCard({
       }
     }
   })();
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -100,8 +106,8 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
-                      anim={shouldAnimateByDefault(image)}
-                      skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
+                      anim={shouldAnimate}
+                      skip={shouldAnimate === false ? 2 : undefined}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

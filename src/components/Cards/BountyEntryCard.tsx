@@ -17,8 +17,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -47,11 +47,17 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes: awardedStyles } = useStyles();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { user, images, awardedUnitAmountTotal } = data;
   const image = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
   const isAwarded = awardedUnitAmountTotal > 0;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -149,8 +155,8 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       width={IMAGE_CARD_WIDTH}
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
-                      anim={shouldAnimateByDefault(image)}
-                      skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
+                      anim={shouldAnimate}
+                      skip={shouldAnimate === false ? 2 : undefined}
                     />
                   ) : (
                     <MediaHash {...image} />

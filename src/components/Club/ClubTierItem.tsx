@@ -123,6 +123,7 @@ export const TierCoverImage = ({
 }) =>
   clubTier.coverImage ? (
     <Center>
+      Not implemented
       {/* <ImageCSSAspectRatioWrap
         aspectRatio={1}
         style={{ width: constants.clubs.tierImageSidebarDisplayWidth }}
