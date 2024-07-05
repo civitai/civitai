@@ -227,8 +227,8 @@ export const createTrainingRequest = async ({
       const override = setting.overrides?.[baseModel];
       const overrideSetting = override ?? setting;
       if (
-        (overrideSetting.min && value < overrideSetting.min) ||
-        (overrideSetting.max && value > overrideSetting.max)
+        (overrideSetting.min && (value as number) < overrideSetting.min) ||
+        (overrideSetting.max && (value as number) > overrideSetting.max)
       ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`
