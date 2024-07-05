@@ -275,7 +275,7 @@ type ResourceReviewRow = {
   createdAt: Date;
   nsfw: boolean;
   exclude: boolean;
-  metadata: MixedObject;
+  metadata: any;
   userId: number;
   username: string;
   deletedAt: Date | null;
