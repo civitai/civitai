@@ -22,8 +22,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -31,6 +31,7 @@ function UnroutedImageCard({ data }: Props) {
   });
   const router = useRouter();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
@@ -44,6 +45,11 @@ function UnroutedImageCard({ data }: Props) {
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...data,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -103,8 +109,8 @@ function UnroutedImageCard({ data }: Props) {
                       width={imageWidth}
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                      anim={shouldAnimateByDefault(data)}
-                      skip={shouldAnimateByDefault(data) === false ? 2 : undefined}
+                      anim={shouldAnimate}
+                      skip={shouldAnimate === false ? 2 : undefined}
                       loading="lazy"
                       contain
                     />

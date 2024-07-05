@@ -5,10 +5,14 @@ import { videoMetadataSchema } from '~/server/schema/media.schema';
 export function shouldAnimateByDefault({
   type,
   metadata,
+  forceDisabled,
 }: {
   type: MediaType;
   metadata?: MixedObject | null;
+  forceDisabled?: boolean;
 }) {
+  if (forceDisabled) return false;
+
   const parsed = videoMetadataSchema.safeParse(metadata);
   if (!parsed.success) return undefined;
 

@@ -16,7 +16,6 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { CosmeticEntity } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 export function PostsCard({
@@ -33,6 +32,11 @@ export function PostsCard({
 
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
@@ -83,8 +87,8 @@ export function PostsCard({
                             })
                           : image.name ?? undefined
                       }
-                      anim={shouldAnimateByDefault(image)}
-                      skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
+                      anim={shouldAnimate}
+                      skip={shouldAnimate === false ? 2 : undefined}
                       type={image.type}
                       width={450}
                       placeholder="empty"
