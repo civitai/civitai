@@ -46,6 +46,7 @@ export function ToolSelect({
       data={data.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
       searchable
       clearable
+      withinPortal
     />
   );
 }

@@ -101,6 +101,7 @@ export function GenericImageCard({
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
                       anim={shouldAnimateByDefault(image)}
+                      skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

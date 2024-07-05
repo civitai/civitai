@@ -1238,7 +1238,8 @@ export const upsertModel = async (
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1253,6 +1254,7 @@ export const upsertModel = async (
       select: { id: true, nsfwLevel: true },
       data: {
         ...data,
+        status,
         meta:
           bountyId || meta
             ? {

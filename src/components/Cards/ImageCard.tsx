@@ -104,6 +104,7 @@ function UnroutedImageCard({ data }: Props) {
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
                       anim={shouldAnimateByDefault(data)}
+                      skip={shouldAnimateByDefault(data) === false ? 2 : undefined}
                       loading="lazy"
                       contain
                     />

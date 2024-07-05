@@ -149,6 +149,7 @@ export function BountyCard({ data }: Props) {
                     anim={shouldAnimateByDefault(image)}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
+                    skip={shouldAnimateByDefault(image) === false ? 2 : undefined}
                   />
                 ) : (
                   <MediaHash {...image} />

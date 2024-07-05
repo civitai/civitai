@@ -129,7 +129,8 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               anim
               controls
               quality={90}
-              original={image.type === 'video' ? true : undefined}
+              // We'll use transcoded videos instead of original ones.
+              // original={image.type === 'video' ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {

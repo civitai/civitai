@@ -400,6 +400,14 @@ export function ModelCard({ data, forceInView }: Props) {
                               type: image.type,
                               metadata: image.metadata as VideoMetadata,
                             })}
+                            skip={
+                              shouldAnimateByDefault({
+                                type: image.type,
+                                metadata: image.metadata as VideoMetadata,
+                              }) === false
+                                ? 2
+                                : undefined
+                            }
                             contain
                           />
                         </div>
