@@ -13,7 +13,7 @@ export const userJourneyNotifications = createNotificationProcessor({
     }),
     prepareQuery: ({ lastSent }) => `
       SELECT
-        CONCAT('join-community:',"id"),
+        CONCAT('join-community:',"id") as "key",
         id "userId",
         'join-community' "type",
         '{}'::jsonb "details"

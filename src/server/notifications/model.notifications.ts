@@ -253,7 +253,6 @@ export const modelNotifications = createNotificationProcessor({
       FROM early_access_complete;
     `,
   },
-  // TODO this won't show another notification if it sends one and then the model gets updated
   'old-draft': {
     displayName: 'Old Model Draft Deletion Reminder',
     category: 'System',
@@ -276,7 +275,7 @@ export const modelNotifications = createNotificationProcessor({
         AND m."updatedAt" < now() - INTERVAL '23 days'
       )
       SELECT
-        concat('old-draft:', details->>'modelId') "key",
+        concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",
         "userId",
         'old-draft' "type",
         details
