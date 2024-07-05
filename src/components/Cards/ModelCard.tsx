@@ -205,6 +205,11 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+  const shouldAnimate = shouldAnimateByDefault({
+    type: image.type,
+    metadata: image.metadata as VideoMetadata,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -396,18 +401,8 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            anim={shouldAnimateByDefault({
-                              type: image.type,
-                              metadata: image.metadata as VideoMetadata,
-                            })}
-                            skip={
-                              shouldAnimateByDefault({
-                                type: image.type,
-                                metadata: image.metadata as VideoMetadata,
-                              }) === false
-                                ? 2
-                                : undefined
-                            }
+                            anim={shouldAnimate}
+                            skip={shouldAnimate === false ? 2 : undefined}
                             contain
                           />
                         </div>
