@@ -7,9 +7,10 @@ const schema = bareNotification;
 
 export default AuthedEndpoint(
   async function handler(req: NextApiRequest, res: NextApiResponse) {
-    const results = schema.safeParse(req.query);
-    if (!results.success)
+    const results = schema.safeParse(req.body);
+    if (!results.success) {
       return res.status(400).json({ error: `Could not parse notification data` });
+    }
 
     try {
       await populateNotificationDetails([results.data]);

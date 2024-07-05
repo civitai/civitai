@@ -127,32 +127,30 @@ export const useNotificationSignal = () => {
   const queryUtils = trpc.useUtils();
 
   const onUpdate = useCallback(
-    (updated: NotificationGetAllItem) => {
+    async (updated: NotificationGetAllItem) => {
       const queryKey = getQueryKey(trpc.notification.getAllByUser);
+
+      // nb: this shouldn't run if "old" doesn't exist, but can't test that yet, and produce doesn't allow async
+      let newUpdated = updated;
+      try {
+        const newUpdatedResp = await fetch('/api/notification/getDetails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updated),
+        });
+        if (newUpdatedResp.ok) {
+          newUpdated = await newUpdatedResp.json();
+        }
+      } catch {}
+
       queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
         { queryKey, exact: false },
         produce((old) => {
           if (!old || !old.pages || !old.pages.length) return;
           const firstPage = old.pages[0];
-          firstPage.items.unshift(updated);
-
-          // TODO can't do async here, but .then doesnt work either
-          // try {
-          //   const newUpdatedResp = await fetch('/api/notification/getDetails', {
-          //     method: 'POST',
-          //     headers: {
-          //       'Content-Type': 'application/json',
-          //     },
-          //     body: JSON.stringify({ updated }),
-          //   });
-          //   const newUpdated: NotificationGetAllItem = await newUpdatedResp.json();
-          //   console.log(newUpdated);
-          //
-          //   firstPage.items.unshift(newUpdated);
-          // } catch (e) {
-          //   console.log(e);
-          //   firstPage.items.unshift(updated);
-          // }
+          firstPage.items.unshift(newUpdated);
         })
       );
 
