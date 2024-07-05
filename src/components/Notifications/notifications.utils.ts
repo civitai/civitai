@@ -133,10 +133,26 @@ export const useNotificationSignal = () => {
         { queryKey, exact: false },
         produce((old) => {
           if (!old || !old.pages || !old.pages.length) return;
-          // TODO put this back in, but cant call here, or move to notification-server
-          // await populateNotificationDetails([updated]);
           const firstPage = old.pages[0];
           firstPage.items.unshift(updated);
+
+          // TODO can't do async here, but .then doesnt work either
+          // try {
+          //   const newUpdatedResp = await fetch('/api/notification/getDetails', {
+          //     method: 'POST',
+          //     headers: {
+          //       'Content-Type': 'application/json',
+          //     },
+          //     body: JSON.stringify({ updated }),
+          //   });
+          //   const newUpdated: NotificationGetAllItem = await newUpdatedResp.json();
+          //   console.log(newUpdated);
+          //
+          //   firstPage.items.unshift(newUpdated);
+          // } catch (e) {
+          //   console.log(e);
+          //   firstPage.items.unshift(updated);
+          // }
         })
       );
 

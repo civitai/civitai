@@ -1,5 +1,6 @@
 import { ClickHouseClient } from '@clickhouse/client';
 import { NotificationCategory } from '@prisma/client';
+import { z } from 'zod';
 
 export type NotificationProcessor = {
   displayName: string;
@@ -12,11 +13,13 @@ export type NotificationProcessor = {
   defaultDisabled?: boolean;
 };
 
-export type BareNotification = {
-  id: number;
-  type: string;
-  details: MixedObject;
-};
+export const bareNotification = z.object({
+  id: z.number(),
+  type: z.string(),
+  details: z.record(z.string(), z.any()),
+});
+export type BareNotification = z.infer<typeof bareNotification>;
+
 type NotificationMessage = {
   message: string;
   url?: string;
