@@ -65,43 +65,44 @@ export const reviewNotifications = createNotificationProcessor({
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review')
       ON CONFLICT (id) DO NOTHING;`,
   },
-  'review-reminder': {
-    displayName: 'Review reminders',
-    category: 'System',
-    prepareMessage: ({ details }) => ({
-      message: `Remember to review "${details.modelName} - ${details.modelVersionName}"`,
-      url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
-    }),
-    prepareQuery: ({ lastSent, category }) => `
-      WITH pending_reviews AS (
-        SELECT DISTINCT
-          ua."userId" "ownerId",
-          m.id as "modelId",
-          mv.id as "modelVersionId",
-          JSONB_BUILD_OBJECT(
-            'modelId', m.id,
-            'modelName', m.name,
-            'modelVersionId', mv.id,
-            'modelVersionName', mv.name
-          ) "details"
-        FROM "DownloadHistory" ua
-        JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
-        JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
-        WHERE ua."userId" IS NOT NULL
-          AND ua."downloadAt" BETWEEN
-            '${lastSent}'::timestamp - INTERVAL '72 hour' AND NOW() - INTERVAL '72 hour'
-          AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
-      )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
-      SELECT
-        CONCAT("ownerId",':','review-reminder',':',"modelVersionId") "id",
-        "ownerId"    "userId",
-        'review-reminder' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
-      FROM pending_reviews
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
-      ON CONFLICT("id") DO NOTHING;
-    `,
-  },
+  // TODO: re-enable this notification when performance of the query is improved
+  // 'review-reminder': {
+  //   displayName: 'Review reminders',
+  //   category: 'System',
+  //   prepareMessage: ({ details }) => ({
+  //     message: `Remember to review "${details.modelName} - ${details.modelVersionName}"`,
+  //     url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
+  //   }),
+  //   prepareQuery: ({ lastSent, category }) => `
+  //     WITH pending_reviews AS (
+  //       SELECT DISTINCT
+  //         ua."userId" "ownerId",
+  //         m.id as "modelId",
+  //         mv.id as "modelVersionId",
+  //         JSONB_BUILD_OBJECT(
+  //           'modelId', m.id,
+  //           'modelName', m.name,
+  //           'modelVersionId', mv.id,
+  //           'modelVersionName', mv.name
+  //         ) "details"
+  //       FROM "DownloadHistory" ua
+  //       JOIN "ModelVersion" mv ON mv.id = ua."modelVersionId" AND mv.status = 'Published'
+  //       JOIN "Model" m ON m.id = mv."modelId" AND m.status = 'Published'
+  //       WHERE ua."userId" IS NOT NULL
+  //         AND ua."downloadAt" BETWEEN
+  //           '${lastSent}'::timestamp - INTERVAL '72 hour' AND NOW() - INTERVAL '72 hour'
+  //         AND NOT EXISTS (SELECT 1 FROM "ResourceReview" r WHERE "modelId" = m.id AND r."userId" = ua."userId")
+  //     )
+  //     INSERT INTO "Notification"("id", "userId", "type", "details", "category")
+  //     SELECT
+  //       CONCAT("ownerId",':','review-reminder',':',"modelVersionId") "id",
+  //       "ownerId"    "userId",
+  //       'review-reminder' "type",
+  //       details,
+  //       '${category}'::"NotificationCategory" "category"
+  //     FROM pending_reviews
+  //     WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'review-reminder')
+  //     ON CONFLICT("id") DO NOTHING;
+  //   `,
+  // },
 });
