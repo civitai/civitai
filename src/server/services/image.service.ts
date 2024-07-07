@@ -1473,55 +1473,56 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   const remainingModelVersionIds = modelVersionIds.filter(
     (x) => !images.some((i) => i.modelVersionId === x)
   );
 
-  if (remainingModelVersionIds.length) {
-    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
-        WITH targets AS (
-          SELECT
-            id,
-            "modelVersionId",
-            row_num
-          FROM (
-            SELECT
-              ir."imageId" id,
-              ir."modelVersionId",
-              -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
-            FROM "ImageResource" ir
-            JOIN "Image" i ON i.id = ir."imageId"
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-            WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
-              AND ${Prisma.join(imageWhere, ' AND ')}
-          ) ranked
-          WHERE ranked.row_num <= 20
-        )
-        SELECT
-          i.id,
-          i."userId",
-          i.name,
-          i.url,
-          i."nsfwLevel",
-          i.width,
-          i.height,
-          i.hash,
-          i.type,
-          i.metadata,
-          t."modelVersionId",
-          p."availability"
-          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
-        FROM targets t
-        JOIN "Image" i ON i.id = t.id
-        JOIN "Post" p ON p.id = i."postId"
-        ORDER BY t.row_num
-      `;
-    images = [...images, ...communityImages];
-  }
+  // TODO: Re-implement community images once we figure out the slowness.
+  // if (remainingModelVersionIds.length) {
+  //   const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+  //       WITH targets AS (
+  //         SELECT
+  //           id,
+  //           "modelVersionId",
+  //           row_num
+  //         FROM (
+  //           SELECT
+  //             ir."imageId" id,
+  //             ir."modelVersionId",
+  //             -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
+  //             row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
+  //           FROM "ImageResource" ir
+  //           JOIN "Image" i ON i.id = ir."imageId"
+  //           JOIN "Post" p ON p.id = i."postId"
+  //           JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+  //           WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+  //             AND ${Prisma.join(imageWhere, ' AND ')}
+  //         ) ranked
+  //         WHERE ranked.row_num <= 20
+  //       )
+  //       SELECT
+  //         i.id,
+  //         i."userId",
+  //         i.name,
+  //         i.url,
+  //         i."nsfwLevel",
+  //         i.width,
+  //         i.height,
+  //         i.hash,
+  //         i.type,
+  //         i.metadata,
+  //         t."modelVersionId",
+  //         p."availability"
+  //         ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+  //       FROM targets t
+  //       JOIN "Image" i ON i.id = t.id
+  //       JOIN "Post" p ON p.id = i."postId"
+  //       ORDER BY t.row_num
+  //     `;
+  //   images = [...images, ...communityImages];
+  // }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
