@@ -7,7 +7,7 @@ export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
     category: 'Comment',
-    priority: -1,
+    // priority: -1,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
