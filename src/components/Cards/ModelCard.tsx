@@ -53,7 +53,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -206,6 +206,11 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+  const shouldAnimate = shouldAnimateByDefault({
+    type: image.type,
+    metadata: image.metadata as VideoMetadata,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -399,7 +404,8 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            anim={shouldAnimateByDefault({
+                            anim={shouldAnimate}
+                            skip={getSkipValue({
                               type: image.type,
                               metadata: image.metadata as VideoMetadata,
                             })}

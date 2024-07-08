@@ -336,6 +336,7 @@ model Purchase {
 enum UserEngagementType {
   Follow
   Hide
+  Block
 }
 
 model UserEngagement {

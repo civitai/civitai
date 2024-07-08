@@ -104,7 +104,7 @@ function promptAuditRefiner(
   data: { prompt: string; negativePrompt?: string },
   ctx: z.RefinementCtx
 ) {
-  const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
+  const { blockedFor, success } = auditPrompt(data.prompt); // TODO: re-enable negativePrompt here
   if (!success) {
     let message = `Blocked for: ${blockedFor.join(', ')}`;
     const count = blockedRequest.increment();

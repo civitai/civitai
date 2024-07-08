@@ -3,7 +3,7 @@ import { CollectionMode } from '@prisma/client';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const useCollectionsForPostEditor = () => {
@@ -104,7 +104,7 @@ export const CollectionSelectDropdown = () => {
               label="Select Entry Category"
               data={selectedCollection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: tag.name,
+                label: toPascalCase(tag.name),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
               onChange={(value: string) =>
@@ -119,10 +119,8 @@ export const CollectionSelectDropdown = () => {
               styles={{
                 input: {
                   height: 32,
-                  textTransform: 'capitalize',
                 },
               }}
-              tt="capitalize"
             />
           )}
         </Group>

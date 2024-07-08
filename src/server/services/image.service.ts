@@ -551,6 +551,7 @@ export const getAllImages = async ({
   techniques,
   baseModels,
   collectionTagId,
+  excludedUserIds,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -654,7 +655,6 @@ export const getAllImages = async ({
       Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
-    console.log('THIS IS ABOUT TO HAPPEN BUD!');
     cacheTime = 0;
     // if (targetUserId !== userId) {
     //   cacheTime = CacheTTL.day;
@@ -761,6 +761,10 @@ export const getAllImages = async ({
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
         )`
     );
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const isGallery = modelId || modelVersionId || reviewId || username;
@@ -1469,55 +1473,56 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   const remainingModelVersionIds = modelVersionIds.filter(
     (x) => !images.some((i) => i.modelVersionId === x)
   );
 
-  if (remainingModelVersionIds.length) {
-    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
-        WITH targets AS (
-          SELECT
-            id,
-            "modelVersionId",
-            row_num
-          FROM (
-            SELECT
-              ir."imageId" id,
-              ir."modelVersionId",
-              -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
-            FROM "ImageResource" ir
-            JOIN "Image" i ON i.id = ir."imageId"
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-            WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
-              AND ${Prisma.join(imageWhere, ' AND ')}
-          ) ranked
-          WHERE ranked.row_num <= 20
-        )
-        SELECT
-          i.id,
-          i."userId",
-          i.name,
-          i.url,
-          i."nsfwLevel",
-          i.width,
-          i.height,
-          i.hash,
-          i.type,
-          i.metadata,
-          t."modelVersionId",
-          p."availability"
-          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
-        FROM targets t
-        JOIN "Image" i ON i.id = t.id
-        JOIN "Post" p ON p.id = i."postId"
-        ORDER BY t.row_num
-      `;
-    images = [...images, ...communityImages];
-  }
+  // TODO: Re-implement community images once we figure out the slowness.
+  // if (remainingModelVersionIds.length) {
+  //   const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+  //       WITH targets AS (
+  //         SELECT
+  //           id,
+  //           "modelVersionId",
+  //           row_num
+  //         FROM (
+  //           SELECT
+  //             ir."imageId" id,
+  //             ir."modelVersionId",
+  //             -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
+  //             row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
+  //           FROM "ImageResource" ir
+  //           JOIN "Image" i ON i.id = ir."imageId"
+  //           JOIN "Post" p ON p.id = i."postId"
+  //           JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+  //           WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+  //             AND ${Prisma.join(imageWhere, ' AND ')}
+  //         ) ranked
+  //         WHERE ranked.row_num <= 20
+  //       )
+  //       SELECT
+  //         i.id,
+  //         i."userId",
+  //         i.name,
+  //         i.url,
+  //         i."nsfwLevel",
+  //         i.width,
+  //         i.height,
+  //         i.hash,
+  //         i.type,
+  //         i.metadata,
+  //         t."modelVersionId",
+  //         p."availability"
+  //         ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+  //       FROM targets t
+  //       JOIN "Image" i ON i.id = t.id
+  //       JOIN "Post" p ON p.id = i."postId"
+  //       ORDER BY t.row_num
+  //     `;
+  //   images = [...images, ...communityImages];
+  // }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
@@ -2340,6 +2345,7 @@ type GetImageModerationReviewQueueRaw = {
   reportDetails?: Prisma.JsonValue;
   reportUsername?: string;
   reportUserId?: number;
+  reportCount?: number;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -2403,6 +2409,7 @@ export const getImageModerationReviewQueue = async ({
     report.reason as "reportReason",
     report.status as "reportStatus",
     report.details as "reportDetails",
+    array_length("alsoReportedBy", 1) as "reportCount",
     ur.username as "reportUsername",
     ur.id as "reportUserId",
   `;
@@ -2515,6 +2522,7 @@ export const getImageModerationReviewQueue = async ({
             reason: string;
             details: Prisma.JsonValue;
             status: ReportStatus;
+            count: number;
             user: { id: number; username?: string | null };
           }
         | undefined;
@@ -2536,6 +2544,7 @@ export const getImageModerationReviewQueue = async ({
       reportDetails,
       reportUsername,
       reportUserId,
+      reportCount,
       ...i
     }) => ({
       ...i,
@@ -2558,6 +2567,7 @@ export const getImageModerationReviewQueue = async ({
             reason: reportReason as string,
             details: reportDetails as Prisma.JsonValue,
             status: reportStatus as ReportStatus,
+            count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
           }
         : undefined,

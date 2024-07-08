@@ -92,10 +92,8 @@ const homeOptions: Record<string, HomeOption> = {
   // },
   shop: {
     url: '/shop',
-    // icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    icon: (props: IconProps) => <IconRainbow {...props} />,
+    icon: (props: IconProps) => <IconShoppingBag {...props} />,
     highlight: true,
-    classes: ['tabRainbow'],
   },
 };
 type HomeOptions = keyof typeof homeOptions;

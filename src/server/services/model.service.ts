@@ -84,6 +84,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -208,6 +209,7 @@ export const getModelsRaw = async ({
     clubId,
     modelVersionIds,
     browsingLevel,
+    excludedUserIds,
   } = input;
 
   let pending = input.pending;
@@ -456,6 +458,11 @@ export const getModelsRaw = async ({
     );
 
     isPrivate = !permissions.publicCollection;
+  }
+
+  // Exclude user content
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
@@ -964,6 +971,10 @@ export const getModelsWithImagesAndModelVersions = async ({
   if (Object.keys(modelVersionWhere).length === 0) {
     modelVersionWhere = undefined;
   }
+  const blockedBy = user ? await BlockedByUsers.getCached({ userId: user.id }) : [];
+  if (blockedBy.length > 0) {
+    input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedBy.map((u) => u.id)];
+  }
 
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take: input.limit },
@@ -1224,7 +1235,8 @@ export const upsertModel = async (
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1239,6 +1251,7 @@ export const upsertModel = async (
       select: { id: true, nsfwLevel: true },
       data: {
         ...data,
+        status,
         meta:
           bountyId || meta
             ? {
