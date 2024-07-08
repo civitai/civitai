@@ -190,6 +190,21 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.existingEntriesDisabled"
+                        label="Existing entries disabled"
+                        placeholder="Makes it so that the + button takes you directly to the create flow."
+                      />
+                    )}
+                    <InputDatePicker
+                      name="metadata.votingPeriodStart"
+                      label="When voting for this contest will start"
+                      description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
+                      placeholder="Select a voting period start date"
+                      icon={<IconCalendar size={16} />}
+                      clearable
+                    />
                     {/* TODO: We probably want to make this compatible with other collection types. */}
                     {data?.collection?.type === CollectionType.Image && (
                       <InputTags

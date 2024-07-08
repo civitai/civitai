@@ -99,6 +99,7 @@ export const getHomeBlocksByIdHandler = async ({
       ...input,
       user: ctx.user,
     });
+    if (homeBlock?.type === 'Announcement') ctx.cache.skip = true;
 
     if (!homeBlock) {
       throw throwNotFoundError('Home block not found');

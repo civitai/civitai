@@ -95,6 +95,7 @@ export const getPostsInfinite = async ({
   query,
   username,
   excludedImageIds,
+  excludedUserIds,
   period,
   periodMode,
   sort,
@@ -226,6 +227,10 @@ export const getPostsInfinite = async ({
         AND ci."postId" = p.id
         AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
     )`);
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   // sorting
@@ -541,6 +546,7 @@ export const updatePost = async ({
       detail: !!data.detail ? (data.detail.length > 0 ? data.detail : null) : undefined,
     },
   });
+  await preventReplicationLag('post', post.id);
 
   return post;
 };

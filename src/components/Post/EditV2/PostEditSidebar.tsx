@@ -18,6 +18,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { removeEmpty } from '~/utils/object-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -70,6 +71,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             // if (returnUrl) router.push(returnUrl);
             // else router.push(`/user/${currentUser.username}/posts`);
           }
+        },
+        onError: (error) => {
+          showErrorNotification({
+            title: 'There was an error while trying to publish your post',
+            error,
+          });
         },
       }
     );

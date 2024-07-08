@@ -143,6 +143,12 @@ model BuzzWithdrawalRequest {
   history                     BuzzWithdrawalRequestHistory[]
 }
 
+enum RewardsEligibility {
+  Eligible
+  Ineligible
+  Protected
+}
+
 model User {
   id                      Int                   @id @default(autoincrement())
   name                    String?
@@ -169,6 +175,8 @@ model User {
   leaderboardShowcase     String?
   referral                UserReferral?
   excludeFromLeaderboards Boolean               @default(false)
+  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  eligibilityChangedAt    DateTime?
 
   profile          UserProfile?
   profilePictureId Int?               @unique
@@ -258,6 +266,8 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
+  collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
 }
 
 model CustomerSubscription {
@@ -324,6 +334,7 @@ model Purchase {
 enum UserEngagementType {
   Follow
   Hide
+  Block
 }
 
 model UserEngagement {
@@ -1983,6 +1994,7 @@ model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
   description         String?
+  videoUrl            String?
   type                CosmeticType
   source              CosmeticSource
   permanentUnlock     Boolean
@@ -2624,6 +2636,27 @@ model EntityAccess {
   @@id([accessToId, accessToType, accessorId, accessorType])
 }
 
+enum EntityCollaboratorStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model EntityCollaborator {
+  entityType        EntityType
+  entityId          Int
+  userId            Int
+  user              User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
+  status            EntityCollaboratorStatus @default(Pending)
+  createdAt         DateTime                 @default(now())
+  createdBy         Int
+  creator           User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+  lastMessageSentAt DateTime?
+
+  @@id([entityType, entityId, userId])
+  @@index([userId, entityType, entityId]) // Include status in the migration.
+}
+
 model Club {
   id            Int     @id @default(autoincrement())
   userId        Int
@@ -3024,15 +3057,17 @@ enum ToolType {
 }
 
 model Tool {
-  id         Int         @id @default(autoincrement())
-  name       String
-  icon       String?
-  createdAt  DateTime    @default(now())
-  enabled    Boolean     @default(true)
-  type       ToolType
-  domain     String?
-  imageTools ImageTool[]
-  priority   Int?
+  id          Int         @id @default(autoincrement())
+  name        String
+  icon        String?
+  createdAt   DateTime    @default(now())
+  enabled     Boolean     @default(true)
+  type        ToolType
+  domain      String?
+  imageTools  ImageTool[]
+  priority    Int?
+  description String?
+  metadata    Json        @default("{}")
 }
 
 model ImageTool {
@@ -3226,6 +3261,11 @@ model ArticleStat {
   favoriteCountMonth       Int     @default(0)
   favoriteCountYear        Int     @default(0)
   favoriteCountAllTime     Int     @default(0)
+  collectedCountDay        Int     @default(0)
+  collectedCountWeek       Int     @default(0)
+  collectedCountMonth      Int     @default(0)
+  collectedCountYear       Int     @default(0)
+  collectedCountAllTime    Int     @default(0)
   hideCountDay             Int     @default(0)
   hideCountWeek            Int     @default(0)
   hideCountMonth           Int     @default(0)
@@ -3333,6 +3373,11 @@ model UserStat {
   downloadCountMonth       Int
   downloadCountYear        Int
   downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
   ratingCountDay           Int
   ratingCountWeek          Int
   ratingCountMonth         Int

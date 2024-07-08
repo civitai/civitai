@@ -90,9 +90,7 @@ export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
   if (!roleAccess && roles.length !== 0 && !!user) {
     if (roles.includes('user')) roleAccess = true;
     else if (roles.includes('mod') && user.isModerator) roleAccess = true;
-    else if (!!user.tier && user.tier != 'free' && roles.includes('member'))
-      roleAccess = true; // Gives access to any tier
-    else if (user.tier && roles.includes(user.tier as FeatureAvailability)) roleAccess = true;
+    else if (!!user.tier && user.tier != 'free' && roles.includes('member')) roleAccess = true; // Gives access to any tier
   }
 
   return devRequirement && (grantedAccess || roleAccess);

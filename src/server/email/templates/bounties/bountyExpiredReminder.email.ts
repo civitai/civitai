@@ -16,6 +16,7 @@ type BountyExpiredData = {
 function getRefundFormUrl({ user, bounty }: BountyExpiredData) {
   const qsParts = new URLSearchParams({
     'Your Civitai Username': user.username,
+    'Your Civitai Email': user.email,
     'Name of the bounty': bounty.name,
     'Link to the bounty': bountyUrl(bounty),
   });

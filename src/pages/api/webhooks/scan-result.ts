@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
+import { prepareModelInOrchestrator } from '~/server/services/generation/generation.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -105,6 +106,7 @@ export default WebhookEndpoint(async (req, res) => {
         },
       ]);
       await dataForModelsCache.bust(version.modelId);
+      await prepareModelInOrchestrator({ id: file.modelVersionId });
     }
   }
 

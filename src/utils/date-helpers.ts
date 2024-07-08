@@ -82,3 +82,13 @@ export function getDatesAsList(startDate: Date, endDate: Date) {
 
   return dates;
 }
+
+export function secondsAsMinutes(seconds: number) {
+  const duration = dayjs.duration(seconds, 'seconds');
+  const sec = duration.seconds();
+  const min = duration.minutes();
+
+  if (min === 0) return `${sec}s`;
+
+  return `${min}m ${sec}s`;
+}

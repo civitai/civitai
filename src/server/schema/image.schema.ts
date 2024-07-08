@@ -11,6 +11,7 @@ import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
+import dayjs from 'dayjs';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -94,10 +95,16 @@ export const imageGenerationSchema = z.object({
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
-    comfy: z.preprocess(
-      (value) => (typeof value === 'string' ? JSON.parse(value) : value),
-      comfyMetaSchema.optional()
-    ),
+    comfy: z.preprocess((value) => {
+      if (typeof value !== 'string') return value;
+      try {
+        let rVal = value.replace('"workflow": undefined', '"workflow": {}');
+        rVal = rVal.replace('[NaN]', '[]');
+        return JSON.parse(rVal);
+      } catch {
+        return {};
+      }
+    }, comfyMetaSchema.optional()),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
     civitaiResources: z.any().optional(),
@@ -212,7 +219,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked']),
+  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -263,7 +270,14 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     limit: z.number().min(0).max(200).default(100),
-    cursor: z.union([z.bigint(), z.number(), z.string(), z.date()]).optional(),
+    cursor: z
+      .union([z.bigint(), z.number(), z.string(), z.date()])
+      .transform((val) =>
+        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+          ? new Date(val)
+          : val
+      )
+      .optional(),
     skip: z.number().optional(),
     postId: z.number().optional(),
     postIds: z.number().array().optional(),

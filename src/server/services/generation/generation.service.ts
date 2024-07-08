@@ -391,6 +391,10 @@ const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
   SDXLDistilled: 'SDXL_Distilled',
   SCascade: 'SCascade',
   Pony: 'SDXL',
+  Lumina: 'Lumina',
+  HyDit1: 'HyDit1',
+  PixArtA: 'PixArtA',
+  PixArtE: 'PixArtE',
   ODOR: undefined,
 };
 
@@ -875,6 +879,8 @@ export const getGenerationData = async (
       return await getResourceGenerationData({ modelId: props.id });
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
+    case 'modelVersions':
+      return await getMultipleResourceGenerationData({ versionIds: props.ids });
     case 'random':
       return await getRandomGenerationData(props.includeResources);
   }
@@ -914,6 +920,30 @@ export const getResourceGenerationData = async ({
       baseModel,
       clipSkip: resource.clipSkip ?? undefined,
     },
+  };
+};
+
+const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: number[] }) => {
+  if (!versionIds.length) throw new Error('missing version ids');
+  const resources = await dbRead.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: {
+      ...generationResourceSelect,
+      clipSkip: true,
+      vaeId: true,
+    },
+  });
+  const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
+  if (checkpoint?.vaeId) {
+    const vae = await dbRead.modelVersion.findFirst({
+      where: { id: checkpoint.vaeId },
+      select: { ...generationResourceSelect, clipSkip: true },
+    });
+    if (vae) resources.push({ ...vae, vaeId: null });
+  }
+  return {
+    resources: resources.map(mapGenerationResource),
+    params: {},
   };
 };
 

@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Container,
+  Divider,
   Group,
   List,
   Stack,
@@ -16,16 +17,23 @@ import {
   getTagsFromPrompt,
   highlightInappropriate,
   includesInappropriate,
+  cleanPrompt,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 
 type AuditResult = {
   highlighted: string;
+  replaced?: { prompt: string; negativePrompt?: string };
   tags: string[];
 };
 
+type ToAudit = {
+  prompt: string;
+  negativePrompt?: string;
+};
+
 export default function MetadataTester() {
-  const [prompts, setPrompts] = useState<string[]>([]);
+  const [prompts, setPrompts] = useState<ToAudit[]>([]);
   const [results, setResults] = useState<{ passed: AuditResult[]; failed: AuditResult[] }>({
     passed: [],
     failed: [],
@@ -33,10 +41,10 @@ export default function MetadataTester() {
 
   const updateJson = (json: string) => {
     try {
-      let setTo = [json];
+      let setTo: ToAudit[] = [{ prompt: json }];
       if (json.trim().startsWith('[')) {
-        const parsed = JSON.parse(json) as { prompt: string }[];
-        setTo = parsed.map((p) => p.prompt);
+        const parsed = JSON.parse(json) as ToAudit[];
+        setTo = parsed;
       }
       setPrompts(setTo);
       updateResults(setTo);
@@ -46,21 +54,23 @@ export default function MetadataTester() {
     }
   };
 
-  const updateResults = (input?: string[]) => {
+  const updateResults = (input?: ToAudit[]) => {
     input ??= prompts;
     if (!input) return;
     const passed = new Set<AuditResult>();
     const failed = new Set<AuditResult>();
 
-    for (let prompt of input) {
+    for (let { prompt, negativePrompt } of input) {
       prompt = normalizeText(prompt);
-      const isInappropriate = includesInappropriate(prompt) !== false;
+      negativePrompt = normalizeText(negativePrompt);
+      const isInappropriate = includesInappropriate({ prompt, negativePrompt }) !== false;
       const tags = getTagsFromPrompt(prompt) || [];
-      const highlighted = highlightInappropriate(prompt) ?? prompt;
+      const highlighted = highlightInappropriate({ prompt, negativePrompt }) ?? prompt;
+      const replaced = cleanPrompt({ prompt, negativePrompt });
       if (isInappropriate) {
-        failed.add({ highlighted, tags });
+        failed.add({ highlighted, replaced, tags });
       } else {
-        passed.add({ highlighted, tags });
+        passed.add({ highlighted, replaced, tags });
       }
     }
     setResults({ passed: [...passed], failed: [...failed] });
@@ -90,7 +100,7 @@ export default function MetadataTester() {
           onChange={(e) => updateJson(e.target.value)}
           autosize
           minRows={5}
-          placeholder={`Prompts JSON: {prompt: string}[]`}
+          placeholder={`Prompts JSON: { prompt: string; negativePrompt?: string }[]`}
         />
         <Group grow align="flex-start">
           {Object.entries(results).map(([key, values]) => (
@@ -99,9 +109,19 @@ export default function MetadataTester() {
                 {key}
               </Text>
               <Stack spacing="xs">
-                {values.map(({ highlighted, tags }) => (
+                {values.map(({ highlighted, tags, replaced }) => (
                   <Card withBorder key={highlighted}>
                     <div dangerouslySetInnerHTML={{ __html: highlighted }} />
+                    {replaced && (
+                      <>
+                        <Divider label="Cleaned" mt="xs" />
+                        <Text>{replaced.prompt}</Text>
+                        {replaced.negativePrompt && (
+                          <Text color="dimmed">{replaced.negativePrompt}</Text>
+                        )}
+                      </>
+                    )}
+                    <div></div>
                     {tags.length > 0 && (
                       <Group spacing={4} mt="sm">
                         {tags.map((tag) => (

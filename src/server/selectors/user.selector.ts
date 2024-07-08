@@ -64,6 +64,7 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
           source: true,
           name: true,
           description: true,
+          videoUrl: true,
         },
       },
     },
@@ -92,6 +93,8 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
       thumbsUpCountAllTime: true,
       followerCountAllTime: true,
       reactionCountAllTime: true,
+      uploadCountAllTime: true,
+      generationCountAllTime: true,
     },
   },
   profile: {

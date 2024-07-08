@@ -5,6 +5,7 @@ import {
   CosmeticType,
   ModelStatus,
   Prisma,
+  UserEngagementType,
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -206,9 +207,13 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
       SELECT
         cs."userId",
-        COALESCE((p.metadata->>'rewardsMultiplier')::float, 1) as "rewardsMultiplier",
+        CASE
+          WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
+          ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
+        END as "rewardsMultiplier",
         COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
       FROM "CustomerSubscription" cs
+      JOIN "User" u ON u.id = cs."userId"
       JOIN "Product" p ON p.id = cs."productId"
       WHERE cs."userId" IN (${Prisma.join(ids)})
         AND cs."status" IN ('active', 'trialing');
@@ -324,5 +329,48 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
     for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
     for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
     return results;
+  },
+});
+
+export const userBlockedUsersCache = createCachedObject<{ userId: number; blockedUsers: number[] }>(
+  {
+    key: REDIS_KEYS.CACHES.BLOCKED_USERS,
+    idKey: 'userId',
+    ttl: CacheTTL.day,
+    lookupFn: async (ids) => {
+      const [userId] = ids;
+
+      const blockedUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+        SELECT
+          ue."targetUserId" "id",
+          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
+        FROM "UserEngagement" ue
+        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+      `;
+
+      return { [userId]: blockedUsers };
+    },
+  }
+);
+
+export const userBlockedByUsersCache = createCachedObject<{
+  userId: number;
+  blockedByUsers: number[];
+}>({
+  key: REDIS_KEYS.CACHES.BLOCKED_USERS,
+  idKey: 'userId',
+  ttl: CacheTTL.day,
+  lookupFn: async (ids) => {
+    const [userId] = ids;
+
+    const blockedByUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
+        SELECT
+          ue."userId" "id",
+          (SELECT u.username FROM "User" u WHERE u.id = ue."userId") "username"
+        FROM "UserEngagement" ue
+        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+      `;
+
+    return { [userId]: blockedByUsers };
   },
 });

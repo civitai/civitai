@@ -1,4 +1,8 @@
-import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   getUserContentOverview,
   getUserWithProfile,
@@ -13,6 +17,7 @@ import { Context } from '~/server/createContext';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
   try {
@@ -26,11 +31,22 @@ export const getUserContentOverviewHandler = async ({ input }: { input: GetUserP
     throw throwDbError(error);
   }
 };
-export const getUserProfileHandler = async ({ input }: { input: GetUserProfileSchema }) => {
+export const getUserProfileHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetUserProfileSchema;
+  ctx: Context;
+}) => {
   try {
     const user = await getUserWithProfile({
       username: input.username,
     });
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: user.id });
+      if (blocked) throw throwNotFoundError();
+    }
 
     return user;
   } catch (error) {

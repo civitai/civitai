@@ -15,6 +15,8 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.image.get.prefetch({ id });
+    await ssg?.image.getContestCollectionDetails.prefetch({ id });
+    await ssg?.hiddenPreferences.getHidden.prefetch();
   },
 });
 

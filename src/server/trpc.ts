@@ -112,7 +112,7 @@ export const isFlagProtected = (flag: keyof FeatureAccess) =>
     const features = getFeatureFlags({ user: ctx.user });
     if (!features[flag]) throw new TRPCError({ code: 'FORBIDDEN' });
 
-    return next({ ctx: { user: ctx.user as SessionUser } });
+    return next();
   });
 
 const isOnboarded = t.middleware(({ ctx, next }) => {

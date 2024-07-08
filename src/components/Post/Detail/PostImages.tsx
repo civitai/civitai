@@ -8,6 +8,8 @@ import {
   Alert,
   Group,
   Text,
+  Badge,
+  Tooltip,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -21,6 +23,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostContestCollectionItem } from '~/types/router';
+import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
+import { CollectionItemStatus } from '@prisma/client';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -30,14 +34,16 @@ export function PostImages({
   isLoading,
   collectionItems,
   isOwner,
+  isModerator,
 }: {
   postId: number;
   images: ImagesInfiniteModel[];
   isLoading?: boolean;
   collectionItems?: PostContestCollectionItem[];
   isOwner?: boolean;
+  isModerator?: boolean;
 }) {
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
 
   if (isLoading)
@@ -58,6 +64,9 @@ export function PostImages({
       {_images.map((image) => {
         const width = image.width ?? maxWidth;
         const imageCollectionItem = collectionItems?.find((item) => item.imageId === image.id);
+        const showImageCollectionBadge =
+          imageCollectionItem?.tag &&
+          (isOwner || isModerator || imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
 
         return (
           <Fragment key={image.id}>
@@ -65,6 +74,7 @@ export function PostImages({
               isOwner={isOwner}
               collectionItem={imageCollectionItem}
               itemLabel="image"
+              isModerator={isModerator}
             />
             <Paper
               key={image.id}
@@ -82,7 +92,14 @@ export function PostImages({
               <ImageGuard2 image={image} connectType="post" connectId={postId}>
                 {(safe) => (
                   <>
-                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    <Group spacing={4} className="absolute left-2 top-2 z-10">
+                      <ImageGuard2.BlurToggle />
+                      {showImageCollectionBadge && (
+                        <Badge variant="filled" color="gray">
+                          {imageCollectionItem?.tag?.name}
+                        </Badge>
+                      )}
+                    </Group>
                     <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                       {!safe ? (
@@ -107,14 +124,17 @@ export function PostImages({
                           }
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
-                          original={image.type === 'video'}
+                          // original={image.type === 'video'} -- Removed to fix site performance.
                           anim={safe}
+                          html5Controls={shouldDisplayHtmlControls(image)}
                         />
                       )}
                     </RoutedDialogLink>
                     <Reactions
                       p={4}
-                      className={classes.reactions}
+                      className={cx(classes.reactions, {
+                        [classes.reactionsWithControls]: shouldDisplayHtmlControls(image),
+                      })}
                       entityId={image.id}
                       entityType="image"
                       reactions={image.reactions}
@@ -148,11 +168,16 @@ const useStyles = createStyles((theme) => ({
     bottom: theme.spacing.sm,
     left: theme.spacing.sm,
     borderRadius: theme.radius.md,
-    background: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
-      0.8
-    ),
+    background:
+      theme.colorScheme === 'dark'
+        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+        : theme.colors.gray[0],
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+  },
+  reactionsWithControls: {
+    bottom: 'initial',
+    top: '32px',
+    left: '8px',
   },
 }));

@@ -13,17 +13,29 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getPagedData, getPagingData } from '~/server/utils/pagination-helpers';
+import { getPagingData } from '~/server/utils/pagination-helpers';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
-import { ReviewSort } from '~/server/common/enums';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
-export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
+export const getResourceReview = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   const result = await dbRead.resourceReview.findUnique({
     where: { id },
     select: {
@@ -32,6 +44,11 @@ export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?
     },
   });
   if (!result || result.model.status !== 'Published') throw throwNotFoundError();
+
+  if (userId && !isModerator) {
+    const blocked = await amIBlockedByUser({ userId, targetUserId: result.user.id });
+    if (blocked) throw throwNotFoundError();
+  }
 
   return result;
 };
@@ -266,11 +283,27 @@ type ResourceReviewRow = {
   imageCount: number;
   commentCount: number;
 };
-export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
+export const getPagedResourceReviews = async ({
+  input,
+  userId,
+}: {
+  input: GetResourceReviewPagedInput;
+  userId?: number;
+}) => {
   const { limit, page, modelVersionId, username } = input;
-  const skip = limit * (page - 1);
+  const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
   if (username) AND.push(Prisma.sql`u.username = ${username}`);
+
+  const excludedUsers = await Promise.all([
+    HiddenUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
+  if (excludedUserIds.length) {
+    AND.push(Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`);
+  }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(rr.id)::int as count

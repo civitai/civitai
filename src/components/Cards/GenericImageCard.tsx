@@ -8,6 +8,8 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function GenericImageCard({
   image: image,
@@ -23,6 +25,7 @@ export function GenericImageCard({
   const { classes: sharedClasses } = useCardStyles({
     aspectRatio: image.width && image.height ? image.width / image.height : 1,
   });
+  const currentUser = useCurrentUser();
 
   const url = (() => {
     if (!entityType || !entityId) return undefined;
@@ -60,6 +63,11 @@ export function GenericImageCard({
     }
   })();
 
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
+
   return (
     <FeedCard
       href={disabled ? undefined : url}
@@ -79,8 +87,8 @@ export function GenericImageCard({
                 <>
                   {!disabled && (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     </>
                   )}
                   {safe ? (
@@ -98,6 +106,8 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
+                      anim={shouldAnimate}
+                      skip={getSkipValue(image)}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}

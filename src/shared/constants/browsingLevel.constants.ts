@@ -51,6 +51,12 @@ export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArr
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
+// helpers
+export function onlySelectableLevels(level: number) {
+  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
+  return level;
+}
+
 export function getIsPublicBrowsingLevel(level: number) {
   const levels = parseBitwiseBrowsingLevel(level);
   return levels.every((level) => publicBrowsingLevelsArray.includes(level));
