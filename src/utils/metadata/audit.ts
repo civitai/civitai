@@ -110,7 +110,6 @@ const templates = [
   'age {age}',
   'age of {age}',
   '{age} age',
-  '{age} {old}',
   '{age} {years} {old}',
   '{age} {years}',
   '{age}th birthday',
