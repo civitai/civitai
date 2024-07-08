@@ -443,4 +443,36 @@ export function highlightInappropriate({
 
   return prompt;
 }
+
+export function cleanPrompt({
+  prompt,
+  negativePrompt,
+}: {
+  prompt?: string;
+  negativePrompt?: string;
+}) {
+  if (!prompt) return;
+  prompt = normalizeText(prompt); // Parse HTML Entities
+  negativePrompt = normalizeText(negativePrompt);
+
+  // Remove blocked nsfw words
+  for (const { word } of blockedNSFWRegex) {
+    prompt = promptWordReplace(prompt, word);
+  }
+
+  // Determine if the prompt is nsfw
+  const nsfw = includesNsfw(prompt);
+  if (nsfw) {
+    // Remove minor references
+    prompt = highlightMinor(prompt, () => '');
+    prompt = words.young.nouns.highlight(prompt, () => '');
+    if (negativePrompt)
+      negativePrompt = words.young.negativeNouns.highlight(negativePrompt ?? '', () => '');
+
+    // Remove poi references
+    prompt = words.poi.highlight(prompt, () => '');
+  }
+
+  return { prompt, negativePrompt };
+}
 // #endregion [highlight]
