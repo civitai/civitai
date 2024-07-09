@@ -62,7 +62,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
           </Stack>
         )}
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
-          <Button
+          {/* <Button
             component={NextLink}
             prefetch={false}
             href="/content/careers"
@@ -72,7 +72,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             px={mobile ? 5 : 'xs'}
           >
             Join Us 💼
-          </Button>
+          </Button> */}
           <Button
             component={NextLink}
             prefetch={false}
