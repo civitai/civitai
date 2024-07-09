@@ -16,7 +16,6 @@ import { deleteImageById, updateImageReportStatusByReason } from '~/server/servi
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
