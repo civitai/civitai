@@ -37,19 +37,6 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
       const promises = batch.map(({ prepareQuery, key, category }) => async () => {
         try {
           e.checkIfCanceled();
-
-          // TODO remove
-          // if (key !== 'new-comment') return;
-          if (
-            key === 'new-model-version' ||
-            key === 'new-review' ||
-            key === 'join-community' ||
-            key === 'model-like-milestone' ||
-            key === 'review-reminder'
-          ) {
-            return;
-          }
-
           log('sending', key, 'notifications');
           const [lastSent, setLastSent] = await getJobDate(
             'last-sent-notification-' + key,
