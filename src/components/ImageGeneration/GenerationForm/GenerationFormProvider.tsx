@@ -9,7 +9,7 @@ import { BaseModel, constants, generation, getGenerationConfig } from '~/server/
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
-  textToImageStepMetadataSchema,
+  textToImageStepRemixMetadataSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
@@ -23,6 +23,7 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -42,6 +43,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
+  .omit({ height: true, width: true })
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
@@ -70,7 +72,7 @@ const formSchema = textToImageParamsSchema
           });
         }
       }),
-    metadata: textToImageStepMetadataSchema.optional(),
+    remix: textToImageStepRemixMetadataSchema.optional(),
   })
   .refine(
     (data) => {
@@ -156,8 +158,6 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     model: checkpoint,
     resources,
     vae,
-    // metadata: data.metadata,
-    ...data.metadata?.params,
   };
 }
 
@@ -202,6 +202,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     storage: localStorage,
   });
 
+  // TODO.Briant - determine a better way to pipe the data into the form
   // #region [effects]
   useEffect(() => {
     if (storeData) {
@@ -216,7 +217,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           ? responseData.resources
           : [...(formData.resources ?? []), ...responseData.resources];
 
-      const data = formatGenerationData({ ...responseData, resources });
+      const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
+      const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
+
+      const data = { ...formatGenerationData({ ...responseData, resources }), workflow };
 
       setValues(runType === 'run' ? removeEmpty(data) : data);
     }

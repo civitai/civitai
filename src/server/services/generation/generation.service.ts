@@ -55,7 +55,7 @@ import {
 import { findClosest } from '~/utils/number-helpers';
 import {
   TextToImageParams,
-  TextToImageStepMetadata,
+  TextToImageStepRemixMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import dayjs from 'dayjs';
 
@@ -652,7 +652,7 @@ export async function getGenerationStatus() {
 export type GenerationData = {
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
-  metadata?: Partial<TextToImageStepMetadata>;
+  remix?: TextToImageStepRemixMetadata;
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
@@ -685,10 +685,8 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
       baseModel,
       clipSkip: resource.clipSkip ?? undefined,
     },
-    metadata: {
-      remix: {
-        versionId: resource.id,
-      },
+    remix: {
+      versionId: resource.id,
     },
   };
 };
@@ -815,10 +813,8 @@ const getImageGenerationData = async (id: number) => {
       aspectRatio,
       baseModel,
     },
-    metadata: {
-      remix: {
-        imageId: image.id,
-      },
+    remix: {
+      imageId: image.id,
     },
   };
 };

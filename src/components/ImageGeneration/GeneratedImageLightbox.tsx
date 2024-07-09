@@ -10,8 +10,8 @@ import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetail
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import {
-  NormalizedTextToImageImage,
-  NormalizedTextToImageResponse,
+  NormalizedGeneratedImage,
+  NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
 
 const TRANSITION_DURATION = 200;
@@ -20,8 +20,8 @@ export function GeneratedImageLightbox({
   image,
   request,
 }: {
-  image: NormalizedTextToImageImage;
-  request: NormalizedTextToImageResponse;
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
 }) {
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();

@@ -1,9 +1,17 @@
-import { formatTextToImageResponses } from '~/server/services/orchestrator/textToImage/textToImage';
+import { WorkflowStatus } from '@civitai/client';
+import { formatGeneratedImageResponses } from '~/server/services/orchestrator/common';
 
-export type NormalizedTextToImageResponse = AsyncReturnType<
-  typeof formatTextToImageResponses
+export type NormalizedGeneratedImageResponse = AsyncReturnType<
+  typeof formatGeneratedImageResponses
 >[number];
-export type NormalizedTextToImageStep = NormalizedTextToImageResponse['steps'][number];
-export type NormalizedTextToImageParams = NormalizedTextToImageStep['params'];
-export type NormalizedTextToImageResource = NormalizedTextToImageStep['resources'][number];
-export type NormalizedTextToImageImage = NormalizedTextToImageStep['images'][number];
+export type NormalizedGeneratedImageStep = NormalizedGeneratedImageResponse['steps'][number];
+export type NormalizedGeneratedImage = {
+  workflowId: string;
+  stepName: string;
+  jobId: string;
+  id: string;
+  status: WorkflowStatus;
+  seed?: number;
+  completed?: Date;
+  url: string;
+};

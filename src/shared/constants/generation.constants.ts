@@ -270,6 +270,11 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
+export function getSizeFromAspectRatio(aspectRatio: number, baseModel: string) {
+  const config = getGenerationConfig(baseModel);
+  return config.aspectRatios[aspectRatio];
+}
+
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
   width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);

@@ -86,7 +86,7 @@ export const generationRouter = router({
   // #endregion
   getWorkflowDefinitions: publicProcedure.query(() =>
     getWorkflowDefinitions().then((res) =>
-      res.filter((x) => x.enabled !== false).map(({ key, name }) => ({ key, name }))
+      res.filter((x) => x.enabled !== false).map(({ type, key, name }) => ({ type, key, name }))
     )
   ),
   getWorkflowDefinition: publicProcedure.input(z.object({ key: z.string() })).query(({ input }) =>

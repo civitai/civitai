@@ -533,6 +533,7 @@ export const generation = {
   samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
   lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
+    workflowKey: 'txt2img',
     cfgScale: 7,
     steps: 25,
     sampler: 'DPM++ 2M Karras',

@@ -4,7 +4,6 @@ import {
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
-import { NormalizedTextToImageParams } from '~/server/services/orchestrator';
 import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
 export function GenerationDetails({
@@ -66,7 +65,7 @@ export function GenerationDetails({
 
 type Props = Omit<DescriptionTableProps, 'items'> & {
   label: string;
-  params: Partial<NormalizedTextToImageParams>;
+  params: Record<string, unknown>;
   upsideDown?: boolean;
   controlProps?: AccordionControlProps;
 };

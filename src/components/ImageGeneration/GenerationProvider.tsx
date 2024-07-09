@@ -10,8 +10,8 @@ import { useDebouncer } from '~/utils/debouncer';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { UserTier } from '~/server/schema/user.schema';
 import {
-  NormalizedTextToImageImage,
-  NormalizedTextToImageResponse,
+  NormalizedGeneratedImage,
+  NormalizedGeneratedImageResponse,
 } from '~/server/services/orchestrator';
 import { WorkflowStatus } from '@civitai/client';
 import { isDefined } from '~/utils/type-guards';
@@ -26,7 +26,7 @@ type GenerationState = {
     quantity: number;
     status: WorkflowStatus;
   }[];
-  latestImage?: NormalizedTextToImageImage;
+  latestImage?: NormalizedGeneratedImage;
   queueStatus?: WorkflowStatus;
   requestLimit: number;
   requestsRemaining: number;
@@ -66,13 +66,13 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
-  const [queued, setQueued] = useState<NormalizedTextToImageResponse[]>([]);
+  const [queued, setQueued] = useState<NormalizedGeneratedImageResponse[]>([]);
   const pendingProcessingQueued = requests.filter(
     (request) =>
       POLLABLE_STATUSES.includes(request.status) || queued.some((x) => x.id === request.id)
   );
 
-  const handleSetQueued = (cb: (draft: NormalizedTextToImageResponse[]) => void) =>
+  const handleSetQueued = (cb: (draft: NormalizedGeneratedImageResponse[]) => void) =>
     setQueued(produce(cb));
 
   const deleteQueueItem = (id: string) => {
@@ -82,7 +82,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     });
   };
 
-  const setQueueItem = (request: NormalizedTextToImageResponse) => {
+  const setQueueItem = (request: NormalizedGeneratedImageResponse) => {
     handleSetQueued((draft) => {
       const index = draft.findIndex((x) => x.id === request.id);
       if (index > -1) draft[index] = request;

@@ -37,21 +37,22 @@ import { constants } from '~/server/common/constants';
 import { generationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import {
-  NormalizedTextToImageImage,
-  NormalizedTextToImageResponse,
-  NormalizedTextToImageStep,
+  NormalizedGeneratedImage,
+  NormalizedGeneratedImageResponse,
+  NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
+import { trpc } from '~/utils/trpc';
 
 export function GeneratedImage({
   image,
   request,
   step,
 }: {
-  image: NormalizedTextToImageImage;
-  request: NormalizedTextToImageResponse;
-  step: NormalizedTextToImageStep;
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
+  step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
@@ -60,6 +61,9 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+
+  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
 
   // if (request.id.indexOf('-') !== request.id.lastIndexOf('-')) {
   //   console.log({ workflowId: request.id, stepName: step.name, imageId: image.id, selected });
@@ -86,14 +90,19 @@ export function GeneratedImage({
     });
   };
 
-  const handleGenerate = () => {
-    generationStore.setData({ ...step, params: { ...step.params, seed: undefined } });
+  const handleGenerate = ({ seed }: { seed?: number } = {}) => {
+    generationStore.setData({
+      resources: step.resources,
+      params: { ...step.params, seed, workflow: 'txt2img' },
+    });
   };
 
-  const handleGenerateWithSeed = () => {
+  const handleGenerateWithSeed = () => handleGenerate({ seed: image.seed ?? step.params.seed });
+
+  const handleSelectWorkflow = (workflow: string) => {
     generationStore.setData({
-      ...step,
-      params: { ...step.params, seed: image.seed ?? step.params.seed },
+      resources: step.resources,
+      params: { ...step.params, seed: undefined, workflow, image: image.url },
     });
   };
 
@@ -218,7 +227,7 @@ export function GeneratedImage({
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item
-                  onClick={handleGenerate}
+                  onClick={() => handleGenerate()}
                   icon={<IconArrowsShuffle size={14} stroke={1.5} />}
                 >
                   Remix
@@ -236,14 +245,20 @@ export function GeneratedImage({
                 >
                   Delete
                 </Menu.Item>
-                <Menu.Divider />
-                <Menu.Label>Coming soon</Menu.Label>
-                <Menu.Item disabled icon={<IconArrowsShuffle size={14} stroke={1.5} />}>
-                  Create variant
-                </Menu.Item>
-                <Menu.Item disabled icon={<IconWindowMaximize size={14} stroke={1.5} />}>
-                  Upscale
-                </Menu.Item>
+                {!!img2imgWorkflows?.length && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Label>Image-to-image workflows</Menu.Label>
+                    {img2imgWorkflows?.map((workflow) => (
+                      <Menu.Item
+                        key={workflow.key}
+                        onClick={() => handleSelectWorkflow(workflow.key)}
+                      >
+                        {workflow.name}
+                      </Menu.Item>
+                    ))}
+                  </>
+                )}
                 <Menu.Divider />
                 <Menu.Label>System</Menu.Label>
                 <Menu.Item

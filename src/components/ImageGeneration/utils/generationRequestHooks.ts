@@ -8,24 +8,26 @@ import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflow
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import { TextToImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
+import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
+import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
-import { getTextToImageRequests } from '~/server/services/orchestrator/textToImage/textToImage';
 import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 
-type InfiniteTextToImageRequests = InfiniteData<AsyncReturnType<typeof getTextToImageRequests>>;
+type InfiniteTextToImageRequests = InfiniteData<
+  AsyncReturnType<typeof queryGeneratedImageWorkflows>
+>;
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean }
 ) {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.orchestrator.getTextToImageRequests.useInfiniteQuery(input ?? {}, {
+  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(input ?? {}, {
     getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
     enabled: !!currentUser,
     ...options,
@@ -70,7 +72,7 @@ export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQ
 }
 
 function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => void) {
-  const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
   // const test = queryClient.getQueriesData({ queryKey, exact: false })
   queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
     produce(state, (old?: InfiniteTextToImageRequests) => {
@@ -81,7 +83,7 @@ function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => vo
 }
 
 export function useSubmitCreateImage() {
-  return trpc.orchestrator.createTextToImage.useMutation({
+  return trpc.orchestrator.generateImage.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests((old) => {
         old.pages[0].items.unshift(data);
@@ -147,7 +149,7 @@ export function useCancelTextToImageRequest() {
 }
 
 export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {
-  const queryKey = getQueryKey(trpc.orchestrator.getTextToImageRequests);
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
   const { updateSteps, isLoading } = useUpdateWorkflowSteps({
     queryKey,
     onSuccess: options?.onSuccess,
@@ -186,7 +188,7 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
       []
     );
 
-    updateSteps<TextToImageStepMetadata>(data, (draft, metadata) => {
+    updateSteps<GeneratedImageStepMetadata>(data, (draft, metadata) => {
       Object.keys(metadata.images ?? {}).map((imageId) => {
         const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
         const images = draft.images ?? {};

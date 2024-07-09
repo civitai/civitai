@@ -45,8 +45,8 @@ import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import {
-  NormalizedTextToImageResponse,
-  NormalizedTextToImageStep,
+  NormalizedGeneratedImageResponse,
+  NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { WorkflowStatus } from '@civitai/client';
 import {
@@ -69,8 +69,8 @@ export function QueueItem({
   request,
   step,
 }: {
-  request: NormalizedTextToImageResponse;
-  step: NormalizedTextToImageStep;
+  request: NormalizedGeneratedImageResponse;
+  step: NormalizedGeneratedImageStep;
 }) {
   const { classes, cx } = useStyle();
 
@@ -119,7 +119,10 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    generationStore.setData({ ...step, params: { ...step.params, seed: undefined } });
+    generationStore.setData({
+      resources: step.resources,
+      params: { ...step.params, seed: undefined },
+    });
   };
 
   const { prompt, ...details } = params;

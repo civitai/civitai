@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import { textToImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { generateImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -31,13 +31,15 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const query = useMemo(() => {
     const { model, resources = [], vae, ...params } = watched;
-    return textToImageWhatIfSchema.safeParse({
-      ...params,
-      prompt: '',
-      negativePrompt: '',
-      seed: undefined,
+    return generateImageWhatIfSchema.safeParse({
       // resources: [defaultModel.id],
       resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      params: {
+        ...params,
+        prompt: undefined,
+        negativePrompt: undefined,
+        seed: undefined,
+      },
     });
   }, [watched, defaultModel.id]);
 
@@ -48,7 +50,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const [debounced] = useDebouncedValue(query, 100);
 
-  const result = trpc.orchestrator.textToImageWhatIf.useQuery(
+  const result = trpc.orchestrator.generateImageWhatIf.useQuery(
     debounced.success ? debounced.data : ({} as any),
     {
       enabled: debounced && debounced.success && enabled,

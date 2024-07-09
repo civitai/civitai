@@ -61,7 +61,11 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { getIsSdxl, getWorkflowDefinitionFeatures } from '~/shared/constants/generation.constants';
+import {
+  getIsSdxl,
+  getSizeFromAspectRatio,
+  getWorkflowDefinitionFeatures,
+} from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -83,26 +87,40 @@ import {
   useTextToImageWhatIfContext,
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
-import { workflowDefinitions } from '~/server/services/orchestrator/types';
+import { WorkflowDefinitionType, workflowDefinitions } from '~/server/services/orchestrator/types';
+import { isProd } from '~/env/other';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
-  // const utils = trpc.useUtils();
-  // const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
-  //   onSuccess: () => {
-  //     utils.generation.getWorkflowDefinition.invalidate();
-  //   },
-  // });
-  // const handleSetDefinitions = () => {
-  //   for (const item of workflowDefinitions) {
-  //     mutate(item);
-  //   }
-  // };
+  const utils = trpc.useUtils();
+
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.generation.getWorkflowDefinitions.useQuery();
+
+  const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
+    onSuccess: () => {
+      utils.generation.getWorkflowDefinitions.invalidate();
+      utils.generation.getWorkflowDefinition.invalidate();
+    },
+  });
+  const handleSetDefinitions = () => {
+    for (const item of workflowDefinitions) {
+      mutate(item);
+    }
+  };
 
   return (
     <IsClient>
-      {/* <Button onClick={handleSetDefinitions}>Set</Button> */}
+      {!isLoading && !data && currentUser?.isModerator && (
+        <div className="p-3">
+          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
+        </div>
+      )}
+
+      {/* <div className="p-3">
+        <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
+      </div> */}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
@@ -132,7 +150,10 @@ export function GenerationFormContent() {
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
 
-  const [key, setKey] = useLocalStorage({ key: 'workflow-definition', defaultValue: 'txt2img' });
+  // const [key, setKey] = useLocalStorage({ key: 'workflow-definition', defaultValue: 'txt2img' });
+  const key = form.watch('workflow') ?? 'txt2img';
+  const workflowType = key?.split('-')?.[0] as WorkflowDefinitionType;
+
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
   const { data: workflowDefinition } = trpc.generation.getWorkflowDefinition.useQuery(
@@ -201,10 +222,10 @@ export function GenerationFormContent() {
       return;
     }
 
-    const { cost } = useCostStore.getState();
-    if (!cost) return;
+    const { cost = 0 } = useCostStore.getState();
 
-    const { model, resources: additionalResources, vae, metadata, ...params } = data;
+    const { model, resources: additionalResources, vae, remix, ...params } = data;
+    const { width, height } = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
 
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
@@ -213,7 +234,7 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        await mutateAsync({ resources, params, metadata, workflowKey: key });
+        await mutateAsync({ resources, params: { ...params, width, height }, remix });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
@@ -255,9 +276,9 @@ export function GenerationFormContent() {
         pt={0}
         className="flex flex-col gap-2 px-3"
       >
-        <SelectWrapper
-          value={key}
-          onChange={(value) => setKey(value)}
+        <InputSelect
+          label="Workflow"
+          name="workflow"
           data={workflowDefinitions?.map(({ key, name }) => ({ label: name, value: key })) ?? []}
           loading={loadingWorkflows}
         />

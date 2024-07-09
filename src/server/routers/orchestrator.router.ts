@@ -1,22 +1,19 @@
 import { z } from 'zod';
 import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/workflows.schema';
 import {
-  textToImageCreateSchema,
-  textToImageWhatIfSchema,
+  generateImageSchema,
+  generateImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   createTextToImage,
-  whatIfTextToImage,
-  getTextToImageRequests,
+  createTextToImageStep,
 } from '~/server/services/orchestrator/textToImage/textToImage';
-import { cancelWorkflow, deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import {
-  guardedProcedure,
-  middleware,
-  protectedProcedure,
-  publicProcedure,
-  router,
-} from '~/server/trpc';
+  cancelWorkflow,
+  deleteWorkflow,
+  submitWorkflow,
+} from '~/server/services/orchestrator/workflows';
+import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { TRPCError } from '@trpc/server';
@@ -27,7 +24,9 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
 import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
-import { createComfy } from '~/server/services/orchestrator/comfy/comfy';
+import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
+import dayjs from 'dayjs';
+import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -71,13 +70,16 @@ export const orchestratorRouter = router({
   }),
   // #endregion
 
-  // #region [image]
-  createImage: orchestratorGuardedProcedure
-    .input(textToImageCreateSchema)
+  // #region [generated images]
+  queryGeneratedImages: orchestratorProcedure
+    .input(workflowQuerySchema)
+    .query(({ ctx, input }) => queryGeneratedImageWorkflows({ ...input, token: ctx.token })),
+  generateImage: orchestratorGuardedProcedure
+    .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
-        if (input.workflowKey === 'text2img') return await createTextToImage(args);
+        if (input.params.workflow === 'txt2img') return await createTextToImage(args);
         else return await createComfy(args);
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
@@ -93,35 +95,85 @@ export const orchestratorRouter = router({
         throw e;
       }
     }),
+  generateImageWhatIf: orchestratorGuardedProcedure
+    .input(generateImageWhatIfSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(async ({ ctx, input }) => {
+      const args = {
+        ...input,
+        resources: input.resources.map((id) => ({ id, strength: 1 })),
+        user: ctx.user,
+        token: ctx.token,
+      };
+
+      let step: any;
+      if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
+      else step = await createComfyStep(args);
+
+      const workflow = await submitWorkflow({
+        token: args.token,
+        body: {
+          steps: [step],
+        },
+      });
+
+      let cost = 0,
+        ready = true,
+        eta = dayjs().add(10, 'minutes').toDate(),
+        position = 0;
+
+      for (const step of workflow.steps ?? []) {
+        for (const job of step.jobs ?? []) {
+          cost += job.cost;
+
+          const { queuePosition } = job;
+          if (!queuePosition) continue;
+
+          const { precedingJobs, startAt, support } = queuePosition;
+          if (support !== 'available' && ready) ready = false;
+          if (precedingJobs && precedingJobs < position) {
+            position = precedingJobs;
+            if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
+          }
+        }
+      }
+
+      return {
+        cost: Math.ceil(cost),
+        ready,
+        eta,
+        position,
+      };
+    }),
   // #endregion
 
   // #region [textToImage]
-  getTextToImageRequests: orchestratorProcedure
-    .input(workflowQuerySchema)
-    .query(({ ctx, input }) => getTextToImageRequests({ ...input, token: ctx.token })),
-  textToImageWhatIf: orchestratorProcedure
-    .input(textToImageWhatIfSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-    .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user, token: ctx.token })),
-  createTextToImage: orchestratorGuardedProcedure
-    .input(textToImageCreateSchema)
-    .mutation(async ({ ctx, input }) => {
-      try {
-        return await createTextToImage({ ...input, user: ctx.user, token: ctx.token });
-      } catch (e) {
-        if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
-          await reportProhibitedRequestHandler({
-            input: {
-              prompt: input.params.prompt,
-              negativePrompt: input.params.negativePrompt,
-              source: 'External',
-            },
-            ctx,
-          });
-        }
-        throw e;
-      }
-    }),
+  // getTextToImageRequests: orchestratorProcedure
+  //   .input(workflowQuerySchema)
+  //   .query(({ ctx, input }) => getTextToImageRequests({ ...input, token: ctx.token })),
+  // textToImageWhatIf: orchestratorProcedure
+  //   .input(imageWhatIfSchema)
+  //   .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+  //   .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user, token: ctx.token })),
+  // createTextToImage: orchestratorGuardedProcedure
+  //   .input(generateImageSchema)
+  //   .mutation(async ({ ctx, input }) => {
+  //     try {
+  //       return await createTextToImage({ ...input, user: ctx.user, token: ctx.token });
+  //     } catch (e) {
+  //       if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
+  //         await reportProhibitedRequestHandler({
+  //           input: {
+  //             prompt: input.params.prompt,
+  //             negativePrompt: input.params.negativePrompt,
+  //             source: 'External',
+  //           },
+  //           ctx,
+  //         });
+  //       }
+  //       throw e;
+  //     }
+  //   }),
   // #endregion
 
   // #region [image training]

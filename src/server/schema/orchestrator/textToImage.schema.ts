@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { stripChecksAndEffects } from '~/utils/zod-helpers';
 
 // #region [step input]
+const workflowKeySchema = z.string().default('txt2img');
+
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z
@@ -21,30 +22,26 @@ export const textToImageParamsSchema = z.object({
   clipSkip: z.coerce.number().default(1),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
-  nsfw: z.boolean().optional(),
-  draft: z.boolean().optional(),
+  nsfw: z.boolean().default(false),
+  draft: z.boolean().default(false),
   aspectRatio: z.string(),
   baseModel: z.enum(baseModelSetTypes),
-  width: z.number().optional(),
-  height: z.number().optional(),
+  width: z.number(),
+  height: z.number(),
   // temp props?
   denoise: z.number().optional(), // tODO - determine if this should go elsewhere
   image: z.string().optional(),
   upscale: z.number().optional(),
-});
-
-export const textToImageWhatIfSchema = stripChecksAndEffects(textToImageParamsSchema).extend({
-  resources: z.number().array().min(1),
-  workflowKey: z.string().default('txt2img'),
+  workflow: workflowKeySchema,
 });
 // #endregion
 
 // #region [step metadata]
-export type TextToImageStepParamsMetadata = z.infer<typeof textToImageStepParamsMetadataSchema>;
-const textToImageStepParamsMetadataSchema = textToImageParamsSchema.partial();
+// export type ImageCreateParamsMetadata = z.infer<typeof imageCreateParamsMetadataSchema>;
+// const imageCreateParamsMetadataSchema = textToImageParamsSchema.partial();
 
 export type TextToImageStepRemixMetadata = z.infer<typeof textToImageStepRemixMetadataSchema>;
-const textToImageStepRemixMetadataSchema = z.object({
+export const textToImageStepRemixMetadataSchema = z.object({
   versionId: z.number().optional(),
   imageId: z.number().optional(),
 });
@@ -58,22 +55,30 @@ const textToImageStepImageMetadataSchema = z.object({
 });
 
 /**
-  - params is to keep track of properties that are potentially lost when submitting generation data.
-  - remix to track the id of the resource or image used to initialize the generation
   - images to track comments, feedback, hidden, etc...
+  - params is to keep track of the original user input
+  - remix to track the id of the resource or image used to initialize the generation
 */
-export type TextToImageStepMetadata = z.infer<typeof textToImageStepMetadataSchema>;
-export const textToImageStepMetadataSchema = z.object({
-  params: textToImageStepParamsMetadataSchema.optional(),
+export type GeneratedImageStepMetadata = z.infer<typeof generatedImageStepMetadataSchema>;
+export const generatedImageStepMetadataSchema = z.object({
+  params: textToImageParamsSchema.optional(),
+  resources: workflowResourceSchema.array().optional(),
   remix: textToImageStepRemixMetadataSchema.optional(),
   images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
 });
 // #endregion
 
-export const textToImageCreateSchema = z.object({
-  workflowKey: z.string().default('txt2img'),
+export const generateImageSchema = z.object({
   params: textToImageParamsSchema,
   resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),
-  metadata: textToImageStepMetadataSchema.optional(),
+  remix: textToImageStepRemixMetadataSchema.optional(),
+});
+
+export const generateImageWhatIfSchema = generateImageSchema.extend({
+  resources: z.number().array().min(1),
+  params: textToImageParamsSchema.extend({
+    prompt: z.string().default('what if'),
+    negativePrompt: z.string().optional(),
+  }),
 });

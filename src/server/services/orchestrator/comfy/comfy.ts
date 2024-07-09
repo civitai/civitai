@@ -3,67 +3,63 @@ import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
-import { textToImageCreateSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   applyResources,
   getWorkflowDefinition,
   populateWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
-  generationParamsToOrchestrator,
-  validateGenerationResources,
+  formatGeneratedImageResponses,
+  parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
+import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
 
-export async function createComfyStep({
-  user,
-  token,
-  ...input
-}: z.infer<typeof textToImageCreateSchema> & {
-  user: SessionUser;
-  token: string;
-}) {
-  const { resources, injectable, status } = await validateGenerationResources({
-    user,
-    ...input,
-  });
+export async function createComfyStep(
+  input: z.infer<typeof generateImageSchema> & {
+    user: SessionUser;
+  }
+) {
+  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
+  const { resources, params } = await parseGenerateImageInput({ ...input, workflowDefinition });
 
-  const workflowDefinition = await getWorkflowDefinition(input.workflowKey);
-  const { params, ...mapped } = await generationParamsToOrchestrator({
-    workflowDefinition,
-    params: input.params,
-    resources,
-    injectable,
-    status,
-    user,
-  });
-
+  // additional params modifications
   const { sampler, scheduler } =
     samplersToComfySamplers[params.sampler as keyof typeof samplersToComfySamplers];
 
-  const allResources = [...resources, ...mapped.resourcesToInject];
-  const comfyWorkflow = await populateWorkflowDefinition(input.workflowKey, {
+  const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
     ...params,
     sampler,
     scheduler,
     seed: params.seed ?? -1,
   });
-  applyResources(comfyWorkflow, allResources);
-  const step: ComfyStepTemplate = { $type: 'comfy', input: { comfyWorkflow } };
+  applyResources(comfyWorkflow, resources);
 
-  return { step, resources, injectable, tags: [workflowDefinition.key] };
+  return {
+    $type: 'comfy',
+    input: {
+      quantity: params.quantity,
+      comfyWorkflow,
+    },
+    metadata: {
+      resources: input.resources,
+      params: input.params,
+      remix: input.remix,
+    },
+  } as ComfyStepTemplate;
 }
 
 export async function createComfy(
-  args: z.infer<typeof textToImageCreateSchema> & { user: SessionUser; token: string }
+  args: z.infer<typeof generateImageSchema> & { user: SessionUser; token: string }
 ) {
   const { user } = args;
-  const { step, resources, injectable, tags } = await createComfyStep(args);
-  const workflow = await submitWorkflow({
+  const step = await createComfyStep(args);
+  const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.IMAGE, ...tags],
+      tags: [WORKFLOW_TAGS.IMAGE, args.params.workflow, ...args.tags],
       steps: [step],
       callbacks: [
         {
@@ -72,6 +68,11 @@ export async function createComfy(
         },
       ],
     },
-  });
+  })) as TextToImageResponse;
+
   console.dir(workflow, { depth: null });
+
+  // TODO - have this use `formatComfyStep`
+  const [formatted] = await formatGeneratedImageResponses([workflow]);
+  return formatted;
 }
