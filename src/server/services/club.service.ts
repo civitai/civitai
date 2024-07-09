@@ -266,7 +266,9 @@ export const updateClub = async ({
       await notifDbWrite.cancellableQuery(Prisma.sql`
         INSERT INTO "PendingNotification" (key, type, category, users, details)
         VALUES
-          (${reqData.key}, ${reqData.type}, 'Update', ${reqUsers}, ${reqData.details})
+          (${reqData.key}, ${reqData.type}, 'Update', ${'{' + reqUsers.join(',') + '}'}, ${
+        reqData.details
+      })
         ON CONFLICT DO NOTHING
       `);
     }

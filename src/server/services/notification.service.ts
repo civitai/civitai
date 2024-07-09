@@ -37,6 +37,7 @@ export const createNotification = async (
   const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
     where: { userId: { in: data.userIds }, type: data.type },
   });
+  // TODO fix below for multiple userIds
   const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId: data.userId }),
     BlockedByUsers.getCached({ userId: data.userId }),
@@ -54,7 +55,7 @@ export const createNotification = async (
       (${data.key},
        ${data.type},
        ${data.category}::"NotificationCategory",
-       ${targets},
+       ${'{' + targets.join(',') + '}'},
        ${JSON.stringify(data.details)}::jsonb)
     ON CONFLICT DO NOTHING
   `);
