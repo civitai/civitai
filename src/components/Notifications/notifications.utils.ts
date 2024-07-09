@@ -141,7 +141,8 @@ export const useNotificationSignal = () => {
           body: JSON.stringify(updated),
         });
         if (newUpdatedResp.ok) {
-          newUpdated = await newUpdatedResp.json();
+          const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
+          newUpdated = { ...newUpdated, ...newUpdatedJson };
         }
       } catch {}
 
