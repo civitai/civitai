@@ -56,12 +56,6 @@ export const getInfiniteBountiesHandler = async ({
   const limit = input.limit + 1 ?? 10;
   const userId = input.userId ?? user?.id;
 
-  const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
-    (u) => u.id
-  );
-  if (blockedByUsers.length)
-    input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedByUsers];
-
   try {
     const items = await getAllBounties({
       input: { ...input, limit, userId },
