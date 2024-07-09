@@ -17,7 +17,7 @@ import { useClickOutside, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -52,14 +52,17 @@ export function NotificationBell() {
     fetchNextPage,
     isRefetching,
   } = useQueryNotifications(
-    { limit: 20, category: selectedCategory, unread: hideRead ? true : undefined },
-    { enabled: opened }
+    { limit: 20, category: selectedCategory }, // unread: hideRead ? true : undefined
+    { enabled: opened, keepPreviousData: false }
+  );
+
+  const notificationsFiltered = useMemo(
+    () => (notifications ?? []).filter((n) => (hideRead ? n.read === false : true)),
+    [hideRead, notifications]
   );
 
   const readNotificationMutation = useMarkReadNotification();
   const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
-
-  // TODO loader on category change, "loading more" for infinite
 
   return (
     <>
@@ -126,7 +129,7 @@ export function NotificationBell() {
                 label="Hide Read"
                 labelPosition="left"
                 checked={hideRead}
-                onChange={() => setHideRead((v) => !v)}
+                onChange={(e) => setHideRead(e.currentTarget.checked)}
               />
               <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
                 <ActionIcon
@@ -160,10 +163,10 @@ export function NotificationBell() {
             <Center p="sm">
               <Loader />
             </Center>
-          ) : notifications && notifications.length > 0 ? (
+          ) : notificationsFiltered && notificationsFiltered.length > 0 ? (
             <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
               <NotificationList
-                items={notifications}
+                items={notificationsFiltered}
                 onItemClick={(notification, keepOpened) => {
                   if (!notification.read)
                     readNotificationMutation.mutate({

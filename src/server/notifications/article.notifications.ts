@@ -120,7 +120,7 @@ export const articleNotifications = createNotificationProcessor({
     displayName: 'New articles from followed users',
     category: 'Update',
     prepareMessage: ({ details }) => ({
-      message: `${details.username} published a new ${details.articleCategory}: "${details.articleTitle}"`,
+      message: `${details.username} published a new ${details.articleCategory} article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}`,
     }),
     prepareQuery: ({ lastSent }) => `

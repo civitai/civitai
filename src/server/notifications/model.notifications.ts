@@ -261,7 +261,7 @@ export const modelNotifications = createNotificationProcessor({
       message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
-    prepareQuery: () => `
+    prepareQuery: ({ lastSent }) => `
       with to_add AS (
         SELECT DISTINCT
           m."userId",
@@ -272,7 +272,7 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
-        AND m."updatedAt" < now() - INTERVAL '23 days'
+        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '23 days' AND NOW() - INTERVAL '23 days'
       )
       SELECT
         concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",

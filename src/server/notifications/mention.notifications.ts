@@ -13,9 +13,9 @@ export const mentionNotifications = createNotificationProcessor({
       if (isCommentV2) {
         const url = threadUrlMap(details);
         return {
-          message: `${details.username} mentioned you in a comment on a ${
-            details.threadType === 'comment' ? 'comment thread' : details.threadType
-          }`,
+          message: `${details.username} mentioned you in a comment on a${
+            ['a', 'e', 'i', 'o', 'u'].includes(details.threadType[0]) ? 'n' : ''
+          } ${details.threadType === 'comment' ? 'comment thread' : details.threadType}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -36,6 +36,7 @@ export const mentionNotifications = createNotificationProcessor({
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
           JSONB_BUILD_OBJECT(
+            'version', 2,
             'mentionedIn', 'comment',
             'commentId', c.id,
             'threadId', c."threadId",
