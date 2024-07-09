@@ -508,6 +508,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
     dbWrite.account.deleteMany({ where: { userId: user.id } }),
     dbWrite.session.deleteMany({ where: { userId: user.id } }),
+    dbWrite.userEngagement.deleteMany({
+      where: { OR: [{ userId: user.id, targetUserId: user.id }] },
+    }),
     dbWrite.user.update({
       where: { id: user.id },
       data: { deletedAt: new Date(), email: null, username: null },

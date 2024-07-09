@@ -53,7 +53,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -402,7 +402,10 @@ export function ModelCard({ data, forceInView }: Props) {
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
                             anim={shouldAnimate}
-                            skip={shouldAnimate === false ? 2 : undefined}
+                            skip={getSkipValue({
+                              type: image.type,
+                              metadata: image.metadata as VideoMetadata,
+                            })}
                             contain
                           />
                         </div>

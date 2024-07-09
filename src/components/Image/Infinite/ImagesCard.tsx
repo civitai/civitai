@@ -38,7 +38,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
@@ -169,7 +169,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                               : image.name ?? undefined
                           }
                           anim={shouldAnimate}
-                          skip={shouldAnimate === false ? 2 : undefined}
+                          skip={getSkipValue(image)}
                           type={image.type}
                           width={450}
                           placeholder="empty"
