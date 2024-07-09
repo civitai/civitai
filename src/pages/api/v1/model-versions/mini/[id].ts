@@ -74,6 +74,14 @@ export default MixedAuthEndpoint(async function handler(
 
   const baseUrl = getBaseUrl();
   const air = stringifyAIR(modelVersion)?.replace('pony', 'sdxl');
+  let downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
+    versionId: modelVersion.id,
+    primary: true,
+  })}`;
+  // if req url domain contains `api.`, strip /api/ from the download url
+  if (req.headers.host?.includes('api.')) {
+    downloadUrl = downloadUrl.replace('/api/', '/');
+  }
 
   const data = {
     air,
@@ -85,12 +93,7 @@ export default MixedAuthEndpoint(async function handler(
     hashes: {
       AutoV2: primaryFile.hash,
     },
-    downloadUrls: [
-      `${baseUrl}${createModelFileDownloadUrl({
-        versionId: modelVersion.id,
-        primary: true,
-      })}`,
-    ],
+    downloadUrls: [downloadUrl],
   };
   res.status(200).json(data);
 });
