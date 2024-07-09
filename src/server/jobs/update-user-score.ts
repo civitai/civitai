@@ -140,7 +140,7 @@ async function getReportedActionedScore(ctx: Context) {
   await getScores(ctx, 'reportsActioned')`
     SELECT
       "userId",
-      COUNT(id) as count
+      COUNT(id) * ${ctx.scoreMultipliers.reportsActioned} as score
     FROM "Report"
     WHERE status = 'Actioned'
     GROUP BY 1
