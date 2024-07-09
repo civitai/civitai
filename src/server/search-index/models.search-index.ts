@@ -143,6 +143,7 @@ const modelSelect = {
   name: true,
   type: true,
   nsfwLevel: true,
+  minor: true,
   status: true,
   createdAt: true,
   lastVersionAt: true,
@@ -240,7 +241,6 @@ const transformData = async ({
   const indexReadyRecords = models
     .map((modelRecord) => {
       const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
-
       const metrics = modelRecord.metrics[0] ?? {};
 
       const weightedRating =

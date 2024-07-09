@@ -517,8 +517,8 @@ function ResourceSelectCard({
                         alt={
                           image.meta
                             ? truncate((image.meta as ImageMetaProps).prompt, {
-                                length: constants.altTruncateLength,
-                              })
+                              length: constants.altTruncateLength,
+                            })
                             : image.name ?? undefined
                         }
                         type={image.type}
