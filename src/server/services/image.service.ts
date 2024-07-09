@@ -1488,6 +1488,7 @@ export const getImagesForModelVersion = async ({
 
   if (remainingModelVersionIds.length) {
     const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+        -- Get Community posts tied to the specific modelVersion via the post.
         WITH targets AS (
           SELECT
             id,
