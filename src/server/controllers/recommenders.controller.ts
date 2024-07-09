@@ -1,21 +1,25 @@
 import { MetricTimeframe, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { GetAssociatedResourcesInput, getAllModelsSchema } from '../schema/model.schema';
-import { Recommenders } from '../http/recommenders/recommenders.schema';
-import { UserPreferencesInput } from '../schema/base.schema';
 import { Context } from '~/server/createContext';
-import { getRecommendations } from '../services/recommenders.service';
-import { getModelsRaw } from '../services/model.service';
-import { getImagesForModelVersion } from '../services/image.service';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import { isModerator } from '~/server/routers/base.router';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { RecommendationRequest } from '~/server/schema/recommenders.schema';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getModelsRaw } from '~/server/services/model.service';
+import {
+  getRecommendations,
+  toggleResourceRecommendation,
+} from '~/server/services/recommenders.service';
+import { throwDbError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
-import { throwDbError } from '../utils/errorHandling';
 
 export const getAssociatedRecommendedResourcesCardDataHandler = async ({
   input,
   ctx,
 }: {
-  input: Recommenders.RecommendationRequest & UserPreferencesInput;
+  input: RecommendationRequest & UserPreferencesInput;
   ctx: Context;
 }) => {
   try {
@@ -30,18 +34,14 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
 
     if (!resourcesIds?.length) return [];
 
-    const period = MetricTimeframe.AllTime;
     const { cursor, ...modelInput } = getAllModelsSchema.parse({
       ...userPreferences,
       browsingLevel,
       modelVersionIds: resourcesIds,
-      period,
+      period: MetricTimeframe.AllTime,
     });
 
-    const { items: models } = await getModelsRaw({
-      user,
-      input: modelInput,
-    });
+    const { items: models } = await getModelsRaw({ user, input: modelInput });
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
     const images = !!modelVersionIds.length
@@ -58,18 +58,21 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
 
     const unavailableGenResources = await getUnavailableResources();
     const completeModels = models
-      .map(({ hashes, modelVersions, rank, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
+
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
+
         const canGenerate = !!version.covered && !unavailableGenResources.includes(version.id);
 
         return {
           ...model,
+          tags: tagsOnModels.map(({ tagId }) => tagId),
           hashes: hashes.map((h) => h.toLowerCase()),
           rank: {
             downloadCount: rank?.downloadCountAllTime ?? 0,
@@ -94,3 +97,22 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export function toggleResourceRecommendationHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return toggleResourceRecommendation({
+      resourceId: input.id,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+  } catch (e) {
+    if (e instanceof TRPCError) throw e;
+    throw throwDbError(e);
+  }
+}

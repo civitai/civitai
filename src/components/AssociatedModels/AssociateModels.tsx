@@ -52,7 +52,7 @@ export function AssociateModels({
   limit?: number;
 }) {
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [changed, setChanged] = useState(false);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 

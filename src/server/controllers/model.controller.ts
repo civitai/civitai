@@ -1253,7 +1253,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
 
     const unavailableGenResources = await getUnavailableResources();
     const completeModels = models
-      .map(({ hashes, modelVersions, rank, ...model }) => {
+      .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
@@ -1265,6 +1265,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
 
         return {
           ...model,
+          tags: tagsOnModels.map(({ tagId }) => tagId),
           hashes: hashes.map((h) => h.toLowerCase()),
           rank: {
             downloadCount: rank?.downloadCountAllTime ?? 0,

@@ -3,12 +3,12 @@ import type { AssociationType } from '@prisma/client';
 import { IconRocketOff } from '@tabler/icons-react';
 import React from 'react';
 
-import { ArticleAltCard } from '~/components/Article/Infinite/ArticleAltCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { ModelCard } from '~/components/Cards/ModelCard';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ModelCategoryCard } from '~/components/Model/Categories/ModelCategoryCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';
@@ -50,7 +50,7 @@ export function AssociatedModels({
           background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
         })}
       >
-        {({ columnWidth, columnCount }) => (
+        {({ columnCount }) => (
           <Stack pb={columnCount > 1 && data.length ? 20 : undefined}>
             <Group>
               <Title order={2}>{label}</Title>
@@ -69,20 +69,16 @@ export function AssociatedModels({
                 data={data}
                 render={({ data, ...props }) =>
                   data.resourceType === 'model' ? (
-                    <ModelCategoryCard
-                      data={data}
+                    <ModelCard
                       {...props}
+                      data={data}
                       data-activity="follow-suggestion:model"
+                      forceInView
                     />
                   ) : (
-                    <ArticleAltCard
-                      data={data}
-                      {...props}
-                      data-activity="follow-suggestion:article"
-                    />
+                    <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
                   )
                 }
-                height={columnWidth}
                 itemId={(x) => x.id}
               />
             ) : (

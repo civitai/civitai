@@ -1,7 +1,10 @@
 import { env } from '~/env/server.mjs';
 import { HttpCaller } from '~/server/http/httpCaller';
-import { Recommenders } from '~/server/http/recommenders/recommenders.schema';
 import { parseStringPromise, Builder } from 'xml2js';
+import {
+  RecommendationRequest,
+  recommendationResponseSchema,
+} from '~/server/schema/recommenders.schema';
 
 // DOCUMENTATION
 // https://github.com/civitai/rec-r2r
@@ -22,10 +25,10 @@ class RecommenderCaller extends HttpCaller {
     return RecommenderCaller.instance;
   }
 
-  async getResourceRecommendationForResource(params: Recommenders.RecommendationRequest) {
+  async getResourceRecommendationForResource(params: RecommendationRequest) {
     const response = await this.getRaw(`/recommendations/${params.modelVersionId}`);
     const json = await response.json();
-    return Recommenders.RecommendationResponseSchema.parse(json);
+    return recommendationResponseSchema.parse(json);
   }
 }
 

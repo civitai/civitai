@@ -1,11 +1,18 @@
-import { getAssociatedRecommendedResourcesCardDataHandler } from '../controllers/recommenders.controller';
-import { Recommenders } from '../http/recommenders/recommenders.schema';
-import { applyUserPreferences } from '../middleware.trpc';
-import { verifiedProcedure, router } from '~/server/trpc';
+import {
+  getAssociatedRecommendedResourcesCardDataHandler,
+  toggleResourceRecommendationHandler,
+} from '~/server/controllers/recommenders.controller';
+import { applyUserPreferences } from '~/server/middleware.trpc';
+import { getByIdSchema } from '~/server/schema/base.schema';
+import { recommendationRequestSchema } from '~/server/schema/recommenders.schema';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const recommendersRouter = router({
-  getResourceRecommendations: verifiedProcedure
-    .input(Recommenders.RecommendationRequestSchema)
+  getResourceRecommendations: publicProcedure
+    .input(recommendationRequestSchema)
     .use(applyUserPreferences)
     .query(getAssociatedRecommendedResourcesCardDataHandler),
+  toggleResourceRecommendations: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(toggleResourceRecommendationHandler),
 });
