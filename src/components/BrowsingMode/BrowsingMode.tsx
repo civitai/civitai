@@ -43,7 +43,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
 
   return (
     <div id="browsing-mode">
-      <Stack spacing="md" classNames="sm:min-w-96" py={"xl"}>
+      <Stack spacing="md" className="sm:min-w-96" py="xl">
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
