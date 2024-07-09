@@ -74,7 +74,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  onlySelectableLevels,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -565,6 +568,9 @@ export const getAllImages = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
+
+  // Exclude unselectable browsing levels
+  browsingLevel = onlySelectableLevels(browsingLevel);
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -1414,6 +1420,7 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
+  if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1473,56 +1480,54 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   const remainingModelVersionIds = modelVersionIds.filter(
     (x) => !images.some((i) => i.modelVersionId === x)
   );
 
-  // TODO: Re-implement community images once we figure out the slowness.
-  // if (remainingModelVersionIds.length) {
-  //   const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
-  //       WITH targets AS (
-  //         SELECT
-  //           id,
-  //           "modelVersionId",
-  //           row_num
-  //         FROM (
-  //           SELECT
-  //             ir."imageId" id,
-  //             ir."modelVersionId",
-  //             -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
-  //             row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
-  //           FROM "ImageResource" ir
-  //           JOIN "Image" i ON i.id = ir."imageId"
-  //           JOIN "Post" p ON p.id = i."postId"
-  //           JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-  //           WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
-  //             AND ${Prisma.join(imageWhere, ' AND ')}
-  //         ) ranked
-  //         WHERE ranked.row_num <= 20
-  //       )
-  //       SELECT
-  //         i.id,
-  //         i."userId",
-  //         i.name,
-  //         i.url,
-  //         i."nsfwLevel",
-  //         i.width,
-  //         i.height,
-  //         i.hash,
-  //         i.type,
-  //         i.metadata,
-  //         t."modelVersionId",
-  //         p."availability"
-  //         ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
-  //       FROM targets t
-  //       JOIN "Image" i ON i.id = t.id
-  //       JOIN "Post" p ON p.id = i."postId"
-  //       ORDER BY t.row_num
-  //     `;
-  //   images = [...images, ...communityImages];
-  // }
+  if (remainingModelVersionIds.length) {
+    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+        -- Get Community posts tied to the specific modelVersion via the post.
+        WITH targets AS (
+          SELECT
+            id,
+            "modelVersionId",
+            row_num
+          FROM (
+            SELECT
+              i.id,
+              p."modelVersionId",
+              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+            FROM "Image" i
+            JOIN "Post" p ON p.id = i."postId"
+            JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+            WHERE p."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+              AND ${Prisma.join(imageWhere, ' AND ')}
+          ) ranked
+          WHERE ranked.row_num <= 20
+        )
+        SELECT
+          i.id,
+          i."userId",
+          i.name,
+          i.url,
+          i."nsfwLevel",
+          i.width,
+          i.height,
+          i.hash,
+          i.type,
+          i.metadata,
+          t."modelVersionId",
+          p."availability"
+          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+        FROM targets t
+        JOIN "Image" i ON i.id = t.id
+        JOIN "Post" p ON p.id = i."postId"
+        ORDER BY t.row_num
+      `;
+    images = [...images, ...communityImages];
+  }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
@@ -1581,6 +1586,7 @@ export const getImagesForPosts = async ({
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   // }
 
+  if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);

@@ -1637,6 +1637,7 @@ model ApiKey {
 enum KeyScope {
   Read
   Write
+  Generate
 }
 
 model Comment {

@@ -84,7 +84,6 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -970,10 +969,6 @@ export const getModelsWithImagesAndModelVersions = async ({
 
   if (Object.keys(modelVersionWhere).length === 0) {
     modelVersionWhere = undefined;
-  }
-  const blockedBy = user ? await BlockedByUsers.getCached({ userId: user.id }) : [];
-  if (blockedBy.length > 0) {
-    input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedBy.map((u) => u.id)];
   }
 
   const { items, isPrivate, nextCursor } = await getModelsRaw({
