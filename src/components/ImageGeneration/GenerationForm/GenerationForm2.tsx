@@ -61,11 +61,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import {
-  getIsSdxl,
-  getSizeFromAspectRatio,
-  getWorkflowDefinitionFeatures,
-} from '~/shared/constants/generation.constants';
+import { getIsSdxl, getWorkflowDefinitionFeatures } from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -117,10 +113,6 @@ export function GenerationForm2() {
           <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
         </div>
       )}
-
-      {/* <div className="p-3">
-        <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-      </div> */}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
@@ -225,7 +217,6 @@ export function GenerationFormContent() {
     const { cost = 0 } = useCostStore.getState();
 
     const { model, resources: additionalResources, vae, remix, ...params } = data;
-    const { width, height } = getSizeFromAspectRatio(params.aspectRatio, params.baseModel);
 
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
@@ -234,7 +225,7 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        await mutateAsync({ resources, params: { ...params, width, height }, remix });
+        await mutateAsync({ resources, params, remix });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {

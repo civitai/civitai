@@ -253,8 +253,8 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio)
-    params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
+  // if (!params.aspectRatio)
+  //   params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
 
   // handle SDXL ClipSkip
   // I was made aware that SDXL only works with clipSkip 2
@@ -270,7 +270,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: number, baseModel: string) {
+export function getSizeFromAspectRatio(aspectRatio: number, baseModel?: string) {
   const config = getGenerationConfig(baseModel);
   return config.aspectRatios[aspectRatio];
 }

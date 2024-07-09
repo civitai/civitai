@@ -23,7 +23,7 @@ import {
 
 import { Currency } from '@prisma/client';
 import dayjs from 'dayjs';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -84,7 +84,11 @@ export function QueueItem({
   const { params, images, resources, cost } = step;
 
   const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
-  const processing = status === 'processing';
+  const [processing, setProcessing] = useState(status === 'processing');
+  useEffect(() => {
+    if (!processing && status === 'processing') setProcessing(true);
+    else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
+  }, [status]);
   // const failed = status && FAILED_STATUSES.includes(status);
 
   const deleteMutation = useDeleteTextToImageRequest();

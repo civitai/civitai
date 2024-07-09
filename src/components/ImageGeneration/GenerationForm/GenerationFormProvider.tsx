@@ -43,7 +43,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ height: true, width: true })
+  // .omit({ height: true, width: true })
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,

@@ -26,8 +26,8 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string(),
   baseModel: z.enum(baseModelSetTypes),
-  width: z.number(),
-  height: z.number(),
+  // width: z.number().optional(),
+  // height: z.number().optional(),
   // temp props?
   denoise: z.number().optional(), // tODO - determine if this should go elsewhere
   image: z.string().optional(),

@@ -227,16 +227,11 @@ export async function parseGenerateImageInput({
   return {
     resources: [...availableResources, ...resourcesToInject],
     params: {
+      ...params,
       quantity,
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
-      sampler: params.sampler,
-      steps: params.steps,
-      cfgScale: params.cfgScale,
-      seed: params.seed,
-      clipSkip: params.clipSkip,
-      denoise: params.denoise,
       width,
       height,
       // temp?
@@ -281,6 +276,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
   });
 }
 
+// TODO - remove this 30 days after launch
 function getTextToImageAirs(inputs: TextToImageInput[]) {
   return Object.entries(
     inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
@@ -298,13 +294,18 @@ function formatWorkflowStep(args: {
   resources: AirResourceData[];
 }) {
   const { step } = args;
-  switch (step.$type) {
-    case 'textToImage':
-      return formatTextToImageStep(args);
-    case 'comfy':
-      return formatComfyStep(args);
-    default:
-      throw new Error('failed to extract generation resources: unsupported workflow type');
+  try {
+    switch (step.$type) {
+      case 'textToImage':
+        return formatTextToImageStep(args);
+      case 'comfy':
+        return formatComfyStep(args);
+      default:
+        throw new Error('failed to extract generation resources: unsupported workflow type');
+    }
+  } catch (e) {
+    console.log({ ERRRRORORR: e });
+    throw e;
   }
 }
 
@@ -449,10 +450,15 @@ export function formatComfyStep({
       })
       .filter(isDefined) ?? [];
 
+  const { width, height } = getSizeFromAspectRatio(
+    Number(params?.aspectRatio ?? 0),
+    params?.baseModel
+  );
+
   return {
     $type: 'comfy' as const,
     name: step.name,
-    params: params!,
+    params: { ...params!, width, height },
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,

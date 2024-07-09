@@ -28,6 +28,8 @@ export async function queryWorkflows({
   const { data, error } = await clientQueryWorkflows({
     client,
     query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
+  }).catch((error) => {
+    throw error;
   });
   if (!data) throw error;
   const { next, items = [] } = data;
