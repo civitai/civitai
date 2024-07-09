@@ -80,7 +80,7 @@ export default MixedAuthEndpoint(async function handler(
   })}`;
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
-    downloadUrl = downloadUrl.replace('/api/', '/');
+    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
 
   const data = {
