@@ -8,7 +8,7 @@ import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
 
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 500;
 const log = createLogger('update-user-score');
 const jobKey = 'update-user-score';
 export const updateUserScore = createJob(
@@ -19,7 +19,7 @@ export const updateUserScore = createJob(
 
     // Build Context
     //-------------------------------------
-    const [lastUpdate, setLastUpdate] = await getJobDate(jobKey, new Date('2024-07-03'));
+    const [lastUpdate, setLastUpdate] = await getJobDate(jobKey);
     const ctx: Context = {
       db: dbWrite,
       ch: clickhouse,
@@ -27,34 +27,32 @@ export const updateUserScore = createJob(
       jobContext,
       scoreMultipliers: await getScoreMultipliers(),
       lastUpdate,
-      affected: new Set(),
-      addAffected: (id) => {
-        if (Array.isArray(id)) id.forEach((x) => ctx.affected.add(x));
-        else ctx.affected.add(id);
+      toUpdate: {},
+      setScore: (id, category, score) => {
+        if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
+        ctx.toUpdate[id][category] = Number(score);
       },
     };
 
     // Update scores
     //-------------------------------------
-    const tasks: Task[] = [];
-    const taskGenerators = {
-      getModelTasks,
-      getArticleTasks,
-      getImageTasks,
-      getUserTasks,
-      getReportActionedTasks,
-      getReportAgainstTasks,
+    const scoreFetchers = {
+      getModelScore,
+      getArticleScore,
+      getUserScore,
+      getReportedActionedScore,
+      getReportAgainstScore,
+      getImageScore,
     };
-    for (const [key, generator] of Object.entries(taskGenerators)) {
-      log('get tasks', key);
-      tasks.push(...(await generator(ctx)));
+    for (const [key, fetcher] of Object.entries(scoreFetchers)) {
+      log('getting score', key);
+      await fetcher(ctx);
     }
-    log('score update', tasks.length, 'tasks');
-    await limitConcurrency(tasks, 5);
 
     // Update score totals
     //-------------------------------------
     const totalTasks = await getUpdateTotalTasks(ctx);
+    log('updating scores', Object.keys(ctx.toUpdate).length, 'batches', totalTasks.length);
     await limitConcurrency(totalTasks, 5);
 
     await setLastUpdate();
@@ -71,167 +69,86 @@ type Context = {
   pg: AugmentedPool;
   jobContext: JobContext;
   scoreMultipliers: ScoreMultipliers;
-  addAffected: (id: number | number[]) => void;
-  affected: Set<number>;
+  toUpdate: Record<number, Partial<Record<ScoreCategory, number>>>;
+  setScore: (id: number, category: ScoreCategory, score: number) => void;
   lastUpdate: Date;
 };
 
-async function getModelTasks(ctx: Context) {
-  const affected = await getAffected(ctx)`
-    SELECT DISTINCT
-      m."userId" as id
+async function getModelScore(ctx: Context) {
+  await getScores(ctx, 'models')`
+    SELECT
+      m."userId",
+      (
+          SUM(mm."ratingCount") * ${ctx.scoreMultipliers.models.reviews}
+        + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
+        + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
+      ) as score
     FROM "ModelMetric" mm
     JOIN "Model" m ON m.id = mm."modelId"
-    WHERE mm."updatedAt" > '${ctx.lastUpdate}'
-    AND timeframe = 'AllTime';
+    WHERE mm.timeframe = 'AllTime'
+    GROUP BY 1
+    HAVING BOOL_OR(mm."updatedAt" > '${ctx.lastUpdate}')
   `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getModelTasks', i + 1, 'of', tasks.length);
-
-    await updateScores(ctx, 'models')`
-      SELECT
-        "userId",
-        (
-            SUM(mm."ratingCount") * ${ctx.scoreMultipliers.models.reviews}
-          + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
-          + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
-        ) as score
-      FROM "ModelMetric" mm
-      JOIN "Model" m ON m.id = mm."modelId"
-      WHERE mm.timeframe = 'AllTime'
-      AND m."userId" IN (${ids})
-      GROUP BY 1
-    `;
-  });
-
-  return tasks;
 }
 
-async function getArticleTasks(ctx: Context) {
-  const affected = await getAffected(ctx)`
-    SELECT DISTINCT
-      a."userId" as id
+async function getArticleScore(ctx: Context) {
+  await getScores(ctx, 'articles')`
+    SELECT
+      "userId",
+      (
+          SUM(am."viewCount") * ${ctx.scoreMultipliers.articles.views}
+        + SUM(am."commentCount") * ${ctx.scoreMultipliers.articles.comments}
+        + SUM(am."likeCount"+am."heartCount"+am."laughCount"+am."cryCount") * ${ctx.scoreMultipliers.articles.reactions}
+      ) as score
     FROM "ArticleMetric" am
     JOIN "Article" a ON a.id = am."articleId"
-    WHERE am."updatedAt" > '${ctx.lastUpdate}'
-    AND timeframe = 'AllTime';
+    WHERE am.timeframe = 'AllTime'
+    GROUP BY 1
+    HAVING BOOL_OR(am."updatedAt" > '${ctx.lastUpdate}')
   `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getArticleTasks', i + 1, 'of', tasks.length);
-
-    await updateScores(ctx, 'articles')`
-      SELECT
-        "userId",
-        (
-            SUM(am."viewCount") * ${ctx.scoreMultipliers.articles.views}
-          + SUM(am."commentCount") * ${ctx.scoreMultipliers.articles.comments}
-          + SUM(am."likeCount"+am."heartCount"+am."laughCount"+am."cryCount") * ${ctx.scoreMultipliers.articles.reactions}
-        ) as score
-      FROM "ArticleMetric" am
-      JOIN "Article" a ON a.id = am."articleId"
-      WHERE am.timeframe = 'AllTime'
-      AND a."userId" IN (${ids})
-      GROUP BY 1
-    `;
-  });
-
-  return tasks;
 }
 
-async function getImageTasks(ctx: Context) {
-  const affected = await getAffected(ctx)`
-    SELECT DISTINCT
-      i."userId" as id
+async function getImageScore(ctx: Context) {
+  await getScores(ctx, 'images')`
+      SELECT
+      "userId",
+      (
+          SUM(im."viewCount") * ${ctx.scoreMultipliers.images.views}
+        + SUM(im."commentCount") * ${ctx.scoreMultipliers.images.comments}
+        + SUM(im."likeCount"+im."heartCount"+im."laughCount"+im."cryCount") * ${ctx.scoreMultipliers.images.reactions}
+      ) as score
     FROM "ImageMetric" im
     JOIN "Image" i ON i.id = im."imageId"
-    WHERE im."updatedAt" > '${ctx.lastUpdate}'
-    AND timeframe = 'AllTime';
+    WHERE im.timeframe = 'AllTime'
+    GROUP BY 1
+    HAVING BOOL_OR(im."updatedAt" > '${ctx.lastUpdate}')
   `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getImageTasks', i + 1, 'of', tasks.length);
-
-    await updateScores(ctx, 'images')`
-      SELECT
-        "userId",
-        (
-            SUM(im."viewCount") * ${ctx.scoreMultipliers.images.views}
-          + SUM(im."commentCount") * ${ctx.scoreMultipliers.images.comments}
-          + SUM(im."likeCount"+im."heartCount"+im."laughCount"+im."cryCount") * ${ctx.scoreMultipliers.images.reactions}
-        ) as score
-      FROM "ImageMetric" im
-      JOIN "Image" i ON i.id = im."imageId"
-      WHERE im.timeframe = 'AllTime'
-      AND i."userId" IN (${ids})
-      GROUP BY 1
-    `;
-  });
-
-  return tasks;
 }
 
-async function getUserTasks(ctx: Context) {
-  const affected = await getAffected(ctx)`
-    SELECT DISTINCT
-      "userId" as id
+async function getUserScore(ctx: Context) {
+  await getScores(ctx, 'users')`
+    SELECT
+      "userId",
+      "followerCount" * ${ctx.scoreMultipliers.users.followers} as score
     FROM "UserMetric"
     WHERE "updatedAt" > '${ctx.lastUpdate}'
     AND timeframe = 'AllTime'
   `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getUserTasks', i + 1, 'of', tasks.length);
-
-    await updateScores(ctx, 'users')`
-      SELECT
-        "userId",
-        (
-          "followerCount" * ${ctx.scoreMultipliers.users.followers}
-        ) as score
-      FROM "UserMetric"
-      WHERE "userId" IN (${ids})
-      AND timeframe = 'AllTime'
-    `;
-  });
-
-  return tasks;
 }
 
-async function getReportActionedTasks(ctx: Context) {
-  const affected = await getAffected(ctx)`
-    SELECT DISTINCT
-      "userId" as id
-    FROM "Report" r
-    WHERE "statusSetAt" > '${ctx.lastUpdate}'
-      AND status = 'Actioned'
+async function getReportedActionedScore(ctx: Context) {
+  await getScores(ctx, 'reportsActioned')`
+    SELECT
+      "userId",
+      COUNT(id) as count
+    FROM "Report"
+    WHERE status = 'Actioned'
+    GROUP BY 1
+    HAVING BOOL_OR("statusSetAt" > '${ctx.lastUpdate}')
   `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getReportTasks', i + 1, 'of', tasks.length);
-
-    await updateScores(ctx, 'reportsActioned')`
-      SELECT
-        "userId",
-        (
-          COUNT(id) * ${ctx.scoreMultipliers.reportsActioned}
-        ) as score
-      FROM "Report"
-      WHERE "userId" IN (${ids}) AND status = 'Actioned'
-      GROUP BY 1
-    `;
-  });
-
-  return tasks;
 }
 
-async function getReportAgainstTasks(ctx: Context) {
+async function getReportAgainstScore(ctx: Context) {
   const affected = await ctx.ch.$query<{ id: number; violations: number }>`
     WITH affected AS (
       SELECT DISTINCT
@@ -248,40 +165,35 @@ async function getReportAgainstTasks(ctx: Context) {
     AND ownerId IN (SELECT ownerId FROM affected)
     GROUP BY 1;
   `;
-  ctx.addAffected(affected.map((x) => x.id));
 
-  const tasks = chunk(affected, BATCH_SIZE).map((data, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getReportAgainstTasks', i + 1, 'of', tasks.length);
-
-    const json = JSON.stringify(data);
-    await updateScores(ctx, 'reportsAgainst')`
-      SELECT
-        CAST(j::json->>'id' as int) as "userId",
-        CAST(j::json->>'violations' as int) * ${ctx.scoreMultipliers.reportsAgainst} as score
-      FROM json_array_elements('${json}'::json) j
-    `;
-  });
-
-  return tasks;
+  for (const { id, violations } of affected) {
+    const score = violations * ctx.scoreMultipliers.reportsAgainst;
+    ctx.setScore(id, 'reportsAgainst', score);
+  }
 }
 
 async function getUpdateTotalTasks(ctx: Context) {
-  const tasks = chunk([...ctx.affected], BATCH_SIZE).map((ids, i) => async () => {
-    await updateScores(ctx, 'total')`
-      SELECT
-        "userId",
-        (
-          COALESCE((meta->'scores'->>'models')::numeric, 0)
-          + COALESCE((meta->'scores'->>'articles')::numeric, 0)
-          + COALESCE((meta->'scores'->>'images')::numeric, 0)
-          + COALESCE((meta->'scores'->>'users')::numeric, 0)
-          + COALESCE((meta->'scores'->>'reportsActioned')::numeric, 0)
-          + COALESCE((meta->'scores'->>'reportsAgainst')::numeric, 0)
-        ) as score
-      FROM "User"
-      WHERE id IN (${ids})
-    `;
+  const tasks = chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map((records, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+
+    const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
+    const updateQuery = await ctx.pg.cancellableQuery(`
+      WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
+      UPDATE "User" u
+        SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
+            COALESCE((s.scores->>'models')::numeric, (u.meta->>'models')::numeric, 0)
+            + COALESCE((s.scores->>'articles')::numeric, (u.meta->>'articles')::numeric, 0)
+            + COALESCE((s.scores->>'images')::numeric, (u.meta->>'images')::numeric, 0)
+            + COALESCE((s.scores->>'users')::numeric, (u.meta->>'users')::numeric, 0)
+            + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->>'reportsActioned')::numeric, 0)
+            + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->>'reportsAgainst')::numeric, 0)
+          )
+        )
+      FROM scores s
+      WHERE s.id = u.id;
+    `);
+    ctx.jobContext.on('cancel', updateQuery.cancel);
+    await updateQuery.result();
   });
 
   return tasks;
@@ -310,17 +222,12 @@ type ScoreMultipliers = {
   reportsActioned: number;
   reportsAgainst: number;
 };
+type ScoreCategory = keyof ScoreMultipliers | 'total';
 
 async function getScoreMultipliers() {
   const data = await redis.packed.get<ScoreMultipliers>(REDIS_KEYS.SYSTEM.USER_SCORE_MULTIPLIERS);
   if (!data) throw new Error('User score multipliers not found in redis');
   return data;
-}
-
-async function timedExecution<T>(fn: (ctx: Context) => Promise<T>, ctx: Context) {
-  const start = Date.now();
-  await fn(ctx);
-  return Date.now() - start;
 }
 
 function getAffected(ctx: Context) {
@@ -329,31 +236,16 @@ function getAffected(ctx: Context) {
     ctx.jobContext.on('cancel', affectedQuery.cancel);
     const affected = await affectedQuery.result();
     const ids = affected.map((x) => x.id);
-    ctx.addAffected(ids);
     return ids;
   });
 }
 
-function executeRefresh(ctx: { pg: AugmentedPool; jobContext: JobContext }) {
+function getScores(ctx: Context, category: ScoreCategory) {
   return templateHandler(async (sql) => {
-    const query = await ctx.pg.cancellableQuery(sql);
+    const query = await ctx.pg.cancellableQuery<{ userId: number; score: number }>(sql);
     ctx.jobContext.on('cancel', query.cancel);
-    await query.result();
-  });
-}
-
-function updateScores(ctx: { pg: AugmentedPool }, target: keyof ScoreMultipliers | 'total') {
-  return templateHandler(async (sql) => {
-    const query = await ctx.pg.cancellableQuery(`
-      WITH user_scores AS (
-        ${sql}
-      )
-      UPDATE "User" u
-        SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || jsonb_build_object('${target}', score))
-      FROM user_scores us
-      WHERE u.id = us."userId";
-    `);
-    await query.result();
+    const scores = await query.result();
+    for (const { userId, score } of scores) ctx.setScore(userId, category, score);
   });
 }
 // #endregion
