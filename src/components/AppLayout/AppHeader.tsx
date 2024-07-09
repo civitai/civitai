@@ -573,22 +573,19 @@ export function AppHeader({
         href: '#!',
         visible: !!currentUser,
         label: (
-          <UnstyledButton
-            onClick={() => {
-              dialogStore.trigger({
-                component: FeatureIntroductionModal,
-                props: {
-                  feature: 'getting-started',
-                  contentSlug: ['feature-introduction', 'welcome'],
-                },
-              });
-            }}
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md" onClick={() => {
+            dialogStore.trigger({
+              component: FeatureIntroductionModal,
+              props: {
+                feature: 'getting-started',
+                contentSlug: ['feature-introduction', 'welcome'],
+              },
+            });
+          }}
           >
-            <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
-              <IconPlayerPlayFilled stroke={1.5} />
-              Getting Started
-            </Group>
-          </UnstyledButton>
+            <IconPlayerPlayFilled stroke={1.5} />
+            Getting Started
+          </Group>
         ),
       },
       {
@@ -681,7 +678,6 @@ export function AppHeader({
         </Group>
 
         <Table
-          highlightOnHover
           withBorder
           withColumnBorders
           sx={(theme) => ({
@@ -699,17 +695,15 @@ export function AppHeader({
                 {row.map((link, colIndex) => (
                   <td key={colIndex} style={{ width: `${100 / columnCount}%` }}>
                     {link.href ? (
-                      <Button
-                        component={Link}
+                      <Anchor
+                        variant='text'
                         href={link.href}
-                        as={link.as}
-                        variant="subtle"
-                        compact
                         onClick={() => setBurgerOpened(false)}
+                        className={cx({ [classes.linkActive]: router.asPath === link.href })}
                         rel={link.rel}
                       >
                         {link.label}
-                      </Button>
+                      </Anchor>
                     ) : (
                       <div
                         onClick={() => setShowBrowsingModeMenu(!showBrowsingModeMenu)}
