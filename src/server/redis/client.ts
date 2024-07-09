@@ -128,7 +128,6 @@ export const REDIS_KEYS = {
     COUNT: 'download:count',
     LIMITS: 'download:limits',
   },
-
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
     RESOURCE_DATA: 'packed:generation:resource-data',
@@ -150,6 +149,7 @@ export const REDIS_KEYS = {
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+    USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',

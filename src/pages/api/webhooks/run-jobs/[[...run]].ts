@@ -48,6 +48,7 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
+import { updateUserScore } from '~/server/jobs/update-user-score';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -94,6 +95,7 @@ export const jobs: Job[] = [
   ...jobQueueJobs,
   countReviewImages,
   processingEngingEarlyAccess,
+  updateUserScore,
 ];
 
 const log = createLogger('jobs', 'green');
