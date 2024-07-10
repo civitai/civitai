@@ -232,12 +232,22 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
+      // handle model change to update baseModel value
       if (
         name !== 'baseModel' &&
         watchedValues.model &&
         getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
       ) {
         form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+      }
+
+      // handle selected `workflow` based on presence of `image` value
+      if (
+        name === 'image' &&
+        !watchedValues.image &&
+        watchedValues.workflow?.startsWith('img2img')
+      ) {
+        form.setValue('workflow', 'txt2img');
       }
     });
     return () => {

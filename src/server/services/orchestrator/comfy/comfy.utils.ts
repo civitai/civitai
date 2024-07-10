@@ -34,13 +34,13 @@ export async function setWorkflowDefinition(key: string, data: WorkflowDefinitio
 
 export async function populateWorkflowDefinition(key: string, data: any) {
   const { template } = await getWorkflowDefinition(key);
-  const populated = template.replace(/{{(.*?)}}/g, (_: any, match: any) => {
+  const populated = template.replace(/{\s*{\s*([\w]+)\s*}\s*}/g, (_: any, match: any) => {
     return data[match];
   });
   try {
+    console.log(populated);
     return JSON.parse(populated);
   } catch (e) {
-    console.log('EEEERRRRORRR', e);
     throw new Error('Failed to populate workflow');
   }
 }
@@ -51,7 +51,7 @@ const LORA_TYPES = ['lora', 'dora', 'lycoris'];
 
 export function applyResources(
   workflow: Record<string, ComfyNode>,
-  resources: { air: string; strength?: number }[]
+  resources: { air: string; triggerWord?: string; strength?: number }[]
 ) {
   // Add references to children
   const checkpointLoaders: ComfyNode[] = [];
@@ -94,7 +94,17 @@ export function applyResources(
         class_type: 'LoraLoader',
       };
     }
-    // TODO add embedding node
+
+    // If it's an embedding, replace trigger word with embedding reference
+    if (parsedAir.type === 'embedding' && resource.triggerWord) {
+      for (const node of Object.values(workflow)) {
+        for (const [key, value] of Object.entries(node.inputs)) {
+          if (typeof value === 'string' && value.includes(resource.triggerWord)) {
+            node.inputs[key] = value.replaceAll(resource.triggerWord, `embedding:${resource.air}`);
+          }
+        }
+      }
+    }
 
     if (node) {
       // increment stack key
@@ -148,6 +158,3 @@ export function applyResources(
     delete node._children;
   }
 }
-
-// TODO.justin - embedding support
-// TODO.justin - extract seed from comfy nodes

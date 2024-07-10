@@ -18,11 +18,13 @@ import {
   useMantineTheme,
   LoadingOverlay,
   Select,
+  CloseButton,
+  ActionIcon,
 } from '@mantine/core';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
-import { IconPlus } from '@tabler/icons-react';
+import { IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -82,9 +84,7 @@ import {
   TextToImageWhatIfProvider,
   useTextToImageWhatIfContext,
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
-import { WorkflowDefinitionType, workflowDefinitions } from '~/server/services/orchestrator/types';
-import { isProd } from '~/env/other';
+import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
@@ -98,7 +98,7 @@ export function GenerationForm2() {
   const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
     onSuccess: () => {
       utils.generation.getWorkflowDefinitions.invalidate();
-      utils.generation.getWorkflowDefinition.invalidate();
+      // utils.generation.getWorkflowDefinition.invalidate();
     },
   });
   const handleSetDefinitions = () => {
@@ -109,11 +109,11 @@ export function GenerationForm2() {
 
   return (
     <IsClient>
-      {!isLoading && !data && currentUser?.isModerator && (
+      {/* {!isLoading && !data && currentUser?.isModerator && (
         <div className="p-3">
           <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
         </div>
-      )}
+      )} */}
 
       <div className="p-3">
         <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
@@ -148,15 +148,17 @@ export function GenerationFormContent() {
   });
 
   // const [key, setKey] = useLocalStorage({ key: 'workflow-definition', defaultValue: 'txt2img' });
-  const key = form.watch('workflow') ?? 'txt2img';
-  const workflowType = key?.split('-')?.[0] as WorkflowDefinitionType;
 
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
-  const { data: workflowDefinition } = trpc.generation.getWorkflowDefinition.useQuery(
-    { key },
-    { enabled: !!key }
-  );
+
+  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
+  const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
+
+  // const { data: workflowDefinition } = trpc.generation.getWorkflowDefinition.useQuery(
+  //   { key: workflow },
+  //   { enabled: !!workflow }
+  // );
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
@@ -272,12 +274,34 @@ export function GenerationFormContent() {
         pt={0}
         className="flex flex-col gap-2 px-3"
       >
-        <InputSelect
-          label="Workflow"
-          name="workflow"
-          data={workflowDefinitions?.map(({ key, name }) => ({ label: name, value: key })) ?? []}
-          loading={loadingWorkflows}
-        />
+        <div className="flex items-end justify-start gap-3">
+          {features.image && image && (
+            <div className="relative mt-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt="image to upscale" className="max-w-16" />
+              <ActionIcon
+                variant="filled"
+                size="sm"
+                color="red"
+                className="absolute -right-2 -top-2"
+                onClick={() => form.setValue('image', undefined)}
+              >
+                <IconX />
+              </ActionIcon>
+            </div>
+          )}
+          <InputSelect
+            label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
+            className="flex-1"
+            name="workflow"
+            data={
+              workflowDefinitions
+                ?.filter((x) => x.type === workflowDefinition?.type && x.selectable !== false)
+                .map(({ key, name }) => ({ label: name, value: key })) ?? []
+            }
+            loading={loadingWorkflows}
+          />
+        </div>
 
         <div className="mb-1 flex items-center gap-1">
           <Input.Label style={{ fontWeight: 590 }} required>

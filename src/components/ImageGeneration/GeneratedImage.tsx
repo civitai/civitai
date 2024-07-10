@@ -92,9 +92,11 @@ export function GeneratedImage({
   };
 
   const handleGenerate = ({ seed }: { seed?: number } = {}) => {
+    const workflowDefinition = workflowDefinitions?.find((x) => x.key === step.params.workflow);
+    const workflow = workflowDefinition?.remix ?? step.params.workflow;
     generationStore.setData({
       resources: step.resources,
-      params: { ...step.params, seed, workflow: 'txt2img' },
+      params: { ...step.params, seed, workflow },
     });
   };
 
@@ -133,7 +135,12 @@ export function GeneratedImage({
       component: UpscaleImageModal,
       props: {
         resources: step.resources,
-        params: { ...step.params, image: image.url, workflow },
+        params: {
+          ...step.params,
+          image: image.url,
+          seed: image.seed ?? step.params.seed,
+          workflow,
+        },
       },
     });
   };

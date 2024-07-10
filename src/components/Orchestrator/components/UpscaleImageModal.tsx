@@ -26,6 +26,7 @@ export function UpscaleImageModal({
       params: {
         ...params,
         upscale: Number(upscale),
+        quantity: 1,
       },
     });
 

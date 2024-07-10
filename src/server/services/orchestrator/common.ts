@@ -42,6 +42,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '@prisma/client';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import { getRandomInt } from '~/utils/number-helpers';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -295,18 +296,13 @@ function formatWorkflowStep(args: {
   resources: AirResourceData[];
 }) {
   const { step } = args;
-  try {
-    switch (step.$type) {
-      case 'textToImage':
-        return formatTextToImageStep(args);
-      case 'comfy':
-        return formatComfyStep(args);
-      default:
-        throw new Error('failed to extract generation resources: unsupported workflow type');
-    }
-  } catch (e) {
-    console.log({ ERRRRORORR: e });
-    throw e;
+  switch (step.$type) {
+    case 'textToImage':
+      return formatTextToImageStep(args);
+    case 'comfy':
+      return formatComfyStep(args);
+    default:
+      throw new Error('failed to extract generation resources: unsupported workflow type');
   }
 }
 
@@ -431,13 +427,12 @@ export function formatComfyStep({
   resources: AirResourceData[];
   workflowId: string;
 }) {
-  const { input, output, jobs, metadata = {} } = step as ComfyStep;
+  const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
   const images: NormalizedGeneratedImage[] =
     output?.blobs
       ?.map((image, i) => {
-        const seed = (input as any).seed;
         const job = jobs?.find((x) => x.id === image.jobId);
         if (!job) return null;
         return {
@@ -446,7 +441,7 @@ export function formatComfyStep({
           jobId: job.id,
           id: image.id,
           status: job.status ?? ('unassignend' as WorkflowStatus),
-          seed: seed ? seed + i : undefined,
+          seed: params?.seed ? params.seed + i : undefined,
           completed: job.completedAt ? new Date(job.completedAt) : undefined,
           url: image.url as string,
         };

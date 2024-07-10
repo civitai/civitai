@@ -2,6 +2,7 @@ import { ComfyStepTemplate } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
+import { generation } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -16,12 +17,17 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
+import { getRandomInt } from '~/utils/number-helpers';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
   }
 ) {
+  input.params.seed =
+    input.params.seed ??
+    getRandomInt(input.params.quantity, generation.maxValues.seed) - input.params.quantity;
+
   const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
   const { resources, params } = await parseGenerateImageInput({ ...input, workflowDefinition });
 
