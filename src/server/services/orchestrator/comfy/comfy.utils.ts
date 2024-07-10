@@ -47,6 +47,7 @@ export async function populateWorkflowDefinition(key: string, data: any) {
 
 const CHECKPOINT_LOADERS = ['CheckpointLoaderSimple', 'CheckpointLoader'];
 const ADDITIONAL_LOADERS = ['LoraLoader'];
+const LORA_TYPES = ['lora', 'dora', 'lycoris'];
 
 export function applyResources(
   workflow: Record<string, ComfyNode>,
@@ -81,7 +82,7 @@ export function applyResources(
     }
 
     let node: ComfyNode | undefined;
-    if (parsedAir.type === 'lora') {
+    if (LORA_TYPES.includes(parsedAir.type)) {
       node = {
         inputs: {
           lora_name: resource.air,
