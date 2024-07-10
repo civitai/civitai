@@ -127,8 +127,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     const steps = getSteps(storedState.steps ?? defaultValues.steps, limits.steps);
     if (steps !== storedState.steps) useGenerationFormStore.setState({ steps });
     form.reset({
-      ...storedState,
       ...defaultValues,
+      ...storedState,
       steps,
       // Use solely to update the resource limits based on tier
       tier: currentUser?.tier ?? 'free',
@@ -439,8 +439,8 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
               <Card.Section>
                 <Alert color="yellow" title="Mature Content Restricted" radius={0}>
                   <Text size="xs">
-                    {`A resource you selected does not allow the generation of Mature Content. 
-                    If you attempt to generate mature content with this resource, 
+                    {`A resource you selected does not allow the generation of Mature Content.
+                    If you attempt to generate mature content with this resource,
                     the image will not be returned but you `}
                     <Text span italic inherit>
                       will
