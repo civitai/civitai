@@ -185,34 +185,33 @@ const useStyles = createStyles((theme) => ({
   },
 
   link: {
-    display: 'block',
     lineHeight: 1,
     padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
     borderRadius: theme.radius.sm,
     textDecoration: 'none',
     color: theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.colors.gray[7],
-    fontSize: theme.fontSizes.sm,
     fontWeight: 500,
+    fontSize: theme.fontSizes.sm,
 
     '&:hover': {
       backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
     },
 
+    [containerQuery.largerThan('sm')]: {
+      display: 'block',
+    },
+
     [containerQuery.smallerThan('md')]: {
       borderRadius: 0,
-      padding: theme.spacing.md,
-      display: 'flex',
       alignItems: 'center',
-      justifyContent: 'space-between',
       width: '100%',
+      textAlign: 'center',
+      fontWeight: 400,
     },
   },
 
   linkActive: {
-    '&, &:hover': {
-      backgroundColor: theme.fn.variant({ variant: 'light', color: theme.primaryColor }).background,
-      color: theme.fn.variant({ variant: 'light', color: theme.primaryColor }).color,
-    },
+      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
   },
 
   user: {
@@ -242,6 +241,61 @@ const useStyles = createStyles((theme) => ({
     display: 'none',
   },
 }));
+
+const additionalLinks = [
+  {
+    href: '/feedback',
+    label: 'Feature Request',
+    icon: IconPointerQuestion,
+    external: true,
+  },
+  {
+    href: '/content/careers',
+    label: 'Join Us',
+    icon: IconBriefcase,
+    external: true,
+  },
+  {
+    href: '/advertise-with-us',
+    label: 'Advertise',
+    icon: IconAd2,
+    external: true,
+  },
+];
+
+const socialLinks = [
+  { icon: IconBrandDiscord, href: 'https://discord.gg/civitai' },
+  { icon: IconBrandReddit, href: 'https://www.reddit.com/r/civitai/' },
+  { icon: IconBrandX, href: 'https://twitter.com/civitai' },
+  { icon: IconBrandTwitch, href: 'https://www.twitch.tv/civitai' },
+  { icon: IconBrandInstagram, href: 'https://www.instagram.com/hellocivitai/' },
+  { icon: IconBrandGithub, href: 'https://github.com/civitai' },
+  { icon: IconBrandYoutube, href: 'https://www.youtube.com/@civitai' },
+  { icon: IconBrandTiktok, href: 'https://www.tiktok.com/@hellocivitai' },
+];
+
+const footerLinks = [
+  {
+    label: 'Creators',
+    items: [
+      { name: 'Residency', href: 'https://air.civitai.com/' },
+      { name: 'Creators', href: '/creators-program' },
+      { name: 'API', href: 'https://github.com/civitai/civitai/wiki/REST-API-Reference' },
+      { name: 'Education', href: 'https://education.civitai.com/' },
+      { name: 'Safety Center', href: '/safety' }
+    ]
+  },
+  {
+    label: 'Docs',
+    items: [
+      { name: 'Terms of Service', href: '/content/tos' },
+      { name: 'Privacy', href: '/content/privacy' },
+      { name: 'Newsroom', href: '/newsroom' },
+      { name: 'Wiki', href: 'https://wiki.civitai.com/wiki/Main_Page' },
+      { name: 'Status', href: 'https://status.civitai.com/status/public' }
+    ]
+  },
+];
 
 type MenuLink = {
   label: ReactNode;
@@ -305,7 +359,7 @@ export function AppHeader({
         href: '/generate',
         visible: !isMuted,
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconBrush stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Generate images
           </Group>
@@ -317,7 +371,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconPhotoUp stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post images
           </Group>
@@ -329,7 +383,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'post-images',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconVideoPlus stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Post videos
           </Group>
@@ -341,7 +395,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'upload-model',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconUpload stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Upload model
           </Group>
@@ -353,7 +407,7 @@ export function AppHeader({
         visible: !isMuted && features.imageTraining,
         redirectReason: 'train-model',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconBarbell stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Group className="gap-1 md:gap-2">
               <Text span inline>
@@ -370,7 +424,7 @@ export function AppHeader({
         visible: !isMuted,
         redirectReason: 'create-article',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconWriting stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Write an article
           </Group>
@@ -382,7 +436,7 @@ export function AppHeader({
         visible: !isMuted && features.bounties,
         redirectReason: 'create-bounty',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconMoneybag stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Group className="gap-1 md:gap-2">
               <Text>Create a bounty</Text>
@@ -397,7 +451,7 @@ export function AppHeader({
         visible: !isMuted && features.clubs,
         redirectReason: 'create-club',
         label: (
-          <Group className="flex flex-col md:flex-row items-center gap-2 text-xs md:text-md">
+          <Group className="flex flex-col md:flex-row items-center gap-2">
             <IconClubs stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             <Text>Create a club</Text>
           </Group>
@@ -414,7 +468,7 @@ export function AppHeader({
         href: `/user/${currentUser?.username}`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconUser stroke={1.5} color={theme.colors.blue[theme.fn.primaryShade()]} />
             Your profile
           </Group>
@@ -424,7 +478,7 @@ export function AppHeader({
         href: `/user/${currentUser?.username}/models?section=training`,
         visible: !!currentUser && features.imageTrainingResults,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconBarbell stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Training
           </Group>
@@ -434,7 +488,7 @@ export function AppHeader({
         href: `/collections`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconBookmark stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             My collections
           </Group>
@@ -444,7 +498,7 @@ export function AppHeader({
         href: `/collections/${bookmarkedModelsCollection?.id}`,
         visible: !!currentUser && !isMobile,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <ThumbsUpIcon stroke={1.5} color={theme.colors.green[theme.fn.primaryShade()]} />
             Liked models
           </Group>
@@ -454,7 +508,7 @@ export function AppHeader({
         href: `/collections/${bookmarkedArticlesCollection?.id}`,
         visible: !!currentUser && !!bookmarkedArticlesCollection,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconBookmarkEdit stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             Bookmarked articles
           </Group>
@@ -465,7 +519,7 @@ export function AppHeader({
         as: '/bounties',
         visible: !!currentUser && features.bounties,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconMoneybag stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My bounties
           </Group>
@@ -476,7 +530,7 @@ export function AppHeader({
         as: '/clubs',
         visible: !!currentUser && features.clubs,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconClubs stroke={1.5} color={theme.colors.pink[theme.fn.primaryShade()]} />
             My clubs
           </Group>
@@ -486,7 +540,7 @@ export function AppHeader({
         href: '/user/buzz-dashboard',
         visible: !!currentUser && features.buzz,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconProgressBolt stroke={1.5} color={theme.colors.yellow[7]} />
             Buzz dashboard
           </Group>
@@ -496,7 +550,7 @@ export function AppHeader({
         href: '/user/vault',
         visible: !!currentUser && features.vault && !isMobile,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconCloudLock stroke={1.5} color={theme.colors.yellow[7]} />
             My vault
           </Group>
@@ -510,7 +564,7 @@ export function AppHeader({
       {
         href: '/leaderboard/overall',
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconCrown stroke={1.5} color={theme.colors.yellow[theme.fn.primaryShade()]} />
             Leaderboard
           </Group>
@@ -520,7 +574,7 @@ export function AppHeader({
         href: '/product/link',
         visible: !isMobile,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconLink stroke={1.5} />
             Download Link App
           </Group>
@@ -530,7 +584,7 @@ export function AppHeader({
         href: `/user/${currentUser?.username}/following`,
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconUsers stroke={1.5} />
             Creators you follow
           </Group>
@@ -540,7 +594,7 @@ export function AppHeader({
         href: '',
         visible: !!currentUser && isMobile,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconEye stroke={1.5} />
             Browsing mode
           </Group>
@@ -550,7 +604,7 @@ export function AppHeader({
         href: '/user/downloads',
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconHistory stroke={1.5} />
             Download history
           </Group>
@@ -560,7 +614,7 @@ export function AppHeader({
         href: '/questions',
         visible: !!currentUser && features.questions && !isMobile,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconInfoSquareRounded stroke={1.5} />
             Questions{' '}
             <Badge color="yellow" size="xs">
@@ -573,7 +627,7 @@ export function AppHeader({
         href: '#!',
         visible: !!currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md" onClick={() => {
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row" onClick={() => {
             dialogStore.trigger({
               component: FeatureIntroductionModal,
               props: {
@@ -592,7 +646,7 @@ export function AppHeader({
         href: `/login?returnUrl=${router.asPath}`,
         visible: !currentUser,
         label: (
-          <Group align="center" spacing="xs" className="flex flex-col md:flex-row text-xs md:text-md">
+          <Group align="center" spacing="xs" className="flex flex-col md:flex-row">
             <IconUserCircle stroke={1.5} />
             Sign In/Sign up
           </Group>
@@ -683,23 +737,21 @@ export function AppHeader({
           sx={(theme) => ({
             borderLeft: 'none',
             borderRight: 'none',
-            '& td': {
-              paddingTop: '20px !important',
-              paddingBottom: '20px !important',
-            },
           })}
         >
           <tbody>
             {rows.map((row, rowIndex) => (
               <tr key={rowIndex}>
                 {row.map((link, colIndex) => (
-                  <td key={colIndex} style={{ width: `${100 / columnCount}%` }}>
+                  <td key={colIndex}                  
+                    style={{ width: `${100 / columnCount}%`, padding: '18px 15px' }}
+                    className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href }, 'hover:bg-gray-100 dark:hover:bg-gray-800')}
+                  >
                     {link.href ? (
                       <Anchor
                         variant='text'
                         href={link.href}
                         onClick={() => setBurgerOpened(false)}
-                        className={cx({ [classes.linkActive]: router.asPath === link.href })}
                         rel={link.rel}
                       >
                         {link.label}
@@ -760,61 +812,6 @@ export function AppHeader({
         ),
     [links]
   );
-
-  const additionalLinks = [
-    {
-      href: '/feedback',
-      label: 'Feature Request',
-      icon: IconPointerQuestion,
-      external: true,
-    },
-    {
-      href: '/content/careers',
-      label: 'Join Us',
-      icon: IconBriefcase,
-      external: true,
-    },
-    {
-      href: '/advertise-with-us',
-      label: 'Advertise',
-      icon: IconAd2,
-      external: true,
-    },
-  ];
-
-  const socialLinks = [
-    { icon: IconBrandDiscord, href: 'https://discord.gg/civitai' },
-    { icon: IconBrandReddit, href: 'https://www.reddit.com/r/civitai/' },
-    { icon: IconBrandX, href: 'https://twitter.com/civitai' },
-    { icon: IconBrandTwitch, href: 'https://www.twitch.tv/civitai' },
-    { icon: IconBrandInstagram, href: 'https://www.instagram.com/hellocivitai/' },
-    { icon: IconBrandGithub, href: 'https://github.com/civitai' },
-    { icon: IconBrandYoutube, href: 'https://www.youtube.com/@civitai' },
-    { icon: IconBrandTiktok, href: 'https://www.tiktok.com/@hellocivitai' },
-  ];
-
-  const footerLinks = [
-    {
-      label: 'Creators',
-      items: [
-        { name: 'Residency', href: 'https://air.civitai.com/' },
-        { name: 'Creators', href: '/creators-program' },
-        { name: 'API', href: 'https://github.com/civitai/civitai/wiki/REST-API-Reference' },
-        { name: 'Education', href: 'https://education.civitai.com/' },
-        { name: 'Safety Center', href: '/safety' }
-      ]
-    },
-    {
-      label: 'Docs',
-      items: [
-        { name: 'Terms of Service', href: '/content/tos' },
-        { name: 'Privacy', href: '/content/privacy' },
-        { name: 'Newsroom', href: '/newsroom' },
-        { name: 'Wiki', href: 'https://wiki.civitai.com/wiki/Main_Page' },
-        { name: 'Status', href: 'https://status.civitai.com/status/public' }
-      ]
-    },
-  ];
 
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
