@@ -92,13 +92,9 @@ const useCostStore = create<{ cost?: number }>(() => ({}));
 export function GenerationForm2() {
   const utils = trpc.useUtils();
 
-  const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.generation.getWorkflowDefinitions.useQuery();
-
   const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
     onSuccess: () => {
       utils.generation.getWorkflowDefinitions.invalidate();
-      // utils.generation.getWorkflowDefinition.invalidate();
     },
   });
   const handleSetDefinitions = () => {
@@ -109,12 +105,6 @@ export function GenerationForm2() {
 
   return (
     <IsClient>
-      {/* {!isLoading && !data && currentUser?.isModerator && (
-        <div className="p-3">
-          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-        </div>
-      )} */}
-
       <div className="p-3">
         <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
       </div>

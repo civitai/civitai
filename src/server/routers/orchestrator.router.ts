@@ -147,35 +147,6 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
-  // #region [textToImage]
-  // getTextToImageRequests: orchestratorProcedure
-  //   .input(workflowQuerySchema)
-  //   .query(({ ctx, input }) => getTextToImageRequests({ ...input, token: ctx.token })),
-  // textToImageWhatIf: orchestratorProcedure
-  //   .input(imageWhatIfSchema)
-  //   .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-  //   .query(({ input, ctx }) => whatIfTextToImage({ ...input, user: ctx.user, token: ctx.token })),
-  // createTextToImage: orchestratorGuardedProcedure
-  //   .input(generateImageSchema)
-  //   .mutation(async ({ ctx, input }) => {
-  //     try {
-  //       return await createTextToImage({ ...input, user: ctx.user, token: ctx.token });
-  //     } catch (e) {
-  //       if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
-  //         await reportProhibitedRequestHandler({
-  //           input: {
-  //             prompt: input.params.prompt,
-  //             negativePrompt: input.params.negativePrompt,
-  //             source: 'External',
-  //           },
-  //           ctx,
-  //         });
-  //       }
-  //       throw e;
-  //     }
-  //   }),
-  // #endregion
-
   // #region [image training]
 
   // #endregion

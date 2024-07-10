@@ -72,7 +72,7 @@ export function QueueItem({
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
 }) {
-  const { classes, cx } = useStyle();
+  const { classes } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
@@ -89,7 +89,6 @@ export function QueueItem({
     if (!processing && status === 'processing') setProcessing(true);
     else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
   }, [status]);
-  // const failed = status && FAILED_STATUSES.includes(status);
 
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
@@ -151,6 +150,8 @@ export function QueueItem({
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
+  const canRemix = step.params.workflow !== 'img2img-upscale';
+
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
@@ -180,7 +181,7 @@ export function QueueItem({
             </ButtonTooltip>
           </div>
           <div className="flex gap-1">
-            {generationStatus.available && (
+            {generationStatus.available && canRemix && (
               <ButtonTooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                   <IconArrowsShuffle />

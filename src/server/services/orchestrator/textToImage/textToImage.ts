@@ -56,6 +56,11 @@ export async function createTextToImageStep(
       scheduler,
       ...params,
     },
+    metadata: {
+      resources: input.resources,
+      params: input.params,
+      remix: input.remix,
+    },
   } as TextToImageStepTemplate;
 }
 

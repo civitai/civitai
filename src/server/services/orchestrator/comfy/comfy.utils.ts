@@ -38,7 +38,6 @@ export async function populateWorkflowDefinition(key: string, data: any) {
     return data[match];
   });
   try {
-    console.log(populated);
     return JSON.parse(populated);
   } catch (e) {
     throw new Error('Failed to populate workflow');

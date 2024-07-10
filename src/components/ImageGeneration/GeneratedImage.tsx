@@ -45,6 +45,7 @@ import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/u
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { trpc } from '~/utils/trpc';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 
 export function GeneratedImage({
   image,
@@ -91,23 +92,14 @@ export function GeneratedImage({
     });
   };
 
-  const handleGenerate = ({ seed }: { seed?: number } = {}) => {
-    const workflowDefinition = workflowDefinitions?.find((x) => x.key === step.params.workflow);
-    const workflow = workflowDefinition?.remix ?? step.params.workflow;
+  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
     generationStore.setData({
       resources: step.resources,
-      params: { ...step.params, seed, workflow },
+      params: { ...step.params, seed, ...rest },
     });
   };
 
-  const handleGenerateWithSeed = () => handleGenerate({ seed: image.seed ?? step.params.seed });
-
-  const handleSelectWorkflow = (workflow: string) => {
-    generationStore.setData({
-      resources: step.resources,
-      params: { ...step.params, seed: undefined, workflow, image: image.url },
-    });
-  };
+  const handleSelectWorkflow = (workflow: string) => handleGenerate({ workflow, image: image.url });
 
   const handleDeleteImage = () => {
     openConfirmModal({
@@ -137,7 +129,7 @@ export function GeneratedImage({
         resources: step.resources,
         params: {
           ...step.params,
-          image: image.url,
+          image: step.params.image ?? image.url,
           seed: image.seed ?? step.params.seed,
           workflow,
         },
@@ -175,6 +167,8 @@ export function GeneratedImage({
   }
 
   if (!available) return <></>;
+
+  const canRemix = step.params.workflow !== 'img2img-upscale';
 
   return (
     <AspectRatio ratio={step.params.width / step.params.height} ref={ref}>
@@ -244,18 +238,22 @@ export function GeneratedImage({
                 </div>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item
-                  onClick={() => handleGenerate()}
-                  icon={<IconArrowsShuffle size={14} stroke={1.5} />}
-                >
-                  Remix
-                </Menu.Item>
-                <Menu.Item
-                  onClick={handleGenerateWithSeed}
-                  icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-                >
-                  Remix (with seed)
-                </Menu.Item>
+                {canRemix && (
+                  <>
+                    <Menu.Item
+                      onClick={() => handleGenerate()}
+                      icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+                    >
+                      Remix
+                    </Menu.Item>
+                    <Menu.Item
+                      onClick={() => handleGenerate({ seed: image.seed })}
+                      icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+                    >
+                      Remix (with seed)
+                    </Menu.Item>
+                  </>
+                )}
                 <Menu.Item
                   color="red"
                   onClick={handleDeleteImage}
@@ -263,7 +261,7 @@ export function GeneratedImage({
                 >
                   Delete
                 </Menu.Item>
-                {!!img2imgWorkflows?.length && (
+                {!!img2imgWorkflows?.length && canRemix && (
                   <>
                     <Menu.Divider />
                     <Menu.Label>Image-to-image workflows</Menu.Label>
