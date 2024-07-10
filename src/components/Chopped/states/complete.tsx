@@ -17,7 +17,6 @@ import { Carousel } from '@mantine/carousel';
 import { IconArrowLeft, IconCheck, IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import {
   GameState,
   GlobalState,

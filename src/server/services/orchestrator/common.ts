@@ -16,6 +16,7 @@ import {
   allInjectableResourceIds,
   formatGenerationResources,
   getBaseModelSetType,
+  getClosestAspectRatio,
   getInjectablResources,
   getSizeFromAspectRatio,
   getWorkflowDefinitionFeatures,
@@ -32,7 +33,7 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { getGenerationConfig } from '~/server/common/constants';
+import { generation, getGenerationConfig } from '~/server/common/constants';
 import { SessionUser } from 'next-auth';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { z } from 'zod';
@@ -361,9 +362,10 @@ export function formatTextToImageStep({
     quantity *= 4;
   }
 
-  const sampler = Object.entries(samplersToSchedulers).find(
-    ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
-  )?.[0];
+  const sampler =
+    Object.entries(samplersToSchedulers).find(
+      ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
+    )?.[0] ?? generation.defaultValues.sampler;
 
   const images: NormalizedGeneratedImage[] =
     output?.images
@@ -401,12 +403,13 @@ export function formatTextToImageStep({
       quantity,
       controlNets: input.controlNets,
       sampler,
-      steps: input.steps,
-      cfgScale: input.cfgScale,
+      aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
+      steps: input.steps ?? generation.defaultValues.steps,
+      cfgScale: input.cfgScale ?? generation.defaultValues.cfgScale,
+      clipSkip: input.clipSkip ?? generation.defaultValues.clipSkip,
       width: input.width,
       height: input.height,
       seed: input.seed,
-      clipSkip: input.clipSkip,
       draft: isDraft,
       nsfw: isNsfw,
       workflow: 'txt2img',

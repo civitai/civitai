@@ -14,7 +14,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
@@ -39,7 +38,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   }, [isImageFeedSeparate, view]);
 
   return (
-    <GenerationProvider>
+    <>
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
           <div className="flex-1">
@@ -87,7 +86,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
         {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
       <View />
-    </GenerationProvider>
+    </>
   );
 }
 

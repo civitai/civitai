@@ -17,7 +17,6 @@ import {
 import { IconCheck, IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { GameState, GlobalState, NewGame } from '~/components/Chopped/chopped.shared-types';
 import { ComputeCost, defaultGameState, useChoppedStore } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

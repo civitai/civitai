@@ -85,6 +85,7 @@ import {
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { WorkflowDefinitionType, workflowDefinitions } from '~/server/services/orchestrator/types';
 import { isProd } from '~/env/other';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -113,6 +114,10 @@ export function GenerationForm2() {
           <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
         </div>
       )}
+
+      <div className="p-3">
+        <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
+      </div>
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
@@ -909,8 +914,6 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const status = useGenerationStatus();
-  const canGenerate = useGenerationContext((state) => state.canGenerate);
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
 
   useEffect(() => {
@@ -919,26 +922,12 @@ function SubmitButton(props: { isLoading?: boolean }) {
     }
   }, [data?.cost]); // eslint-disable-line
 
-  return !status.charge ? (
-    <Button
+  return (
+    <GenerateButton
       type="submit"
-      size="lg"
       className="h-auto flex-1"
-      loading={props.isLoading}
-      disabled={!canGenerate}
-    >
-      <Text ta="center">Generate</Text>
-    </Button>
-  ) : (
-    <BuzzTransactionButton
-      type="submit"
-      size="lg"
-      label="Generate"
       loading={isInitialLoading || props.isLoading}
-      className="h-auto flex-1"
-      disabled={!canGenerate || !data}
-      buzzAmount={data?.cost ?? 0}
-      showPurchaseModal={false}
+      cost={data?.cost}
       error={
         !isInitialLoading && isError
           ? 'Error calculating cost. Please try updating your values'

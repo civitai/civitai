@@ -4,7 +4,6 @@ import { TypeOf, ZodAny, ZodArray, ZodEffects, ZodObject, ZodString, ZodTypeAny,
 import { Adunit } from '~/components/Ads/AdUnit';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IsClient } from '~/components/IsClient/IsClient';
 import OnboardingWizard from '~/components/Onboarding/OnboardingWizard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -20,11 +19,11 @@ export default function Test() {
 
   return (
     <IsClient>
-      <GenerationProvider>
+      <>
         <div className="container max-w-xs">
           <GenerationForm2 />
         </div>
-      </GenerationProvider>
+      </>
       {/* <InnerContent /> */}
     </IsClient>
   );

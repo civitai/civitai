@@ -44,6 +44,7 @@ import {
 import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { trpc } from '~/utils/trpc';
+import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 
 export function GeneratedImage({
   image,
@@ -124,6 +125,16 @@ export function GeneratedImage({
         ]),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
+    });
+  };
+
+  const handleUpscale = (workflow: string) => {
+    dialogStore.trigger({
+      component: UpscaleImageModal,
+      props: {
+        resources: step.resources,
+        params: { ...step.params, image: image.url, workflow },
+      },
     });
   };
 
@@ -252,7 +263,10 @@ export function GeneratedImage({
                     {img2imgWorkflows?.map((workflow) => (
                       <Menu.Item
                         key={workflow.key}
-                        onClick={() => handleSelectWorkflow(workflow.key)}
+                        onClick={() => {
+                          if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                          else handleSelectWorkflow(workflow.key);
+                        }}
                       >
                         {workflow.name}
                       </Menu.Item>

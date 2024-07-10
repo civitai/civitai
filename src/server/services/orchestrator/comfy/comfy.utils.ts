@@ -147,3 +147,6 @@ export function applyResources(
     delete node._children;
   }
 }
+
+// TODO.justin - embedding support
+// TODO.justin - extract seed from comfy nodes
