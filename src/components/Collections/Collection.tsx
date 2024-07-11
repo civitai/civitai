@@ -14,6 +14,7 @@ import {
   Menu,
   Popover,
   Select,
+  Divider,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -59,9 +60,10 @@ import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
+  contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
   useCollection,
 } from '~/components/Collections/collection.utils';
@@ -71,9 +73,12 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { removeTags } from '~/utils/string-helpers';
+import { removeTags, toPascalCase } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -231,6 +236,7 @@ const ImageCollection = ({
               <ImageCategories />
             </>
           )}
+
           {isContestCollection && collection.tags.length > 0 && (
             <Select
               label="Collection Categories"
@@ -246,19 +252,38 @@ const ImageCollection = ({
                 },
                 ...collection.tags.map((tag) => ({
                   value: tag.id.toString(),
-                  label: tag.name,
+                  label: toPascalCase(tag.name),
                 })),
               ]}
-              tt="capitalize"
               clearable
-              styles={{
-                input: {
-                  textTransform: 'capitalize',
-                },
-              }}
             />
           )}
-          <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
+          {isContestCollection && (
+            <Group position="right">
+              <AdaptiveFiltersDropdown>
+                <Stack>
+                  <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <ToolSelect
+                    value={(query.tools ?? [])[0]}
+                    onChange={(toolId) => {
+                      if (!toolId) {
+                        replace({ tools: undefined });
+                      } else {
+                        replace({ tools: [toolId as number] });
+                      }
+                    }}
+                    placeholder="Created with..."
+                  />
+                </Stack>
+              </AdaptiveFiltersDropdown>
+            </Group>
+          )}
+          <ReactionSettingsProvider
+            settings={{
+              hideReactionCount: isContestCollection,
+              hideReactions: contestCollectionReactionsHidden(collection),
+            }}
+          >
             <ImagesInfinite
               filters={{
                 ...filters,
@@ -399,7 +424,10 @@ export function Collection({
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
 
-  if (!isLoading && !collection) {
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
+
+  if (!isLoading && (!collection || isBlocked)) {
     return (
       <Stack w="100%" align="center">
         <Stack spacing="md" align="center" maw={800}>

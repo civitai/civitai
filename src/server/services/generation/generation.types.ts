@@ -68,6 +68,7 @@ export namespace Generation {
     strength?: number;
     minStrength?: number;
     maxStrength?: number;
+    minor?: boolean;
 
     // navigation props
     covered?: boolean;

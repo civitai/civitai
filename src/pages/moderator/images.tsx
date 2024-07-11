@@ -386,11 +386,18 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 <Text size="xs" color="dimmed" inline>
                   Reported by
                 </Text>
-                <Link href={`/user/${image.report?.user.username}`} passHref>
-                  <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                    {image.report?.user.username}
-                  </Anchor>
-                </Link>
+                <Group spacing={4}>
+                  <Link href={`/user/${image.report?.user.username}`} passHref>
+                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                      {image.report?.user.username}
+                    </Anchor>
+                  </Link>
+                  {(image.report?.count ?? 0) > 1 && (
+                    <Badge size="xs" color="red">
+                      +{(image.report?.count ?? 0) - 1}
+                    </Badge>
+                  )}
+                </Group>
               </Stack>
               <Stack spacing={2} align="flex-end">
                 <Text size="xs" color="dimmed" inline>
@@ -403,8 +410,8 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               {image.report?.details
                 ? Object.entries(image.report.details).map(([key, value]) => (
                     <Text key={key} size="sm">
-                      <Text weight="bold" span>
-                        {titleCase(key)}:
+                      <Text weight="bold" span className="capitalize">
+                        {splitUppercase(key)}:
                       </Text>{' '}
                       {value}
                     </Text>

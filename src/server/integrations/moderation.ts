@@ -36,9 +36,9 @@ async function moderatePrompt(prompt: string) {
   }
 
   const { results } = await res.json();
-  let flagged: boolean = results[0].flagged;
-  let categories = Object.entries(results[0].categories)
-    .filter(([, v]) => v as boolean)
+  let flagged = results[0].flagged;
+  let categories = Object.entries(results[0].category_scores)
+    .filter(([, v]) => (v as number) > env.EXTERNAL_MODERATION_THRESHOLD)
     .map(([k]) => k);
 
   // If we have categories

@@ -53,7 +53,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 const IMAGE_CARD_WIDTH = 450;
@@ -190,6 +190,7 @@ export function ModelCard({ data, forceInView }: Props) {
   const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
+  const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
 
   const isPOI = data.poi;
   const isMinor = data.minor;
@@ -205,6 +206,11 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+  const shouldAnimate = shouldAnimateByDefault({
+    type: image.type,
+    metadata: image.metadata as VideoMetadata,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -260,15 +266,15 @@ export function ModelCard({ data, forceInView }: Props) {
                               {getDisplayName(data.type)}
                             </Text>
 
-                            {isSDXL && (
+                            {baseModelIndicator && (
                               <>
                                 <Divider orientation="vertical" />
-                                {isPony ? (
-                                  <IconHorse size={16} strokeWidth={2.5} />
-                                ) : (
+                                {typeof baseModelIndicator === 'string' ? (
                                   <Text color="white" size="xs">
-                                    XL
+                                    {baseModelIndicator}
                                   </Text>
+                                ) : (
+                                  baseModelIndicator
                                 )}
                               </>
                             )}
@@ -396,7 +402,8 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            anim={shouldAnimateByDefault({
+                            anim={shouldAnimate}
+                            skip={getSkipValue({
                               type: image.type,
                               metadata: image.metadata as VideoMetadata,
                             })}
@@ -488,5 +495,33 @@ export function ModelCard({ data, forceInView }: Props) {
     </FeedCard>
   );
 }
+
+const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
+  'SDXL 1.0': 'XL',
+  'SDXL 0.9': 'XL',
+  'SDXL Lightning': 'XL',
+  'SDXL 1.0 LCM': 'XL',
+  'SDXL Distilled': 'XL',
+  'SDXL Turbo': 'XL',
+  'SDXL Hyper': 'XL',
+  Pony: <IconHorse size={16} strokeWidth={2.5} />,
+  'SD 1.4': 'SD1',
+  'SD 1.5': 'SD1',
+  'SD 1.5 LCM': 'SD1',
+  'SD 1.5 Hyper': 'SD1',
+  'SD 2.0': 'SD2',
+  'SD 2.0 768': 'SD2',
+  'SD 2.1': 'SD2',
+  'SD 2.1 768': 'SD2',
+  'SD 2.1 Unclip': 'SD2',
+  'SD 3': 'SD3',
+  SVD: 'SVD',
+  'SVD XT': 'SVD',
+  'PixArt E': 'Σ',
+  'PixArt a': 'α',
+  'Hunyuan 1': 'HY',
+  Lumina: 'L',
+  ODOR: <IconNose size={16} strokeWidth={2} />,
+};
 
 type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };

@@ -97,6 +97,12 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -107,6 +113,11 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: modelWithDetailsSelect,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: model.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
 
     const features = getFeatureFlags({ user: ctx.user });
     const filteredVersions = model.modelVersions.filter((version) => {
@@ -1269,16 +1280,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
       })
       .filter(isDefined);
 
+    const hiddenUsers = await Promise.all([
+      HiddenUsers.getCached({ userId: ctx.user?.id }),
+      BlockedByUsers.getCached({ userId: ctx.user?.id }),
+      BlockedUsers.getCached({ userId: ctx.user?.id }),
+    ]);
+    const excludedUserIds = [...new Set(hiddenUsers.flat().map((u) => u.id))];
+
     return resourcesIds
       .map(({ id, resourceType }) => {
         switch (resourceType) {
           case 'article':
             const article = articles.find((article) => article.id === id);
             if (!article) return null;
+            if (excludedUserIds.includes(article.user.id)) return null;
+
             return { resourceType: 'article' as const, ...article };
           case 'model':
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
+            if (excludedUserIds.includes(model.user.id)) return null;
+
             return { resourceType: 'model' as const, ...model };
         }
       })

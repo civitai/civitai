@@ -88,7 +88,7 @@ export function Reactions({
     defaultValue: false,
     getInitialValueInEffect: true,
   });
-  const { buttonStyling } = useReactionSettingsContext();
+  const { buttonStyling, hideReactions } = useReactionSettingsContext();
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
@@ -121,6 +121,7 @@ export function Reactions({
   const supportsBuzzTipping = ['image'].includes(entityType);
 
   if (readonly && !hasReactions) return null;
+  if (hideReactions) return null;
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>

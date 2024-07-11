@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   Container,
+  Divider,
   Group,
   List,
   Stack,
@@ -16,11 +17,13 @@ import {
   getTagsFromPrompt,
   highlightInappropriate,
   includesInappropriate,
+  cleanPrompt,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 
 type AuditResult = {
   highlighted: string;
+  replaced?: { prompt: string; negativePrompt?: string };
   tags: string[];
 };
 
@@ -63,10 +66,11 @@ export default function MetadataTester() {
       const isInappropriate = includesInappropriate({ prompt, negativePrompt }) !== false;
       const tags = getTagsFromPrompt(prompt) || [];
       const highlighted = highlightInappropriate({ prompt, negativePrompt }) ?? prompt;
+      const replaced = cleanPrompt({ prompt, negativePrompt });
       if (isInappropriate) {
-        failed.add({ highlighted, tags });
+        failed.add({ highlighted, replaced, tags });
       } else {
-        passed.add({ highlighted, tags });
+        passed.add({ highlighted, replaced, tags });
       }
     }
     setResults({ passed: [...passed], failed: [...failed] });
@@ -105,9 +109,19 @@ export default function MetadataTester() {
                 {key}
               </Text>
               <Stack spacing="xs">
-                {values.map(({ highlighted, tags }) => (
+                {values.map(({ highlighted, tags, replaced }) => (
                   <Card withBorder key={highlighted}>
                     <div dangerouslySetInnerHTML={{ __html: highlighted }} />
+                    {replaced && (
+                      <>
+                        <Divider label="Cleaned" mt="xs" />
+                        <Text>{replaced.prompt}</Text>
+                        {replaced.negativePrompt && (
+                          <Text color="dimmed">{replaced.negativePrompt}</Text>
+                        )}
+                      </>
+                    )}
+                    <div></div>
                     {tags.length > 0 && (
                       <Group spacing={4} mt="sm">
                         {tags.map((tag) => (

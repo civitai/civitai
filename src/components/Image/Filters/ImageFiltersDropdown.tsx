@@ -9,6 +9,7 @@ import {
   Group,
   Indicator,
   Popover,
+  ScrollArea,
   Stack,
 } from '@mantine/core';
 import { MediaType, MetricTimeframe } from '@prisma/client';
@@ -310,10 +311,16 @@ export function ImageFiltersDropdown({
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
+      withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
-        {dropdown}
+      <Popover.Dropdown maw={468} w="100%">
+        <ScrollArea.Autosize
+          type="hover"
+          maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+        >
+          {dropdown}
+        </ScrollArea.Autosize>
       </Popover.Dropdown>
     </Popover>
   );

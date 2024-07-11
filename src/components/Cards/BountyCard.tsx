@@ -36,8 +36,8 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { shouldAnimateByDefault, getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -52,6 +52,7 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
 export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { id, name, images, user, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
@@ -98,6 +99,10 @@ export function BountyCard({ data }: Props) {
       : expired
       ? expiredBadge
       : countdownBadge;
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
@@ -146,9 +151,10 @@ export function BountyCard({ data }: Props) {
                         : undefined
                     }
                     type={image.type}
-                    anim={shouldAnimateByDefault(image)}
+                    anim={shouldAnimate}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
+                    skip={getSkipValue(image)}
                   />
                 ) : (
                   <MediaHash {...image} />

@@ -4,20 +4,28 @@ import { IconTournament } from '@tabler/icons-react';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { formatDate } from '~/utils/date-helpers';
 
 export const ImageContestCollectionDetails = ({
   imageId,
   isOwner,
+  isModerator,
 }: {
   imageId: number;
   isOwner: boolean;
+  isModerator?: boolean;
 }) => {
-  const { collectionItems } = useImageContestCollectionDetails({ id: imageId });
+  const isOwnerOrMod = isOwner || isModerator;
+  const { collectionItems } = useImageContestCollectionDetails(
+    { id: imageId },
+    { enabled: !!imageId }
+  );
   const { shareUrl } = useImageDetailContext();
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =
-    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwner) ?? [];
+    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod) ??
+    [];
 
   if (displayedItems.length === 0) return null;
 
@@ -31,7 +39,18 @@ export const ImageContestCollectionDetails = ({
       </div>
       <div className="flex flex-col gap-3">
         {collectionItems?.map((item) => {
-          if (isOwner) {
+          const tagDisplay = item?.tag ? (
+            <>
+              {' '}
+              for the{' '}
+              <Text component="span" tt="capitalize" weight="bold">
+                {item?.tag.name}
+              </Text>{' '}
+              category
+            </>
+          ) : null;
+
+          if (isOwnerOrMod) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -40,8 +59,18 @@ export const ImageContestCollectionDetails = ({
                   <Text weight="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
-                  contest.
+                  Contest{tagDisplay}.
                 </Text>
+
+                {!!item.collection.metadata?.votingPeriodStart && (
+                  <Text>
+                    The ability to react/vote for this film will go live starting at{' '}
+                    <Text weight="bold" component="span">
+                      {formatDate(item.collection.metadata?.votingPeriodStart)}
+                    </Text>{' '}
+                    when the Community Voting period begins
+                  </Text>
+                )}
 
                 {item.status === CollectionItemStatus.REVIEW && (
                   <Text>
@@ -96,8 +125,17 @@ export const ImageContestCollectionDetails = ({
                 <Text weight="bold" component="span">
                   {item.collection.name}
                 </Text>{' '}
-                contest.{' '}
+                contest{tagDisplay}.{' '}
               </Text>
+              {!!item.collection.metadata?.votingPeriodStart && (
+                <Text>
+                  The ability to react/vote for this film will go live starting at{' '}
+                  <Text weight="bold" component="span">
+                    {formatDate(item.collection.metadata?.votingPeriodStart)}
+                  </Text>{' '}
+                  when the Community Voting period begins
+                </Text>
+              )}
               <Anchor href={`/collections/${item.collection.id}`} className="text-center" size="xs">
                 View and vote on all contest entries
               </Anchor>

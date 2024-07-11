@@ -242,6 +242,7 @@ export function formatGenerationResources(resources: ResourceData[]) {
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       covered: resource.covered,
+      minor: resource.model.minor,
     };
   });
 }

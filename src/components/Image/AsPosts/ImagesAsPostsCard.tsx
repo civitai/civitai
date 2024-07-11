@@ -48,8 +48,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showSuccessNotification } from '~/utils/notifications';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesAsPostsCard({
   data,
@@ -63,6 +63,7 @@ export function ImagesAsPostsCard({
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
   const { modelVersions, showModerationOptions, model, filters } =
@@ -210,6 +211,11 @@ export function ImagesAsPostsCard({
   const isOP = data.user.id === model?.user.id;
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
 
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
+
   return (
     <div className={cx(pinned && classes.pinned)}>
       {pinned && (
@@ -349,7 +355,8 @@ export function ImagesAsPostsCard({
                                 placeholder="empty"
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
-                                anim={shouldAnimateByDefault(image)}
+                                anim={shouldAnimate}
+                                skip={getSkipValue(image)}
                                 fadeIn
                               />
                             )}
@@ -422,6 +429,11 @@ export function ImagesAsPostsCard({
                     }}
                   >
                     {data.images.map((image, index) => {
+                      const shouldAnimate = shouldAnimateByDefault({
+                        ...image,
+                        forceDisabled: currentUser?.autoplayGifs,
+                      });
+
                       return (
                         <Carousel.Slide key={image.id}>
                           {slidesInView.includes(index) && (
@@ -486,7 +498,8 @@ export function ImagesAsPostsCard({
                                           placeholder="empty"
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
-                                          anim={shouldAnimateByDefault(image)}
+                                          anim={shouldAnimate}
+                                          skip={getSkipValue(image)}
                                           fadeIn
                                         />
                                       )}

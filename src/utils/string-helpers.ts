@@ -53,8 +53,10 @@ const nameOverrides: Record<string, string> = {
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
-  ClubMembership: 'Club Memebership',
+  ClubMembership: 'Club Membership',
   Redeemable: 'Redeemed Code',
+  'PixArt E': 'PixArt Σ',
+  'PixArt a': 'PixArt α',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
@@ -247,4 +249,21 @@ export function safeDecodeURIComponent(str: string) {
 
 export function getRandomId() {
   return Math.random().toString(36).substring(2, 11);
+}
+
+export function toPascalCase(str: string) {
+  // Split the string by any sequence of non-alphanumeric characters
+  const words = str.split(/[^a-zA-Z0-9]+/);
+
+  // Capitalize the first letter of each word
+  const pascalCaseWords = words.map((word) => {
+    if (!isNaN(parseInt(word[0]))) {
+      // If the word starts with a digit, keep the entire word as is
+      return word.toUpperCase();
+    }
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+
+  // Join the words back together with a space
+  return pascalCaseWords.join(' ');
 }

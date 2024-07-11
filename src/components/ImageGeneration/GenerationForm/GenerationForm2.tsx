@@ -137,18 +137,11 @@ export function GenerationFormContent() {
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
 
-  // const [key, setKey] = useLocalStorage({ key: 'workflow-definition', defaultValue: 'txt2img' });
-
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
   const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
-
-  // const { data: workflowDefinition } = trpc.generation.getWorkflowDefinition.useQuery(
-  //   { key: workflow },
-  //   { enabled: !!workflow }
-  // );
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
@@ -222,7 +215,11 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
-        await mutateAsync({ resources, params, remix });
+        await mutateAsync({
+          resources,
+          params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
+          remix,
+        });
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
@@ -251,6 +248,18 @@ export function GenerationFormContent() {
       setPromptWarning(null);
     }
   };
+
+  const [hasMinorResources, setHasMinorResources] = useState(false);
+  useEffect(() => {
+    const subscription = form.watch(({ model, resources = [], vae }, { name }) => {
+      if (name === 'model' || name === 'resources' || name === 'vae') {
+        setHasMinorResources([model, ...resources, vae].filter((x) => x?.minor).length > 0);
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   return (
     <Form
@@ -318,6 +327,7 @@ export function GenerationFormContent() {
           <Watch {...form} fields={['baseModel', 'model', 'resources', 'vae']}>
             {({ baseModel, model, resources = [], vae }) => {
               const selectedResources = [...resources, vae, model].filter(isDefined);
+              const minorFlaggedResources = selectedResources.filter((x) => x.minor);
               const unstableResources = selectedResources.filter((x) =>
                 allUnstableResources.includes(x.id)
               );
@@ -434,6 +444,28 @@ export function GenerationFormContent() {
                         </Text>
                         <List size="xs">
                           {unstableResources.map((resource) => (
+                            <List.Item key={resource.id}>
+                              {resource.modelName} - {resource.name}
+                            </List.Item>
+                          ))}
+                        </List>
+                      </Alert>
+                    </Card.Section>
+                  )}
+                  {minorFlaggedResources.length > 0 && (
+                    <Card.Section>
+                      <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                        <Text size="xs">
+                          {`A resource you selected does not allow the generation of Mature Content.
+                    If you attempt to generate mature content with this resource,
+                    the image will not be returned but you `}
+                          <Text span italic inherit>
+                            will
+                          </Text>
+                          {` be charged Buzz.`}
+                        </Text>{' '}
+                        <List size="xs">
+                          {minorFlaggedResources.map((resource) => (
                             <List.Item key={resource.id}>
                               {resource.modelName} - {resource.name}
                             </List.Item>
@@ -578,7 +610,13 @@ export function GenerationFormContent() {
         </div>
 
         <div className="my-2 flex justify-between gap-3">
-          <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+          <InputSwitch
+            name="nsfw"
+            label="Mature content"
+            labelPosition="left"
+            disabled={hasMinorResources}
+            checked={hasMinorResources ? false : undefined}
+          />
           {features.draft && (
             <InputSwitch
               name="draft"

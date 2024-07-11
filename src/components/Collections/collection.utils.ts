@@ -1,4 +1,5 @@
 import {
+  CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
@@ -16,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 import { CollectionByIdModel } from '~/types/router';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isFutureDate } from '~/utils/date-helpers';
 
 const collectionQueryParamSchema = z
   .object({
@@ -254,4 +256,14 @@ export const useCollection = (collectionId: number) => {
     permissions,
     ...rest,
   };
+};
+
+export const contestCollectionReactionsHidden = (
+  collection: Pick<NonNullable<CollectionByIdModel>, 'mode' | 'metadata'>
+) => {
+  return (
+    collection.mode === CollectionMode.Contest &&
+    !!collection.metadata?.votingPeriodStart &&
+    isFutureDate(collection.metadata?.votingPeriodStart ?? new Date())
+  );
 };

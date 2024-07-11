@@ -288,7 +288,7 @@ export function DumbModelFiltersDropdown({
         >
           {activeBaseModels.map((baseModel, index) => (
             <Chip key={index} value={baseModel} {...chipProps}>
-              {baseModel}
+              {getDisplayName(baseModel, { splitNumbers: false })}
             </Chip>
           ))}
         </Chip.Group>

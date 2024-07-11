@@ -74,7 +74,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  onlySelectableLevels,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -90,6 +93,8 @@ import {
 } from './../schema/image.schema';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -549,6 +554,7 @@ export const getAllImages = async ({
   techniques,
   baseModels,
   collectionTagId,
+  excludedUserIds,
 }: GetInfiniteImagesOutput & {
   userId?: number;
   user?: SessionUser;
@@ -562,6 +568,9 @@ export const getAllImages = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
+
+  // Exclude unselectable browsing levels
+  browsingLevel = onlySelectableLevels(browsingLevel);
 
   // Filter to specific user content
   let targetUserId: number | undefined;
@@ -652,7 +661,6 @@ export const getAllImages = async ({
       Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
-    console.log('THIS IS ABOUT TO HAPPEN BUD!');
     cacheTime = 0;
     // if (targetUserId !== userId) {
     //   cacheTime = CacheTTL.day;
@@ -704,6 +712,15 @@ export const getAllImages = async ({
 
   // Filter to a specific collection and relevant status:
   if (collectionId) {
+    const permissions = await getUserCollectionPermissionsById({
+      userId,
+      isModerator,
+      id: collectionId,
+    });
+
+    // Check if user has access to collection
+    if (!permissions.read) return { nextCursor: undefined, items: [] };
+
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
@@ -750,6 +767,10 @@ export const getAllImages = async ({
           ${Prisma.raw(sort === ImageSort.Random ? 'ORDER BY "randomId" DESC' : '')}
         )`
     );
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const isGallery = modelId || modelVersionId || reviewId || username;
@@ -1399,6 +1420,7 @@ export const getImagesForModelVersion = async ({
     imageWhere.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
+  if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -1466,6 +1488,7 @@ export const getImagesForModelVersion = async ({
 
   if (remainingModelVersionIds.length) {
     const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+        -- Get Community posts tied to the specific modelVersion via the post.
         WITH targets AS (
           SELECT
             id,
@@ -1473,15 +1496,13 @@ export const getImagesForModelVersion = async ({
             row_num
           FROM (
             SELECT
-              ir."imageId" id,
-              ir."modelVersionId",
-              -- Community posts on the carousel follow the Oldest first rule. We are matching that here.
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY p."createdAt" ASC) row_num
-            FROM "ImageResource" ir
-            JOIN "Image" i ON i.id = ir."imageId"
+              i.id,
+              p."modelVersionId",
+              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+            FROM "Image" i
             JOIN "Post" p ON p.id = i."postId"
-            JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-            WHERE ir."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+            JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+            WHERE p."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
               AND ${Prisma.join(imageWhere, ' AND ')}
           ) ranked
           WHERE ranked.row_num <= 20
@@ -1565,6 +1586,7 @@ export const getImagesForPosts = async ({
   //     imageWhere.push(Prisma.sql`i."id" NOT IN (${Prisma.join(excludedIds)})`);
   // }
 
+  if (browsingLevel) browsingLevel = onlySelectableLevels(browsingLevel);
   if (pending && (isModerator || userId) && browsingLevel) {
     if (isModerator) {
       imageWhere.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
@@ -2329,6 +2351,7 @@ type GetImageModerationReviewQueueRaw = {
   reportDetails?: Prisma.JsonValue;
   reportUsername?: string;
   reportUserId?: number;
+  reportCount?: number;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -2392,6 +2415,7 @@ export const getImageModerationReviewQueue = async ({
     report.reason as "reportReason",
     report.status as "reportStatus",
     report.details as "reportDetails",
+    array_length("alsoReportedBy", 1) as "reportCount",
     ur.username as "reportUsername",
     ur.id as "reportUserId",
   `;
@@ -2504,6 +2528,7 @@ export const getImageModerationReviewQueue = async ({
             reason: string;
             details: Prisma.JsonValue;
             status: ReportStatus;
+            count: number;
             user: { id: number; username?: string | null };
           }
         | undefined;
@@ -2525,6 +2550,7 @@ export const getImageModerationReviewQueue = async ({
       reportDetails,
       reportUsername,
       reportUserId,
+      reportCount,
       ...i
     }) => ({
       ...i,
@@ -2547,6 +2573,7 @@ export const getImageModerationReviewQueue = async ({
             reason: reportReason as string,
             details: reportDetails as Prisma.JsonValue,
             status: reportStatus as ReportStatus,
+            count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
           }
         : undefined,
@@ -3107,6 +3134,7 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     ...i,
     collection: {
       ...i.collection,
+      metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,
       tags: i.collection.tags.map((t) => t.tag),
     },
   }));

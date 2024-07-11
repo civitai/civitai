@@ -42,6 +42,7 @@ import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { reportAcceptedReward } from '~/server/rewards';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const moderateImageHandler = async ({
   input,
@@ -443,6 +444,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
     });
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
 
     return result;
   } catch (error) {

@@ -37,6 +37,7 @@ const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   covered: z.boolean().optional(),
   baseModel: z.string(),
   image: imageSchema.pick({ url: true }).optional(),
+  minor: z.boolean().default(false),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
@@ -279,7 +280,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function reset() {
-    console.log(getDefaultValues(form.getValues()));
     form.reset(getDefaultValues(form.getValues()));
   }
   // #endregion

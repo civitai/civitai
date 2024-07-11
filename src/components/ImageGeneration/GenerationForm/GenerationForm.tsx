@@ -928,14 +928,19 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
   if (currentUser?.muted)
     return (
       <Center h="100%" w="75%" mx="auto">
-        <Stack spacing="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
+        <Stack spacing="xs" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow" mb="xl">
             <IconLock />
           </ThemeIcon>
-          <Text align="center">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 48 hours. You do not need to contact us.
+          <Text size="xl" weight={500}>
+            Account Restricted
+          </Text>
+          <Text className="leading-snug text-center">
+            Your account is under review for potential Terms of Service violations. You will receive
+            a decision within 48 hours.
+          </Text>
+          <Text weight="bold">
+            Do <u>not</u> contact support.
           </Text>
         </Stack>
       </Center>

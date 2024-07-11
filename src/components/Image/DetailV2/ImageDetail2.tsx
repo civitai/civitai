@@ -67,6 +67,9 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -110,13 +113,20 @@ export function ImageDetail2() {
     shareUrl,
     navigate,
   } = useImageDetailContext();
+  const { collectionItems = [] } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+
   if (isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
+  if (!image || isBlocked) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -199,7 +209,7 @@ export function ImageDetail2() {
       <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
         <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
           <ImageGuard2 image={image} explain={false}>
-            {(safe) => (
+            {() => (
               <>
                 {/* HEADER */}
                 <div className="flex justify-between gap-8 p-3">
@@ -276,6 +286,9 @@ export function ImageDetail2() {
                     <ReactionSettingsProvider
                       settings={{
                         hideReactionCount: false,
+                        hideReactions: collectionItems.some((ci) =>
+                          contestCollectionReactionsHidden(ci.collection)
+                        ),
                         buttonStyling: (reaction, hasReacted) => ({
                           radius: 'xl',
                           variant: 'light',
@@ -401,6 +414,7 @@ export function ImageDetail2() {
               <ImageContestCollectionDetails
                 imageId={image.id}
                 isOwner={image.user.id === currentUser?.id}
+                isModerator={currentUser?.isModerator}
               />
               <ImageExternalMeta imageId={image.id} />
             </div>

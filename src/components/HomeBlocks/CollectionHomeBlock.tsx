@@ -39,6 +39,7 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 
 const useStyles = createStyles<string, { count: number; rows: number }>(
   (theme, { count, rows }) => {
@@ -315,7 +316,10 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             }
           >
             <ReactionSettingsProvider
-              settings={{ hideReactionCount: collection?.mode === CollectionMode.Contest }}
+              settings={{
+                hideReactionCount: collection?.mode === CollectionMode.Contest,
+                hideReactions: collection && contestCollectionReactionsHidden(collection),
+              }}
             >
               {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
               {items.map((item) => (

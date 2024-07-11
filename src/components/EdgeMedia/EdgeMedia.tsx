@@ -15,6 +15,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     mediaRef?: [HTMLImageElement | null, (ref: HTMLImageElement | null) => void];
     muted?: boolean;
     html5Controls?: boolean;
+    onMutedChange?: (muted: boolean) => void;
   };
 
 export function EdgeMedia({
@@ -38,8 +39,10 @@ export function EdgeMedia({
   mediaRef,
   transcode,
   original,
+  skip,
   muted,
   html5Controls,
+  onMutedChange,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -64,6 +67,7 @@ export function EdgeMedia({
     name,
     type,
     original,
+    skip,
   });
 
   switch (inferredType) {
@@ -92,6 +96,7 @@ export function EdgeMedia({
           fadeIn={fadeIn}
           muted={muted}
           html5Controls={html5Controls}
+          onMutedChange={onMutedChange}
         />
       );
     case 'audio':
