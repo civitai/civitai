@@ -115,6 +115,9 @@ export const orchestratorRouter = router({
         body: {
           steps: [step],
         },
+        query: {
+          whatif: true,
+        },
       });
 
       let cost = 0,
