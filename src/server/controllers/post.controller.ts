@@ -39,10 +39,7 @@ import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards
 import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
 import { hasEntityAccess } from '../services/common.service';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   CollectionMetadataSchema,
   getCollectionPermissionDetails,

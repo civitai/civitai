@@ -77,7 +77,7 @@ import {
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   onlySelectableLevels,
-  sfwBrowsingLevelsFlag,
+  safeBrowsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
@@ -2643,7 +2643,7 @@ export async function get404Images() {
       AND c.name = '404 Contest'
       AND i."ingestion" = 'Scanned'
       AND i."needsReview" IS NULL
-      AND (i."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+      AND (i."nsfwLevel" & ${safeBrowsingLevels}) != 0
       AND ci.status = 'ACCEPTED';
   `;
 

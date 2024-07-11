@@ -79,7 +79,6 @@ import { VideoMetadata } from '~/server/schema/media.schema';
 import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { removeTags } from '~/utils/string-helpers';
 import { HiddenContentAlert } from '~/components/HiddenContentAlert/HiddenContentAlert';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
