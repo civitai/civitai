@@ -199,8 +199,6 @@ export const upsertModelVersionHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
-    console.log(ctx.user);
-
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
