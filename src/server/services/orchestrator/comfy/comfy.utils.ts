@@ -139,11 +139,20 @@ export function applyResources(
       } else {
         const value = child.inputs[inputKey];
         if (Array.isArray(value)) {
-          if (CHECKPOINT_LOADERS.includes(parent.class_type)) {
-            // If it's not a loader, and it references the checkpoint, reference head node
+          // Disabled since this approach requires every workflow to also include a LoraLoader
+          // if (CHECKPOINT_LOADERS.includes(parent.class_type)) {
+          //   // If it's not a loader, and it references the checkpoint, reference head node
+          //   value[0] = stackKeys[0];
+          // } else {
+          //   // If it's not a loader, and it doesn't reference the checkpoint, reference tail node
+          //   value[0] = stackKeys[stackKeys.length - 1];
+          // }
+
+          if (inputKey === 'vae') {
+            // We only need to reference the checkpoint for the vae
             value[0] = stackKeys[0];
           } else {
-            // If it's not a loader, and it doesn't reference the checkpoint, reference tail node
+            // otherwise, reference tail node
             value[0] = stackKeys[stackKeys.length - 1];
           }
         }
