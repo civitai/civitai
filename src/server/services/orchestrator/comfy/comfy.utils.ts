@@ -1,18 +1,21 @@
 import { ComfyNode } from '~/shared/types/generation.types';
 import { parseAIR } from '~/utils/string-helpers';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { WorkflowDefinition, WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/orchestrator/types';
+import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 
 export async function getWorkflowDefinitions() {
   const workflowsJsons = await redis.hGetAll(REDIS_KEYS.GENERATION.WORKFLOWS);
   if (!workflowsJsons) throw new Error('No workflows found');
   const workflows = Object.values(workflowsJsons).map((json) => {
     const workflow = JSON.parse(json) as WorkflowDefinition;
-    const type = workflow.key.split('-')[0] as WorkflowDefinitionType;
-    return { ...workflow, type };
+    return {
+      ...workflow,
+      label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
+    };
   });
 
-  return workflows;
+  return sortAlphabeticallyBy(workflows, (x) => x.label);
 }
 
 export async function clearWorkflowDefinitions() {

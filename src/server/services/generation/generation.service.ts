@@ -41,6 +41,7 @@ import {
   TextToImageStepRemixMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { BaseModelSetType, getGenerationConfig } from '~/server/common/constants';
+import { cleanPrompt } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -353,6 +354,8 @@ const getImageGenerationData = async (id: number) => {
     aspectRatio = `${ratios.indexOf(closest)}`;
   }
 
+  const { prompt, negativePrompt } = cleanPrompt(meta);
+
   return {
     // only send back resources if we have a checkpoint resource
     resources: checkpoint ? deduped : [],
@@ -361,6 +364,8 @@ const getImageGenerationData = async (id: number) => {
       clipSkip,
       aspectRatio,
       baseModel,
+      prompt,
+      negativePrompt,
     },
     remix: {
       imageId: image.id,

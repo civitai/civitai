@@ -92,15 +92,10 @@ const useCostStore = create<{ cost?: number }>(() => ({}));
 export function GenerationForm2() {
   const utils = trpc.useUtils();
 
-  const { mutate } = trpc.generation.setWorkflowDefinition.useMutation({
-    onSuccess: () => {
-      utils.generation.getWorkflowDefinitions.invalidate();
-    },
-  });
-  const handleSetDefinitions = () => {
-    for (const item of workflowDefinitions) {
-      mutate(item);
-    }
+  const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
+  const handleSetDefinitions = async () => {
+    await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
+    utils.generation.getWorkflowDefinitions.invalidate();
   };
 
   return (
@@ -290,13 +285,14 @@ export function GenerationFormContent() {
             </div>
           )}
           <InputSelect
-            label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
+            label="Workflow"
+            // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
             className="flex-1"
             name="workflow"
             data={
               workflowDefinitions
                 ?.filter((x) => x.type === workflowDefinition?.type && x.selectable !== false)
-                .map(({ key, name }) => ({ label: name, value: key })) ?? []
+                .map(({ key, label }) => ({ label, value: key })) ?? []
             }
             loading={loadingWorkflows}
           />

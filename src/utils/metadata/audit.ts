@@ -449,8 +449,8 @@ export function cleanPrompt({
 }: {
   prompt?: string;
   negativePrompt?: string;
-}) {
-  if (!prompt) return;
+}): { prompt?: string; negativePrompt?: string } {
+  if (!prompt) return {};
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
 

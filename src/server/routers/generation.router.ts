@@ -30,13 +30,14 @@ export const generationRouter = router({
     getWorkflowDefinitions().then((res) =>
       res
         .filter((x) => x.enabled !== false)
-        .map(({ type, key, name, features, description, selectable }) => ({
+        .map(({ type, key, name, features, description, selectable, label }) => ({
           type,
           key,
           name,
           features,
           description,
           selectable,
+          label,
         }))
     )
   ),

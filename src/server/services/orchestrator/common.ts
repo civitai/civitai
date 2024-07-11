@@ -270,7 +270,10 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
       status: workflow.status ?? ('unassignend' as WorkflowStatus),
       createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
       totalCost:
-        workflow.transactions?.reduce((acc, transaction) => acc + transaction.amount, 0) ?? 0,
+        workflow.transactions?.list?.reduce((acc, value) => {
+          if (value.type === 'debit') return acc + value.amount;
+          else return acc - value.amount;
+        }, 0) ?? 0,
       tags: workflow.tags ?? [],
       steps: workflow.steps.map((step) =>
         formatWorkflowStep({

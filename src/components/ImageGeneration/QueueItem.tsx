@@ -52,6 +52,7 @@ import {
   orchestratorPendingStatuses,
   orchestratorRefundableStatuses,
 } from '~/shared/constants/generation.constants';
+import { trpc } from '~/utils/trpc';
 
 // const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
@@ -153,35 +154,41 @@ export function QueueItem({
 
   const canRemix = step.params.workflow !== 'img2img-upscale';
 
+  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
+
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
-          <div className="flex items-center gap-1">
-            {images.length && (
-              <GenerationStatusBadge
-                status={request.status}
-                complete={completedCount}
-                processing={processingCount}
-                quantity={images.length}
-                tooltipLabel={overwriteStatusLabel}
-                progress
-              />
-            )}
-
-            <Text size="xs" color="dimmed">
-              {formatDateMin(request.createdAt)}
-            </Text>
-            {!!actualCost &&
-              dayjs(request.createdAt).toDate() >=
-                constants.buzz.generationBuzzChargingStartDate && (
-                <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+          <div className="flex flex-wrap items-center gap-1">
+            {workflowDefinition && <Badge radius="lg">{workflowDefinition.label}</Badge>}
+            <div className="flex items-center gap-1">
+              {images.length && (
+                <GenerationStatusBadge
+                  status={request.status}
+                  complete={completedCount}
+                  processing={processingCount}
+                  quantity={images.length}
+                  tooltipLabel={overwriteStatusLabel}
+                  progress
+                />
               )}
-            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                {copied ? <IconCheck /> : <IconInfoHexagon />}
-              </ActionIcon>
-            </ButtonTooltip>
+
+              <Text size="xs" color="dimmed">
+                {formatDateMin(request.createdAt)}
+              </Text>
+              {!!actualCost &&
+                dayjs(request.createdAt).toDate() >=
+                  constants.buzz.generationBuzzChargingStartDate && (
+                  <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                )}
+              <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
+                <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                  {copied ? <IconCheck /> : <IconInfoHexagon />}
+                </ActionIcon>
+              </ButtonTooltip>
+            </div>
           </div>
           <div className="flex gap-1">
             {generationStatus.available && canRemix && (
@@ -228,12 +235,20 @@ export function QueueItem({
             </div>
           </Alert>
         )}
+
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
             {prompt}
           </Text>
         </ContentClamp>
-        <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+        <div className="flex gap-1">
+          {workflowDefinition && (
+            <Badge radius="lg" color="violet" size="sm">
+              {workflowDefinition.label}
+            </Badge>
+          )}
+          <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+        </div>
         {(!!images?.length || processing) && (
           <div className={classes.grid}>
             {images.map((image) => (

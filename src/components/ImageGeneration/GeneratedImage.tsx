@@ -25,7 +25,6 @@ import {
   IconThumbDown,
   IconThumbUp,
   IconTrash,
-  IconWindowMaximize,
 } from '@tabler/icons-react';
 import { useEffect, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
