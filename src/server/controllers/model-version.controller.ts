@@ -51,6 +51,7 @@ import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { getMaxEarlyAccessDays } from '~/server/utils/early-access-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -198,9 +199,20 @@ export const upsertModelVersionHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
+    console.log(ctx.user);
+
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
+
+    if (!!input.earlyAccessConfig?.timeframe) {
+      const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta });
+
+      if (input.earlyAccessConfig?.timeframe > maxDays) {
+        throw throwBadRequestError('Early access days exceeds user limit');
+      }
+    }
+
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,

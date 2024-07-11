@@ -207,8 +207,8 @@ export function ModelCard({ data, forceInView }: Props) {
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const shouldAnimate = shouldAnimateByDefault({
-    type: image.type,
-    metadata: image.metadata as VideoMetadata,
+    type: image?.type,
+    metadata: image?.metadata as VideoMetadata,
     forceDisabled: !currentUser?.autoplayGifs,
   });
 

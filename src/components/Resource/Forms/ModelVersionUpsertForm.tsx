@@ -438,7 +438,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         />
                       </Stack>
                     )}
-                    {(version?.status !== 'published' ||
+                    {(version?.status !== 'Published' ||
                       version?.earlyAccessConfig?.donationGoalId) && (
                       <>
                         <InputSwitch
