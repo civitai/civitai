@@ -29,16 +29,28 @@ export async function updateWorkflowSteps({
 }) {
   const client = createOrchestratorClient(token);
 
+  // console.dir(input, { depth: null });
+
   await Promise.all(
-    input.map(({ workflowId, stepName, metadata }) =>
-      updateWorkflowStep({
+    input.map(async ({ workflowId, stepName, metadata }) => {
+      // console.dir(
+      //   {
+      //     body: { metadata: deepOmit(metadata) },
+      //     path: {
+      //       workflowId,
+      //       stepName,
+      //     },
+      //   },
+      //   { depth: null }
+      // );
+      await updateWorkflowStep({
         client,
         body: { metadata: deepOmit(metadata) },
         path: {
           workflowId,
           stepName,
         },
-      })
-    )
+      });
+    })
   );
 }
