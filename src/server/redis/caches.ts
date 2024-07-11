@@ -5,16 +5,12 @@ import {
   CosmeticType,
   ModelStatus,
   Prisma,
-  UserEngagementType,
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  GenerationResourceSelect,
-  generationResourceSelect,
-} from '~/server/selectors/generation.selector';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import {
@@ -338,48 +334,5 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
     for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
     for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
     return results;
-  },
-});
-
-export const userBlockedUsersCache = createCachedObject<{ userId: number; blockedUsers: number[] }>(
-  {
-    key: REDIS_KEYS.CACHES.BLOCKED_USERS,
-    idKey: 'userId',
-    ttl: CacheTTL.day,
-    lookupFn: async (ids) => {
-      const [userId] = ids;
-
-      const blockedUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
-        SELECT
-          ue."targetUserId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
-        FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
-      `;
-
-      return { [userId]: blockedUsers };
-    },
-  }
-);
-
-export const userBlockedByUsersCache = createCachedObject<{
-  userId: number;
-  blockedByUsers: number[];
-}>({
-  key: REDIS_KEYS.CACHES.BLOCKED_USERS,
-  idKey: 'userId',
-  ttl: CacheTTL.day,
-  lookupFn: async (ids) => {
-    const [userId] = ids;
-
-    const blockedByUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
-        SELECT
-          ue."userId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."userId") "username"
-        FROM "UserEngagement" ue
-        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
-      `;
-
-    return { [userId]: blockedByUsers };
   },
 });

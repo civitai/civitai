@@ -8,6 +8,7 @@ import {
 } from '~/server/schema/api-key.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
+import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 export function getApiKey({ id }: GetAPIKeyInput) {
   return dbRead.apiKey.findUnique({
@@ -19,8 +20,12 @@ export function getApiKey({ id }: GetAPIKeyInput) {
   });
 }
 
-export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { userId: number }) {
-  return dbRead.apiKey.findMany({
+export async function getUserApiKeys({
+  take,
+  skip,
+  userId,
+}: GetUserAPIKeysInput & { userId: number }) {
+  const keys = await dbRead.apiKey.findMany({
     take,
     skip,
     where: { userId, type: 'User' },
@@ -31,6 +36,7 @@ export function getUserApiKeys({ take, skip, userId }: GetUserAPIKeysInput & { u
       createdAt: true,
     },
   });
+  return keys.filter((x) => x.name !== generationServiceCookie.name);
 }
 
 export async function addApiKey({

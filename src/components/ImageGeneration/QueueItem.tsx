@@ -162,7 +162,7 @@ export function QueueItem({
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex flex-wrap items-center gap-1">
-            {workflowDefinition && <Badge radius="lg">{workflowDefinition.label}</Badge>}
+            {/* {workflowDefinition && <Badge radius="lg">{workflowDefinition.label}</Badge>} */}
             <div className="flex items-center gap-1">
               {images.length && (
                 <GenerationStatusBadge
@@ -241,14 +241,15 @@ export function QueueItem({
             {prompt}
           </Text>
         </ContentClamp>
-        <div className="flex gap-1">
+
+        <div>
           {workflowDefinition && (
             <Badge radius="lg" color="violet" size="sm">
               {workflowDefinition.label}
             </Badge>
           )}
-          <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
         </div>
+        <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
         {(!!images?.length || processing) && (
           <div className={classes.grid}>
             {images.map((image) => (

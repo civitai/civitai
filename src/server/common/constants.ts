@@ -560,6 +560,7 @@ export const generation = {
       maxStrength: 2,
       covered: true,
       image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
+      minor: false,
     } as GenerationResource,
   },
   maxValues: {
@@ -600,6 +601,7 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       covered: true,
+      minor: false,
     } as GenerationResource,
   },
   SDXL: {
@@ -627,6 +629,7 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       covered: true,
+      minor: false,
     } as GenerationResource,
   },
   Pony: {
@@ -665,6 +668,7 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       covered: true,
+      minor: false,
     } as GenerationResource,
   },
 };
@@ -762,4 +766,4 @@ export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
 
-export const downloadGeneratedImagesByDate = '8-15-2024';
+export const downloadGeneratedImagesByDate = '8-11-2024';
