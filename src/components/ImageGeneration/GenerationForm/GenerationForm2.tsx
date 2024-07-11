@@ -962,7 +962,7 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
 
   useEffect(() => {
     if (data) {
@@ -978,7 +978,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
       cost={data?.cost}
       error={
         !isInitialLoading && isError
-          ? 'Error calculating cost. Please try updating your values'
+          ? error
+            ? (error as any).message
+            : 'Error calculating cost. Please try updating your values'
           : undefined
       }
     />
