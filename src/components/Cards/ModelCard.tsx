@@ -183,11 +183,6 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    data.version?.baseModel as BaseModel
-  );
-  const isPony = data.version?.baseModel === 'Pony';
-  const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
   const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
@@ -206,11 +201,13 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const shouldAnimate = shouldAnimateByDefault({
-    type: image.type,
-    metadata: image.metadata as VideoMetadata,
-    forceDisabled: !currentUser?.autoplayGifs,
-  });
+  const shouldAnimate = image
+    ? shouldAnimateByDefault({
+        type: image.type,
+        metadata: image.metadata as VideoMetadata,
+        forceDisabled: !currentUser?.autoplayGifs,
+      })
+    : false;
 
   return (
     <FeedCard
@@ -276,12 +273,6 @@ export function ModelCard({ data, forceInView }: Props) {
                                 ) : (
                                   baseModelIndicator
                                 )}
-                              </>
-                            )}
-                            {isOdor && (
-                              <>
-                                <Divider orientation="vertical" />
-                                <IconNose size={16} strokeWidth={2} />
                               </>
                             )}
                           </Badge>
