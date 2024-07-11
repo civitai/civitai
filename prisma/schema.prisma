@@ -172,6 +172,7 @@ model User {
   bannedAt                DateTime?
   autoplayGifs            Boolean?              @default(true)
   filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  meta                    Json?                 @default("{}")
   leaderboardShowcase     String?
   referral                UserReferral?
   excludeFromLeaderboards Boolean               @default(false)

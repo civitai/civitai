@@ -22,6 +22,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputMultiSelect,
@@ -54,22 +55,21 @@ import {
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { numericString } from '~/utils/zod-helpers';
-
-const earlyAccessTimeframeValues = [5, 7, 10, 12, 15];
+import { isDefined } from '~/utils/type-guards';
 
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
     earlyAccessConfig: earlyAccessConfigInput
       .extend({
-        timeframe: z.number().refine((v) => earlyAccessTimeframeValues.includes(v), {
-          message: 'Invalid value',
-        }),
+        timeframe: z
+          .number()
+          .refine((v) => constants.earlyAccess.timeframeValues.some((x) => x === v), {
+            message: 'Invalid value',
+          }),
       })
       .nullish(),
     useMonetization: z.boolean().default(false),
@@ -116,6 +116,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -130,7 +131,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
   const isEarlyAccessOver =
-    !version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt);
+    model?.status === 'Published' &&
+    (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
 
   const MAX_EARLY_ACCCESS = 15;
 
@@ -163,7 +165,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       version?.earlyAccessConfig && features.earlyAccessModel
         ? {
             ...(version?.earlyAccessConfig ?? {}),
-            timeframe: version.earlyAccessConfig?.timeframe ?? earlyAccessTimeframeValues[0],
+            timeframe:
+              version.earlyAccessConfig?.timeframe ?? constants.earlyAccess.timeframeValues[0],
           }
         : null,
     modelId: model?.id ?? -1,
@@ -267,8 +270,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
+  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
+    .map(([score, days]) => ((currentUser?.meta?.scores?.total ?? 0) >= score ? days : null))
+    .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
-  const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
+  const showEarlyAccessInput =
+    features.earlyAccessModel &&
+    earlyAccessUnlockedDays.length > 0 &&
+    (version?.status !== 'Published' || atEarlyAccess);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -322,7 +331,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     'earlyAccessConfig',
                     e.target.checked
                       ? {
-                          timeframe: earlyAccessTimeframeValues[0],
+                          timeframe: constants.earlyAccess.timeframeValues[0],
                           downloadPrice: 500,
                           chargeForGeneration: false,
                           generationPrice: 100,
@@ -347,9 +356,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         form.setValue('earlyAccessConfig.timeframe', parseInt(value, 10))
                       }
                       value={
-                        earlyAccessConfig?.timeframe?.toString() ?? earlyAccessTimeframeValues[0]
+                        earlyAccessConfig?.timeframe?.toString() ??
+                        constants.earlyAccess.timeframeValues[0]
                       }
-                      data={earlyAccessTimeframeValues.map((v) => ({
+                      data={[0, ...earlyAccessUnlockedDays].map((v) => ({
                         label: v === 0 ? 'None' : `${v} days`,
                         value: v.toString(),
                         disabled: maxEarlyAccessValue < v,
@@ -370,18 +380,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       fullWidth
                       disabled={isEarlyAccessOver}
                     />
-                    <Group noWrap>
-                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                      <Text size="xs" color="dimmed" mt="sm">
-                        You will be charged a non-refundable fee of{' '}
-                        {constants.earlyAccess.buzzChargedPerDay} BUZZ per day of early access once
-                        your model is published. Your current total is{' '}
-                        <Text component="span" color="yellow.6">
-                          {constants.earlyAccess.buzzChargedPerDay * earlyAccessConfig?.timeframe}{' '}
-                          BUZZ.
+                    {earlyAccessUnlockedDays.length !==
+                      constants.earlyAccess.timeframeValues.length && (
+                      <Group noWrap>
+                        <Text size="xs" color="dimmed">
+                          You will unlock more early access day over time by posting models, images,
+                          reactions and more to the site.
                         </Text>
-                      </Text>
-                    </Group>
+                      </Group>
+                    )}
                     {!canIncreaseEarlyAccess && (
                       <Text size="xs" color="dimmed" mt="sm">
                         You cannot increase early access value after a model has been published
