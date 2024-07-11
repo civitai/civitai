@@ -90,19 +90,19 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
-  const utils = trpc.useUtils();
+  // const utils = trpc.useUtils();
 
-  const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
-  const handleSetDefinitions = async () => {
-    await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
-    utils.generation.getWorkflowDefinitions.invalidate();
-  };
+  // const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
+  // const handleSetDefinitions = async () => {
+  //   await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
+  //   utils.generation.getWorkflowDefinitions.invalidate();
+  // };
 
   return (
     <IsClient>
-      <div className="p-3">
+      {/* <div className="p-3">
         <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-      </div>
+      </div> */}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
