@@ -1,12 +1,12 @@
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import recommendersCaller from '~/server/http/recommenders/recommenders.caller';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export async function getRecommendations(params: RecommendationRequest) {
-  const recommendations = await recommendersCaller.getResourceRecommendationForResource(params);
-  return recommendations;
+export function getRecommendations(params: RecommendationRequest) {
+  return recommendersCaller.getRecommendationsForResource(params);
 }
 
 export async function toggleResourceRecommendation({
@@ -24,7 +24,7 @@ export async function toggleResourceRecommendation({
     select: { id: true, meta: true, model: { select: { userId: true } } },
   });
   if (!modelVersion) throw throwNotFoundError(`No model version found with id ${resourceId}`);
-  if (modelVersion.model.userId !== userId || !isModerator)
+  if (modelVersion.model.userId !== userId && !isModerator)
     throw throwAuthorizationError("You don't have permission to toggle this setting");
 
   const versionMeta = modelVersion.meta as ModelVersionMeta;
@@ -33,10 +33,11 @@ export async function toggleResourceRecommendation({
     data: {
       meta: { ...versionMeta, allowAIRecommendations: !versionMeta.allowAIRecommendations },
     },
-    select: { id: true, meta: true },
+    select: { id: true, meta: true, modelId: true },
   });
 
   await preventReplicationLag('modelVersion', updatedVersion.id);
+  await dataForModelsCache.bust(updatedVersion.modelId);
 
   return { ...updatedVersion, meta: updatedVersion.meta as ModelVersionMeta };
 }

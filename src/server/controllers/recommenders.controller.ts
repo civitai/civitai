@@ -1,21 +1,28 @@
 import { MetricTimeframe, ModelModifier } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-import { isModerator } from '~/server/routers/base.router';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
 import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { getVersionById } from '~/server/services/model-version.service';
 import { getModelsRaw } from '~/server/services/model.service';
 import {
   getRecommendations,
   toggleResourceRecommendation,
 } from '~/server/services/recommenders.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import { throwDbError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 
-export const getAssociatedRecommendedResourcesCardDataHandler = async ({
+export const getRecommendedResourcesCardDataHandler = async ({
   input,
   ctx,
 }: {
@@ -23,27 +30,39 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { modelVersionId, browsingLevel, ...userPreferences } = input;
+    const { modelVersionId, limit, ...userPreferences } = input;
     const { user } = ctx;
 
-    const resourcesIds: number[] | undefined = await getRecommendations({
+    const modelVersion = await getVersionById({
+      id: modelVersionId,
+      select: { meta: true, nsfwLevel: true },
+    });
+    if (!(modelVersion?.meta as ModelVersionMeta).allowAIRecommendations) return [];
+
+    const resourcesIds = await getRecommendations({
       modelVersionId,
       excludeIds: userPreferences.excludedModelIds,
-      browsingLevel,
+      browsingLevel: modelVersion?.nsfwLevel || 1,
+      limit,
     });
-
     if (!resourcesIds?.length) return [];
 
-    const { cursor, ...modelInput } = getAllModelsSchema.parse({
+    const result = getAllModelsSchema.safeParse({
       ...userPreferences,
-      browsingLevel,
       modelVersionIds: resourcesIds,
       period: MetricTimeframe.AllTime,
+      sort: ModelSort.HighestRated,
     });
+    if (!result.success) throw throwDbError(new Error('Failed to parse input'));
+
+    const { cursor, ...modelInput } = result.data;
 
     const { items: models } = await getModelsRaw({ user, input: modelInput });
 
-    const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
+    const modelVersionIds = models
+      .slice(0, limit)
+      .flatMap((m) => m.modelVersions)
+      .map((m) => m.id);
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
@@ -57,10 +76,19 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
+    const hiddenUsers = await Promise.all([
+      HiddenUsers.getCached({ userId: ctx.user?.id }),
+      BlockedByUsers.getCached({ userId: ctx.user?.id }),
+      BlockedUsers.getCached({ userId: ctx.user?.id }),
+    ]);
+    const excludedUserIds = [...new Set(hiddenUsers.flat().map((u) => u.id))];
+
     const completeModels = models
+      .slice(0, limit)
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
+        if (excludedUserIds.includes(model.user.id)) return null;
 
         const versionImages = images.filter((i) => i.modelVersionId === version.id);
         const showImageless =
@@ -72,6 +100,7 @@ export const getAssociatedRecommendedResourcesCardDataHandler = async ({
 
         return {
           ...model,
+          resourceType: 'recommended' as const,
           tags: tagsOnModels.map(({ tagId }) => tagId),
           hashes: hashes.map((h) => h.toLowerCase()),
           rank: {

@@ -3,7 +3,8 @@ import { HttpCaller } from '~/server/http/httpCaller';
 import { parseStringPromise, Builder } from 'xml2js';
 import {
   RecommendationRequest,
-  recommendationResponseSchema,
+  RecommendationsResponse,
+  recommendationsResponseSchema,
 } from '~/server/schema/recommenders.schema';
 
 // DOCUMENTATION
@@ -25,10 +26,14 @@ class RecommenderCaller extends HttpCaller {
     return RecommenderCaller.instance;
   }
 
-  async getResourceRecommendationForResource(params: RecommendationRequest) {
-    const response = await this.getRaw(`/recommendations/${params.modelVersionId}`);
-    const json = await response.json();
-    return recommendationResponseSchema.parse(json);
+  async getRecommendationsForResource(payload: RecommendationRequest) {
+    const response = await this.post<RecommendationsResponse>(`/recommendations`, { payload });
+    if (!response.ok) throw new Error('Failed to get recommendations');
+
+    const result = recommendationsResponseSchema.safeParse(response.data);
+    if (!result.success) throw new Error('Failed to parse recommendation response');
+
+    return result.data;
   }
 }
 

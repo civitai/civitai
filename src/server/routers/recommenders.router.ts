@@ -1,5 +1,5 @@
 import {
-  getAssociatedRecommendedResourcesCardDataHandler,
+  getRecommendedResourcesCardDataHandler,
   toggleResourceRecommendationHandler,
 } from '~/server/controllers/recommenders.controller';
 import { applyUserPreferences } from '~/server/middleware.trpc';
@@ -11,7 +11,7 @@ export const recommendersRouter = router({
   getResourceRecommendations: publicProcedure
     .input(recommendationRequestSchema)
     .use(applyUserPreferences)
-    .query(getAssociatedRecommendedResourcesCardDataHandler),
+    .query(getRecommendedResourcesCardDataHandler),
   toggleResourceRecommendations: protectedProcedure
     .input(getByIdSchema)
     .mutation(toggleResourceRecommendationHandler),

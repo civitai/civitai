@@ -60,7 +60,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { AssociatedRecommendedModels } from '~/components/AssociatedRecommendedModels/AssociatedRecommendedModels';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -537,8 +536,6 @@ export default function ModelDetailsV2({
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage}.` ?? '';
 
-  console.log({ selectedVersion });
-
   return (
     <>
       {meta}
@@ -1000,6 +997,7 @@ export default function ModelDetailsV2({
           <AssociatedModels
             fromId={model.id}
             type="Suggested"
+            versionId={selectedVersion?.id}
             label={
               <Group spacing={8} noWrap>
                 Suggested Resources{' '}
