@@ -51,8 +51,10 @@ const nameOverrides: Record<string, string> = {
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
-  ClubMembership: 'Club Memebership',
+  ClubMembership: 'Club Membership',
   Redeemable: 'Redeemed Code',
+  'PixArt E': 'PixArt Σ',
+  'PixArt a': 'PixArt α',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {

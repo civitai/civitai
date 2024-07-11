@@ -69,6 +69,7 @@ export function ImageDetailCarousel() {
   return (
     <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
       <Carousel
+        key={images.length}
         withControls={canNavigate}
         className="flex-1"
         onSlideChange={handleSlideChange}
