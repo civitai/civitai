@@ -355,8 +355,9 @@ function toggleShow({
 
 const useBadgeStyles = createStyles((theme, params: { browsingLevel?: number }) => {
   const backgroundColor = getIsSafeBrowsingLevel(params.browsingLevel ?? 0)
-    ? undefined
+    ? theme.fn.rgba(theme.colors.blue[8], 0.2)
     : theme.fn.rgba(theme.colors.red[9], 0.6);
+
   return {
     root: {
       userSelect: 'none',

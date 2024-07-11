@@ -100,14 +100,13 @@ type MoveAssetRow = {
 export const moveAsset = async ({
   url,
   modelVersionId,
-  modelId,
   userId,
 }: MoveAssetInput & { userId: number }) => {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
 
-  const { url: destinationUri } = await getPutUrl(`model/${modelId}/${assetName}`);
+  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
 
   const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
     jobId,
@@ -128,7 +127,13 @@ export const moveAsset = async ({
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
 
-  const result = response.data?.jobs?.[0]?.result;
+  const thisJob = response.data?.jobs?.[0];
+
+  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
+    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+  }
+
+  const result = thisJob.result;
   if (!result || !result.found) {
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
@@ -222,8 +227,8 @@ export const createTrainingRequest = async ({
       const override = setting.overrides?.[baseModel];
       const overrideSetting = override ?? setting;
       if (
-        (overrideSetting.min && value < overrideSetting.min) ||
-        (overrideSetting.max && value > overrideSetting.max)
+        (overrideSetting.min && (value as number) < overrideSetting.min) ||
+        (overrideSetting.max && (value as number) > overrideSetting.max)
       ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`

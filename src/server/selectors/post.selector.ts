@@ -65,4 +65,5 @@ export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   publishedAt: true,
   availability: true,
   tags: { select: { tag: { select: simpleTagSelect } } },
+  collectionId: true,
 });

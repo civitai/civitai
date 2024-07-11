@@ -17,6 +17,7 @@ import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { createPage } from '~/components/AppLayout/createPage';
 import { BackButton } from '~/components/BackButton/BackButton';
+import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
@@ -31,6 +32,7 @@ import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -50,7 +52,16 @@ export default createPage(
     const currentUser = useCurrentUser();
     const router = useRouter();
     const params = postEditQuerySchema.parse(router.query);
-    const { modelId, modelVersionId, tag: tagId, video: postingVideo, clubId, reviewing } = params;
+    const {
+      modelId,
+      modelVersionId,
+      tag: tagId,
+      video: postingVideo,
+      clubId,
+      reviewing,
+      collections: collectionIds,
+      collectionId,
+    } = params;
 
     const isMuted = currentUser?.muted ?? false;
     const displayReview = !isMuted && !!reviewing && !!modelVersionId && !!modelId;
@@ -77,9 +88,14 @@ export default createPage(
       );
 
     let backButtonUrl = modelId ? `/models/${modelId}` : '/';
+
     if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (clubId) backButtonUrl = `/clubs/${clubId}`;
+    if (collectionIds?.length)
+      backButtonUrl =
+        collectionIds.length > 1 ? `/collections` : `/collections/${collectionIds[0]}`;
+    if (collectionId) backButtonUrl = `/collections/${collectionId}`;
 
     const loading = (loadingCurrentUserReview || versionLoading) && !currentUserReview && !version;
 

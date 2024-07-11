@@ -26,7 +26,12 @@ import { TRPCError } from '@trpc/server';
 import { dbRead } from '../db/client';
 import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
 import { hasEntityAccess } from '../services/common.service';
-import { HiddenUsers } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -40,9 +45,13 @@ export const getInfiniteCommentsV2Handler = async ({
   try {
     const limit = input.limit + 1;
 
-    const excludedUserIds = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map(
+    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (x) => x.id
     );
+    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+
     const comments = await getComments({
       ...input,
       excludedUserIds,
@@ -67,7 +76,18 @@ export const getInfiniteCommentsV2Handler = async ({
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
-    return await getComment({ ...input });
+    const comment = await getComment({ ...input });
+    if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({
+        userId: ctx.user.id,
+        targetUserId: comment.user.id,
+      });
+      if (blocked) throw throwNotFoundError();
+    }
+
+    return comment;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -198,7 +218,14 @@ export const getCommentsThreadDetailsHandler = async ({
   input: CommentConnectorInput;
 }) => {
   try {
-    return await getCommentsThreadDetails(input);
+    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+      (x) => x.id
+    );
+    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
+    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
+
+    return await getCommentsThreadDetails({ ...input, excludedUserIds });
   } catch (error) {
     throw throwDbError(error);
   }

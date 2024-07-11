@@ -208,6 +208,7 @@ export const getModelsRaw = async ({
     clubId,
     modelVersionIds,
     browsingLevel,
+    excludedUserIds,
   } = input;
 
   let pending = input.pending;
@@ -458,6 +459,11 @@ export const getModelsRaw = async ({
     isPrivate = !permissions.publicCollection;
   }
 
+  // Exclude user content
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+  }
+
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
 
   if (sort === ModelSort.HighestRated)
@@ -541,14 +547,14 @@ export const getModelsRaw = async ({
       m."name",
       ${ifDetails`
         m."description",
-        m."poi",
-        m."minor",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
       `}
       m."type",
+      m."minor",
+      m."poi",
       m."nsfw",
       m."nsfwLevel",
       m."status",
@@ -1207,7 +1213,8 @@ export const upsertModel = async (
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1222,6 +1229,7 @@ export const upsertModel = async (
       select: { id: true, nsfwLevel: true },
       data: {
         ...data,
+        status,
         meta:
           bountyId || meta
             ? {

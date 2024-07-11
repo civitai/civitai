@@ -370,7 +370,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
       END
     )
     FROM level
-    WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
+    WHERE level.id = m.id AND (level."nsfwLevel" != m."nsfwLevel" OR m.nsfw = TRUE) 
     RETURNING m.id;
   `);
   await modelsSearchIndex.queueUpdate(

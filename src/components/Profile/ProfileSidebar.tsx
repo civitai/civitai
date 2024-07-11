@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Box,
   Button,
   Divider,
@@ -14,6 +15,7 @@ import { CosmeticType } from '@prisma/client';
 import {
   IconAlertCircle,
   IconMapPin,
+  IconExternalLink,
   IconPencilMinus,
   IconRss,
   IconShare3,
@@ -40,6 +42,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -261,6 +264,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           followers={stats.followerCountAllTime}
           favorites={stats.thumbsUpCountAllTime}
           downloads={stats.downloadCountAllTime}
+          generations={stats.generationCountAllTime}
         />
       )}
 
@@ -273,7 +277,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           </Text>
           <Group spacing="xs">
             {(showAllBadges ? badges : badges.slice(0, sizeOpts.badgeCount)).map((award) => {
-              const data = (award.data ?? {}) as { url?: string; animated?: boolean };
+              const data = (award.data ?? {}) as BadgeCosmetic['data'];
               const url = (data.url ?? '') as string;
               const isEnlarged = enlargedBadge === award.id;
 
@@ -321,6 +325,19 @@ export function ProfileSidebar({ username, className }: { username: string; clas
                       <Text size="sm" align="center" weight={500}>
                         {award.name}
                       </Text>
+                      {award.videoUrl && (
+                        <Anchor
+                          href={award.videoUrl}
+                          size="xs"
+                          opacity={0.9}
+                          mt={4}
+                          target="_blank"
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center' }}>
+                            How it was made <IconExternalLink size={14} style={{ marginLeft: 4 }} />
+                          </span>
+                        </Anchor>
+                      )}
                     </Stack>
                   </Popover.Dropdown>
                 </Popover>

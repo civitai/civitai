@@ -1,4 +1,3 @@
-import { ReactionEntityType } from '~/server/schema/reaction.schema';
 import { createBuzzEvent } from '../base.reward';
 
 export const generatorFeedbackReward = createBuzzEvent({

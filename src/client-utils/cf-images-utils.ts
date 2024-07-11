@@ -20,7 +20,8 @@ export type EdgeUrlProps = {
   optimized?: boolean;
   transcode?: boolean;
   type?: MediaType;
-  original?: true;
+  original?: boolean;
+  skip?: number;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -47,6 +48,7 @@ export function getEdgeUrl(
     background,
     gamma,
     optimized,
+    skip,
   }: Omit<EdgeUrlProps, 'src'>
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
@@ -74,6 +76,7 @@ export function getEdgeUrl(
     background,
     gamma,
     optimized,
+    skip,
   };
   const params = Object.entries(modifiedParams)
     .filter(([, value]) => value !== undefined)

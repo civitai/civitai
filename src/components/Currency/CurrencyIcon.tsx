@@ -1,10 +1,10 @@
 import { useMantineTheme } from '@mantine/core';
 import { Currency } from '@prisma/client';
-import { TablerIconsProps } from '@tabler/icons-react';
+import { IconProps } from '@tabler/icons-react';
 import { CurrencyConfig } from '~/server/common/constants';
 import React from 'react';
 
-type Props = TablerIconsProps & {
+type Props = IconProps & {
   currency?: Currency;
 };
 

@@ -17,6 +17,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -27,6 +28,11 @@ export function PostCard({ data }: Props) {
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
@@ -73,6 +79,8 @@ export function PostCard({ data }: Props) {
                         ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
                         : image.name ?? undefined
                     }
+                    anim={shouldAnimate}
+                    skip={getSkipValue(image)}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}
                     placeholder="empty"

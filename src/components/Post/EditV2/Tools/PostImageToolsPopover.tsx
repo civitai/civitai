@@ -105,6 +105,7 @@ export function ImageToolsPopover({
       onChange={handleSetValue}
       options={options}
       loading={loadingTools}
+      showSelected={showSelected}
       renderOption={({ selected, label }) => (
         <>
           <span>{label}</span>

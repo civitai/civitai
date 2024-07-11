@@ -185,7 +185,7 @@ export const getTags = async ({
     FROM "Tag" t
       ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(tagsOrderBy.join(', '))}
+    ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
 

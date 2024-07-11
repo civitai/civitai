@@ -84,6 +84,11 @@ export const useDerivedGenerationState = () => {
     [selectedResources, allUnstableResources]
   );
 
+  const minorFlaggedResources = useMemo(
+    () => selectedResources.filter((x) => x.minor),
+    [selectedResources]
+  );
+
   const draft = useGenerationFormStore((x) => x.draft);
 
   return {
@@ -100,6 +105,7 @@ export const useDerivedGenerationState = () => {
     isCalculatingCost,
     draft,
     costEstimateError,
+    minorFlaggedResources,
   };
 };
 
@@ -226,6 +232,8 @@ export const getFormData = (
 ) => {
   const state = useGenerationFormStore.getState();
   let formData = { ...state, ...params };
+  if (state.negativePrompt && !params?.negativePrompt)
+    formData.negativePrompt = params?.negativePrompt;
 
   formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
 

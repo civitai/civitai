@@ -9,6 +9,7 @@ import {
   Group,
   Indicator,
   Popover,
+  ScrollArea,
   Stack,
 } from '@mantine/core';
 import { MediaType, MetricTimeframe } from '@prisma/client';
@@ -22,9 +23,11 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { getDisplayName } from '~/utils/string-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
+import { ToolMultiSelect, ToolSelect } from '~/components/Tool/ToolMultiSelect';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
+import { useRouter } from 'next/router';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -75,6 +78,17 @@ export function ImageFiltersDropdown({
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
+  const router = useRouter();
+  const imageParams = useImageQueryParams();
+
+  function handleToolChange(value: number) {
+    if (!value) {
+      const { tools, ...query } = router.query;
+      router.replace({ query }, undefined, { shallow: true });
+    } else {
+      router.replace({ query: { ...router.query, tools: value } }, undefined, { shallow: true });
+    }
+  }
 
   const [opened, setOpened] = useState(false);
 
@@ -91,6 +105,8 @@ export function ImageFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
+    (!!mergedFilters.tools?.length ? 1 : 0) +
+    (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
     (mergedFilters.baseModels?.length ?? 0);
 
@@ -102,6 +118,7 @@ export function ImageFiltersDropdown({
       followed: false,
       fromPlatform: false,
       notPublished: false,
+      tools: [],
       period: MetricTimeframe.AllTime,
       baseModels: undefined,
     };
@@ -170,8 +187,8 @@ export function ImageFiltersDropdown({
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={(mergedFilters.baseModels as string[]) ?? []}
-          onChange={(baseModels: BaseModel[]) => setFilters({ baseModels })}
+          value={mergedFilters.baseModels ?? []}
+          onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
           multiple
           my={4}
         >
@@ -234,17 +251,19 @@ export function ImageFiltersDropdown({
           )}
         </Group>
 
-        {/* <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <ToolMultiSelect
-          value={mergedFilters.tools ?? []}
-          onChange={(tools) => handleChange({ tools })}
+        <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <ToolSelect
+          value={(imageParams.query.tools ?? [])[0]}
+          onChange={(toolId) => handleToolChange(toolId)}
+          placeholder="Created with..."
         />
 
         <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
         <TechniqueMultiSelect
           value={mergedFilters.techniques ?? []}
           onChange={(techniques) => handleChange({ techniques })}
-        /> */}
+          placeholder="Created with..."
+        />
       </Stack>
       {filterLength > 0 && (
         <Button
@@ -292,10 +311,16 @@ export function ImageFiltersDropdown({
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
+      withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} p="md" w="100%">
-        {dropdown}
+      <Popover.Dropdown maw={468} w="100%">
+        <ScrollArea.Autosize
+          type="hover"
+          maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+        >
+          {dropdown}
+        </ScrollArea.Autosize>
       </Popover.Dropdown>
     </Popover>
   );

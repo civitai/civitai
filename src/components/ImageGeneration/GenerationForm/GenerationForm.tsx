@@ -97,7 +97,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
   const [opened, setOpened] = useState(false);
-  const { nsfw, quantity, prompt } = useGenerationFormStore.getState();
+  const { nsfw, quantity, prompt, negativePrompt } = useGenerationFormStore.getState();
   const defaultValues = {
     ...generation.defaultValues,
     // nsfw: nsfw ?? currentUser?.showNsfw,
@@ -152,7 +152,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isCalculatingCost,
     draft,
     costEstimateError,
+    minorFlaggedResources,
   } = useDerivedGenerationState();
+  const hasMinorResources = minorFlaggedResources.length > 0;
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -208,7 +210,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       try {
         await mutateAsync({
           resources: _resources.filter((x) => x.covered !== false),
-          params: { ...params, baseModel },
+          params: { ...params, baseModel, nsfw: hasMinorResources ? false : params.nsfw },
         });
         onSuccess?.();
         // if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
@@ -234,7 +236,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       const status = blockedRequest.status();
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
-        const isBlocked = await reportProhibitedRequest({ prompt });
+        const isBlocked = await reportProhibitedRequest({ prompt, negativePrompt });
         if (isBlocked) currentUser?.refresh();
       }
     } else {
@@ -433,6 +435,28 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Alert>
               </Card.Section>
             )}
+            {hasMinorResources && (
+              <Card.Section>
+                <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                  <Text size="xs">
+                    {`A resource you selected does not allow the generation of Mature Content.
+                    If you attempt to generate mature content with this resource,
+                    the image will not be returned but you `}
+                    <Text span italic inherit>
+                      will
+                    </Text>
+                    {` be charged Buzz.`}
+                  </Text>{' '}
+                  <List size="xs">
+                    {minorFlaggedResources.map((resource) => (
+                      <List.Item key={resource.id}>
+                        {resource.modelName} - {resource.name}
+                      </List.Item>
+                    ))}
+                  </List>
+                </Alert>
+              </Card.Section>
+            )}
             {ready === false && (
               <Card.Section>
                 <Alert color="yellow" title="Potentially slow generation" radius={0}>
@@ -566,7 +590,13 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
           <Group position="apart" my="xs">
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <InputSwitch
+              name="nsfw"
+              label="Mature content"
+              labelPosition="left"
+              disabled={hasMinorResources}
+              checked={hasMinorResources ? false : undefined}
+            />
             {features.draftMode && (
               <InputSwitch
                 name="draft"
@@ -925,14 +955,19 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
   if (currentUser?.muted)
     return (
       <Center h="100%" w="75%" mx="auto">
-        <Stack spacing="xl" align="center">
-          <ThemeIcon size="xl" radius="xl" color="yellow">
+        <Stack spacing="xs" align="center">
+          <ThemeIcon size="xl" radius="xl" color="yellow" mb="xl">
             <IconLock />
           </ThemeIcon>
-          <Text align="center">
-            Your account has been restricted due to potential Terms of Service violations, and has
-            been flagged for review. A Community Manager will investigate, and you will receive a
-            determination notification within 48 hours. You do not need to contact us.
+          <Text size="xl" weight={500}>
+            Account Restricted
+          </Text>
+          <Text className="leading-snug text-center">
+            Your account is under review for potential Terms of Service violations. You will receive
+            a decision within 48 hours.
+          </Text>
+          <Text weight="bold">
+            Do <u>not</u> contact support.
           </Text>
         </Stack>
       </Center>

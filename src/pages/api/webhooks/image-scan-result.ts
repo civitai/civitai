@@ -27,7 +27,7 @@ import { normalizeText } from '~/utils/normalize-text';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
-const tagCache: Record<string, number> = {};
+const tagCache: Record<string, { id: number; blocked?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -190,21 +190,33 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
+  let hasBlockedTag = false;
   for (const tag of tags) {
-    tag.id = tagCache[tag.tag];
-    if (!tag.id) tagsToFind.push(tag.tag);
+    const cachedTag = tagCache[tag.tag];
+    if (!cachedTag) tagsToFind.push(tag.tag);
+    else {
+      tag.id = cachedTag.id;
+      if (cachedTag.blocked) hasBlockedTag = true;
+    }
   }
 
   // Get tags that we don't have cached
   if (tagsToFind.length > 0) {
     const foundTags = await dbWrite.tag.findMany({
       where: { name: { in: tagsToFind } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, nsfwLevel: true },
     });
 
     // Cache found tags and add ids to tags
-    for (const tag of foundTags) tagCache[tag.name] = tag.id;
-    for (const tag of tags) tag.id = tagCache[tag.tag];
+    for (const tag of foundTags) {
+      tagCache[tag.name] = { id: tag.id };
+      if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
+    }
+    for (const tag of tags) {
+      const cachedTag = tagCache[tag.tag];
+      tag.id = cachedTag.id;
+      if (cachedTag.blocked) hasBlockedTag = true;
+    }
   }
 
   // Add missing tags
@@ -222,10 +234,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     });
     const newFoundTags = await dbWrite.tag.findMany({
       where: { name: { in: newTags.map((x) => x.tag) } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, nsfwLevel: true },
     });
     for (const tag of newFoundTags) {
-      tagCache[tag.name] = tag.id;
+      tagCache[tag.name] = { id: tag.id };
       const match = tags.find((x) => x.tag === tag.name);
       if (match) match.id = tag.id;
     }
@@ -275,10 +287,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     const prompt = normalizeText(
       (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
     );
+    const negativePrompt = normalizeText(
+      (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
+    );
 
     let reviewKey: string | null = null;
-    const inappropriate = includesInappropriate(prompt, nsfw);
+    const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
+    if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
     if (!reviewKey && nsfw) {
       const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
         WITH to_check AS (

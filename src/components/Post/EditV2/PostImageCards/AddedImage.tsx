@@ -13,7 +13,7 @@ import {
   Tooltip,
   Anchor,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { CollectionMode, ImageIngestionStatus } from '@prisma/client';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -53,6 +53,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { Flags } from '~/shared/utils';
 import { graphicBrowsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
@@ -103,6 +104,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
+
   const [updateImage, setImages] = usePostEditStore((state) => [
     state.updateImage,
     state.setImages,
@@ -236,6 +238,7 @@ function EditDetail() {
     isUpdating,
     toggleHidePrompt,
   } = useAddedImageContext();
+  const { activeCollection } = useCollectionsForPostEditor();
 
   const { meta, hideMeta, resourceHelper: resources, nsfwLevel } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
@@ -465,6 +468,28 @@ function EditDetail() {
             {/* #endregion */}
 
             {/* #region [tools] */}
+
+            {activeCollection?.mode === CollectionMode.Contest && (
+              <Alert radius="md">
+                <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                  Contest tip!
+                </h3>
+                {activeCollection.name.toLowerCase().includes('odyssey') ? (
+                  <Text mt="md">
+                    If you&rsquo;re participating in Project Odyssey, make sure to add the tags for
+                    the AI Filmmaking tools you used. This will make you eligible for the Sponsor
+                    Company Awards (cash prize of $500) from our Premier Sponsors such as Civitai,
+                    ElevenLabs, ThinkDiffusion, Morph Studio, LensGo, Domo AI, DeepMake, and Neural
+                    Frames! Do not tag a tool you did not use to make your project.
+                  </Text>
+                ) : (
+                  <Text mt="md">
+                    Tagging the tools you used may make you elegible for Sponsored Awards. For
+                    example, in Project Odyssey, ElevenLabs has a sponsored $500 USD cash prize.
+                  </Text>
+                )}
+              </Alert>
+            )}
 
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">

@@ -9,6 +9,7 @@ import {
   getAllImages,
   getEntityCoverImage,
   getImage,
+  getImageContestCollectionDetails,
   getImageDetail,
   getImageModerationReviewQueue,
   getImageResources,
@@ -41,6 +42,7 @@ import { Flags } from '~/shared/utils';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { imagesSearchIndex } from '~/server/search-index';
 import { reportAcceptedReward } from '~/server/rewards';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const moderateImageHandler = async ({
   input,
@@ -443,6 +445,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       isModerator: ctx.user?.isModerator,
     });
 
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
+
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -486,6 +493,21 @@ export const getModeratorReviewQueueHandler = async ({
 }) => {
   try {
     return await getImageModerationReviewQueue({
+      ...input,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageContestCollectionDetailsHandler = async ({
+  input,
+}: {
+  input: GetByIdInput;
+}) => {
+  try {
+    return await getImageContestCollectionDetails({
       ...input,
     });
   } catch (error) {

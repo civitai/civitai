@@ -26,6 +26,7 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
+import dayjs from 'dayjs';
 
 export const config = {
   api: {
@@ -53,7 +54,14 @@ const imagesEndpointSchema = z.object({
     }),
   browsingLevel: z.coerce.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
-  cursor: numericString().optional(),
+  cursor: z
+    .union([z.bigint(), z.number(), z.string(), z.date()])
+    .transform((val) =>
+      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+        ? new Date(val)
+        : val
+    )
+    .optional(),
   type: z.nativeEnum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
 });

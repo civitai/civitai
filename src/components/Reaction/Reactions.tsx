@@ -46,7 +46,7 @@ export function PostReactions({
   imageCount?: number;
 } & GroupProps) {
   const total = Object.values(metrics).reduce((acc, val) => acc + (val ?? 0), 0);
-  if (total === 0) return null;
+  if (total === 0 && imageCount === 0) return null;
 
   return (
     <Group spacing="xs" sx={{ cursor: 'default' }} {...groupProps}>
@@ -58,12 +58,14 @@ export function PostReactions({
           </Text>
         </Group>
       )}
-      <Group spacing={4} align="center">
-        <IconHeart size={20} strokeWidth={2} />
-        <Text size="sm" weight={500} pr={2}>
-          {total}
-        </Text>
-      </Group>
+      {total > 0 && (
+        <Group spacing={4} align="center">
+          <IconHeart size={20} strokeWidth={2} />
+          <Text size="sm" weight={500} pr={2}>
+            {total}
+          </Text>
+        </Group>
+      )}
     </Group>
   );
 }
@@ -86,7 +88,7 @@ export function Reactions({
     defaultValue: false,
     getInitialValueInEffect: true,
   });
-  const { buttonStyling } = useReactionSettingsContext();
+  const { buttonStyling, hideReactions } = useReactionSettingsContext();
 
   const ignoredKeys = ['tippedAmountCount'];
   const available = availableReactions[entityType];
@@ -119,6 +121,7 @@ export function Reactions({
   const supportsBuzzTipping = ['image'].includes(entityType);
 
   if (readonly && !hasReactions) return null;
+  if (hideReactions) return null;
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
@@ -262,16 +265,7 @@ function ReactionBadge({
         <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
           {constants.availableReactions[reaction]}
         </Text>
-        {!hideReactionCount && (
-          <Text
-            sx={(theme) => ({
-              color: !hasReacted ? 'white' : undefined,
-            })}
-            inherit
-          >
-            {count}
-          </Text>
-        )}
+        {!hideReactionCount && <Text inherit>{count}</Text>}
       </Group>
     </Button>
   );

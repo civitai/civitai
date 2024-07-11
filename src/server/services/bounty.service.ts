@@ -35,6 +35,7 @@ import {
   throwNotFoundError,
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -49,6 +50,7 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     userId,
     period,
     baseModels,
+    excludedUserIds,
   },
   select,
 }: {
@@ -89,6 +91,10 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
 
       AND.push({ OR });
     }
+  }
+
+  if (excludedUserIds?.length) {
+    AND.push({ userId: { notIn: excludedUserIds } });
   }
 
   const orderBy: Prisma.BountyFindManyArgs['orderBy'] = [];
@@ -587,6 +593,7 @@ export const getImagesForBounties = async ({
       nsfwLefel: image.nsfwLevel as NsfwLevel,
       tags: image.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
       entityId,
+      metadata: image.metadata as ImageMetadata | VideoMetadata | null,
     })),
     'entityId'
   );

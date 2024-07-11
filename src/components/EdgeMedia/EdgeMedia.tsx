@@ -1,7 +1,10 @@
 import { createStyles, Text } from '@mantine/core';
+import { MediaType } from '@prisma/client';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
+import { VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -10,6 +13,9 @@ export type EdgeMediaProps = EdgeUrlProps &
     contain?: boolean;
     fadeIn?: boolean;
     mediaRef?: [HTMLImageElement | null, (ref: HTMLImageElement | null) => void];
+    muted?: boolean;
+    html5Controls?: boolean;
+    onMutedChange?: (muted: boolean) => void;
   };
 
 export function EdgeMedia({
@@ -33,6 +39,10 @@ export function EdgeMedia({
   mediaRef,
   transcode,
   original,
+  skip,
+  muted,
+  html5Controls,
+  onMutedChange,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -57,6 +67,7 @@ export function EdgeMedia({
     name,
     type,
     original,
+    skip,
   });
 
   switch (inferredType) {
@@ -66,7 +77,7 @@ export function EdgeMedia({
         <img
           ref={imgRef}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
-          onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+          onLoad={(e) => (fadeIn ? (e.currentTarget.style.opacity = '1') : undefined)}
           onError={(e) => e.currentTarget.classList.add('load-error')}
           src={url}
           style={style}
@@ -83,6 +94,9 @@ export function EdgeMedia({
           wrapperProps={wrapperProps}
           contain={contain}
           fadeIn={fadeIn}
+          muted={muted}
+          html5Controls={html5Controls}
+          onMutedChange={onMutedChange}
         />
       );
     case 'audio':

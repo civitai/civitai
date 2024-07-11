@@ -7,6 +7,7 @@ const kindMap = {
   model: 'hiddenModels',
   tag: 'hiddenTags',
   user: 'hiddenUsers',
+  blockedUser: 'blockedUsers',
 } as const;
 
 export const useToggleHiddenPreferences = () => {
@@ -27,7 +28,16 @@ export const useToggleHiddenPreferences = () => {
       const key = kindMap[kind];
       queryUtils.hiddenPreferences.getHidden.setData(
         undefined,
-        (old = { hiddenImages: [], hiddenModels: [], hiddenUsers: [], hiddenTags: [] }) =>
+        (
+          old = {
+            hiddenImages: [],
+            hiddenModels: [],
+            hiddenUsers: [],
+            hiddenTags: [],
+            blockedUsers: [],
+            blockedByUsers: [],
+          }
+        ) =>
           produce(old, (draft) => {
             for (const { kind, id, ...props } of added) {
               const index = draft[key].findIndex((x) => x.id === id && x.hidden);
@@ -54,7 +64,16 @@ export const useUpdateHiddenPreferences = () => {
     const key = kindMap[kind];
     queryUtils.hiddenPreferences.getHidden.setData(
       undefined,
-      (old = { hiddenImages: [], hiddenModels: [], hiddenUsers: [], hiddenTags: [] }) =>
+      (
+        old = {
+          hiddenImages: [],
+          hiddenModels: [],
+          hiddenUsers: [],
+          hiddenTags: [],
+          blockedUsers: [],
+          blockedByUsers: [],
+        }
+      ) =>
         produce(old, (draft) => {
           for (const item of data) {
             const index = draft[key].findIndex((x) => x.id === item.id && x.hidden);

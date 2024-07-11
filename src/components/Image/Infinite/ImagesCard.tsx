@@ -38,6 +38,8 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -45,6 +47,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images } = useImagesContext();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
 
@@ -68,6 +71,11 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   ) as (typeof image.user.cosmetics)[number] & {
     data?: { lights?: number; upgradedLights?: number };
   };
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -160,6 +168,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                                 })
                               : image.name ?? undefined
                           }
+                          anim={shouldAnimate}
+                          skip={getSkipValue(image)}
                           type={image.type}
                           width={450}
                           placeholder="empty"
@@ -291,10 +301,10 @@ const useStyles = createStyles((theme, _, getRef) => {
     },
     reactions: {
       borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
-      ),
+      background:
+        theme.colorScheme === 'dark'
+          ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+          : theme.colors.gray[0],
       // backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,

@@ -28,7 +28,7 @@ import {
   IconPhoto,
   IconShoppingBag,
   IconVideo,
-  TablerIconsProps,
+  IconProps,
   IconRainbow,
 } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -41,7 +41,7 @@ import { isDefined } from '~/utils/type-guards';
 
 type HomeOption = {
   url: string;
-  icon: (props: TablerIconsProps) => JSX.Element;
+  icon: (props: IconProps) => JSX.Element;
   highlight?: boolean;
   grouped?: boolean;
   classes?: string[];
@@ -49,53 +49,51 @@ type HomeOption = {
 const homeOptions: Record<string, HomeOption> = {
   home: {
     url: '/',
-    icon: (props: TablerIconsProps) => <IconHome {...props} />,
+    icon: (props: IconProps) => <IconHome {...props} />,
   },
   models: {
     url: '/models',
-    icon: (props: TablerIconsProps) => <IconCategory {...props} />,
+    icon: (props: IconProps) => <IconCategory {...props} />,
   },
   images: {
     url: '/images',
-    icon: (props: TablerIconsProps) => <IconPhoto {...props} />,
+    icon: (props: IconProps) => <IconPhoto {...props} />,
   },
   videos: {
     url: '/videos',
-    icon: (props: TablerIconsProps) => <IconVideo {...props} />,
+    icon: (props: IconProps) => <IconVideo {...props} />,
   },
   posts: {
     url: '/posts',
-    icon: (props: TablerIconsProps) => <IconLayoutList {...props} />,
+    icon: (props: IconProps) => <IconLayoutList {...props} />,
     grouped: true,
   },
   articles: {
     url: '/articles',
-    icon: (props: TablerIconsProps) => <IconFileText {...props} />,
+    icon: (props: IconProps) => <IconFileText {...props} />,
   },
   bounties: {
     url: '/bounties',
-    icon: (props: TablerIconsProps) => <IconMoneybag {...props} />,
+    icon: (props: IconProps) => <IconMoneybag {...props} />,
     grouped: true,
   },
   events: {
     url: '/events',
-    icon: (props: TablerIconsProps) => <IconCalendar {...props} />,
+    icon: (props: IconProps) => <IconCalendar {...props} />,
   },
   // clubs: {
   //   url: '/clubs',
-  //   icon: (props: TablerIconsProps) => <IconClubs {...props} />,
+  //   icon: (props: IconProps) => <IconClubs {...props} />,
   // },
   // builds: {
   //   url: '/builds',
-  //   icon: (props: TablerIconsProps) => <IconCpu {...props} />,
+  //   icon: (props: IconProps) => <IconCpu {...props} />,
   //   grouped: true,
   // },
   shop: {
     url: '/shop',
-    // icon: (props: TablerIconsProps) => <IconShoppingBag {...props} />,
-    icon: (props: TablerIconsProps) => <IconRainbow {...props} />,
+    icon: (props: IconProps) => <IconShoppingBag {...props} />,
     highlight: true,
-    classes: ['tabRainbow'],
   },
 };
 type HomeOptions = keyof typeof homeOptions;

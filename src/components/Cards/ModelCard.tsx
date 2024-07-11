@@ -52,6 +52,8 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -181,13 +183,12 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    data.version?.baseModel as BaseModel
-  );
-  const isPony = data.version?.baseModel === 'Pony';
-  const isOdor = data.version?.baseModel === 'ODOR';
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
+  const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
+
+  const isPOI = data.poi;
+  const isMinor = data.minor;
 
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
@@ -200,6 +201,13 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
+  const shouldAnimate = image
+    ? shouldAnimateByDefault({
+        type: image.type,
+        metadata: image.metadata as VideoMetadata,
+        forceDisabled: !currentUser?.autoplayGifs,
+      })
+    : false;
 
   return (
     <FeedCard
@@ -224,6 +232,28 @@ export function ModelCard({ data, forceInView }: Props) {
                       >
                         <Group spacing={4}>
                           <ImageGuard2.BlurToggle className={classes.chip} />
+                          {currentUser?.isModerator && isPOI && (
+                            <Badge
+                              className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Text color="white" size="xs" transform="capitalize">
+                                POI
+                              </Text>
+                            </Badge>
+                          )}
+                          {currentUser?.isModerator && isMinor && (
+                            <Badge
+                              className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Text color="white" size="xs" transform="capitalize">
+                                Minor
+                              </Text>
+                            </Badge>
+                          )}
                           <Badge
                             className={cx(classes.infoChip, classes.chip)}
                             variant="light"
@@ -232,22 +262,17 @@ export function ModelCard({ data, forceInView }: Props) {
                             <Text color="white" size="xs" transform="capitalize">
                               {getDisplayName(data.type)}
                             </Text>
-                            {isSDXL && (
+
+                            {baseModelIndicator && (
                               <>
                                 <Divider orientation="vertical" />
-                                {isPony ? (
-                                  <IconHorse size={16} strokeWidth={2.5} />
-                                ) : (
+                                {typeof baseModelIndicator === 'string' ? (
                                   <Text color="white" size="xs">
-                                    XL
+                                    {baseModelIndicator}
                                   </Text>
+                                ) : (
+                                  baseModelIndicator
                                 )}
-                              </>
-                            )}
-                            {isOdor && (
-                              <>
-                                <Divider orientation="vertical" />
-                                <IconNose size={16} strokeWidth={2} />
                               </>
                             )}
                           </Badge>
@@ -368,6 +393,11 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                            anim={shouldAnimate}
+                            skip={getSkipValue({
+                              type: image.type,
+                              metadata: image.metadata as VideoMetadata,
+                            })}
                             contain
                           />
                         </div>
@@ -456,5 +486,33 @@ export function ModelCard({ data, forceInView }: Props) {
     </FeedCard>
   );
 }
+
+const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
+  'SDXL 1.0': 'XL',
+  'SDXL 0.9': 'XL',
+  'SDXL Lightning': 'XL',
+  'SDXL 1.0 LCM': 'XL',
+  'SDXL Distilled': 'XL',
+  'SDXL Turbo': 'XL',
+  'SDXL Hyper': 'XL',
+  Pony: <IconHorse size={16} strokeWidth={2.5} />,
+  'SD 1.4': 'SD1',
+  'SD 1.5': 'SD1',
+  'SD 1.5 LCM': 'SD1',
+  'SD 1.5 Hyper': 'SD1',
+  'SD 2.0': 'SD2',
+  'SD 2.0 768': 'SD2',
+  'SD 2.1': 'SD2',
+  'SD 2.1 768': 'SD2',
+  'SD 2.1 Unclip': 'SD2',
+  'SD 3': 'SD3',
+  SVD: 'SVD',
+  'SVD XT': 'SVD',
+  'PixArt E': 'Σ',
+  'PixArt a': 'α',
+  'Hunyuan 1': 'HY',
+  Lumina: 'L',
+  ODOR: <IconNose size={16} strokeWidth={2} />,
+};
 
 type Props = { data: UseQueryModelReturn[number]; forceInView?: boolean };

@@ -15,6 +15,7 @@ import {
   getPostTagsHandler,
   getPostsInfiniteHandler,
   getPostResourcesHandler,
+  getPostContestCollectionDetailsHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -117,4 +118,7 @@ export const postRouter = router({
     .use(isOwnerOrModerator)
     .mutation(removePostTagHandler),
   getResources: publicProcedure.input(getByIdSchema).query(getPostResourcesHandler),
+  getContestCollectionDetails: publicProcedure
+    .input(getByIdSchema)
+    .query(getPostContestCollectionDetailsHandler),
 });

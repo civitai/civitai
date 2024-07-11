@@ -1,7 +1,11 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import { commaDelimitedStringArray, commaDelimitedStringObject, stringToArray } from '~/utils/zod-helpers';
+import {
+  commaDelimitedStringArray,
+  commaDelimitedStringObject,
+  stringToArray,
+} from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -17,7 +21,7 @@ export const serverSchema = z.object({
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.string().url(),
-  REDIS_TIMEOUT: z.preprocess((x) => x ? parseInt(String(x)) : 5000, z.number().optional()),
+  REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
   NEXTAUTH_URL: z.preprocess(
@@ -25,7 +29,7 @@ export const serverSchema = z.object({
     // Since NextAuth automatically uses the VERCEL_URL if present.
     (str) => process.env.VERCEL_URL ?? str,
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
-    process.env.VERCEL ? z.string() : z.string().url(),
+    process.env.VERCEL ? z.string() : z.string().url()
   ),
   CLICKHOUSE_HOST: z.string().optional(),
   CLICKHOUSE_USERNAME: z.string().optional(),
@@ -120,17 +124,23 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_ENDPOINT: z.string().url().optional(),
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+  EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
   ALT_ORCHESTRATION_ENDPOINT: z.string().url().optional(),
   ALT_ORCHESTRATION_TOKEN: z.string().optional(),
-  ALT_ORCHESTRATION_TIMEFRAME: z.preprocess((value) => {
-    if (typeof value !== 'string') return null;
+  ALT_ORCHESTRATION_TIMEFRAME: z
+    .preprocess(
+      (value) => {
+        if (typeof value !== 'string') return null;
 
-    const [start, end] = value.split(',').map((x) => new Date(x));
-    return { start, end };
-  }, z.object({
-    start: z.date().optional(),
-    end: z.date().optional(),
-  })).optional(),
+        const [start, end] = value.split(',').map((x) => new Date(x));
+        return { start, end };
+      },
+      z.object({
+        start: z.date().optional(),
+        end: z.date().optional(),
+      })
+    )
+    .optional(),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.string().url().optional(),
@@ -149,6 +159,7 @@ export const serverSchema = z.object({
   FRESHDESK_TOKEN: z.string().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
+  CHOPPED_TOKEN: z.string().optional(),
 });
 
 /**
@@ -185,6 +196,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
+  NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
 });
 
 /**
@@ -222,4 +234,5 @@ export const clientEnv = {
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
+  NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
 };

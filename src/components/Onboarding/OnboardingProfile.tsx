@@ -79,7 +79,7 @@ export function OnboardingProfile() {
   return (
     <Container size="xs" px={0}>
       <Stack>
-        <StepperTitle title="Account Details" description="Please verify your account details" />
+        <StepperTitle title="Account Details" description="Please add your account details" />
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
             <InputText size="lg" name="email" label="Email" type="email" withAsterisk />

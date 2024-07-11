@@ -42,6 +42,8 @@ import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NsfwLevel } from '~/server/common/enums';
+import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -152,6 +154,14 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     });
     if (!bounty) throw throwNotFoundError(`No bounty with id ${input.id}`);
 
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({
+        userId: ctx.user?.id,
+        targetUserId: bounty.user?.id,
+      });
+      if (blocked) throw throwNotFoundError();
+    }
+
     const images = await getBountyImages({
       id: bounty.id,
       userId: user?.id,
@@ -185,8 +195,15 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
+      (u) => u.id
+    );
     const entries = await getAllEntriesByBountyId({
-      input: { bountyId: input.id, userId: input.owned ? ctx.user?.id : undefined },
+      input: {
+        bountyId: input.id,
+        userId: input.owned ? ctx.user?.id : undefined,
+        excludedUserIds: blockedByUsers,
+      },
       select: {
         id: true,
         createdAt: true,

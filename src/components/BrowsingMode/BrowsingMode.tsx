@@ -2,9 +2,10 @@ import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } fr
 import { NextLink } from '@mantine/next';
 import {
   IconCaretRightFilled,
+  IconDeviceGamepad,
   IconEyeCog,
   IconSettings,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -30,7 +31,7 @@ export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   );
 }
 type BrowsingModeIconProps = {
-  iconProps?: TablerIconsProps;
+  iconProps?: IconProps;
   closeMenu?: () => void;
 };
 

@@ -101,6 +101,12 @@ export const blurrableBrowsingLevels = flagifyBrowsingLevel([
   NsfwLevel.XXX,
 ]);
 
+// helpers
+export function onlySelectableLevels(level: number) {
+  if (Flags.hasFlag(level, NsfwLevel.Blocked)) level = Flags.removeFlag(level, NsfwLevel.Blocked);
+  return level;
+}
+
 export function getIsPublicBrowsingLevel(level: number) {
   return Flags.hasFlag(safeBrowsingLevels, level);
 }

@@ -14,7 +14,7 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -30,7 +30,7 @@ import {
   IconLayoutSidebarRightExpand,
   IconPhoto,
   IconShare3,
-  TablerIconsProps,
+  IconProps,
 } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -64,6 +64,12 @@ import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { DownloadImage } from '~/components/Image/DownloadImage';
+import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -86,7 +92,7 @@ const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
   className: 'h-9 w-9 rounded-full',
 };
 
-const sharedIconProps: TablerIconsProps = {
+const sharedIconProps: IconProps = {
   size: 18,
   stroke: 2,
   color: 'white',
@@ -96,6 +102,7 @@ const maxIndicators = 20;
 
 export function ImageDetail2() {
   const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
   const {
     images,
     image: image,
@@ -106,13 +113,20 @@ export function ImageDetail2() {
     shareUrl,
     navigate,
   } = useImageDetailContext();
+  const { collectionItems = [] } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+
   if (isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
+  if (!image || isBlocked) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -186,7 +200,7 @@ export function ImageDetail2() {
   return (
     <>
       <Meta
-        title={`Image posted by ${image.user.username}`}
+        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
         images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
@@ -195,7 +209,7 @@ export function ImageDetail2() {
       <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
         <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
           <ImageGuard2 image={image} explain={false}>
-            {(safe) => (
+            {() => (
               <>
                 {/* HEADER */}
                 <div className="flex justify-between gap-8 p-3">
@@ -272,6 +286,9 @@ export function ImageDetail2() {
                     <ReactionSettingsProvider
                       settings={{
                         hideReactionCount: false,
+                        hideReactions: collectionItems.some((ci) =>
+                          contestCollectionReactionsHidden(ci.collection)
+                        ),
                         buttonStyling: (reaction, hasReacted) => ({
                           radius: 'xl',
                           variant: 'light',
@@ -357,6 +374,15 @@ export function ImageDetail2() {
                 tipBuzzEntityType="Image"
                 className="rounded-xl"
               />
+              {image.postId && (
+                <EntityCollaboratorList
+                  entityId={image.postId}
+                  entityType={EntityType.Post}
+                  creatorCardProps={{
+                    className: 'rounded-xl',
+                  }}
+                />
+              )}
               {image.needsReview && (
                 <AlertWithIcon
                   icon={<IconAlertTriangle />}
@@ -376,6 +402,8 @@ export function ImageDetail2() {
                 collapsible
                 nsfwLevel={image.nsfwLevel}
               />
+              <ImageProcess imageId={image.id} />
+              <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />
@@ -383,8 +411,11 @@ export function ImageDetail2() {
                 </Text>
                 <ImageDetailComments imageId={image.id} userId={image.user.id} />
               </Card>
-              <ImageGenerationData imageId={image.id} />
-              <ImageProcess imageId={image.id} />
+              <ImageContestCollectionDetails
+                imageId={image.id}
+                isOwner={image.user.id === currentUser?.id}
+                isModerator={currentUser?.isModerator}
+              />
               <ImageExternalMeta imageId={image.id} />
             </div>
           </ScrollArea>

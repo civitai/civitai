@@ -13,6 +13,7 @@ export const getServerSideProps = createServerSideProps({
         await ssg.collection.getAllUser.prefetch({
           permission: CollectionContributorPermission.VIEW,
         });
+        await ssg.hiddenPreferences.getHidden.prefetch();
       }
       // TODO - prefetch top user collections and popular collections
     }

@@ -147,6 +147,7 @@ export const REDIS_KEYS = {
     SYSTEM_TAGS: 'system:tags',
     PERMISSIONS: 'system:permissions',
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
+    TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
   },
@@ -159,6 +160,8 @@ export const REDIS_KEYS = {
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version',
     EDGE_CACHED: 'packed:caches:edge-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model',
+    BLOCKED_USERS: 'packed:caches:blocked-users',
+    BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',

@@ -17,6 +17,7 @@ import {
 import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { tagSchema } from '~/server/schema/tag.schema';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
@@ -32,7 +33,12 @@ export type CollectItemInput = z.infer<typeof collectionItemSchema>;
 export type AddCollectionItemInput = z.infer<typeof saveCollectionItemInputSchema>;
 export const saveCollectionItemInputSchema = collectionItemSchema
   .extend({
-    collectionIds: z.coerce.number().array(),
+    collections: z.array(
+      z.object({
+        collectionId: z.number(),
+        tagId: z.number().nullish(),
+      })
+    ),
     removeFromCollectionIds: z.coerce.number().array().optional(),
   })
   .refine(
@@ -72,6 +78,7 @@ export const bulkSaveCollectionItemsInput = z
     articleIds: z.coerce.number().array().optional(),
     postIds: z.coerce.number().array().optional(),
     modelIds: z.coerce.number().array().optional(),
+    tagId: z.coerce.number().nullish(),
   })
   .refine(
     ({ articleIds, imageIds, postIds, modelIds }) =>
@@ -96,6 +103,8 @@ export const collectionMetadataSchema = z
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
+    existingEntriesDisabled: z.coerce.boolean().optional(),
+    votingPeriodStart: z.coerce.date().nullish(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
@@ -139,6 +148,7 @@ export const upsertCollectionInput = z
     type: z.nativeEnum(CollectionType).default(CollectionType.Model),
     mode: z.nativeEnum(CollectionMode).nullish(),
     metadata: collectionMetadataSchema.optional(),
+    tags: z.array(tagSchema).nullish(),
   })
   .merge(collectionItemSchema);
 
@@ -200,3 +210,8 @@ export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
   })
   .merge(userPreferencesSchema)
   .partial();
+
+export type GetCollectionPermissionDetails = z.infer<typeof getCollectionPermissionDetails>;
+export const getCollectionPermissionDetails = z.object({
+  ids: z.array(z.number()).min(1),
+});

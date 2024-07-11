@@ -160,3 +160,14 @@ export function purgeOnSuccess(tags: string[]) {
     return result;
   });
 }
+
+export function noEdgeCache() {
+  return middleware(({ next, ctx }) => {
+    if (ctx.cache) {
+      ctx.cache.edgeTTL = 0;
+      ctx.cache.browserTTL = 0;
+    }
+
+    return next();
+  });
+}

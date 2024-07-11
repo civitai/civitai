@@ -27,10 +27,10 @@ export function ArticleCard({ data, aspectRatio }: Props) {
   const router = useRouter();
   const { id, title, coverImage, publishedAt, user, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
-  const { commentCount, viewCount, favoriteCount, tippedAmountCount } = stats || {
+  const { commentCount, viewCount, collectedCount, tippedAmountCount } = stats || {
     commentCount: 0,
     viewCount: 0,
-    favoriteCount: 0,
+    collectedCount: 0,
     likeCount: 0,
     tippedAmountCount: 0,
   };
@@ -117,12 +117,12 @@ export function ArticleCard({ data, aspectRatio }: Props) {
                 </Text>
               )}
             </Stack>
-            <Group position="apart">
+            <Group position="apart" align="center" spacing={4}>
               <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
                 <Group spacing={2} noWrap>
                   <IconBookmark size={14} strokeWidth={2.5} />
                   <Text size="xs" color="white">
-                    {abbreviateNumber(favoriteCount)}
+                    {abbreviateNumber(collectedCount)}
                   </Text>
                 </Group>
                 <Group spacing={2} noWrap>

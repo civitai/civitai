@@ -45,6 +45,16 @@ export const parseBuzzTransactionDetails = (
       notification: `${baseNotification} on one of your images!`,
       label: 'Image',
     },
+    Comment: {
+      url: fallbackUrl,
+      notification: `${baseNotification} on one of your comments!`,
+      label: 'Comment',
+    },
+    CommentV2: {
+      url: fallbackUrl,
+      notification: `${baseNotification} on one of your comments!`,
+      label: 'Comment',
+    },
     Article: {
       url: `/articles/${entityId}`,
       notification: `${baseNotification} on one of your articles!`,

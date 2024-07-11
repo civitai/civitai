@@ -84,6 +84,19 @@ export function VotableTags({
           }}
         />
       )}
+      {showAddibles && (
+        <>
+          {canAddModerated && (
+            <VotableTagMature
+              tags={tags}
+              addTag={(tag) => {
+                const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
+                handleVote({ tags: [tag], vote, tagType: 'Moderation' });
+              }}
+            />
+          )}
+        </>
+      )}
       {displayedTags.map((tag) => (
         <VotableTag
           key={tag.name}
@@ -103,19 +116,6 @@ export function VotableTags({
           }}
         />
       ))}
-      {showAddibles && (
-        <>
-          {canAddModerated && (
-            <VotableTagMature
-              tags={tags}
-              addTag={(tag) => {
-                const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
-                handleVote({ tags: [tag], vote, tagType: 'Moderation' });
-              }}
-            />
-          )}
-        </>
-      )}
       {collapsible && tags.length > limit && (
         <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
           {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}

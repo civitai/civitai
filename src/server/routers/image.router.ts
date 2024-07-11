@@ -1,6 +1,7 @@
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   getEntitiesCoverImageHandler,
+  getImageContestCollectionDetailsHandler,
   getImageHandler,
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
@@ -147,12 +148,13 @@ export const imageRouter = router({
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getByIdSchema)
-    .use(
-      edgeCacheIt({
-        ttl: CacheTTL.day, // Cache is purged on remove resource
-        tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
-      })
-    )
+    // TODO: Add edgeCacheIt back after fixing the cache invalidation.
+    // .use(
+    //   edgeCacheIt({
+    //     ttl: CacheTTL.day, // Cache is purged on remove resource
+    //     tags: (i) => ['image-generation-data', `image-generation-data-${i.id}`],
+    //   })
+    // )
     .query(({ input }) => getImageGenerationData(input)),
 
   // #region [tools]
@@ -177,5 +179,11 @@ export const imageRouter = router({
   updateTechniques: protectedProcedure
     .input(updateImageTechniqueSchema)
     .mutation(({ input, ctx }) => updateImageTechniques({ ...input, user: ctx.user })),
+  // #endregion
+
+  // #region [collections]
+  getContestCollectionDetails: publicProcedure
+    .input(getByIdSchema)
+    .query(({ input }) => getImageContestCollectionDetailsHandler({ input })),
   // #endregion
 });
