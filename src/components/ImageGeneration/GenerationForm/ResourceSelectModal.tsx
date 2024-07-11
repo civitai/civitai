@@ -312,6 +312,7 @@ function ResourceSelectCard({
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
+      minor: data.minor,
       image: image,
       covered: data.canGenerate,
       strength: settings?.strength ?? 1,
