@@ -4,15 +4,13 @@ BEGIN
     IF NEW."publishedAt" IS NOT NULL
         AND NEW."earlyAccessConfig" IS NOT NULL
         -- Ensure the user has paid for early access
-        AND NEW."earlyAccessConfig"->>'buzzTransactionId' IS NOT NULL 
-    THEN
-        IF NEW."earlyAccessConfig"->>'timeframe' IS NOT NULL
-            AND (NEW."earlyAccessConfig"->>'timeframe')::int > 0 THEN
-                UPDATE "ModelVersion" 
-                SET "earlyAccessEndsAt" = COALESCE(NEW."publishedAt", now()) + CONCAT(NEW."earlyAccessConfig"->>'timeframe', ' days')::interval,
-                    "availability" = 'EarlyAccess'
-                WHERE id = NEW.id;
-        END IF;
+        AND NEW."earlyAccessConfig"->>'timeframe' IS NOT NULL
+        AND (NEW."earlyAccessConfig"->>'timeframe')::int > 0
+    THEN 
+        UPDATE "ModelVersion" 
+        SET "earlyAccessEndsAt" = COALESCE(NEW."publishedAt", now()) + CONCAT(NEW."earlyAccessConfig"->>'timeframe', ' days')::interval,
+            "availability" = 'EarlyAccess'
+        WHERE id = NEW.id;
     ELSE
     	UPDATE "ModelVersion"
 		SET "earlyAccessEndsAt" = NULL,

@@ -34,7 +34,7 @@ export const processScheduledPublishing = createJob(
         m."userId",
         JSON_BUILD_OBJECT(
           'modelId', m.id,
-          'hasEarlyAccess', mv."earlyAccesConfig" IS NOT NULL,
+          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
@@ -99,7 +99,7 @@ export const processScheduledPublishing = createJob(
       transaction.push(dbWrite.$executeRaw`
         -- Update scheduled versions published
         UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelVersions)})
+        WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
           AND status = 'Scheduled' AND "publishedAt" <= ${now};
       `);
 

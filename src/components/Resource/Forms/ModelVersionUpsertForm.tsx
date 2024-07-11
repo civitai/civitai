@@ -64,6 +64,9 @@ const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
     earlyAccessConfig: earlyAccessConfigInput
+      .omit({
+        originalPublishedAt: true,
+      })
       .extend({
         timeframe: z
           .number()
@@ -131,7 +134,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
   const isEarlyAccessOver =
-    model?.status === 'Published' &&
+    version?.status === 'Published' &&
     (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
 
   const MAX_EARLY_ACCCESS = 15;
@@ -435,7 +438,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         />
                       </Stack>
                     )}
-                    {version?.earlyAccessConfig?.donationGoalId && (
+                    {(version?.status !== 'published' ||
+                      version?.earlyAccessConfig?.donationGoalId) && (
                       <>
                         <InputSwitch
                           name="earlyAccessConfig.donationGoalEnabled"
