@@ -8,9 +8,12 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { formatDate } from '~/utils/date-helpers';
+import { decreaseDate, formatDate } from '~/utils/date-helpers';
 import { useSchedulerDownloadingStore } from '~/store/scheduler-download.store';
-import { downloadGeneratedImagesByDate } from '~/server/common/constants';
+import {
+  downloadGeneratedImagesByDate,
+  orchestratorIntegrationDate,
+} from '~/server/common/constants';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -18,7 +21,7 @@ export function Queue() {
 
   const { downloading } = useSchedulerDownloadingStore();
   const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
-  const canDownload = new Date().getTime() < new Date(downloadGeneratedImagesByDate).getTime();
+  const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
 
   if (isError)
     return (
@@ -102,7 +105,7 @@ export function Queue() {
                 download
                 onClick={handleSetDownloading}
               >
-                Download images created before {formatDate(new Date(downloadGeneratedImagesByDate))}
+                Download images created before {formatDate(orchestratorIntegrationDate)}
               </Text>
             )}
           </Text>

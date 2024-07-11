@@ -16,6 +16,7 @@ import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from '
 import { GenerationResource } from '~/shared/constants/generation.constants';
 import { env } from '~/env/client.mjs';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { increaseDate } from '~/utils/date-helpers';
 
 export const constants = {
   modelFilterDefaults: {
@@ -766,4 +767,5 @@ export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
 
-export const downloadGeneratedImagesByDate = '8-11-2024';
+export const orchestratorIntegrationDate = new Date('7-11-2024');
+export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');

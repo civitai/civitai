@@ -23,7 +23,7 @@ export default AuthedEndpoint(async function handler(req, res, user) {
     return res.status(429).send(message);
   }
 
-  const canDownload = new Date().getTime() < new Date(downloadGeneratedImagesByDate).getTime();
+  const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
   if (!canDownload) return res.status(400).send('download period has ended');
 
   const url =
