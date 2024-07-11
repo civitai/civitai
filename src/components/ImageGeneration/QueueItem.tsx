@@ -10,7 +10,6 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangleFilled,
@@ -81,7 +80,8 @@ export function QueueItem({
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
-  const { params, images, resources, cost } = step;
+  const { params, images, resources } = step;
+  const cost = request.totalCost;
 
   const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const [processing, setProcessing] = useState(status === 'processing');
@@ -138,14 +138,16 @@ export function QueueItem({
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  const refunded = Math.ceil(
-    !!cost
-      ? (cost / params.quantity) *
-          (params.quantity -
-            (images.filter((x) => !orchestratorRefundableStatuses.includes(x.status)).length ?? 0))
-      : 0
-  );
-  const actualCost = !!cost ? cost - refunded : 0;
+  // const refunded = Math.ceil(
+  //   !!cost
+  //     ? (cost / params.quantity) *
+  //         (params.quantity -
+  //           (images.filter((x) => !orchestratorRefundableStatuses.includes(x.status)).length ?? 0))
+  //     : 0
+  // );
+  // const actualCost = !!cost ? cost - refunded : 0;
+  const actualCost = cost;
+
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
@@ -156,14 +158,16 @@ export function QueueItem({
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex items-center gap-1">
-            <GenerationStatusBadge
-              status={request.status} // todo - update to use step status
-              complete={completedCount}
-              processing={processingCount}
-              quantity={params.quantity}
-              tooltipLabel={overwriteStatusLabel}
-              progress
-            />
+            {images.length && (
+              <GenerationStatusBadge
+                status={request.status}
+                complete={completedCount}
+                processing={processingCount}
+                quantity={images.length}
+                tooltipLabel={overwriteStatusLabel}
+                progress
+              />
+            )}
 
             <Text size="xs" color="dimmed">
               {formatDateMin(request.createdAt)}

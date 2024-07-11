@@ -253,10 +253,15 @@ function getStepCost(step: WorkflowStep) {
 
 export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
-  const versionIds = steps.flatMap((step) => {
-    if (step.$type === 'comfy') return step.metadata?.resources?.map((r) => r.id) ?? [];
-    else return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => x.version);
+  const allResources = steps.flatMap((step) => {
+    if (step.$type === 'comfy') return step.metadata?.resources ?? [];
+    else
+      return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+        id: x.version,
+        strength: x.networkParams.strength,
+      }));
   });
+  const versionIds = allResources.map((x) => x.id);
   const { resources, injectable } = await getResourceDataWithInjects(versionIds);
 
   return workflows.map((workflow) => {
@@ -271,7 +276,10 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
         formatWorkflowStep({
           workflowId: workflow.id as string,
           step,
-          resources: [...resources, ...injectable],
+          resources: [...resources, ...injectable].map((resource) => {
+            const original = allResources.find((x) => x.id === resource.id);
+            return { ...resource, ...original };
+          }),
         })
       ),
     };

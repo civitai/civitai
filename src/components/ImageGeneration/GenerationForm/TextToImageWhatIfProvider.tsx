@@ -2,9 +2,9 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generationConfig } from '~/server/common/constants';
+import { generation, generationConfig } from '~/server/common/constants';
 import { generateImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { getBaseModelSetType } from '~/shared/constants/generation.constants';
+import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
 import { TextToImageWhatIf } from '~/server/services/orchestrator/textToImage/textToImage';
@@ -32,13 +32,11 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const query = useMemo(() => {
     const { model, resources = [], vae, ...params } = watched;
     return generateImageWhatIfSchema.safeParse({
-      // resources: [defaultModel.id],
-      resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      resources: [defaultModel.id],
+      // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,
-        prompt: undefined,
-        negativePrompt: undefined,
-        seed: undefined,
+        ...whatIfQueryOverrides,
       },
     });
   }, [watched, defaultModel.id]);

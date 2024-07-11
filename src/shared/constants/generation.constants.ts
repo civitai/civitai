@@ -97,6 +97,15 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
 }
 // #endregion
 
+export const whatIfQueryOverrides = {
+  prompt: undefined,
+  negativePrompt: undefined,
+  seed: undefined,
+  image: undefined,
+  nsfw: false,
+  cfgScale: generation.defaultValues.cfgScale,
+};
+
 export const samplersToSchedulers: Record<Sampler, string> = {
   'Euler a': 'EulerA',
   Euler: 'Euler',

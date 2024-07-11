@@ -5,8 +5,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { generation } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource } from '~/shared/constants/generation.constants';
+import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -25,6 +26,7 @@ export function UpscaleImageModal({
       resources: resources.map((x) => x.id),
       params: {
         ...params,
+        ...whatIfQueryOverrides,
         upscale: Number(upscale),
         quantity: 1,
       },
