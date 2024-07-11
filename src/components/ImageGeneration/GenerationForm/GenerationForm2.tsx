@@ -91,6 +91,7 @@ const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
   const handleSetDefinitions = async () => {
@@ -100,9 +101,11 @@ export function GenerationForm2() {
 
   return (
     <IsClient>
-      <div className="p-3">
-        <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-      </div>
+      {(currentUser?.id === 1 || currentUser?.id === 5) && (
+        <div className="p-3">
+          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
+        </div>
+      )}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
@@ -962,7 +965,7 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
 
   useEffect(() => {
     if (data) {
@@ -978,7 +981,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
       cost={data?.cost}
       error={
         !isInitialLoading && isError
-          ? 'Error calculating cost. Please try updating your values'
+          ? error
+            ? (error as any).message
+            : 'Error calculating cost. Please try updating your values'
           : undefined
       }
     />

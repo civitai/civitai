@@ -49,6 +49,7 @@ export async function createComfyStep(
       quantity: params.quantity,
       comfyWorkflow,
     },
+    timeout: '00:10:00',
     metadata: {
       resources: input.resources,
       params: input.params,

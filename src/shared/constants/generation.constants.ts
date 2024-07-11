@@ -90,9 +90,12 @@ export const allInjectableResourceIds = [
 ].map((x) => x.id);
 
 export function getInjectablResources(baseModelSetType: BaseModelSetType) {
+  const isSdxl = getIsSdxl(baseModelSetType);
+  let value = baseModelSetType;
+  if (isSdxl) value = 'SDXL';
   return {
     ...baseInjectableResources,
-    draft: draftInjectableResources.find((x) => x.baseModelSetType === baseModelSetType),
+    draft: draftInjectableResources.find((x) => x.baseModelSetType === value),
   };
 }
 // #endregion

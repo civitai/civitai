@@ -56,6 +56,7 @@ export async function createTextToImageStep(
       scheduler,
       ...params,
     },
+    timeout: '00:10:00',
     metadata: {
       resources: input.resources,
       params: input.params,
