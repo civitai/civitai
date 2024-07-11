@@ -533,7 +533,7 @@ export const generation = {
   samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
   lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
-    workflowKey: 'txt2img',
+    workflow: 'txt2img',
     cfgScale: 7,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
@@ -545,8 +545,8 @@ export const generation = {
     negativePrompt: '',
     nsfw: false,
     baseModel: 'SD1',
-    denoise: 1,
-    upscale: 2,
+    denoise: 0.4,
+    upscale: 1.5,
     model: {
       id: 128713,
       name: '8',
@@ -761,3 +761,5 @@ export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
+
+export const downloadGeneratedImagesByDate = '8-15-2024';

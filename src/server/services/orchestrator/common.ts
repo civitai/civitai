@@ -42,7 +42,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '@prisma/client';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { getRandomInt } from '~/utils/number-helpers';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -100,6 +99,13 @@ export async function parseGenerateImageInput({
   user: SessionUser;
   workflowDefinition: WorkflowDefinition;
 }) {
+  // remove data not allowed by workflow features
+  const features = getWorkflowDefinitionFeatures(workflowDefinition);
+  for (const key in features) {
+    if (!features[key as keyof typeof features])
+      delete originalParams[key as keyof typeof features];
+  }
+
   let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
@@ -150,12 +156,6 @@ export async function parseGenerateImageInput({
   ];
 
   params = sanitizeTextToImageParams(params, limits);
-
-  // remove data not allowed by workflow features
-  const features = getWorkflowDefinitionFeatures(workflowDefinition);
-  for (const key in features) {
-    if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
-  }
 
   // handle moderate prompt
   try {

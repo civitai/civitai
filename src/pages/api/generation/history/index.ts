@@ -2,7 +2,7 @@ import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import dayjs from 'dayjs';
 import fetch from 'node-fetch';
 import { env } from '~/env/server.mjs';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, downloadGeneratedImagesByDate } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createLimiter } from '~/server/utils/rate-limiting';
 
@@ -22,6 +22,9 @@ export default AuthedEndpoint(async function handler(req, res, user) {
       message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
     return res.status(429).send(message);
   }
+
+  const canDownload = new Date().getTime() < new Date(downloadGeneratedImagesByDate).getTime();
+  if (!canDownload) return res.status(400).send('download period has ended');
 
   const url =
     `https://image-generation-scheduler-dev.civitai.com/users/${user.id}/images/download?` +

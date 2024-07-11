@@ -1,39 +1,24 @@
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
-  BulkDeleteGeneratedImagesInput,
   CheckResourcesCoverageSchema,
-  CreateGenerationRequestInput,
-  GenerationRequestTestRunSchema,
   GenerationStatus,
   generationStatusSchema,
   GetGenerationDataInput,
-  GetGenerationRequestsOutput,
   GetGenerationResourcesInput,
-  PrepareModelInput,
 } from '~/server/schema/generation.schema';
 import { SessionUser } from 'next-auth';
 import { dbRead } from '~/server/db/client';
 import {
   handleLogError,
   throwAuthorizationError,
-  throwBadRequestError,
-  throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ModelType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import { isDefined } from '~/utils/type-guards';
 
-import {
-  BaseModel,
-  baseModelSets,
-  BaseModelSetType,
-  getGenerationConfig,
-  Sampler,
-} from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
-import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -42,8 +27,6 @@ import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
 
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { UserTier } from '~/server/schema/user.schema';
-import { generatorFeedbackReward } from '~/server/rewards';
 import { ResourceData, resourceDataCache } from '~/server/redis/caches';
 import {
   defaultCheckpoints,
@@ -57,7 +40,7 @@ import {
   TextToImageParams,
   TextToImageStepRemixMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import dayjs from 'dayjs';
+import { BaseModelSetType, getGenerationConfig } from '~/server/common/constants';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -70,7 +53,7 @@ export function parseModelVersionId(assetId: string) {
   return null;
 }
 
-const baseModelSetsArray = Object.values(baseModelSets);
+// const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
 export const getGenerationResources = async (
   input: GetGenerationResourcesInput & { user?: SessionUser }
@@ -196,21 +179,6 @@ export const getGenerationResources = async (
     }
   );
 };
-
-// const baseModelToOrchestration: Record<BaseModelSetType, string | undefined> = {
-//   SD1: 'SD_1_5',
-//   SD2: undefined,
-//   SD3: 'SD_3',
-//   SDXL: 'SDXL',
-//   SDXLDistilled: 'SDXL_Distilled',
-//   SCascade: 'SCascade',
-//   Pony: 'SDXL',
-//   Lumina: 'Lumina',
-//   HyDit1: 'HyDit1',
-//   PixArtA: 'PixArtA',
-//   PixArtE: 'PixArtE',
-//   ODOR: undefined,
-// };
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   const unavailableGenResources = await getUnavailableResources();

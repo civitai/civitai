@@ -279,6 +279,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function reset() {
+    console.log(getDefaultValues(form.getValues()));
     form.reset(getDefaultValues(form.getValues()));
   }
   // #endregion

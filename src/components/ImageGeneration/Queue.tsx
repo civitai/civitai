@@ -10,6 +10,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { formatDate } from '~/utils/date-helpers';
 import { useSchedulerDownloadingStore } from '~/store/scheduler-download.store';
+import { downloadGeneratedImagesByDate } from '~/server/common/constants';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -17,6 +18,7 @@ export function Queue() {
 
   const { downloading } = useSchedulerDownloadingStore();
   const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
+  const canDownload = new Date().getTime() < new Date(downloadGeneratedImagesByDate).getTime();
 
   if (isError)
     return (
@@ -32,7 +34,7 @@ export function Queue() {
       </Center>
     );
 
-  const RetentionPolicyUpdate = (
+  const RetentionPolicyUpdate = canDownload ? (
     <div className="flex flex-col items-center justify-center gap-3 ">
       <div className="flex flex-col items-center justify-center">
         <Text color="dimmed">
@@ -55,7 +57,7 @@ export function Queue() {
         Download past images
       </Button>
     </div>
-  );
+  ) : null;
 
   if (!data.length)
     return (
@@ -87,22 +89,24 @@ export function Queue() {
   return (
     <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
       <Stack>
-        <Text size="xs" color="dimmed" my={-10}>
-          <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-          Images are kept in the generator for 30 days{' '}
-          {!downloading && (
-            <Text
-              variant="link"
-              td="underline"
-              component="a"
-              href="/api/generation/history"
-              download
-              onClick={handleSetDownloading}
-            >
-              Download images created before {formatDate(new Date('6-24-2024'))}
-            </Text>
-          )}
-        </Text>
+        {canDownload && (
+          <Text size="xs" color="dimmed" my={-10}>
+            <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
+            Images are kept in the generator for 30 days{' '}
+            {!downloading && (
+              <Text
+                variant="link"
+                td="underline"
+                component="a"
+                href="/api/generation/history"
+                download
+                onClick={handleSetDownloading}
+              >
+                Download images created before {formatDate(new Date(downloadGeneratedImagesByDate))}
+              </Text>
+            )}
+          </Text>
+        )}
         {data.map((request) =>
           request.steps.map((step) => (
             <div key={request.id} id={request.id.toString()}>
@@ -111,7 +115,7 @@ export function Queue() {
           ))
         )}
         {hasNextPage ? (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!!data.length && !isRefetching}>
             <Center sx={{ height: 60 }}>
               <Loader />
             </Center>

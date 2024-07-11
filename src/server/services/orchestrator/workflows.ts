@@ -7,6 +7,7 @@ import {
   deleteWorkflow as clientDeleteWorkflow,
 } from '@civitai/client';
 import { z } from 'zod';
+import { isProd } from '~/env/other';
 import {
   workflowQuerySchema,
   workflowIdSchema,
@@ -31,7 +32,7 @@ export async function queryWorkflows({
   }).catch((error) => {
     throw error;
   });
-  if (!data) throw error;
+  if (!data) throw (error as any).errors?.messages?.join('\n');
   const { next, items = [] } = data;
 
   return { nextCursor: next, items };
@@ -44,7 +45,7 @@ export async function getWorkflow({
 }: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { token: string }) {
   const client = createOrchestratorClient(token);
   const { data, error } = await clientGetWorkflow({ client, path, query });
-  if (!data) throw error;
+  if (!data) throw (error as any).errors?.messages?.join('\n');
 
   return data;
 }
@@ -63,17 +64,19 @@ export async function submitWorkflow({
     query,
   });
   if (!data) {
-    // console.log('-------ERROR-------');
-    // console.dir({ error }, { depth: null });
-    // console.dir({ body, query }, { depth: null });
-    // console.log('-------END ERROR-------');
+    const message = (error as any).errors?.messages?.join('\n');
+    if (!isProd) {
+      console.log('----Error Request Body----');
+      console.dir(body, { depth: null });
+      console.log('----End Error Request Body----');
+    }
     switch (error.status) {
       case 400:
-        throw throwBadRequestError(); // TODO - better error handling
+        throw throwBadRequestError(message);
       case 401:
-        throw throwAuthorizationError();
+        throw throwAuthorizationError(message);
       case 403:
-        throw throwInsufficientFundsError();
+        throw throwInsufficientFundsError(message);
       default:
         throw error;
     }

@@ -10,7 +10,6 @@ export function useSchedulerDownloadSignal() {
   useSignalConnection(
     SignalMessages.SchedulerDownload,
     ({ downloading }: { downloading: boolean }) => {
-      console.log({ downloading });
       useSchedulerDownloadingStore.setState({ downloading });
     }
   );
