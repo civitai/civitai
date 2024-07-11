@@ -76,7 +76,7 @@ export async function createComfy(
     },
   })) as TextToImageResponse;
 
-  console.dir(workflow, { depth: null });
+  // console.dir(workflow, { depth: null });
 
   // TODO - have this use `formatComfyStep`
   const [formatted] = await formatGeneratedImageResponses([workflow]);

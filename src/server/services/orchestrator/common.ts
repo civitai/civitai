@@ -403,7 +403,6 @@ export function formatTextToImageStep({
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
     params: {
-      ...params,
       baseModel,
       prompt,
       negativePrompt,
@@ -421,7 +420,7 @@ export function formatTextToImageStep({
       steps: metadata?.params?.steps ?? generation.defaultValues.steps,
       cfgScale: metadata?.params?.cfgScale ?? generation.defaultValues.cfgScale,
       sampler: metadata?.params?.sampler ?? sampler ?? generation.defaultValues.sampler,
-    },
+    } as TextToImageParams & { height: number; width: number },
     images,
     status: step.status,
     metadata: metadata,
@@ -468,7 +467,7 @@ export function formatComfyStep({
   return {
     $type: 'comfy' as const,
     name: step.name,
-    params: { ...params!, width, height },
+    params: { ...params!, width, height } as TextToImageParams & { height: number; width: number },
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,

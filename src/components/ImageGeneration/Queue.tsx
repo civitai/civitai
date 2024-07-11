@@ -8,7 +8,7 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { decreaseDate, formatDate } from '~/utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { useSchedulerDownloadingStore } from '~/store/scheduler-download.store';
 import {
   downloadGeneratedImagesByDate,

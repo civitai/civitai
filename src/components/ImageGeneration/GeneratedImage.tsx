@@ -26,7 +26,7 @@ import {
   IconThumbUp,
   IconTrash,
 } from '@tabler/icons-react';
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
