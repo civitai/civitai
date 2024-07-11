@@ -264,7 +264,7 @@ export function GenerationFormContent() {
         pt={0}
         className="flex flex-col gap-2 px-3"
       >
-        <div className="flex items-end justify-start gap-3">
+        <div className="flex items-start justify-start gap-3">
           {features.image && image && (
             <div className="relative mt-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
