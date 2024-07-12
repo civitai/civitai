@@ -767,5 +767,5 @@ export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
 
-export const orchestratorIntegrationDate = new Date('7-11-2024');
+export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
