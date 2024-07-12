@@ -41,11 +41,13 @@ export const useGenerationStore = create<GenerationState>()(
       setView: (view) =>
         set((state) => {
           state.view = view;
+          state.input = undefined;
         }),
       setData: (data) =>
         set((state) => {
           state.view = 'generate';
           state.data = data;
+          state.input = undefined;
         }),
       clearData: () =>
         set((state) => {

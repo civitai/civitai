@@ -29,9 +29,9 @@ export const textToImageParamsSchema = z.object({
   width: z.number(),
   height: z.number(),
   // temp props?
-  denoise: z.number().optional(), // tODO - determine if this should go elsewhere
-  image: z.string().optional(),
-  upscale: z.number().optional(),
+  denoise: z.number().max(1).optional(),
+  image: z.string().startsWith('https://orchestration.civitai.com').optional(),
+  upscale: z.number().max(3).optional(),
   workflow: workflowKeySchema,
 });
 // #endregion

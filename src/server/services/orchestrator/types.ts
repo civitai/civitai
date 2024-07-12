@@ -3,6 +3,13 @@ import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToI
 
 export * from './comfy/comfy.types';
 
+export type GenerationWhatIfResponse = {
+  cost: number;
+  ready: boolean;
+  eta: Date;
+  position: number;
+};
+
 export type GeneratedImageWorkflowStep = Omit<WorkflowStep, 'metadata'> & {
   metadata?: GeneratedImageStepMetadata;
 };

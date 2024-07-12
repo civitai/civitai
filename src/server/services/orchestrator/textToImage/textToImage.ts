@@ -9,11 +9,7 @@ import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generati
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import {
-  generateImageSchema,
-  generateImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
-import dayjs from 'dayjs';
+import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { env } from '~/env/server.mjs';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -89,61 +85,3 @@ export async function createTextToImage(
   const [formatted] = await formatGeneratedImageResponses([workflow]);
   return formatted;
 }
-
-export type TextToImageWhatIf = AsyncReturnType<typeof whatIfTextToImage>;
-export async function whatIfTextToImage(
-  args: z.infer<typeof generateImageWhatIfSchema> & { user: SessionUser; token: string }
-) {
-  const step = await createTextToImageStep({
-    ...args,
-    resources: args.resources.map((id) => ({ id, strength: 1 })),
-  });
-  const workflow = await submitWorkflow({
-    token: args.token,
-    body: {
-      steps: [step],
-    },
-  });
-
-  let cost = 0,
-    ready = true,
-    eta = dayjs().add(10, 'minutes').toDate(),
-    position = 0;
-
-  for (const step of workflow.steps ?? []) {
-    for (const job of step.jobs ?? []) {
-      cost += job.cost;
-
-      const { queuePosition } = job;
-      if (!queuePosition) continue;
-
-      const { precedingJobs, startAt, support } = queuePosition;
-      if (support !== 'available' && ready) ready = false;
-      if (precedingJobs && precedingJobs < position) {
-        position = precedingJobs;
-        if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
-      }
-    }
-  }
-
-  return {
-    cost: Math.ceil(cost),
-    ready,
-    eta,
-    position,
-  };
-}
-
-// export async function getTextToImageRequests(
-//   props: Parameters<typeof queryWorkflows>[0] & { token: string }
-// ) {
-//   const { nextCursor, items } = await queryWorkflows({
-//     ...props,
-//     tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.TEXT_TO_IMAGE, ...(props.tags ?? [])],
-//   });
-
-//   return {
-//     items: await formatTextToImageResponses(items as TextToImageResponse[]),
-//     nextCursor,
-//   };
-// }

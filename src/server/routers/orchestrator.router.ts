@@ -27,6 +27,7 @@ import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowStep
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import { generatorFeedbackReward } from '~/server/rewards';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -51,7 +52,6 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
 
 const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
 const orchestratorGuardedProcedure = guardedProcedure.use(orchestratorMiddleware);
-
 export const orchestratorRouter = router({
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
@@ -65,8 +65,32 @@ export const orchestratorRouter = router({
   // #region [steps]
   steps: router({
     update: orchestratorProcedure
-      .input(z.object({ data: updateWorkflowStepSchema.array() }))
-      .mutation(({ ctx, input }) => updateWorkflowSteps({ input: input.data, token: ctx.token })),
+      .input(
+        z.object({
+          data: updateWorkflowStepSchema.array(),
+          updateType: z.enum(['feedback']).optional(),
+        })
+      )
+      .mutation(async ({ ctx, input }) => {
+        if (input.updateType === 'feedback') {
+          await Promise.all(
+            input.data.map(async (data) =>
+              Object.entries(data.metadata.images)
+                .filter(([_, x]) => (x as any).feedback)
+                .map(([key]) =>
+                  generatorFeedbackReward.apply({
+                    userId: ctx.user.id,
+                    jobId: key,
+                  })
+                )
+            )
+          );
+        }
+        await updateWorkflowSteps({
+          input: input.data,
+          token: ctx.token,
+        });
+      }),
   }),
   // #endregion
 

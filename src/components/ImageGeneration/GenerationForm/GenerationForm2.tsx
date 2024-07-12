@@ -17,8 +17,6 @@ import {
   Divider,
   useMantineTheme,
   LoadingOverlay,
-  Select,
-  CloseButton,
   ActionIcon,
 } from '@mantine/core';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
@@ -29,7 +27,6 @@ import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import Link from 'next/link';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
@@ -42,7 +39,6 @@ import {
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -64,9 +60,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
-  getClosestAspectRatio,
   getIsSdxl,
-  getSizeFromAspectRatio,
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
@@ -846,7 +840,7 @@ export function GenerationFormContent() {
                             name="denoise"
                             label="Denoise"
                             min={0}
-                            max={1}
+                            max={0.75}
                             step={0.05}
                           />
                         )}
