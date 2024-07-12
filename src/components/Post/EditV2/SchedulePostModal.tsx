@@ -20,9 +20,11 @@ const schema = z.object({ date: z.date(), time: z.date() }).refine(
 export function SchedulePostModal({
   onSubmit,
   publishedAt,
+  publishingModel,
 }: {
   onSubmit: (date: Date) => void;
   publishedAt?: Date | null;
+  publishingModel?: boolean;
 }) {
   const dialog = useDialogContext();
 
@@ -31,7 +33,7 @@ export function SchedulePostModal({
     defaultValues: publishedAt ? { date: publishedAt, time: publishedAt } : undefined,
   });
   const { minDate, maxDate } = useMemo(
-    () => ({ minDate: new Date(), maxDate: dayjs().add(1, 'month').toDate() }),
+    () => ({ minDate: new Date(), maxDate: dayjs().add(3, 'month').toDate() }),
     []
   );
 
@@ -50,13 +52,19 @@ export function SchedulePostModal({
   return (
     <Modal
       {...dialog}
-      title={<Text className="font-semibold">Schedule your model</Text>}
+      title={
+        <Text className="font-semibold">
+          {publishingModel ? 'Schedule your model' : 'Schedule your post'}
+        </Text>
+      }
       size="md"
       centered
     >
       <Stack spacing="md">
         <Text size="sm" color="dimmed">
-          Select the date and time you want to publish this model.
+          {publishingModel
+            ? 'Select the date and time you want to publish this model.'
+            : 'Select the date and time you want to publish this post.'}
         </Text>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack spacing="xl">
