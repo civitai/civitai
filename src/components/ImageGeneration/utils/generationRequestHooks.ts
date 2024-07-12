@@ -190,16 +190,20 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
       []
     );
 
-    updateSteps<GeneratedImageStepMetadata>(data, (draft, metadata) => {
-      Object.keys(metadata.images ?? {}).map((imageId) => {
-        const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
-        const images = draft.images ?? {};
-        images[imageId] = { ...images[imageId], ...removeEmpty(rest) };
-        if (feedback)
-          images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
-        draft.images = images;
-      });
-    });
+    updateSteps<GeneratedImageStepMetadata>(
+      data,
+      (draft, metadata) => {
+        Object.keys(metadata.images ?? {}).map((imageId) => {
+          const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
+          const images = draft.images ?? {};
+          images[imageId] = { ...images[imageId], ...removeEmpty(rest) };
+          if (feedback)
+            images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
+          draft.images = images;
+        });
+      },
+      !!args.find((x) => x.feedback !== undefined) ? 'feedback' : undefined // TODO - temp for giving buzz for feedback
+    );
   }
 
   return { updateImages, isLoading };

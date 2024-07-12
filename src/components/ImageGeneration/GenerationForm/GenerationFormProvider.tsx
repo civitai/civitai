@@ -277,6 +277,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
+    // TODO.briant this is reseting things when people navigate back to the generation form after remix
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
