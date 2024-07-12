@@ -79,7 +79,6 @@ const formSchema = textToImageParamsSchema
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
-    console.log({ aspectRatio: data.aspectRatio, baseModel: data.baseModel, height, width });
     return {
       ...data,
       height,

@@ -164,8 +164,6 @@ export async function parseGenerateImageInput({
     params.height = size.height;
   }
 
-  console.log(params);
-
   // this needs to come after updating the size from the aspect ratio that is done directly above
   params = sanitizeTextToImageParams(params, limits);
   // #endregion
