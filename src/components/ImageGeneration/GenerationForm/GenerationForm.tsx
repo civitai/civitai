@@ -152,7 +152,9 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
     isCalculatingCost,
     draft,
     costEstimateError,
+    minorFlaggedResources,
   } = useDerivedGenerationState();
+  const hasMinorResources = minorFlaggedResources.length > 0;
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
@@ -208,7 +210,7 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
       try {
         await mutateAsync({
           resources: _resources.filter((x) => x.covered !== false),
-          params: { ...params, baseModel },
+          params: { ...params, baseModel, nsfw: hasMinorResources ? false : params.nsfw },
         });
         onSuccess?.();
         // if (!Router.pathname.includes('/generate')) generationPanel.setView('queue');
@@ -433,6 +435,28 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
                 </Alert>
               </Card.Section>
             )}
+            {hasMinorResources && (
+              <Card.Section>
+                <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                  <Text size="xs">
+                    {`A resource you selected does not allow the generation of Mature Content.
+                    If you attempt to generate mature content with this resource,
+                    the image will not be returned but you `}
+                    <Text span italic inherit>
+                      will
+                    </Text>
+                    {` be charged Buzz.`}
+                  </Text>{' '}
+                  <List size="xs">
+                    {minorFlaggedResources.map((resource) => (
+                      <List.Item key={resource.id}>
+                        {resource.modelName} - {resource.name}
+                      </List.Item>
+                    ))}
+                  </List>
+                </Alert>
+              </Card.Section>
+            )}
             {ready === false && (
               <Card.Section>
                 <Alert color="yellow" title="Potentially slow generation" radius={0}>
@@ -566,7 +590,13 @@ const GenerationFormInner = ({ onSuccess }: { onSuccess?: () => void }) => {
             <InputSegmentedControl name="aspectRatio" data={getAspectRatioControls(baseModel)} />
           </Stack>
           <Group position="apart" my="xs">
-            <InputSwitch name="nsfw" label="Mature content" labelPosition="left" />
+            <InputSwitch
+              name="nsfw"
+              label="Mature content"
+              labelPosition="left"
+              disabled={hasMinorResources}
+              checked={hasMinorResources ? false : undefined}
+            />
             {features.draftMode && (
               <InputSwitch
                 name="draft"

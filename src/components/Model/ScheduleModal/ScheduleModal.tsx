@@ -21,7 +21,7 @@ const schema = z
 export function ScheduleModal({ opened, onClose, onSubmit }: Props) {
   const form = useForm({ schema });
   const { minDate, maxDate } = useMemo(
-    () => ({ minDate: new Date(), maxDate: dayjs().add(1, 'month').toDate() }),
+    () => ({ minDate: new Date(), maxDate: dayjs().add(3, 'month').toDate() }),
     []
   );
 

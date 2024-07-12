@@ -312,6 +312,7 @@ function ResourceSelectCard({
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
+      minor: data.minor,
       image: image,
       covered: data.canGenerate,
       strength: settings?.strength ?? 1,
@@ -517,8 +518,8 @@ function ResourceSelectCard({
                         alt={
                           image.meta
                             ? truncate((image.meta as ImageMetaProps).prompt, {
-                                length: constants.altTruncateLength,
-                              })
+                              length: constants.altTruncateLength,
+                            })
                             : image.name ?? undefined
                         }
                         type={image.type}
