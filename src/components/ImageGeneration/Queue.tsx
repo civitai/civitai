@@ -110,11 +110,12 @@ export function Queue() {
             )}
           </Text>
         )}
+        {/* {data.map((request) =>
+          request.steps.map((step) => createRenderElement(QueueItem, request, step))
+        )} */}
         {data.map((request) =>
           request.steps.map((step) => (
-            <div key={request.id} id={request.id.toString()}>
-              {createRenderElement(QueueItem, request.id, request, step)}
-            </div>
+            <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} />
           ))
         )}
         {hasNextPage ? (
@@ -133,8 +134,8 @@ export function Queue() {
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap, WeakMap],
-  (RenderComponent, index, request, step) => (
-    <RenderComponent index={index} request={request} step={step} />
+  [OneKeyMap, WeakMap, WeakMap],
+  (RenderComponent, request, step) => (
+    <RenderComponent key={request.id} id={request.id.toString()} request={request} step={step} />
   )
 );

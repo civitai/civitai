@@ -68,9 +68,11 @@ const delayTimeouts = new Map<string, NodeJS.Timeout>();
 export function QueueItem({
   request,
   step,
+  id,
 }: {
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
+  id: string;
 }) {
   const { classes } = useStyle();
 
@@ -158,11 +160,10 @@ export function QueueItem({
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
   return (
-    <Card withBorder px="xs">
+    <Card withBorder px="xs" id={id}>
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
           <div className="flex flex-wrap items-center gap-1">
-            {/* {workflowDefinition && <Badge radius="lg">{workflowDefinition.label}</Badge>} */}
             <div className="flex items-center gap-1">
               {images.length && (
                 <GenerationStatusBadge
