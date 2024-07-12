@@ -37,9 +37,11 @@ export async function setWorkflowDefinition(key: string, data: WorkflowDefinitio
 
 export async function populateWorkflowDefinition(key: string, data: any) {
   const { template } = await getWorkflowDefinition(key);
-  const populated = template.replace(/{\s*{\s*([\w]+)\s*}\s*}/g, (_: any, match: any) => {
-    return data[match];
-  });
+  const populated = template
+    .replace(/"\{\{\{(\w+)\}\}\}"/g, '{{$1}}')
+    .replace(/{\s*{\s*([\w]+)\s*}\s*}/g, (_: any, match: any) => {
+      return data[match];
+    });
   try {
     return JSON.parse(populated);
   } catch (e) {
@@ -108,7 +110,7 @@ export function applyResources(
       }
     }
 
-    if (node) {
+    if (node && checkpointLoaders.length) {
       // increment stack key
       const stackKey = `${stackKeys[0]}-${++i}`;
       stackKeys.push(stackKey);

@@ -288,7 +288,19 @@ export function GenerationFormContent() {
             </div>
           )}
           <InputSelect
-            label="Workflow"
+            label={
+              <div className="flex items-center gap-1">
+                <Input.Label>Workflow</Input.Label>
+                <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                  Go beyond text-to-image with different workflows. Currently we have limited
+                  workflows that cover some of the most important use cases. Community workflows
+                  coming soon.
+                </InfoPopover>
+                <Badge color="yellow" size="xs">
+                  New
+                </Badge>
+              </div>
+            }
             // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
             className="flex-1"
             name="workflow"
@@ -300,8 +312,13 @@ export function GenerationFormContent() {
             loading={loadingWorkflows}
           />
         </div>
+        {workflowDefinition?.description && (
+          <Text size="xs" lh={1.2} color="dimmed" className="mb-2">
+            {workflowDefinition.description}
+          </Text>
+        )}
 
-        <div className="mb-1 flex items-center gap-1">
+        <div className="-mb-1 flex items-center gap-1">
           <Input.Label style={{ fontWeight: 590 }} required>
             Model
           </Input.Label>
@@ -320,7 +337,7 @@ export function GenerationFormContent() {
           )}
           withBorder
           p="sm"
-          radius="md"
+          radius="sm"
           pb={0}
         >
           <Watch {...form} fields={['baseModel', 'model', 'resources', 'vae']}>
@@ -551,7 +568,7 @@ export function GenerationFormContent() {
                         <Text color="dimmed" className="text-xs font-semibold">
                           Trigger words
                         </Text>
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 mb-2">
                           <TrainedWords
                             type="LORA"
                             trainedWords={trainedWords}
@@ -623,13 +640,6 @@ export function GenerationFormContent() {
               label={
                 <div className="relative flex items-center gap-1">
                   <Input.Label>Draft Mode</Input.Label>
-                  <Badge
-                    color="yellow"
-                    size="xs"
-                    sx={{ position: 'absolute', right: 18, top: -8, padding: '0 4px' }}
-                  >
-                    New
-                  </Badge>
                   <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
                     Draft Mode will generate images faster, cheaper, and with slightly less quality.
                     Use this for exploring concepts quickly.
@@ -1021,13 +1031,13 @@ const useStyles = createStyles((theme) => ({
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : '#fff',
 
     '&:first-of-type': {
-      borderTopLeftRadius: '8px',
-      borderTopRightRadius: '8px',
+      borderTopLeftRadius: theme.radius.sm,
+      borderTopRightRadius: theme.radius.sm,
     },
 
     '&:last-of-type': {
-      borderBottomLeftRadius: '8px',
-      borderBottomRightRadius: '8px',
+      borderBottomLeftRadius: theme.radius.sm,
+      borderBottomRightRadius: theme.radius.sm,
     },
 
     '&[data-active]': {

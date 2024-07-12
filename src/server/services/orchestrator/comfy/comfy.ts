@@ -63,6 +63,8 @@ export async function createComfy(
 ) {
   const { user } = args;
   const step = await createComfyStep(args);
+  // console.log(JSON.stringify(step.input.comfyWorkflow));
+  // throw new Error('stop');
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {

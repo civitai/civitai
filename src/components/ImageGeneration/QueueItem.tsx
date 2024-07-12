@@ -242,9 +242,9 @@ export function QueueItem({
           </Text>
         </ContentClamp>
 
-        <div>
+        <div className="-mb-2 -mt-2">
           {workflowDefinition && (
-            <Badge radius="lg" color="violet" size="sm">
+            <Badge radius="sm" color="violet" size="sm">
               {workflowDefinition.label}
             </Badge>
           )}
