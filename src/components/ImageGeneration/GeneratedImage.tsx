@@ -128,7 +128,7 @@ export function GeneratedImage({
         resources: step.resources,
         params: {
           ...step.params,
-          image: step.params.image ?? image.url,
+          image: image.url,
           seed: image.seed ?? step.params.seed,
           workflow,
         },
