@@ -275,15 +275,20 @@ export function GenerationFormContent() {
           {features.image && image && (
             <div className="relative mt-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={image} alt="image to upscale" className="max-w-16" />
+              <img
+                src={image}
+                alt="image to refine"
+                className="max-w-16 rounded-md shadow-sm shadow-black"
+              />
               <ActionIcon
-                variant="filled"
+                variant="light"
                 size="sm"
                 color="red"
+                radius="xl"
                 className="absolute -right-2 -top-2"
                 onClick={() => form.setValue('image', undefined)}
               >
-                <IconX />
+                <IconX size={16} strokeWidth={2.5} />
               </ActionIcon>
             </div>
           )}

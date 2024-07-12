@@ -25,6 +25,7 @@ import {
   IconThumbDown,
   IconThumbUp,
   IconTrash,
+  IconWand,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -315,6 +316,36 @@ export function GeneratedImage({
                   >
                     <IconThumbDown size={16} />
                   </ActionIcon>
+
+                  {!!img2imgWorkflows?.length && canRemix && (
+                    <Menu
+                      zIndex={400}
+                      trigger="hover"
+                      openDelay={100}
+                      closeDelay={100}
+                      transition="fade"
+                      transitionDuration={150}
+                    >
+                      <Menu.Target>
+                        <ActionIcon size="md">
+                          <IconWand size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown className={classes.improveMenu}>
+                        {img2imgWorkflows?.map((workflow) => (
+                          <Menu.Item
+                            key={workflow.key}
+                            onClick={() => {
+                              if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                              else handleSelectWorkflow(workflow.key);
+                            }}
+                          >
+                            {workflow.name}
+                          </Menu.Item>
+                        ))}
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
                 </Group>
                 <ImageMetaPopover
                   meta={step.params}
@@ -451,6 +482,16 @@ const useStyles = createStyles((theme, _params, getRef) => {
       [theme.fn.smallerThan('sm')]: {
         opacity: 0.7,
       },
+    },
+    improveMenu: {
+      borderRadius: theme.radius.sm,
+      background: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+        0.6
+      ),
+      border: 'none',
+      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+      padding: 4,
     },
   };
 });
