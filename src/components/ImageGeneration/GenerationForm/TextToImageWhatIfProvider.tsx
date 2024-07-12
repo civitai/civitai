@@ -3,16 +3,21 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import { generateImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
-import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  getBaseModelSetType,
+  getSizeFromAspectRatio,
+  whatIfQueryOverrides,
+} from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
-import { TextToImageWhatIf } from '~/server/services/orchestrator/textToImage/textToImage';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
+import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 
-const Context = createContext<UseTRPCQueryResult<TextToImageWhatIf | undefined, unknown> | null>(
-  null
-);
+const Context = createContext<UseTRPCQueryResult<
+  GenerationWhatIfResponse | undefined,
+  unknown
+> | null>(null);
 
 export function useTextToImageWhatIfContext() {
   const context = useContext(Context);
@@ -30,14 +35,21 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const query = useMemo(() => {
     const { model, resources = [], vae, ...params } = watched;
-    return generateImageWhatIfSchema.safeParse({
+    if (params.aspectRatio) {
+      const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
+      params.width = size.width;
+      params.height = size.height;
+    }
+
+    return {
       resources: [defaultModel.id],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,
         ...whatIfQueryOverrides,
-      },
-    });
+        prompt: 'what if',
+      } as TextToImageParams,
+    };
   }, [watched, defaultModel.id]);
 
   useEffect(() => {
@@ -47,12 +59,9 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const [debounced] = useDebouncedValue(query, 100);
 
-  const result = trpc.orchestrator.generateImageWhatIf.useQuery(
-    debounced.success ? debounced.data : ({} as any),
-    {
-      enabled: debounced && debounced.success && enabled,
-    }
-  );
+  const result = trpc.orchestrator.generateImageWhatIf.useQuery(debounced, {
+    enabled: debounced && enabled,
+  });
 
   return <Context.Provider value={result}>{children}</Context.Provider>;
 }
