@@ -62,7 +62,11 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const { connected } = useSignalContext();
-  const { data: requests, steps, isLoading } = useGetTextToImageRequests();
+  const {
+    data: requests,
+    steps,
+    isLoading,
+  } = useGetTextToImageRequests(undefined, { enabled: false });
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]

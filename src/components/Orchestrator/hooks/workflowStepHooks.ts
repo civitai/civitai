@@ -46,7 +46,8 @@ export function useUpdateWorkflowSteps<TData extends IWorkflowsInfinite>({
 
   function updateSteps<T extends UpdateWorkflowStepParams['metadata']>(
     args: UpdateWorkflowStepParams[],
-    cb: (draft: WritableDraft<T>, metadata: T) => void
+    cb: (draft: WritableDraft<T>, metadata: T) => void,
+    updateType?: 'feedback'
   ) {
     // gets current workflow data from query cache
     const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
@@ -97,7 +98,7 @@ export function useUpdateWorkflowSteps<TData extends IWorkflowsInfinite>({
       })
       .filter(isDefined);
 
-    mutate({ data });
+    mutate({ data, updateType });
   }
 
   return { updateSteps, isLoading };
