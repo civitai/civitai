@@ -47,7 +47,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params: {
         ...params,
         ...whatIfQueryOverrides,
-        prompt: 'what if',
       } as TextToImageParams,
     };
   }, [watched, defaultModel.id]);
