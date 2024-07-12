@@ -17,7 +17,7 @@ export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues>
   };
 
 export function usePersistForm<
-  TSchema extends AnyZodObject | ZodEffects<AnyZodObject>,
+  TSchema extends AnyZodObject | ZodEffects<AnyZodObject> | ZodEffects<ZodEffects<AnyZodObject>>,
   TExclude extends Array<Path<TypeOf<TSchema>>>
 >(
   storageKey: string,

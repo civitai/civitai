@@ -24,10 +24,10 @@ export const textToImageParamsSchema = z.object({
   quantity: z.coerce.number().min(1).max(20),
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
-  aspectRatio: z.string(),
+  aspectRatio: z.string().optional(),
   baseModel: z.enum(baseModelSetTypes),
-  // width: z.number().optional(),
-  // height: z.number().optional(),
+  width: z.number(),
+  height: z.number(),
   // temp props?
   denoise: z.number().optional(), // tODO - determine if this should go elsewhere
   image: z.string().optional(),

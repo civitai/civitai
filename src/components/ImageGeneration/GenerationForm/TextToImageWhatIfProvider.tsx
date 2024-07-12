@@ -2,14 +2,13 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generation, generationConfig } from '~/server/common/constants';
+import { generationConfig } from '~/server/common/constants';
 import { generateImageWhatIfSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 
 import { TextToImageWhatIf } from '~/server/services/orchestrator/textToImage/textToImage';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
-import { isDefined } from '~/utils/type-guards';
 
 const Context = createContext<UseTRPCQueryResult<TextToImageWhatIf | undefined, unknown> | null>(
   null

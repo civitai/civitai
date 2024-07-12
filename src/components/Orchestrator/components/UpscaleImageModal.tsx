@@ -1,13 +1,12 @@
 import { Modal, SegmentedControl } from '@mantine/core';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { generation } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
+import { createImageElement } from '~/utils/image-utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -20,6 +19,14 @@ export function UpscaleImageModal({
 }) {
   const dialog = useDialogContext();
   const [upscale, setUpscale] = useState(String(params.upscale ?? 2));
+  const [size, setSize] = useState({ height: params.height, width: params.width });
+
+  useEffect(() => {
+    if (!params.image) return;
+    createImageElement(params.image).then((elem) => {
+      setSize({ height: elem.height, width: elem.width });
+    });
+  }, [params.image]);
 
   const { data, isLoading, isInitialLoading, isError } =
     trpc.orchestrator.generateImageWhatIf.useQuery({
@@ -29,6 +36,7 @@ export function UpscaleImageModal({
         ...whatIfQueryOverrides,
         upscale: Number(upscale),
         quantity: 1,
+        ...size,
       },
     });
 
@@ -49,6 +57,7 @@ export function UpscaleImageModal({
           ...params,
           upscale: Number(upscale),
           quantity: 1,
+          ...size,
         },
       });
       dialog.onClose();

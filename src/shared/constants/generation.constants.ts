@@ -266,8 +266,8 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  // if (!params.aspectRatio)
-  //   params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
+  if (!params.aspectRatio)
+    params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
 
   // handle SDXL ClipSkip
   // I was made aware that SDXL only works with clipSkip 2
@@ -283,9 +283,10 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: number, baseModel?: string) {
+export function getSizeFromAspectRatio(aspectRatio: number | string, baseModel?: string) {
+  const numberAspectRatio = typeof aspectRatio === 'string' ? Number(aspectRatio) : aspectRatio;
   const config = getGenerationConfig(baseModel);
-  return config.aspectRatios[aspectRatio];
+  return config.aspectRatios[numberAspectRatio];
 }
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
@@ -307,6 +308,18 @@ export function getWorkflowDefinitionFeatures(workflow?: {
     upscale: workflow?.features?.includes('upscale') ?? false,
     image: workflow?.features?.includes('image') ?? false,
   };
+}
+
+export function sanitizeParamsByWorkflowDefinition(
+  params: TextToImageParams,
+  workflow?: {
+    features?: WorkflowDefinition['features'];
+  }
+) {
+  const features = getWorkflowDefinitionFeatures(workflow);
+  for (const key in features) {
+    if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
+  }
 }
 // #endregion
 

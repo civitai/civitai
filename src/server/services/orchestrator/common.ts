@@ -21,6 +21,7 @@ import {
   getSizeFromAspectRatio,
   getWorkflowDefinitionFeatures,
   samplersToSchedulers,
+  sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
@@ -104,11 +105,7 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
 }) {
   // remove data not allowed by workflow features
-  const features = getWorkflowDefinitionFeatures(workflowDefinition);
-  for (const key in features) {
-    if (!features[key as keyof typeof features])
-      delete originalParams[key as keyof typeof features];
-  }
+  sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
 
   let params = { ...originalParams };
   const status = await getGenerationStatus();
@@ -159,7 +156,19 @@ export async function parseGenerateImageInput({
     ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type)),
   ];
 
+  // #region [together]
+  // TODO - should be able to remove this 30 days after orchestrator integration
+  if (params.aspectRatio) {
+    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
+    params.width = size.width;
+    params.height = size.height;
+  }
+
+  console.log(params);
+
+  // this needs to come after updating the size from the aspect ratio that is done directly above
   params = sanitizeTextToImageParams(params, limits);
+  // #endregion
 
   // handle moderate prompt
   try {
@@ -228,8 +237,6 @@ export async function parseGenerateImageInput({
     batchSize = 4;
   }
 
-  const { width, height } = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-
   return {
     resources: [...availableResources, ...resourcesToInject],
     params: {
@@ -238,11 +245,9 @@ export async function parseGenerateImageInput({
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
-      width,
-      height,
       // temp?
-      upscaleWidth: getUpscaleSize(width, params.upscale),
-      upscaleHeight: getUpscaleSize(height, params.upscale),
+      upscaleWidth: getUpscaleSize(params.width, params.upscale),
+      upscaleHeight: getUpscaleSize(params.height, params.upscale),
     },
   };
 }
@@ -424,8 +429,8 @@ export function formatTextToImageStep({
       prompt,
       negativePrompt,
       quantity,
-      controlNets: input.controlNets,
-      aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
+      // controlNets: input.controlNets,
+      // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
 
       width: input.width,
       height: input.height,
@@ -433,11 +438,12 @@ export function formatTextToImageStep({
       draft: isDraft,
       nsfw: isNsfw,
       workflow: 'txt2img',
+      //support using metadata params first (one of the quirks of draft mode makes this necessary)
       clipSkip: metadata?.params?.clipSkip ?? input.clipSkip ?? generation.defaultValues.clipSkip,
-      steps: metadata?.params?.steps ?? generation.defaultValues.steps,
-      cfgScale: metadata?.params?.cfgScale ?? generation.defaultValues.cfgScale,
+      steps: metadata?.params?.steps ?? input.steps ?? generation.defaultValues.steps,
+      cfgScale: metadata?.params?.cfgScale ?? input.cfgScale ?? generation.defaultValues.cfgScale,
       sampler: metadata?.params?.sampler ?? sampler ?? generation.defaultValues.sampler,
-    } as TextToImageParams & { height: number; width: number },
+    } as TextToImageParams,
     images,
     status: step.status,
     metadata: metadata,
@@ -476,15 +482,16 @@ export function formatComfyStep({
       })
       .filter(isDefined) ?? [];
 
-  const { width, height } = getSizeFromAspectRatio(
-    Number(params?.aspectRatio ?? 0),
-    params?.baseModel
-  );
+  if (params?.aspectRatio) {
+    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+    params.width = size.width;
+    params.height = size.height;
+  }
 
   return {
     $type: 'comfy' as const,
     name: step.name,
-    params: { ...params!, width, height } as TextToImageParams & { height: number; width: number },
+    params: { ...params! } as TextToImageParams,
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,

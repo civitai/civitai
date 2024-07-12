@@ -15,6 +15,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   getBaseModelSetType,
+  getSizeFromAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -44,7 +45,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  // .omit({ height: true, width: true })
+  .omit({ aspectRatio: true })
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
@@ -74,6 +75,16 @@ const formSchema = textToImageParamsSchema
         }
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
+    aspectRatio: z.string(),
+  })
+  .transform((data) => {
+    const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+    console.log({ aspectRatio: data.aspectRatio, baseModel: data.baseModel, height, width });
+    return {
+      ...data,
+      height,
+      width,
+    };
   })
   .refine(
     (data) => {
@@ -85,7 +96,6 @@ const formSchema = textToImageParamsSchema
     },
     { message: `You have exceed the number of allowed resources`, path: ['resources'] }
   );
-
 export const blockedRequest = (() => {
   let instances: number[] = [];
   const updateStorage = () => {

@@ -63,7 +63,13 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { getIsSdxl, getWorkflowDefinitionFeatures } from '~/shared/constants/generation.constants';
+import {
+  getClosestAspectRatio,
+  getIsSdxl,
+  getSizeFromAspectRatio,
+  getWorkflowDefinitionFeatures,
+  sanitizeParamsByWorkflowDefinition,
+} from '~/shared/constants/generation.constants';
 import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -204,7 +210,8 @@ export function GenerationFormContent() {
 
     const { cost = 0 } = useCostStore.getState();
 
-    const { model, resources: additionalResources, vae, remix, ...params } = data;
+    const { model, resources: additionalResources, vae, remix, aspectRatio, ...params } = data;
+    sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
 
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
@@ -318,7 +325,7 @@ export function GenerationFormContent() {
               loading={loadingWorkflows}
             />
             {workflowDefinition?.description && (
-              <Text size="xs" lh={1.2} color="dimmed" className="mt-2 mb-2">
+              <Text size="xs" lh={1.2} color="dimmed" className="my-2">
                 {workflowDefinition.description}
               </Text>
             )}
@@ -575,7 +582,7 @@ export function GenerationFormContent() {
                         <Text color="dimmed" className="text-xs font-semibold">
                           Trigger words
                         </Text>
-                        <div className="flex items-center gap-1 mb-2">
+                        <div className="mb-2 flex items-center gap-1">
                           <TrainedWords
                             type="LORA"
                             trainedWords={trainedWords}
