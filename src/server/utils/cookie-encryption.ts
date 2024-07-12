@@ -1,5 +1,5 @@
-import { NextApiRequest, NextApiResponse } from 'next';
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'crypto';
+import { NextApiRequest, NextApiResponse } from 'next';
 
 const algorithm = 'aes-256-ctr';
 const secretKey = process.env.COOKIE_SECRET_KEY || 'default_secret_key';
@@ -51,6 +51,22 @@ export const setEncryptedCookie = (ctx: Context, options: SetCookieOptions): voi
     httpOnly ? 'HttpOnly;' : ''
   } ${secure ? 'Secure;' : ''}`;
 
+  ctx.res.setHeader('Set-Cookie', cookie);
+};
+
+export const deleteEncryptedCookie = (
+  ctx: Context,
+  options: { name: string; secure?: boolean; path?: string; httpOnly?: boolean }
+) => {
+  const {
+    name,
+    secure = process.env.NODE_ENV === 'production',
+    path = '/',
+    httpOnly = true,
+  } = options;
+  const cookie = `${name}=''; Max-Age=0; Path=${path}; ${httpOnly ? 'HttpOnly;' : ''} ${
+    secure ? 'Secure;' : ''
+  }`;
   ctx.res.setHeader('Set-Cookie', cookie);
 };
 
