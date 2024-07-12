@@ -840,7 +840,7 @@ export function GenerationFormContent() {
                             name="denoise"
                             label="Denoise"
                             min={0}
-                            max={1}
+                            max={0.75}
                             step={0.05}
                           />
                         )}

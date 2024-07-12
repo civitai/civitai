@@ -75,12 +75,14 @@ export const orchestratorRouter = router({
         if (input.updateType === 'feedback') {
           await Promise.all(
             input.data.map(async (data) =>
-              Object.keys(data.metadata.images).map((key) =>
-                generatorFeedbackReward.apply({
-                  userId: ctx.user.id,
-                  jobId: key,
-                })
-              )
+              Object.entries(data.metadata.images)
+                .filter(([_, x]) => (x as any).feedback)
+                .map(([key]) =>
+                  generatorFeedbackReward.apply({
+                    userId: ctx.user.id,
+                    jobId: key,
+                  })
+                )
             )
           );
         }
