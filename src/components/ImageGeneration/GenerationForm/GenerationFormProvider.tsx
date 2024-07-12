@@ -45,7 +45,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true })
+  .omit({ aspectRatio: true, width: true, height: true })
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
