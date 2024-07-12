@@ -242,17 +242,19 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     if (!callbackUrl?.includes('connect=true')) delete req.cookies[civitaiTokenCookieName];
   }
 
-  if (req.url?.startsWith('/api/auth/session')) {
-    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
-  }
-
   customAuthOptions.events ??= {};
   // customAuthOptions.events.session = async (message) => {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
 
+  customAuthOptions.events.signOut = async (context) => {
+    // console.log('signout event', context.user?.email, context.account?.userId);
+    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
+  };
+
   customAuthOptions.events.signIn = async (context) => {
     // console.log('signin event', context.user?.email, context.account?.userId);
+    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
     const source = req.cookies['ref_source'] as string;
     const landingPage = req.cookies['ref_landing_page'] as string;
