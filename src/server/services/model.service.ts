@@ -46,10 +46,7 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import {
-  getUnavailableResources,
-  prepareModelInOrchestrator,
-} from '~/server/services/generation/generation.service';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -83,6 +80,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -588,6 +586,11 @@ export const getModelsRaw = async ({
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
+
+  // TODO - break into multiple queries
+  // model query
+  // model version query
+  // additional subqueries?
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
@@ -1401,10 +1404,7 @@ export const publishModelById = async ({
   );
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    // Send to orchestrator
-    Promise.all(
-      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
-    );
+    await bustOrchestratorModelCache(model.modelVersions.map((x) => x.id));
   }
 
   // Fetch affected posts to update their images in search index

@@ -46,7 +46,7 @@ export async function bustCacheTag(tag: string | string[]) {
 type CachedLookupOptions<T extends object> = {
   key: string;
   idKey: keyof T;
-  lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, object>>;
+  lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
   appendFn?: (results: Set<T>) => Promise<void>;
   ttl?: number;
   debounceTime?: number;

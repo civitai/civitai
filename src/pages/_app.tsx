@@ -59,6 +59,7 @@ import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -162,16 +163,18 @@ function MyApp(props: CustomAppProps) {
                                         >
                                           <BrowserRouterProvider>
                                             <RecaptchaWidgetProvider>
-                                              <BaseLayout>
-                                                <ChatContextProvider>
-                                                  <CustomModalsProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                    <StripeSetupSuccessProvider />
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </ChatContextProvider>
-                                              </BaseLayout>
+                                              <GenerationProvider>
+                                                <BaseLayout>
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </GenerationProvider>
                                             </RecaptchaWidgetProvider>
                                           </BrowserRouterProvider>
                                         </NotificationsProvider>

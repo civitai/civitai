@@ -2,6 +2,8 @@ import { ModelType } from '@prisma/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { Air } from '@civitai/client';
+import he from 'he';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -177,24 +179,17 @@ export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
 
-const regex =
-  /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/]+)(?:@(?<version>[a-zA-Z0-9_\-]+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i;
+export function normalizeText(input?: string): string {
+  if (!input) return '';
+  return he
+    .decode(input)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
 
 export function parseAIR(identifier: string) {
-  const match = regex.exec(identifier);
-  if (!match) {
-    throw new Error(`Invalid identifier: ${identifier}`);
-  }
-
-  const { ecosystem, type, source, id, version, format } = match.groups!;
-  return {
-    ecosystem,
-    type,
-    source,
-    model: Number(id),
-    version: Number(version),
-    format,
-  };
+  const { id, version, ...value } = Air.parse(identifier);
+  return { ...value, model: Number(id), version: Number(version) };
 }
 
 const typeUrnMap: Partial<Record<ModelType, string>> = {
@@ -226,13 +221,18 @@ export function stringifyAIR({
 }) {
   const ecosystem = (
     Object.entries(baseModelSets).find(([, value]) =>
-      value.includes(baseModel as BaseModel)
+      (value as string[]).includes(baseModel)
     )?.[0] ?? 'multi'
   ).toLowerCase();
   const urnType = typeUrnMap[type] ?? 'unknown';
-  if (!urnType) return null;
 
-  return `urn:air:${ecosystem}:${urnType}:${source}:${modelId}${id ? `@${id}` : ''}`;
+  return Air.stringify({
+    ecosystem,
+    type: urnType,
+    source,
+    id: String(modelId),
+    version: String(id),
+  });
 }
 
 export function toBase64(str: string) {

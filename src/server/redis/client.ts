@@ -131,10 +131,11 @@ export const REDIS_KEYS = {
 
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data',
+    RESOURCE_DATA: 'packed:generation:resource-data-3',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
+    WORKFLOWS: 'generation:workflows',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -175,9 +176,11 @@ export const REDIS_KEYS = {
   COUNTERS: {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
   },
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
+    HISTORY_DOWNLOADS: 'limits:history-downloads',
   },
   LIVE_NOW: 'live-now',
 } as const;

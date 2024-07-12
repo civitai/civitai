@@ -10,7 +10,6 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangleFilled,
@@ -23,7 +22,7 @@ import {
 
 import { Currency } from '@prisma/client';
 import dayjs from 'dayjs';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -35,25 +34,45 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
-  useDeleteGenerationRequest,
-  useDeleteGenerationRequestImages,
+  useCancelTextToImageRequest,
+  useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { GenerationRequestStatus } from '~/server/common/enums';
 import { Generation } from '~/server/services/generation/generation.types';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import {
+  NormalizedGeneratedImageResponse,
+  NormalizedGeneratedImageStep,
+} from '~/server/services/orchestrator';
+import { WorkflowStatus } from '@civitai/client';
+import {
+  orchestratorPendingStatuses,
+  orchestratorRefundableStatuses,
+} from '~/shared/constants/generation.constants';
+import { trpc } from '~/utils/trpc';
 
-const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
+// const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
+// const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
+const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
+  ...orchestratorPendingStatuses,
+  'processing',
+];
 const LONG_DELAY_TIME = 5; // minutes
 const EXPIRY_TIME = 10; // minutes
 const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
 // export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
-export function QueueItem({ request }: Props) {
-  const { classes, cx } = useStyle();
+export function QueueItem({
+  request,
+  step,
+}: {
+  request: NormalizedGeneratedImageResponse;
+  step: NormalizedGeneratedImageStep;
+}) {
+  const { classes } = useStyle();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
@@ -61,19 +80,20 @@ export function QueueItem({ request }: Props) {
   const { copied, copy } = useClipboard();
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
-  const status = request.status ?? GenerationRequestStatus.Pending;
-  const isDraft = request.sequential ?? false;
-  const pendingProcessing =
-    PENDING_STATUSES.includes(status) &&
-    (isDraft
-      ? request.images?.every((x) => !x.status)
-      : request.images?.some((x) => !x.status || x.status === 'Started'));
-  const processing = status === GenerationRequestStatus.Processing;
-  const failed = status === GenerationRequestStatus.Error;
+  const { status } = request;
+  const { params, images, resources } = step;
+  const cost = request.totalCost;
 
-  const deleteImageMutation = useDeleteGenerationRequestImages();
-  const deleteMutation = useDeleteGenerationRequest();
-  const cancellingDeleting = deleteImageMutation.isLoading || deleteMutation.isLoading;
+  const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
+  const [processing, setProcessing] = useState(status === 'processing');
+  useEffect(() => {
+    if (!processing && status === 'processing') setProcessing(true);
+    else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
+  }, [status]);
+
+  const deleteMutation = useDeleteTextToImageRequest();
+  const cancelMutation = useCancelTextToImageRequest();
+  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
 
   useEffect(() => {
     if (!pendingProcessing) return;
@@ -93,94 +113,85 @@ export function QueueItem({ request }: Props) {
   const refundTime = dayjs(request.createdAt).add(EXPIRY_TIME, 'minute').toDate();
 
   const handleDeleteQueueItem = () => {
-    deleteMutation.mutate({ id: request.id });
+    deleteMutation.mutate({ workflowId: request.id });
   };
 
-  const handleCancel = () => {
-    const ids =
-      request.images
-        ?.filter((x) => (isDraft ? !x.status : !x.status || x.status === 'Started'))
-        .map((x) => x.id) ?? [];
-    if (ids.length) {
-      deleteImageMutation.mutate({
-        ids,
-        cancelled: true,
-      });
-    }
-  };
+  const handleCancel = () => cancelMutation.mutate({ workflowId: request.id });
 
   const handleCopy = () => {
-    copy(request.images?.map((x) => x.hash).join('\n'));
+    copy(images.map((x) => x.jobId).join('\n'));
   };
 
   const handleGenerate = () => {
-    const { resources, params } = request;
     generationStore.setData({
-      type: 'remix',
-      data: { resources, params: { ...params, seed: undefined } },
+      resources: step.resources,
+      params: { ...step.params, seed: undefined },
     });
   };
 
-  const { prompt, ...details } = request.params;
-  const images = request.images
-    ?.filter((x) => x.duration)
-    .sort((a, b) => b.duration! - a.duration!);
+  const { prompt, ...details } = params;
 
-  const hasUnstableResources = request.resources.some((x) => unstableResources.includes(x.id));
+  const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
-    hasUnstableResources && status === GenerationRequestStatus.Error
+    hasUnstableResources && status === 'failed'
       ? `${status} - Potentially caused by unstable resources`
-      : status === GenerationRequestStatus.Error
+      : status === 'failed'
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  // const boost = (request: Generation.Request) => {
-  //   console.log('boost it', request);
-  // };
+  // const refunded = Math.ceil(
+  //   !!cost
+  //     ? (cost / params.quantity) *
+  //         (params.quantity -
+  //           (images.filter((x) => !orchestratorRefundableStatuses.includes(x.status)).length ?? 0))
+  //     : 0
+  // );
+  // const actualCost = !!cost ? cost - refunded : 0;
+  const actualCost = cost;
 
-  // TODO - enable this after boosting is ready
-  // const handleBoostClick = () => {
-  //   if (showBoost) openBoostModal({ request, cb: boost });
-  //   else boost(request);
-  // };
+  const completedCount = images.filter((x) => x.status === 'succeeded').length;
+  const processingCount = images.filter((x) => x.status === 'processing').length;
 
-  const refunded = Math.ceil(
-    !!request.cost
-      ? (request.cost / request.quantity) * (request.quantity - (request.images?.length ?? 0))
-      : 0
-  );
-  const cost = !!request.cost ? request.cost - refunded : 0;
+  const canRemix = step.params.workflow !== 'img2img-upscale';
+
+  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
   return (
     <Card withBorder px="xs">
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
-          <div className="flex gap-1 items-center">
-            <GenerationStatusBadge
-              status={request.status}
-              complete={request.images?.filter((x) => x.duration).length ?? 0}
-              processing={request.images?.filter((x) => x.status === 'Started').length ?? 0}
-              quantity={request.quantity}
-              tooltipLabel={overwriteStatusLabel}
-              progress
-            />
-
-            <Text size="xs" color="dimmed">
-              {formatDateMin(request.createdAt)}
-            </Text>
-            {!!cost &&
-              dayjs(request.createdAt).toDate() >=
-                constants.buzz.generationBuzzChargingStartDate && (
-                <CurrencyBadge unitAmount={cost} currency={Currency.BUZZ} size="xs" />
+          <div className="flex flex-wrap items-center gap-1">
+            {/* {workflowDefinition && <Badge radius="lg">{workflowDefinition.label}</Badge>} */}
+            <div className="flex items-center gap-1">
+              {images.length && (
+                <GenerationStatusBadge
+                  status={request.status}
+                  complete={completedCount}
+                  processing={processingCount}
+                  quantity={images.length}
+                  tooltipLabel={overwriteStatusLabel}
+                  progress
+                />
               )}
-            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                {copied ? <IconCheck /> : <IconInfoHexagon />}
-              </ActionIcon>
-            </ButtonTooltip>
+
+              <Text size="xs" color="dimmed">
+                {formatDateMin(request.createdAt)}
+              </Text>
+              {!!actualCost &&
+                dayjs(request.createdAt).toDate() >=
+                  constants.buzz.generationBuzzChargingStartDate && (
+                  <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                )}
+              <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
+                <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                  {copied ? <IconCheck /> : <IconInfoHexagon />}
+                </ActionIcon>
+              </ButtonTooltip>
+            </div>
           </div>
           <div className="flex gap-1">
-            {generationStatus.available && (
+            {generationStatus.available && canRemix && (
               <ButtonTooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                   <IconArrowsShuffle />
@@ -207,32 +218,9 @@ export function QueueItem({ request }: Props) {
         </div>
       </Card.Section>
       <div className="flex flex-col gap-3 py-3 @container">
-        {/* TODO.generation - add restart functionality to the code commented out below */}
-        {/* {status !== GenerationRequestStatus.Cancelled && (
-          <div
-            className={cx(
-              classes.stopped,
-              'flex justify-between items-center rounded-3xl p-1 pl-2'
-            )}
-          >
-            <Text
-              color={theme.colorScheme === 'dark' ? 'yellow' : 'orange'}
-              weight={500}
-              className="flex items-center gap-1 "
-            >
-              <IconHandStop size={16} /> Stopped
-            </Text>
-            <Button compact color="gray" radius="xl">
-              <span className="flex gap-1">
-                <IconRotateClockwise size={16} />
-                <span>Restart</span>
-              </span>
-            </Button>
-          </div>
-        )} */}
         {showDelayedMessage && pendingProcessing && (
           <Alert color="yellow" p={0}>
-            <div className="flex items-center px-2 py-1 gap-2">
+            <div className="flex items-center gap-2 px-2 py-1">
               <Text size="xs" color="yellow" lh={1}>
                 <IconAlertTriangleFilled size={20} />
               </Text>
@@ -247,18 +235,27 @@ export function QueueItem({ request }: Props) {
             </div>
           </Alert>
         )}
+
         <ContentClamp maxHeight={36} labelSize="xs">
           <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
             {prompt}
           </Text>
         </ContentClamp>
-        <Collection items={request.resources} limit={3} renderItem={ResourceBadge} grouped />
+
+        <div className="-my-2">
+          {workflowDefinition && (
+            <Badge radius="sm" color="violet" size="sm">
+              {workflowDefinition.label}
+            </Badge>
+          )}
+        </div>
+        <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
         {(!!images?.length || processing) && (
           <div className={classes.grid}>
-            {processing && <GenerationPlaceholder request={request} />}
-            {images?.map((image) => (
-              <GeneratedImage key={image.id} image={image} request={request} />
+            {images.map((image) => (
+              <GeneratedImage key={image.id} image={image} request={request} step={step} />
             ))}
+            {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
           </div>
         )}
       </div>
@@ -279,11 +276,6 @@ export function QueueItem({ request }: Props) {
     </Card>
   );
 }
-
-type Props = {
-  request: Generation.Request;
-  // id: number;
-};
 
 const useStyle = createStyles((theme) => ({
   stopped: {
@@ -339,12 +331,4 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withArrow: true,
   color: 'dark',
   zIndex: constants.imageGeneration.drawerZIndex + 1,
-};
-
-const statusColors: Record<GenerationRequestStatus, MantineColor> = {
-  [GenerationRequestStatus.Pending]: 'gray',
-  [GenerationRequestStatus.Cancelled]: 'gray',
-  [GenerationRequestStatus.Processing]: 'yellow',
-  [GenerationRequestStatus.Succeeded]: 'green',
-  [GenerationRequestStatus.Error]: 'red',
 };

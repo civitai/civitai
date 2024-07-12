@@ -41,7 +41,7 @@ export const NumberInputWrapper = forwardRef<HTMLInputElement, Props>(
     };
 
     useEffect(() => {
-      if (value === undefined) handleClearInput();
+      if (value === undefined || typeof value !== 'number') handleClearInput();
     }, [value]); //eslint-disable-line
 
     const handleChange = (value: number | undefined) => {

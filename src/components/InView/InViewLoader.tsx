@@ -26,8 +26,8 @@ export function InViewLoader({
   useEffect(() => {
     setTimeout(() => {
       setInitialCanLoad(true);
-    }, loadTimeout);
-  }, [loadTimeout]);
+    }, 1500);
+  }, []);
 
   useEffect(() => {
     if (inView && loadCondition && initialCanLoad && canLoad) {

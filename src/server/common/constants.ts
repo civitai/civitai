@@ -12,10 +12,11 @@ import {
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { Generation } from '~/server/services/generation/generation.types';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { GenerationResource } from '~/shared/constants/generation.constants';
 import { env } from '~/env/client.mjs';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { increaseDate } from '~/utils/date-helpers';
 
 export const constants = {
   modelFilterDefaults: {
@@ -359,21 +360,6 @@ export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
 );
 
-export const draftMode = {
-  sdxl: {
-    steps: 8,
-    cfgScale: 1,
-    sampler: 'Euler',
-    resourceId: 391999,
-  },
-  sd1: {
-    steps: 6,
-    cfgScale: 1,
-    sampler: 'LCM',
-    resourceId: 424706,
-  },
-} as const;
-
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
 
@@ -387,6 +373,7 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
+export type BaseModelSetType = (typeof baseModelSetTypes)[number];
 export const baseModelSetTypes = [
   'SD1',
   'SD2',
@@ -401,8 +388,9 @@ export const baseModelSetTypes = [
   'HyDit1',
   'ODOR',
 ] as const;
-export type BaseModelSetType = (typeof baseModelSetTypes)[number];
-export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
+
+const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
+export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
@@ -415,7 +403,7 @@ export const baseModelSets: Record<BaseModelSetType, BaseModel[]> = {
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
-};
+});
 
 type LicenseDetails = {
   url: string;
@@ -548,6 +536,7 @@ export const generation = {
   samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
   lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
+    workflow: 'txt2img',
     cfgScale: 7,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
@@ -558,6 +547,9 @@ export const generation = {
     prompt: '',
     negativePrompt: '',
     nsfw: false,
+    baseModel: 'SD1',
+    denoise: 0.4,
+    upscale: 1.5,
     model: {
       id: 128713,
       name: '8',
@@ -567,7 +559,12 @@ export const generation = {
       baseModel: 'SD 1.5',
       strength: 1,
       trainedWords: [],
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
+      minor: false,
+    } as GenerationResource,
   },
   maxValues: {
     seed: 4294967295,
@@ -604,7 +601,11 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+    } as GenerationResource,
   },
   SDXL: {
     additionalResourceTypes: [
@@ -628,7 +629,11 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'SDXL 1.0',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+    } as GenerationResource,
   },
   Pony: {
     additionalResourceTypes: [
@@ -663,16 +668,21 @@ export const generationConfig = {
       modelType: 'Checkpoint',
       baseModel: 'Pony',
       strength: 1,
-    } as Generation.Resource,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+    } as GenerationResource,
   },
 };
 
-export type GenerationBaseModel = keyof typeof generationConfig;
+// export type GenerationBaseModel = keyof typeof generationConfig;
 
-export const getGenerationConfig = (baseModel?: string) => {
-  const key = baseModel as keyof typeof generationConfig | undefined;
-  return key && generationConfig[key] ? generationConfig[key] : generationConfig['SD1'];
-};
+export function getGenerationConfig(baseModel = 'SD1') {
+  if (!(baseModel in generationConfig))
+    throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
+  return generationConfig[baseModel as keyof typeof generationConfig];
+}
 
 export const MODELS_SEARCH_INDEX = 'models_v9';
 export const IMAGES_SEARCH_INDEX = 'images_v6';
@@ -758,3 +768,6 @@ export const creatorCardStatsDefaults = ['followers', 'likes'];
 export const creatorCardMaxStats = 3;
 
 export const milestoneNotificationFix = '2024-04-20';
+
+export const orchestratorIntegrationDate = new Date('7-12-2024');
+export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');

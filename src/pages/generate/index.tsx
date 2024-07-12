@@ -5,7 +5,6 @@ import React, { useState } from 'react';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Queue } from '~/components/ImageGeneration/Queue';
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
@@ -57,7 +56,7 @@ export default function GeneratePage() {
 
   // desktop view
   return (
-    <GenerationProvider>
+    <>
       <Meta title="Generate" deIndex />
 
       <Tabs
@@ -93,7 +92,7 @@ export default function GeneratePage() {
           </Tabs.Panel>
         </ScrollArea>
       </Tabs>
-    </GenerationProvider>
+    </>
   );
 }
 

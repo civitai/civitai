@@ -10,9 +10,11 @@ import {
 } from '~/components/Training/Form/TrainingCommon';
 import { SignalMessages } from '~/server/common/enums';
 import { imageStore } from '~/store/image.store';
+import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
 
 export function SignalsRegistrar() {
   useTextToImageSignalUpdate();
+  useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
 

@@ -23,7 +23,7 @@ import { normalizeText } from '~/utils/normalize-text';
 
 type AuditResult = {
   highlighted: string;
-  replaced?: { prompt: string; negativePrompt?: string };
+  replaced?: { prompt?: string; negativePrompt?: string };
   tags: string[];
 };
 
