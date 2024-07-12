@@ -62,6 +62,7 @@ export const constants = {
     'SDXL 1.0',
     'SD 3',
     'Pony',
+    'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
     'SDXL Turbo',
@@ -485,6 +486,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Lumina: baseLicenses['apache 2.0'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
+  AuraFlow: baseLicenses['apache 2.0'],
   ODOR: undefined,
   Other: undefined,
 };

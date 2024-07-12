@@ -206,11 +206,13 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const shouldAnimate = shouldAnimateByDefault({
-    type: image.type,
-    metadata: image.metadata as VideoMetadata,
-    forceDisabled: !currentUser?.autoplayGifs,
-  });
+  const shouldAnimate = image
+    ? shouldAnimateByDefault({
+        type: image.type,
+        metadata: image.metadata as VideoMetadata,
+        forceDisabled: !currentUser?.autoplayGifs,
+      })
+    : false;
 
   return (
     <FeedCard
@@ -276,12 +278,6 @@ export function ModelCard({ data, forceInView }: Props) {
                                 ) : (
                                   baseModelIndicator
                                 )}
-                              </>
-                            )}
-                            {isOdor && (
-                              <>
-                                <Divider orientation="vertical" />
-                                <IconNose size={16} strokeWidth={2} />
                               </>
                             )}
                           </Badge>

@@ -142,6 +142,7 @@ export enum SignalMessages {
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   SchedulerDownload = 'scheduler:download',
+  NotificationNew = 'notification:new',
 }
 
 export enum BountySort {

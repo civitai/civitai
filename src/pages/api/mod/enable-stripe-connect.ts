@@ -1,9 +1,9 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { ModEndpoint, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { createUserStripeConnectAccount } from '../../../server/services/user-stripe-connect.service';
-import { createNotification } from '../../../server/services/notification.service';
-import { addSystemPermission } from '../../../server/services/system-cache';
+import { createNotification } from '~/server/services/notification.service';
+import { addSystemPermission } from '~/server/services/system-cache';
+import { createUserStripeConnectAccount } from '~/server/services/user-stripe-connect.service';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -23,6 +23,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         userId,
         type: 'creators-program-enabled',
         category: 'System',
+        key: `creators-program-enabled:${userId}`,
+        details: {},
       }).catch();
     })
   );

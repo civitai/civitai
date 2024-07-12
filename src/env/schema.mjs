@@ -14,6 +14,8 @@ import {
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_REPLICA_URL: z.string().url(),
+  NOTIFICATION_DB_URL: z.string().url(),
+  NOTIFICATION_DB_REPLICA_URL: z.string().url(),
   DATABASE_SSL_CA: z.string().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
