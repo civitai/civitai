@@ -230,7 +230,7 @@ export function getIsSdxl(baseModel?: string) {
 export type GenerationResource = MakeUndefinedOptional<
   ReturnType<typeof formatGenerationResources>[number]
 >;
-export function formatGenerationResources(resources: ResourceData[]) {
+export function formatGenerationResources(resources: Array<ResourceData>) {
   return resources.map((resource) => {
     const settings = resource.settings as RecommendedSettingsSchema;
     return {

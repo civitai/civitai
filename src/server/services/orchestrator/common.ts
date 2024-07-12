@@ -31,7 +31,11 @@ import {
   GeneratedImageStepMetadata,
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import { GeneratedImageWorkflow, WorkflowDefinition } from '~/server/services/orchestrator/types';
+import {
+  GeneratedImageWorkflow,
+  GeneratedImageWorkflowStep,
+  WorkflowDefinition,
+} from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { generation, getGenerationConfig } from '~/server/common/constants';
 import { SessionUser } from 'next-auth';
@@ -251,16 +255,32 @@ function getStepCost(step: WorkflowStep) {
   return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
 }
 
+function getResources(step: WorkflowStep) {
+  if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
+  else
+    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+      id: x.version,
+      strength: x.networkParams.strength,
+    }));
+}
+
+function combineResourcesWithInputResource(
+  allResources: AirResourceData[],
+  resources: { id: number; strength?: number | null }[]
+) {
+  return allResources.map((resource) => {
+    const original = resources.find((x) => x.id === resource.id);
+    const { settings = {} } = resource;
+    settings.strength = original?.strength;
+    resource.settings = settings;
+    return resource;
+  });
+}
+
 export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
-  const allResources = steps.flatMap((step) => {
-    if (step.$type === 'comfy') return step.metadata?.resources ?? [];
-    else
-      return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
-        id: x.version,
-        strength: x.networkParams.strength,
-      }));
-  });
+  const allResources = steps.flatMap(getResources);
+  // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
   const { resources, injectable } = await getResourceDataWithInjects(versionIds);
 
@@ -279,10 +299,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
         formatWorkflowStep({
           workflowId: workflow.id as string,
           step,
-          resources: [...resources, ...injectable].map((resource) => {
-            const original = allResources.find((x) => x.id === resource.id);
-            return { ...resource, ...original };
-          }),
+          resources: [...resources, ...injectable],
         })
       ),
     };
@@ -334,8 +351,8 @@ export function formatTextToImageStep({
   } = metadata;
   const stepResources = getTextToImageAirs([input]);
 
-  const resources = allResources.filter((resource) =>
-    stepResources.some((x) => x.version === resource.id)
+  const resources = combineResourcesWithInputResource(allResources, getResources(step)).filter(
+    (resource) => stepResources.some((x) => x.version === resource.id)
   );
   const versionIds = resources.map((x) => x.id);
 
@@ -472,7 +489,9 @@ export function formatComfyStep({
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
     resources: formatGenerationResources(
-      resources.filter((resource) => stepResources.some((x) => x.id === resource.id))
+      combineResourcesWithInputResource(resources, stepResources).filter((resource) =>
+        stepResources.some((x) => x.id === resource.id)
+      )
     ),
     cost: getStepCost(step),
   };

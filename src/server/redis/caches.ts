@@ -9,6 +9,7 @@ import {
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
@@ -238,9 +239,10 @@ export const resourceDataCache = createCachedArray({
         where: { id: { in: ids as number[] } },
         select: generationResourceSelect,
       })
-    ).map(({ generationCoverage, ...result }) =>
+    ).map(({ generationCoverage, settings = {}, ...result }) =>
       removeEmpty({
         ...result,
+        settings: settings as RecommendedSettingsSchema,
         covered: generationCoverage?.covered,
       })
     );
