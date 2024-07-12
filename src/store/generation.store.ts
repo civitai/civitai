@@ -52,7 +52,6 @@ export const useGenerationStore = create<GenerationState>()(
       clearData: () =>
         set((state) => {
           state.data = undefined;
-          state.input = undefined;
         }),
     })),
     { name: 'generation-store' }
