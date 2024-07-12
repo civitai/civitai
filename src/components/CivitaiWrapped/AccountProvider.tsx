@@ -23,7 +23,8 @@ type ogAccountType = {
 } | null;
 const ogAccountKey = 'civitai-og-account';
 
-const deleteCookieList = ['ref_code', 'ref_source', generationServiceCookie.name];
+const deleteCookiesOnSwapList = [generationServiceCookie.name];
+const deleteCookieList = ['ref_code', 'ref_source', ...deleteCookiesOnSwapList];
 
 type AccountState = {
   accounts: CivitaiAccounts;
@@ -97,6 +98,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const swapAccount = async (token: EncryptedDataSchema) => {
+    deleteCookies(deleteCookiesOnSwapList);
     await signIn('account-switch', { callbackUrl: router.asPath, ...token });
   };
 

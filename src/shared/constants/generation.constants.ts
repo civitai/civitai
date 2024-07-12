@@ -101,7 +101,7 @@ export function getInjectablResources(baseModelSetType: BaseModelSetType) {
 // #endregion
 
 export const whatIfQueryOverrides = {
-  prompt: 'what if',
+  prompt: undefined,
   negativePrompt: undefined,
   seed: undefined,
   image: undefined,
