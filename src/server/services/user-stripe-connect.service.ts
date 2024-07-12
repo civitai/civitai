@@ -1,10 +1,11 @@
+import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import Stripe from 'stripe';
+import { v4 as uuid } from 'uuid';
 import { env } from '../../env/server.mjs';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
-import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import { createNotification } from './notification.service';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
@@ -111,6 +112,8 @@ export async function updateByStripeConnectAccount({
         userId: userStripeConnect.userId,
         type: 'creators-program-payments-enabled',
         category: 'System',
+        key: `creators-program-payments-enabled:${uuid()}`,
+        details: {},
       }).catch();
     }
   } else if (stripeAccount.requirements?.disabled_reason) {
@@ -128,6 +131,8 @@ export async function updateByStripeConnectAccount({
         userId: userStripeConnect.userId,
         type: 'creators-program-rejected-stripe',
         category: 'System',
+        key: `creators-program-rejected-stripe:${uuid()}`,
+        details: {},
       }).catch();
     }
   } else if (stripeAccount.details_submitted) {

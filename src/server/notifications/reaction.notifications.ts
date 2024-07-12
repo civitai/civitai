@@ -15,7 +15,7 @@ export const reactionNotifications = createNotificationProcessor({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${commentReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -47,16 +47,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE c."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:comment-reaction:', details->>'commentId', ':', details->>'reactionCount'),
+        CONCAT('comment-reaction-milestone:', details->>'commentId', ':', details->>'reactionCount') "key",
         "ownerId"    "userId",
         'comment-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'image-reaction-milestone': {
@@ -86,7 +83,7 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${imageReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -124,16 +121,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE i."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:image-reaction:', details->>'imageId', ':', details->>'reactionCount'),
+        CONCAT('image-reaction-milestone:', details->>'imageId', ':', details->>'reactionCount') "key",
         "ownerId"    "userId",
         'image-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'article-reaction-milestone': {
@@ -144,7 +138,7 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -173,16 +167,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= af.reaction_count
             AND a."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:article-reaction:', details->>'articleId', ':', details->>'reactionCount'),
+        CONCAT('article-reaction-milestone:', details->>'articleId', ':', details->>'reactionCount') "key",
         "ownerId"    "userId",
         'article-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
 });

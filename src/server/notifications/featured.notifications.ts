@@ -1,6 +1,9 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
+// Moveable only if submitted through an api
+
 export const featuredNotifications = createNotificationProcessor({
+  // TODO can models only be featured once?
   'featured-model': {
     displayName: 'Model featured',
     category: 'System',
@@ -9,7 +12,7 @@ export const featuredNotifications = createNotificationProcessor({
       message: `Congrats! Your ${details.modelName} model has been featured on the homepage`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent, category }) => `
+    prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
           m."userId",
@@ -25,15 +28,12 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','featured-model',':',"modelId"),
+        CONCAT('featured-model:',"modelId") "key", -- maybe add last sent
         "userId",
         'featured-model' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-image': {
@@ -44,7 +44,7 @@ export const featuredNotifications = createNotificationProcessor({
       message: `Congrats! Your image has been featured on the homepage`,
       url: `/images/${details.imageId}`,
     }),
-    prepareQuery: async ({ lastSent, category }) => `
+    prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
           i."userId",
@@ -59,15 +59,12 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','featured-image',':',"imageId"),
+        CONCAT('featured-image:',"imageId") "key", -- maybe add last sent
         "userId",
         'featured-image' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-post': {
@@ -81,7 +78,7 @@ export const featuredNotifications = createNotificationProcessor({
       const url = `/posts/${details.postId}`;
       return { message, url };
     },
-    prepareQuery: async ({ lastSent, category }) => `
+    prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
           p."userId",
@@ -97,15 +94,12 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','featured-post',':',"postId"),
+        CONCAT('featured-post:',"postId") "key", -- maybe add last sent
         "userId",
         'featured-post' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
   'featured-article': {
@@ -116,7 +110,7 @@ export const featuredNotifications = createNotificationProcessor({
       message: `Congrats! Your article "${details.articleTitle}" has been featured on the homepage`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: async ({ lastSent, category }) => `
+    prepareQuery: async ({ lastSent }) => `
       WITH data AS (
         SELECT DISTINCT
           a."userId",
@@ -132,15 +126,12 @@ export const featuredNotifications = createNotificationProcessor({
           AND ci.status = 'ACCEPTED'
           AND (ci."createdAt" > '${lastSent}' OR ci."updatedAt" > '${lastSent}')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT("userId",':','featured-article',':',"articleId"),
+        CONCAT('featured-article:',"articleId") "key", -- maybe add last sent
         "userId",
         'featured-article' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
 });
