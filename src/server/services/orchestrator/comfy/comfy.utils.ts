@@ -50,6 +50,7 @@ export async function populateWorkflowDefinition(key: string, data: any) {
 }
 
 const CHECKPOINT_LOADERS = ['CheckpointLoaderSimple', 'CheckpointLoader'];
+const UPSCALER_LOADERS = ['UpscaleModelLoader'];
 const ADDITIONAL_LOADERS = ['LoraLoader'];
 const LORA_TYPES = ['lora', 'dora', 'lycoris'];
 
@@ -59,6 +60,7 @@ export function applyResources(
 ) {
   // Add references to children
   const checkpointLoaders: ComfyNode[] = [];
+  const upscalers: ComfyNode[] = [];
   for (const node of Object.values(workflow)) {
     for (const [key, value] of Object.entries(node.inputs)) {
       if (!Array.isArray(value)) continue;
@@ -67,6 +69,7 @@ export function applyResources(
       refNode._children.push({ node, inputKey: key });
     }
 
+    if (UPSCALER_LOADERS.includes(node.class_type)) upscalers.push(node);
     if (CHECKPOINT_LOADERS.includes(node.class_type)) checkpointLoaders.push(node);
   }
 
@@ -116,6 +119,19 @@ export function applyResources(
       stackKeys.push(stackKey);
       workflow[stackKey] = node;
     }
+  }
+
+  // TODO remove this hack once the worker is fixed
+  if (!checkpointLoaders.length && upscalers.length) {
+    workflow['dummy'] = {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: {
+        ckpt_name: 'urn:air:sd1:checkpoint:civitai:4384@128713',
+      },
+      _meta: {
+        title: 'Dummy checkpoint',
+      },
+    };
   }
 
   // Update reference to point to resource nodes

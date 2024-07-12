@@ -55,7 +55,7 @@ export function createOrchestratorClient(token: string) {
 }
 
 /** Used to perform orchestrator operations with the system user account */
-export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_API_TOKEN);
+export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRATOR_ACCESS_TOKEN);
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
