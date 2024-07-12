@@ -27,9 +27,11 @@ import {
   getSessionUser,
   updateAccountScope,
 } from '~/server/services/user.service';
+import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 
 const setUserName = async (id: number, setTo: string) => {
@@ -240,10 +242,15 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     if (!callbackUrl?.includes('connect=true')) delete req.cookies[civitaiTokenCookieName];
   }
 
+  if (req.url?.startsWith('/api/auth/session')) {
+    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
+  }
+
   customAuthOptions.events ??= {};
   // customAuthOptions.events.session = async (message) => {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
+
   customAuthOptions.events.signIn = async (context) => {
     // console.log('signin event', context.user?.email, context.account?.userId);
 

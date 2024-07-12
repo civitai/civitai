@@ -3,7 +3,6 @@ import { signIn, signOut, useSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { createContext, ReactNode, useContext, useEffect } from 'react';
 import { civTokenEndpoint, EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
 
 export type CivitaiAccount = {
@@ -23,8 +22,7 @@ type ogAccountType = {
 } | null;
 const ogAccountKey = 'civitai-og-account';
 
-const deleteCookiesOnSwapList = [generationServiceCookie.name];
-const deleteCookieList = ['ref_code', 'ref_source', ...deleteCookiesOnSwapList];
+const deleteCookieList = ['ref_code', 'ref_source'];
 
 type AccountState = {
   accounts: CivitaiAccounts;
@@ -98,7 +96,6 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const swapAccount = async (token: EncryptedDataSchema) => {
-    deleteCookies(deleteCookiesOnSwapList);
     await signIn('account-switch', { callbackUrl: router.asPath, ...token });
   };
 
