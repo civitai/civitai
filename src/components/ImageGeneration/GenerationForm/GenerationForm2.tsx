@@ -287,36 +287,38 @@ export function GenerationFormContent() {
               </ActionIcon>
             </div>
           )}
-          <InputSelect
-            label={
-              <div className="flex items-center gap-1">
-                <Input.Label>Workflow</Input.Label>
-                <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                  Go beyond text-to-image with different workflows. Currently we have limited
-                  workflows that cover some of the most important use cases. Community workflows
-                  coming soon.
-                </InfoPopover>
-                <Badge color="yellow" size="xs">
-                  New
-                </Badge>
-              </div>
-            }
-            // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
-            className="flex-1"
-            name="workflow"
-            data={
-              workflowDefinitions
-                ?.filter((x) => x.type === workflowDefinition?.type && x.selectable !== false)
-                .map(({ key, label }) => ({ label, value: key })) ?? []
-            }
-            loading={loadingWorkflows}
-          />
+          <div className="flex-1">
+            <InputSelect
+              label={
+                <div className="flex items-center gap-1">
+                  <Input.Label>Workflow</Input.Label>
+                  <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                    Go beyond text-to-image with different workflows. Currently we have limited
+                    workflows that cover some of the most important use cases. Community workflows
+                    coming soon.
+                  </InfoPopover>
+                  <Badge color="yellow" size="xs">
+                    New
+                  </Badge>
+                </div>
+              }
+              // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
+              className="flex-1"
+              name="workflow"
+              data={
+                workflowDefinitions
+                  ?.filter((x) => x.type === workflowDefinition?.type && x.selectable !== false)
+                  .map(({ key, label }) => ({ label, value: key })) ?? []
+              }
+              loading={loadingWorkflows}
+            />
+            {workflowDefinition?.description && (
+              <Text size="xs" lh={1.2} color="dimmed" className="mt-2 mb-2">
+                {workflowDefinition.description}
+              </Text>
+            )}
+          </div>
         </div>
-        {workflowDefinition?.description && (
-          <Text size="xs" lh={1.2} color="dimmed" className="mb-2">
-            {workflowDefinition.description}
-          </Text>
-        )}
 
         <div className="-mb-1 flex items-center gap-1">
           <Input.Label style={{ fontWeight: 590 }} required>
