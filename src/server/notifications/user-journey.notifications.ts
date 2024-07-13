@@ -1,7 +1,6 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const userJourneyNotifications = createNotificationProcessor({
-  // Moveable
   'join-community': {
     displayName: 'Welcome to Civitai',
     category: 'System',
@@ -11,14 +10,5 @@ export const userJourneyNotifications = createNotificationProcessor({
       url: `/discord`,
       target: '_blank',
     }),
-    prepareQuery: ({ lastSent }) => `
-      SELECT
-        CONCAT('join-community:',"id") as "key",
-        id "userId",
-        'join-community' "type",
-        '{}'::jsonb "details"
-      FROM "User"
-      WHERE "createdAt" > '${lastSent}'
-    `,
   },
 });

@@ -11,7 +11,6 @@ import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
-
 import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
@@ -19,9 +18,11 @@ import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
+import { createNotification } from '~/server/services/notification.service';
 import {
   createUserReferral,
   getSessionUser,
@@ -280,6 +281,28 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
           loginRedirectReason,
         });
       }
+
+      // does this work for email login? it should
+      createNotification({
+        type: 'join-community',
+        userId: context.user.id,
+        category: 'System',
+        key: `join-community:${context.user.id}`,
+        details: {},
+      }).catch((e) => {
+        const error = e as Error;
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'Failed to create notification',
+            details: { key: 'join-community' },
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
+          },
+          'notifications'
+        ).catch();
+      });
     } else {
       loginCounter?.inc();
     }

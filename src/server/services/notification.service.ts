@@ -1,7 +1,7 @@
 import { NotificationCategory, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
-import { NotificationPendingRow } from '~/server/jobs/send-notifications';
+import { NotificationSingleRowFull } from '~/server/jobs/send-notifications';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
   notificationCache,
@@ -25,7 +25,7 @@ type NotificationsRaw = {
 };
 
 export const createNotification = async (
-  data: Omit<NotificationPendingRow, 'users'> & {
+  data: Omit<NotificationSingleRowFull, 'userId'> & {
     userId?: number;
     userIds?: number[];
   }
@@ -38,6 +38,7 @@ export const createNotification = async (
     where: { userId: { in: data.userIds }, type: data.type },
   });
   // TODO fix below for multiple userIds
+  //   also, does this block notifications from users youve blocked? we'd have to know the "origin" user
   const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId: data.userId }),
     BlockedByUsers.getCached({ userId: data.userId }),
@@ -77,7 +78,7 @@ export async function getUserNotifications({
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
   if (cursor) AND.push(Prisma.sql`un."createdAt" < ${cursor}`);
-  else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
+  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
   const query = await notifDbRead.cancellableQuery<NotificationsRaw>(Prisma.sql`
     SELECT
@@ -118,7 +119,7 @@ export async function getUserNotificationCount({
 
   const AND = [Prisma.sql`un."userId" = ${userId}`];
   if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
-  else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
+  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
   // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
