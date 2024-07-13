@@ -49,8 +49,11 @@ export function Queue() {
             'To download images created before this policy took effect, click the download button below'
           }
         </Text>
+        <Text color="dimmed" td="underline">
+          Historical downloads have been temporarily disabled
+        </Text>
       </div>
-      <Button
+      {/* <Button
         component="a"
         href="/api/generation/history"
         download
@@ -58,7 +61,7 @@ export function Queue() {
         onClick={handleSetDownloading}
       >
         Download past images
-      </Button>
+      </Button> */}
     </div>
   ) : null;
 
@@ -96,7 +99,10 @@ export function Queue() {
           <Text size="xs" color="dimmed" my={-10}>
             <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
             Images are kept in the generator for 30 days{' '}
-            {!downloading && (
+            <Text span td="underline">
+              Historical downloads have been temporarily disabled
+            </Text>
+            {/* {!downloading && (
               <Text
                 variant="link"
                 td="underline"
@@ -107,7 +113,7 @@ export function Queue() {
               >
                 Download images created before {formatDate(orchestratorIntegrationDate)}
               </Text>
-            )}
+            )} */}
           </Text>
         )}
         {/* {data.map((request) =>
