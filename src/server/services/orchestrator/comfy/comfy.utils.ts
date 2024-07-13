@@ -107,7 +107,8 @@ export function applyResources(
       for (const node of Object.values(workflow)) {
         for (const [key, value] of Object.entries(node.inputs)) {
           if (typeof value === 'string' && value.includes(resource.triggerWord)) {
-            node.inputs[key] = value.replaceAll(resource.triggerWord, `embedding:${resource.air}`);
+            const regex = new RegExp(`\\b${resource.triggerWord}\\b`, 'gi');
+            node.inputs[key] = value.replace(regex, `embedding:${resource.air}`);
           }
         }
       }
