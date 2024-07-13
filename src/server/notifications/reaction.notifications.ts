@@ -94,11 +94,12 @@ export const reactionNotifications = createNotificationProcessor({
       ), affected_value AS (
         SELECT
           a.affected_id,
-          COUNT(r."imageId") reaction_count
-        FROM "ImageReaction" r
-        JOIN affected a ON a.affected_id = r."imageId"
+          MAX(im."reactionCount") + COUNT(ir."imageId") as reaction_count
+        FROM affected a
+        LEFT JOIN "ImageMetric" im ON im."imageId" = a.affected_id AND im.timeframe = 'AllTime'
+        LEFT JOIN "ImageReaction" ir ON ir."imageId" = a.affected_id AND ir."createdAt" > im."updatedAt"
         GROUP BY a.affected_id
-        HAVING COUNT(*) >= ${imageReactionMilestones[0]}
+        HAVING MAX(im."reactionCount") + COUNT(ir."imageId") >= ${imageReactionMilestones[0]}
       ), reaction_milestone AS (
         SELECT
           i."userId" "ownerId",
@@ -106,18 +107,17 @@ export const reactionNotifications = createNotificationProcessor({
             'version', 2,
             'imageId', i.id,
             'postId', i."postId",
-            'models', ir.models,
+            'models', (
+              SELECT json_agg(m.name)
+              FROM "ImageResource" ir
+              JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
+              JOIN "Model" m ON m.id = mv."modelId"
+              WHERE ir."imageId" = a.affected_id
+            ),
             'reactionCount', ms.value
           ) "details"
         FROM affected_value a
         JOIN "Image" i on i.id = a.affected_id
-        LEFT JOIN (
-          SELECT ir."imageId", json_agg(m.name) models
-          FROM "ImageResource" ir
-          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-          JOIN "Model" m ON m.id = mv."modelId"
-          GROUP BY ir."imageId"
-        ) ir ON ir."imageId" = i.id
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE i."createdAt" > '${milestoneNotificationFix}'
       )
