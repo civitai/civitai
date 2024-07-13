@@ -1,6 +1,7 @@
 import { NotificationCategory, Prisma } from '@prisma/client';
 import { chunk, isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
+import { z } from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
@@ -12,17 +13,23 @@ import { createJob, getJobDate } from './job';
 
 const log = createLogger('send-notifications', 'blue');
 
-export type NotificationSingleRow = {
-  key: string;
-  userId: number;
-  type: string;
-  details: MixedObject;
-};
+export const notificationSingleRow = z.object({
+  key: z.string(),
+  userId: z.number(),
+  type: z.string(),
+  details: z.record(z.string(), z.any()),
+});
+export type NotificationSingleRow = z.infer<typeof notificationSingleRow>;
 
-export type NotificationPendingRow = Omit<NotificationSingleRow, 'userId'> & {
-  users: number[];
-  category: NotificationCategory;
-};
+export const notificationSingleRowFull = notificationSingleRow.extend({
+  category: z.nativeEnum(NotificationCategory),
+});
+export type NotificationSingleRowFull = z.infer<typeof notificationSingleRowFull>;
+
+export const notificationPendingRow = notificationSingleRowFull.omit({ userId: true }).extend({
+  users: z.array(z.number()),
+});
+export type NotificationPendingRow = z.infer<typeof notificationPendingRow>;
 
 const batchSize = 5000;
 const concurrent = 8;

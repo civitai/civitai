@@ -30,6 +30,8 @@ import {
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
+const notifLimit = 30;
+
 export function NotificationBell() {
   const mobile = useIsMobile();
 
@@ -52,7 +54,7 @@ export function NotificationBell() {
     fetchNextPage,
     isRefetching,
   } = useQueryNotifications(
-    { limit: 20, category: selectedCategory }, // unread: hideRead ? true : undefined
+    { limit: notifLimit, category: selectedCategory }, // unread: hideRead ? true : undefined
     { enabled: opened, keepPreviousData: false }
   );
 
