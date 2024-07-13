@@ -165,7 +165,7 @@ export function QueueItem({
         <div className="flex justify-between">
           <div className="flex flex-wrap items-center gap-1">
             <div className="flex items-center gap-1">
-              {images.length && (
+              {!!images.length && (
                 <GenerationStatusBadge
                   status={request.status}
                   complete={completedCount}

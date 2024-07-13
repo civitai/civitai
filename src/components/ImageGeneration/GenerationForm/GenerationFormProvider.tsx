@@ -25,6 +25,7 @@ import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import { uniqBy } from 'lodash-es';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -45,7 +46,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true })
+  .omit({ aspectRatio: true, width: true, height: true })
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
@@ -225,7 +226,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const resources =
         runType === 'remix'
           ? responseData.resources
-          : [...(formData.resources ?? []), ...responseData.resources];
+          : uniqBy([...(formData.resources ?? []), ...responseData.resources], 'id');
 
       const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
       const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;

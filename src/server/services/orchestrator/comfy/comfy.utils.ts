@@ -43,7 +43,7 @@ export async function populateWorkflowDefinition(key: string, data: any) {
       return data[match];
     });
   try {
-    return JSON.parse(populated);
+    return JSON.parse(populated.replace(/\n/g, '\\n'));
   } catch (e) {
     throw new Error('Failed to populate workflow');
   }
