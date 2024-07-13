@@ -42,6 +42,7 @@ import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
+import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -91,6 +92,7 @@ export const jobs: Job[] = [
   clearVaultItems,
   ...jobQueueJobs,
   countReviewImages,
+  tempSetMissingNsfwLevel,
 ];
 
 const log = createLogger('jobs', 'green');
