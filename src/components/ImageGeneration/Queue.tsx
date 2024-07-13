@@ -98,9 +98,9 @@ export function Queue() {
         {canDownload && (
           <Text size="xs" color="dimmed" my={-10}>
             <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-            Images are kept in the generator for 30 days{' '}
+            Images are kept in the generator for 30 days.{' '}
             <Text span td="underline">
-              Historical downloads have been temporarily disabled
+              {`You'll be able to download older images soon.`}
             </Text>
             {/* {!downloading && (
               <Text
