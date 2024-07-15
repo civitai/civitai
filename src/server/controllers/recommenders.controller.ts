@@ -61,6 +61,7 @@ export const getRecommendedResourcesCardDataHandler = async ({
 
     const result = getAllModelsSchema.safeParse({
       ...userPreferences,
+      browsingLevel: nsfwLevelIntersection,
       modelVersionIds: resourcesIds,
       period: MetricTimeframe.AllTime,
       sort: ModelSort.HighestRated,
