@@ -7,7 +7,6 @@ export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
     category: 'Comment',
-    // priority: -1,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
@@ -146,9 +145,7 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.status = 'Published'
       )
       SELECT
-        -- this technically can have a collision with comment <-> model IDs
-        -- it would be better to split out model mentions here
-        concat('${commentDedupeKey}', coalesce(details->>'commentId', details->>'modelId')) "key",
+        concat('${commentDedupeKey}', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
         "ownerId"    "userId",
         'new-mention' "type",
         details
