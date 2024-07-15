@@ -1,25 +1,17 @@
 import produce from 'immer';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { Flags } from '~/shared/utils';
-
-
 
 export function useQueryRecommendedResources(
-  { modelVersionId, modelId }: { modelVersionId: number, modelId: number },
+  payload: RecommendationRequest,
   options?: { enabled?: boolean }
 ) {
-  const browsingLevel = useBrowsingLevelDebounced();
-  const gallerySettings = trpc.model.getGallerySettings.useQuery({ id: modelId }).data;
-  let intersection = browsingLevel;
-  if (gallerySettings?.level) {
-    intersection = Flags.intersection(browsingLevel, gallerySettings.level);
-  }
   const { data = [], ...rest } = trpc.recommenders.getResourceRecommendations.useQuery(
-    { modelVersionId, browsingLevel: intersection },
+    { ...payload },
     options
   );
+
   return { data, ...rest };
 }
 

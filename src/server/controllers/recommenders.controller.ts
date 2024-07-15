@@ -9,7 +9,11 @@ import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVersionById } from '~/server/services/model-version.service';
-import { getModelsRaw } from '~/server/services/model.service';
+import {
+  getGallerySettingsByModelId,
+  getModel,
+  getModelsRaw,
+} from '~/server/services/model.service';
 import {
   getRecommendations,
   toggleResourceRecommendation,
@@ -20,6 +24,7 @@ import {
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
 import { throwDbError } from '~/server/utils/errorHandling';
+import { Flags } from '~/shared/utils';
 import { isDefined } from '~/utils/type-guards';
 
 export const getRecommendedResourcesCardDataHandler = async ({
@@ -35,14 +40,21 @@ export const getRecommendedResourcesCardDataHandler = async ({
 
     const modelVersion = await getVersionById({
       id: modelVersionId,
-      select: { meta: true, nsfwLevel: true },
+      select: { meta: true, nsfwLevel: true, modelId: true },
     });
-    if (!(modelVersion?.meta as ModelVersionMeta).allowAIRecommendations) return [];
+    if (!modelVersion || !(modelVersion?.meta as ModelVersionMeta).allowAIRecommendations)
+      return [];
+
+    const gallerySettings = await getGallerySettingsByModelId({ id: modelVersion.modelId });
+    const nsfwLevelIntersection = Flags.intersection(
+      user?.browsingLevel ?? 1,
+      gallerySettings?.level ?? 1
+    );
 
     const resourcesIds = await getRecommendations({
       modelVersionId,
       excludeIds: userPreferences.excludedModelIds,
-      browsingLevel: modelVersion?.nsfwLevel || 1,
+      browsingLevel: nsfwLevelIntersection,
       limit,
     });
     if (!resourcesIds?.length) return [];
@@ -59,10 +71,7 @@ export const getRecommendedResourcesCardDataHandler = async ({
 
     const { items: models } = await getModelsRaw({ user, input: modelInput });
 
-    const modelVersionIds = models
-      .slice(0, limit)
-      .flatMap((m) => m.modelVersions)
-      .map((m) => m.id);
+    const modelVersionIds = models.flatMap((m) => m.modelVersions).map((m) => m.id);
     const images = !!modelVersionIds.length
       ? await getImagesForModelVersion({
           modelVersionIds,
@@ -71,7 +80,7 @@ export const getRecommendedResourcesCardDataHandler = async ({
           excludedUserIds: modelInput.excludedUserIds,
           user,
           pending: modelInput.pending,
-          browsingLevel: modelInput.browsingLevel,
+          browsingLevel: nsfwLevelIntersection,
         })
       : [];
 
@@ -84,7 +93,6 @@ export const getRecommendedResourcesCardDataHandler = async ({
     const excludedUserIds = [...new Set(hiddenUsers.flat().map((u) => u.id))];
 
     const completeModels = models
-      .slice(0, limit)
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) return null;
