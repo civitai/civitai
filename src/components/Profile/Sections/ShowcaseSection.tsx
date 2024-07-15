@@ -24,9 +24,7 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
     isLoading,
     isRefetching,
   } = trpc.image.getEntitiesCoverImage.useQuery(
-    {
-      entities: showcaseItems,
-    },
+    { entities: showcaseItems },
     {
       enabled: showcaseItems.length > 0 && inView,
       keepPreviousData: true,

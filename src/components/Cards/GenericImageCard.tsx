@@ -10,6 +10,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function GenericImageCard({
   image: image,
@@ -18,8 +19,8 @@ export function GenericImageCard({
   disabled,
 }: {
   image: ImageProps;
+  entityId: number;
   entityType?: string;
-  entityId?: number;
   disabled?: boolean;
 }) {
   const { classes: sharedClasses } = useCardStyles({
@@ -67,8 +68,9 @@ export function GenericImageCard({
     ...image,
     forceDisabled: !currentUser?.autoplayGifs,
   });
+  const isImageEntity = entityType === 'Image';
 
-  return (
+  const cardContent = (
     <FeedCard
       href={disabled ? undefined : url}
       style={disabled ? { cursor: 'initial' } : undefined}
@@ -143,4 +145,16 @@ export function GenericImageCard({
       </div>
     </FeedCard>
   );
+
+  if (isImageEntity && !disabled)
+    return (
+      <RoutedDialogLink
+        name="imageDetail"
+        state={{ imageId: entityId, filters: { postId: image.postId } }}
+      >
+        {cardContent}
+      </RoutedDialogLink>
+    );
+
+  return cardContent;
 }

@@ -17,7 +17,7 @@ import { useClickOutside, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -54,13 +54,8 @@ export function NotificationBell() {
     fetchNextPage,
     isRefetching,
   } = useQueryNotifications(
-    { limit: notifLimit, category: selectedCategory }, // unread: hideRead ? true : undefined
+    { limit: notifLimit, category: selectedCategory, unread: hideRead ? true : undefined },
     { enabled: opened, keepPreviousData: false }
-  );
-
-  const notificationsFiltered = useMemo(
-    () => (notifications ?? []).filter((n) => (hideRead ? n.read === false : true)),
-    [hideRead, notifications]
   );
 
   const readNotificationMutation = useMarkReadNotification();
@@ -165,10 +160,10 @@ export function NotificationBell() {
             <Center p="sm">
               <Loader />
             </Center>
-          ) : notificationsFiltered && notificationsFiltered.length > 0 ? (
+          ) : notifications && notifications.length > 0 ? (
             <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
               <NotificationList
-                items={notificationsFiltered}
+                items={notifications}
                 onItemClick={(notification, keepOpened) => {
                   if (!notification.read)
                     readNotificationMutation.mutate({

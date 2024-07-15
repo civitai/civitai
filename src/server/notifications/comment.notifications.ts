@@ -54,7 +54,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != m."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment' "type",
         details
@@ -92,7 +92,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != p."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-response' "type",
         details
@@ -129,7 +129,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != m."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-nested' "type",
         details
@@ -191,7 +191,7 @@ export const commentNotifications = createNotificationProcessor({
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-reply' "type",
         details
@@ -312,7 +312,7 @@ export const commentNotifications = createNotificationProcessor({
           AND t."answerId" IS NULL
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
         "ownerId"    "userId",
         'new-thread-response' "type",
         details
@@ -359,7 +359,7 @@ export const commentNotifications = createNotificationProcessor({
         AND c."userId" != r."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-review-response' "type",
         details
@@ -429,7 +429,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != i."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-image-comment' "type",
         details
@@ -465,7 +465,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != a."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-article-comment' "type",
         details
@@ -502,7 +502,7 @@ export const commentNotifications = createNotificationProcessor({
           AND c."userId" != b."userId"
       )
       SELECT
-        concat('${commentDedupeKey}', details->>'commentId') "key",
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-bounty-comment' "type",
         details
