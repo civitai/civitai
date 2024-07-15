@@ -2066,6 +2066,7 @@ type GetEntityImageRaw = {
   needsReview: string | null;
   userId: number;
   index: number;
+  postId: number | null;
   type: MediaType;
   metadata: MixedObject | null;
   entityId: number;
@@ -2195,6 +2196,7 @@ export const getEntityCoverImage = async ({
       i."needsReview",
       i."userId",
       i."index",
+      i."postId",
       t."entityId",
       t."entityType"
     FROM targets t
