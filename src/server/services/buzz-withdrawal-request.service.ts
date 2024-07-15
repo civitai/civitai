@@ -1,4 +1,12 @@
 import { BuzzWithdrawalRequestStatus, Prisma } from '@prisma/client';
+import { v4 as uuid } from 'uuid';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  payToStripeConnectAccount,
+  revertStripeConnectTransfer,
+} from '~/server/services/user-stripe-connect.service';
+import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
 import {
@@ -9,20 +17,13 @@ import {
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
 import { TransactionType } from '../schema/buzz.schema';
-import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
-import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
-import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
 import {
   buzzWithdrawalRequestDetails,
   buzzWithdrawalRequestModerationDetails,
 } from '../selectors/buzzWithdrawalRequest.select';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
-import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
-import {
-  payToStripeConnectAccount,
-  revertStripeConnectTransfer,
-} from '~/server/services/user-stripe-connect.service';
-import { createNotification } from '~/server/services/notification.service';
+import { throwBadRequestError, throwInsufficientFundsError } from '../utils/errorHandling';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '../utils/pagination-helpers';
+import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
 
 export const createBuzzWithdrawalRequest = async ({
   amount,
@@ -397,6 +398,8 @@ export const updateBuzzWithdrawalRequest = async ({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-approved',
           category: 'System',
+          key: `creators-program-withdrawal-approved:${uuid()}`,
+          details: {},
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Rejected:
@@ -404,6 +407,8 @@ export const updateBuzzWithdrawalRequest = async ({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-rejected',
           category: 'System',
+          key: `creators-program-withdrawal-rejected:${uuid()}`,
+          details: {},
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Transferred:
@@ -411,6 +416,8 @@ export const updateBuzzWithdrawalRequest = async ({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-transferred',
           category: 'System',
+          key: `creators-program-withdrawal-transferred:${uuid()}`,
+          details: {},
         }).catch();
         break;
       case BuzzWithdrawalRequestStatus.Reverted:
@@ -418,6 +425,8 @@ export const updateBuzzWithdrawalRequest = async ({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-reverted',
           category: 'System',
+          key: `creators-program-withdrawal-reverted:${uuid()}`,
+          details: {},
         }).catch();
         break;
     }

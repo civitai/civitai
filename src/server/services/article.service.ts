@@ -11,7 +11,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { SessionUser } from 'next-auth';
 
 import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -46,7 +45,6 @@ import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 
 type ArticleRaw = {
@@ -226,11 +224,6 @@ export const getArticles = async ({
         AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
       );
     }
-
-    const blockedByUsers = (await BlockedByUsers.getCached({ userId: sessionUser?.id })).map(
-      (u) => u.id
-    );
-    if (blockedByUsers.length) excludedUserIds = [...(excludedUserIds ?? []), ...blockedByUsers];
 
     if (!isOwnerRequest) {
       if (!!excludedUserIds?.length) {

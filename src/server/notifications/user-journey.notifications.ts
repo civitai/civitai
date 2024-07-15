@@ -10,16 +10,5 @@ export const userJourneyNotifications = createNotificationProcessor({
       url: `/discord`,
       target: '_blank',
     }),
-    prepareQuery: ({ lastSent, category }) => `
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
-      SELECT
-        CONCAT('join-community:',"id"),
-        id "userId",
-        'join-community' "type",
-        jsonb_build_object(),
-        '${category}'::"NotificationCategory" "category"
-      FROM "User"
-      WHERE "createdAt" > '${lastSent}'
-      ON CONFLICT ("id") DO NOTHING;`,
   },
 });

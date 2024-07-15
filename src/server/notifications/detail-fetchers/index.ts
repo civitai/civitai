@@ -15,6 +15,7 @@ const detailFetchers = [
   followDetailFetcher,
   reviewDetailFetcher,
 ];
+
 export async function populateNotificationDetails(notifications: BareNotification[]) {
   for (const { types, fetcher } of detailFetchers) {
     const targetNotifications = notifications.filter((n) => types.includes(n.type));

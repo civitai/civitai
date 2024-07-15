@@ -1,8 +1,9 @@
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { getDisplayName } from '../../utils/string-helpers';
-import { formatDate } from '../../utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const clubNotifications = createNotificationProcessor({
+  // Moveable
   'club-new-member-joined': {
     displayName: 'New Member Joined your club!',
     category: 'Update',
@@ -16,7 +17,7 @@ export const clubNotifications = createNotificationProcessor({
     prepareQuery: async ({ lastSent }) => `
        WITH data AS (
         SELECT
-          c.id "clubId",
+          c.id as "clubId",
           c.name "clubName",
           ct.name "tierName",
           c."userId"
@@ -28,7 +29,7 @@ export const clubNotifications = createNotificationProcessor({
         UNION
 
         SELECT
-          c.id "clubId",
+          c.id as "clubId",
           c.name "clubName",
           ct.name "tierName",
           ca."userId"
@@ -39,18 +40,16 @@ export const clubNotifications = createNotificationProcessor({
         WHERE cm."startedAt" > '${lastSent}'
           AND 'ManageMemberships'=ANY(ca.permissions)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
         SELECT
-          REPLACE(gen_random_uuid()::text, '-', ''),
+          concat('club-new-member-joined:',"clubId",':','${lastSent}') "key",
           "userId",
           'club-new-member-joined' "type",
           jsonb_build_object(
             'clubId', "clubId",
             'clubName', "clubName",
             'tierName', "tierName"
-          )
+          ) as "details"
         FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
   'club-billing-toggled': {
@@ -68,6 +67,7 @@ export const clubNotifications = createNotificationProcessor({
       };
     },
   },
+  // Moveable
   'club-new-post-created': {
     displayName: 'A new club post has been created!',
     category: 'Update',
@@ -80,27 +80,26 @@ export const clubNotifications = createNotificationProcessor({
       WITH data AS (
         SELECT
           p.id "clubPostId",
-          c.id "clubId",
-          c.name "name",
+          c.id as "clubId",
+          c.name as "name",
           cm."userId"
         FROM "ClubPost" p
         JOIN "Club" c ON p."clubId" = c.id
         JOIN "ClubMembership" cm ON cm."clubId" = c.id
         WHERE p."createdAt" > '${lastSent}' AND (cm."expiresAt" > NOW() OR cm."expiresAt" IS NULL)
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
         SELECT
-          CONCAT("userId",':','club-new-post-created',':',"clubPostId"),
+          CONCAT('club-new-post-created:',"clubPostId") "key",
           "userId",
           'club-new-post-created' "type",
           jsonb_build_object(
             'clubId', "clubId",
             'name', "name"
-          )
+          ) as "details"
         FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
+  // Moveable
   'club-new-resource-added': {
     displayName: 'A new club resouce has been created!',
     category: 'Update',
@@ -114,10 +113,10 @@ export const clubNotifications = createNotificationProcessor({
     prepareQuery: async ({ lastSent }) => `
       WITH "clubEntities" AS (
         SELECT
-          COALESCE(c.id, ct."clubId") "clubId",
+          COALESCE(c.id, ct."clubId") as "clubId",
           ea."accessToId" "resourceId",
           ea."accessToType" "resourceType",
-          COALESCE(c.name, cct.name) "name"
+          COALESCE(c.name, cct.name) as "name"
         FROM "EntityAccess" ea
         LEFT JOIN "Club" c ON ea."accessorId" = c.id AND ea."accessorType" = 'Club'
         LEFT JOIN "ClubTier" ct ON ea."accessorId" = ct."id" AND ea."accessorType" = 'ClubTier'
@@ -134,18 +133,16 @@ export const clubNotifications = createNotificationProcessor({
         JOIN "ClubMembership" cm ON cm."clubId" = ce."clubId"
         WHERE cm."expiresAt" > NOW() OR cm."expiresAt" IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
         SELECT
-          CONCAT("userId",':','club-new-resource-added',':',"resourceType",':',"resourceId"),
+          CONCAT('club-new-resource-added:',"resourceType",':',"resourceId") "key",
           "userId",
           'club-new-resource-added' "type",
           jsonb_build_object(
             'clubId', "clubId",
             'name', "name",
             'resourceType', "resourceType"
-          )
+          ) as "details"
         FROM data
-      ON CONFLICT("id") DO NOTHING;
     `,
   },
 });

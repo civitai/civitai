@@ -13,18 +13,17 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
 import { Prisma } from '@prisma/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getPagedData, getPagingData } from '~/server/utils/pagination-helpers';
+import { getPagingData } from '~/server/utils/pagination-helpers';
 import {
   resourceReviewSelect,
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
-import { ReviewSort } from '~/server/common/enums';
 import {
   amIBlockedByUser,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -292,7 +291,7 @@ export const getPagedResourceReviews = async ({
   userId?: number;
 }) => {
   const { limit, page, modelVersionId, username } = input;
-  const skip = limit * (page - 1);
+  const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
   if (username) AND.push(Prisma.sql`u.username = ${username}`);
 
@@ -303,7 +302,7 @@ export const getPagedResourceReviews = async ({
   ]);
   const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
   if (excludedUserIds.length) {
-    AND.push(Prisma.sql`u.id NOT IN (${excludedUserIds})`);
+    AND.push(Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`

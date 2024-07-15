@@ -47,7 +47,7 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
             })
             .then(() => {
               showSuccessNotification({
-                title: isBlocked ? 'User unblocked' : 'blocked',
+                title: isBlocked ? 'User unblocked' : 'User blocked',
                 message: `Content from this user will${
                   isBlocked ? ' ' : ' not'
                 } show up in your feed`,

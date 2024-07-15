@@ -26,6 +26,3 @@ In everything we do, we are guided by our core values:
 
 ## Be Part of Our Journey
 Civitai is in a phase of rapid expansion and we're looking for exceptional individuals to join our journey. Check out our latest openings and discover how you can contribute to the AI revolution.
-
-### Open Positions
-- [Support Agent](/content/careers/support)

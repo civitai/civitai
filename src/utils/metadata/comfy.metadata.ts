@@ -3,6 +3,8 @@ import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
 import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
+import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 
 const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 
@@ -10,9 +12,44 @@ function cleanBadJson(str: string) {
   return str.replace(/\[NaN\]/g, '[]').replace(/\[Infinity\]/g, '[]');
 }
 
+type CivitaiResource = {
+  weight?: number;
+  modelVersionId?: number;
+  type?: string;
+};
+
 export const comfyMetadataProcessor = createMetadataProcessor({
-  canParse: (exif) => exif.prompt || exif.workflow,
+  canParse: (exif) => {
+    const isStandardComfy = exif.prompt || exif.workflow;
+    if (isStandardComfy) return true;
+
+    // TODO: remove someday...
+    // Check for our ugly hack
+    let generationDetails = null;
+    if (exif?.parameters) {
+      generationDetails = exif.parameters;
+    } else if (exif?.userComment) {
+      generationDetails = decodeBigEndianUTF16(exif.userComment);
+    }
+
+    if (generationDetails) {
+      try {
+        const details = JSON.parse(generationDetails);
+        const { extra, ...workflow } = details;
+        if (details.extra) {
+          exif.prompt = JSON.stringify(workflow);
+          exif.workflow = generationDetails;
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    return false;
+  },
   parse: (exif) => {
+    console.log(exif.prompt);
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
@@ -79,6 +116,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
     }
 
+    const isCivitComfy = workflow?.extra?.airs?.length > 0;
     const metadata: ImageMetaProps = {
       prompt: getPromptText(initialSamplerNode.positive, 'positive'),
       negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
@@ -101,8 +139,23 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       versionIds,
       modelIds,
       // Converting to string to reduce bytes size
-      comfy: `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
+      // TODO.justin remove once this is compliant with comfy
+      comfy: isCivitComfy ? undefined : `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
+
+    if (isCivitComfy) {
+      metadata.civitaiResources = [];
+      for (const air of workflow.extra.airs) {
+        const { version, type } = parseAIR(air);
+        const resource: CivitaiResource = {
+          modelVersionId: version,
+          type,
+        };
+        const weight = additionalResources.find((x) => x.name === air)?.strength;
+        if (weight) resource.weight = weight;
+        (metadata.civitaiResources as CivitaiResource[]).push(resource);
+      }
+    }
 
     // Map to automatic1111 terms for compatibility
     a1111Compatability(metadata);

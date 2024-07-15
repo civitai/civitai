@@ -4,6 +4,7 @@ import { authOptions } from '~/pages/api/auth/[...nextauth]';
 import { getSessionFromBearerToken } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Session } from 'next-auth';
+import { env } from '~/env/server.mjs';
 
 // Next API route example - /pages/api/restricted.ts
 export const getServerAuthSession = async ({
@@ -18,7 +19,8 @@ export const getServerAuthSession = async ({
   if (req.headers.authorization) token = req.headers.authorization.split(' ')[1];
   else if (req.url) {
     const url = new URL(req.url, getBaseUrl());
-    token = url.searchParams.get('token') || undefined;
+    if (url.searchParams.get('token') !== env.WEBHOOK_TOKEN)
+      token = url.searchParams.get('token') || undefined;
   }
 
   if (token) {

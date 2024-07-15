@@ -1,16 +1,13 @@
-import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
-import { modelsSearchIndex } from '~/server/search-index';
 import { Prisma } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { chunk } from 'lodash-es';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { createLogger } from '~/utils/logging';
-import { templateHandler } from '~/server/db/pgDb';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { templateHandler } from '~/server/db/db-helpers';
+import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
-import {
-  allInjectedNegatives,
-  allInjectedPositives,
-} from '~/shared/constants/generation.constants';
+import { modelsSearchIndex } from '~/server/search-index';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
+import { createLogger } from '~/utils/logging';
 
 const log = createLogger('metrics:model');
 const BATCH_SIZE = 1000;
@@ -28,7 +25,8 @@ export const modelMetrics = createMetricProcessor({
     ctx.queuedModelVersions = [];
     if (ctx.queue.length > 0) {
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "ModelVersion"
+        SELECT id
+        FROM "ModelVersion"
         WHERE "modelId" IN (${Prisma.join(ctx.queue)})
       `;
       ctx.queuedModelVersions = queuedModelVersions.map((x) => x.id);
@@ -95,12 +93,13 @@ type VersionTimeframeRow = {
   year: number;
   all_time: number;
 };
+
 async function getDownloadTasks(ctx: ModelMetricContext) {
   const downloaded = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
     FROM modelVersionEvents
     WHERE type = 'Download'
-    AND time >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}');
+      AND time >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}');
   `;
   const affected = downloaded.map((x) => x.modelVersionId);
 
@@ -108,13 +107,12 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
     ctx.jobContext.checkIfCanceled();
     log('getDownloadTasks', i + 1, 'of', tasks.length);
     const downloads = await ctx.ch.$query<VersionTimeframeRow>`
-      SELECT
-        modelVersionId,
-        uniqMergeIf(users_state, createdDate = current_date()) day,
-        uniqMergeIf(users_state, createdDate >= subtractDays(current_date(),7)) week,
-        uniqMergeIf(users_state, createdDate >= subtractMonths(current_date(),1)) month,
-        uniqMergeIf(users_state, createdDate >= subtractYears(current_date(),1)) year,
-        uniqMerge(users_state) all_time
+      SELECT modelVersionId,
+             uniqMergeIf(users_state, createdDate = current_date())                     day,
+             uniqMergeIf(users_state, createdDate >= subtractDays(current_date(), 7))   week,
+             uniqMergeIf(users_state, createdDate >= subtractMonths(current_date(), 1)) month,
+             uniqMergeIf(users_state, createdDate >= subtractYears(current_date(), 1))  year,
+             uniqMerge(users_state)                                                     all_time
       FROM daily_downloads_unique
       WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
@@ -124,31 +122,27 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
     const downloadsJson = JSON.stringify(downloads);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "downloadCount")
-      SELECT
-          mvm.modelVersionId, mvm.timeframe, mvm.downloads
-      FROM
-      (
-        SELECT
-          CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
-          tf.timeframe,
-          CAST(
-            CASE
-              WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
-              WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
-              WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
-              WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
-              WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
-            END
-          AS int) as downloads
-        FROM json_array_elements('${downloadsJson}'::json) mvs
-        CROSS JOIN (
-            SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-        ) tf
-      ) mvm
+      SELECT mvm.modelVersionId,
+             mvm.timeframe,
+             mvm.downloads
+      FROM (SELECT CAST(mvs::json ->> 'modelVersionId' AS INT) AS modelVersionId,
+                   tf.timeframe,
+                   CAST(
+                     CASE
+                       WHEN tf.timeframe = 'Day' THEN mvs::json ->> 'day'
+                       WHEN tf.timeframe = 'Week' THEN mvs::json ->> 'week'
+                       WHEN tf.timeframe = 'Month' THEN mvs::json ->> 'month'
+                       WHEN tf.timeframe = 'Year' THEN mvs::json ->> 'year'
+                       WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
+                       END
+                     AS int)                                   as downloads
+            FROM json_array_elements('${downloadsJson}'::json) mvs
+                   CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.downloads IS NOT NULL
-      AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+        AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-        SET "downloadCount" = EXCLUDED."downloadCount", "updatedAt" = now();
+        SET "downloadCount" = EXCLUDED."downloadCount",
+            "updatedAt"     = now();
     `;
 
     log('getDownloadTasks', i + 1, 'of', tasks.length, 'done');
@@ -157,16 +151,14 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-const injectedVersionIds = [...allInjectedNegatives, ...allInjectedPositives].map((x) => x.id);
+const injectedVersionIds = allInjectableResourceIds;
+
 async function getGenerationTasks(ctx: ModelMetricContext) {
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
-    FROM  (
-      SELECT
-        arrayJoin(resourcesUsed) as modelVersionId
-      FROM orchestration.textToImageJobs
-      WHERE createdAt >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}')
-    )
+    FROM (SELECT arrayJoin(resourcesUsed) as modelVersionId
+          FROM orchestration.textToImageJobs
+          WHERE createdAt >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}'))
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
@@ -176,13 +168,12 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     ctx.jobContext.checkIfCanceled();
     log('getGenerationTasks', i + 1, 'of', tasks.length);
     const generations = await ctx.ch.$query<VersionTimeframeRow>`
-      SELECT
-        modelVersionId,
-        countIf(date = current_date()) day,
-        countIf(date >= subtractDays(current_date(), 7)) week,
-        countIf(date >= subtractMonths(current_date(), 1)) month,
-        countIf(date >= subtractYears(current_date(), 1)) year,
-        count(*) all_time
+      SELECT modelVersionId,
+             countIf(date = current_date())                     day,
+             countIf(date >= subtractDays(current_date(), 7))   week,
+             countIf(date >= subtractMonths(current_date(), 1)) month,
+             countIf(date >= subtractYears(current_date(), 1))  year,
+             count(*)                                           all_time
       FROM daily_user_resource
       WHERE modelVersionId IN (${ids})
       GROUP BY modelVersionId;
@@ -192,31 +183,27 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     const generationsJson = JSON.stringify(generations);
     await executeRefresh(ctx)`
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "generationCount")
-      SELECT
-          mvm.modelVersionId, mvm.timeframe, mvm.generations
-      FROM
-      (
-          SELECT
-              CAST(mvs::json->>'modelVersionId' AS INT) AS modelVersionId,
-              tf.timeframe,
-              CAST(
-                CASE
-                  WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
-                  WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
-                  WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
-                  WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
-                  WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
-                END
-              AS int) as generations
-          FROM json_array_elements('${generationsJson}'::json) mvs
-          CROSS JOIN (
-              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-          ) tf
-      ) mvm
+      SELECT mvm.modelVersionId,
+             mvm.timeframe,
+             mvm.generations
+      FROM (SELECT CAST(mvs::json ->> 'modelVersionId' AS INT) AS modelVersionId,
+                   tf.timeframe,
+                   CAST(
+                     CASE
+                       WHEN tf.timeframe = 'Day' THEN mvs::json ->> 'day'
+                       WHEN tf.timeframe = 'Week' THEN mvs::json ->> 'week'
+                       WHEN tf.timeframe = 'Month' THEN mvs::json ->> 'month'
+                       WHEN tf.timeframe = 'Year' THEN mvs::json ->> 'year'
+                       WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'all_time'
+                       END
+                     AS int)                                   as generations
+            FROM json_array_elements('${generationsJson}'::json) mvs
+                   CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf) mvm
       WHERE mvm.generations IS NOT NULL
-      AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+        AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-        SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = now();
+        SET "generationCount" = EXCLUDED."generationCount",
+            "updatedAt"       = now();
     `;
 
     log('getGenerationTasks', i + 1, 'of', tasks.length, 'done');
@@ -350,7 +337,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT entityId AS modelId
     FROM comments
     WHERE time >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate}')
-    AND type = 'Model'
+      AND type = 'Model'
   `;
   const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
   ctx.addAffected(affected);
@@ -449,7 +436,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     SELECT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
-    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+           JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
     WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 

@@ -2,16 +2,19 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat/ChatSignals';
 import { useTextToImageSignalUpdate } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useNotificationSignal } from '~/components/Notifications/notifications.utils';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import {
   useOrchestratorUpdateSignal,
   useTrainingSignals,
 } from '~/components/Training/Form/TrainingCommon';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { imageStore } from '~/store/image.store';
+import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
 
 export function SignalsRegistrar() {
   useTextToImageSignalUpdate();
+  useSchedulerDownloadSignal();
 
   useBuzzSignalUpdate();
 
@@ -35,6 +38,8 @@ export function SignalsRegistrar() {
       imageStore.setImage(imageId, { ingestion, blockedFor });
     }
   );
+
+  useNotificationSignal();
 
   return null;
 }

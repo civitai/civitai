@@ -46,10 +46,7 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import {
-  getUnavailableResources,
-  prepareModelInOrchestrator,
-} from '~/server/services/generation/generation.service';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -83,7 +80,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { BlockedByUsers } from '~/server/services/user-preferences.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -590,6 +587,11 @@ export const getModelsRaw = async ({
     LIMIT ${(take ?? 100) + 1}
   `;
 
+  // TODO - break into multiple queries
+  // model query
+  // model version query
+  // additional subqueries?
+
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
   );
@@ -970,10 +972,6 @@ export const getModelsWithImagesAndModelVersions = async ({
   if (Object.keys(modelVersionWhere).length === 0) {
     modelVersionWhere = undefined;
   }
-  const blockedBy = user ? await BlockedByUsers.getCached({ userId: user.id }) : [];
-  if (blockedBy.length > 0) {
-    input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedBy.map((u) => u.id)];
-  }
 
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take: input.limit },
@@ -1238,7 +1236,8 @@ export const upsertModel = async (
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1253,6 +1252,7 @@ export const upsertModel = async (
       select: { id: true, nsfwLevel: true },
       data: {
         ...data,
+        status,
         meta:
           bountyId || meta
             ? {
@@ -1404,10 +1404,7 @@ export const publishModelById = async ({
   );
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    // Send to orchestrator
-    Promise.all(
-      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
-    );
+    await bustOrchestratorModelCache(model.modelVersions.map((x) => x.id));
   }
 
   // Fetch affected posts to update their images in search index

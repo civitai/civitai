@@ -104,7 +104,7 @@ function promptAuditRefiner(
   data: { prompt: string; negativePrompt?: string },
   ctx: z.RefinementCtx
 ) {
-  const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
+  const { blockedFor, success } = auditPrompt(data.prompt); // TODO: re-enable negativePrompt here
   if (!success) {
     let message = `Blocked for: ${blockedFor.join(', ')}`;
     const count = blockedRequest.increment();
@@ -154,7 +154,7 @@ const generationLimitsSchema = z.object({
   resources: z.number(),
 });
 export type GenerationLimits = z.infer<typeof generationLimitsSchema>;
-const defaultsByTier: Record<string, GenerationLimits> = {
+export const defaultsByTier: Record<string, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,
@@ -267,9 +267,8 @@ export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
-  z.object({ type: z.literal('model'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
-  z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
+  // z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 
@@ -282,16 +281,4 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
-});
-
-export enum GENERATION_QUALITY {
-  GOOD = 'GOOD_QUALITY',
-  BAD = 'BAD_QUALITY',
-}
-
-export type SendFeedbackInput = z.infer<typeof sendFeedbackSchema>;
-export const sendFeedbackSchema = z.object({
-  jobId: z.string(),
-  reason: z.nativeEnum(GENERATION_QUALITY),
-  message: z.string().optional(),
 });

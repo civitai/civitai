@@ -39,6 +39,7 @@ export function EdgeMedia({
   mediaRef,
   transcode,
   original,
+  skip,
   muted,
   html5Controls,
   onMutedChange,
@@ -66,6 +67,7 @@ export function EdgeMedia({
     name,
     type,
     original,
+    skip,
   });
 
   switch (inferredType) {
