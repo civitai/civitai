@@ -975,7 +975,7 @@ export const updatePostCollectionTagId = async ({
       })
     : [];
 
-  await dbRead.collectionItem.updateMany({
+  await dbWrite.collectionItem.updateMany({
     where: {
       collectionId: post.collectionId,
       postId: isImageCollection ? undefined : id,
