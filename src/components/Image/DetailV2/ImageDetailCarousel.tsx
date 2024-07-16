@@ -12,6 +12,7 @@ import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import useIsClient from '~/hooks/useIsClient';
 
 export function ImageDetailCarousel() {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
@@ -98,10 +99,15 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
     defaultValue: true,
   });
 
+  // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
+  const isClient = useIsClient();
+
   const { setRef, height, width } = useAspectRatioFit({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
   });
+
+  const isVideo = image?.type === 'video';
 
   return (
     <ImageGuardContent image={image}>
@@ -126,11 +132,11 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                 className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
-              width={image.width}
-              anim
+              width={!isVideo || isClient ? image.width : 450}
+              anim={isClient}
               controls
               quality={90}
-              original={image.type === 'video' ? true : undefined}
+              original={isVideo && isClient ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
