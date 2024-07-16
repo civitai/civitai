@@ -110,12 +110,10 @@ export async function parseGenerateImageInput({
   let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
+  const resourceLimit = limits.resources;
 
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
-
-  if (resources.length > limits.resources)
-    throw throwBadRequestError('You have exceed the number of allowed resources.');
 
   const resourceData = await getResourceDataWithInjects(
     resources.map((x) => x.id),
@@ -125,6 +123,12 @@ export async function parseGenerateImageInput({
       triggerWord: resource.trainedWords?.[0],
     })
   );
+
+  if (
+    resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
+      .length > resourceLimit
+  )
+    throw throwBadRequestError('You have exceed the number of allowed resources.');
 
   const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)

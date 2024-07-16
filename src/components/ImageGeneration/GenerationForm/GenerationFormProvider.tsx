@@ -50,7 +50,7 @@ const formSchema = textToImageParamsSchema
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
-    resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
+    resources: extendedTextToImageResourceSchema.array().min(0).default([]),
     vae: extendedTextToImageResourceSchema.optional(),
     prompt: z
       .string()
