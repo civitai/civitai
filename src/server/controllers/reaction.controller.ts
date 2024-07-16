@@ -1,4 +1,6 @@
+import { Prisma } from '@prisma/client';
 import { Context } from '~/server/createContext';
+import { notifDbRead } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
 import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
@@ -240,8 +242,16 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
     if (!match) return;
 
-    // could query to prevent dupe notifications from coming through
-    // or we can filter on equals, and potentially miss the notification if it fails?
+    const type = 'image-reaction-milestone';
+    const key = `${type}:${entityId}:${match}`;
+
+    const query = await notifDbRead.cancellableQuery<{ exists: number }>(Prisma.sql`
+      SELECT 1 as exists
+      FROM "Notification"
+      WHERE key = '${key}'
+    `);
+    const items = await query.result();
+    if (items.length > 0) return;
 
     const resource = await dbRead.image.findFirst({
       where: { id: entityId },
@@ -258,7 +268,7 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
         {
           type: 'warning',
           name: 'Failed to create notification',
-          details: { key: 'image-reaction-milestone' },
+          details: { key: type },
           message: 'Could not find resource',
         },
         'notifications'
@@ -277,8 +287,8 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     };
 
     createNotification({
-      type: 'image-reaction-milestone',
-      key: `image-reaction-milestone:${resource.id}:${match}`,
+      type,
+      key,
       category: 'Milestone',
       userId: resource.userId,
       details,
