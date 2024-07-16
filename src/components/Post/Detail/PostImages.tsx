@@ -124,7 +124,7 @@ export function PostImages({
                           }
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
-                          // original={image.type === 'video'} -- Removed to fix site performance.
+                          original={image.type === 'video'}
                           anim={safe}
                           html5Controls={shouldDisplayHtmlControls(image)}
                         />
