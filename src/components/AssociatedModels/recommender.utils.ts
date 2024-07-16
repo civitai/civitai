@@ -4,7 +4,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function useQueryRecommendedResources(
-  payload: RecommendationRequest,
+  payload: Pick<RecommendationRequest, 'modelVersionId'>,
   options?: { enabled?: boolean }
 ) {
   const { data = [], ...rest } = trpc.recommenders.getResourceRecommendations.useQuery(

@@ -46,7 +46,7 @@ export function AssociatedModels({
     browsingLevel,
   });
   const { data: recommendedResources, isInitialLoading: loadingRecommended } =
-    useQueryRecommendedResources({ modelVersionId: versionId as number, modelId: fromId }, { enabled: !!versionId });
+    useQueryRecommendedResources({ modelVersionId: versionId as number }, { enabled: !!versionId });
 
   const combinedData = [...data, ...recommendedResources];
 
