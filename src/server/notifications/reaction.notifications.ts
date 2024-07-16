@@ -3,9 +3,9 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 import { humanizeList } from '~/utils/humanizer';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
-const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
-const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
+export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
 const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
+// const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
@@ -83,52 +83,6 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
-    prepareQuery: ({ lastSent }) => `
-      WITH milestones AS (
-        SELECT * FROM (VALUES ${imageReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
-      ), affected AS (
-        SELECT DISTINCT
-          "imageId" affected_id
-        FROM "ImageReaction"
-        WHERE "createdAt" > '${lastSent}'
-      ), affected_value AS (
-        SELECT
-          a.affected_id,
-          MAX(im."reactionCount") + COUNT(ir."imageId") as reaction_count
-        FROM affected a
-        LEFT JOIN "ImageMetric" im ON im."imageId" = a.affected_id AND im.timeframe = 'AllTime'
-        LEFT JOIN "ImageReaction" ir ON ir."imageId" = a.affected_id AND ir."createdAt" > im."updatedAt"
-        GROUP BY a.affected_id
-        HAVING MAX(im."reactionCount") + COUNT(ir."imageId") >= ${imageReactionMilestones[0]}
-      ), reaction_milestone AS (
-        SELECT
-          i."userId" "ownerId",
-          JSON_BUILD_OBJECT(
-            'version', 2,
-            'imageId', i.id,
-            'postId', i."postId",
-            'models', (
-              SELECT json_agg(m.name)
-              FROM "ImageResource" ir
-              JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-              JOIN "Model" m ON m.id = mv."modelId"
-              WHERE ir."imageId" = a.affected_id
-            ),
-            'reactionCount', ms.value
-          ) "details"
-        FROM affected_value a
-        JOIN "Image" i on i.id = a.affected_id
-        JOIN milestones ms ON ms.value <= a.reaction_count
-        WHERE i."createdAt" > '${milestoneNotificationFix}'
-      )
-      SELECT
-        CONCAT('image-reaction-milestone:', details->>'imageId', ':', details->>'reactionCount') "key",
-        "ownerId"    "userId",
-        'image-reaction-milestone' "type",
-        details
-      FROM reaction_milestone
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone')
-    `,
   },
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',

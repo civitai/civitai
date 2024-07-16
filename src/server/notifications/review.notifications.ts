@@ -21,48 +21,6 @@ export const reviewNotifications = createNotificationProcessor({
         url: `/redirect?to=review&reviewId=${details.reviewId}`,
       };
     },
-    prepareQuery: ({ lastSent }) => `
-      WITH new_reviews AS (
-      SELECT DISTINCT
-        m."userId" "ownerId",
-        jsonb_build_object(
-          'version', 2,
-          'modelId', r."modelId",
-          'reviewId', r.id,
-          'modelName', m.name,
-          'modelVersionName', mv.name,
-          'username', u.username,
-          'rating', r.rating,
-          'recommended', r.recommended,
-          'imageCount', (
-              SELECT COUNT(*)
-              FROM "Image" i
-              JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
-              WHERE i."userId" = r."userId"
-          )
-        ) as "details",
-        r.details AS "content",
-        r.id
-      FROM "ResourceReview" r
-      JOIN "User" u ON r."userId" = u.id
-      JOIN "ModelVersion" mv ON mv.id = r."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE
-        m."userId" > 0 AND
-        m."userId" != r."userId" AND
-        r."createdAt" > '${lastSent}'::timestamp - INTERVAL '5 minutes' AND
-        r."createdAt" <= NOW() - INTERVAL '5 minutes'
-      )
-      SELECT
-        CONCAT('new-review:',id) as "key",
-        "ownerId" "userId",
-        'new-review' "type",
-        details
-      FROM new_reviews
-      WHERE
-        (CAST(details->'imageCount' as int) > 0 OR content IS NOT NULL) AND
-        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review')
-    `,
   },
   // TODO: re-enable this notification when performance of the query is improved
   // 'review-reminder': {

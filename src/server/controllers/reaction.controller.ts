@@ -1,17 +1,20 @@
-import { toggleReaction } from './../services/reaction.service';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { Context } from '~/server/createContext';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
-import { dbRead } from '../db/client';
-import { ReactionType } from '../clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import {
-  NsfwLevelDeprecated,
-  getNsfwLevelDeprecatedReverseMapping,
-} from '~/shared/constants/browsingLevel.constants';
+import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
-import dayjs from 'dayjs';
+import { createNotification } from '~/server/services/notification.service';
+import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  getNsfwLevelDeprecatedReverseMapping,
+  NsfwLevelDeprecated,
+} from '~/shared/constants/browsingLevel.constants';
 import { isFutureDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { ReactionType } from '../clickhouse/client';
+import { dbRead } from '../db/client';
+import { toggleReaction } from './../services/reaction.service';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -219,9 +222,66 @@ export const toggleReactionHandler = async ({
           )
           .catch(handleLogError),
       ]);
+
+      // TODO unhandledRejection: Error: read ECONNRESET
+      createReactionNotification(input).catch();
     }
     return result;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
+  if (entityType === 'image') {
+    const cnt = await dbRead.imageReaction.count({
+      where: { imageId: entityId },
+    });
+    const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
+    if (!match) return;
+
+    // could query to prevent dupe notifications from coming through
+    // or we can filter on equals, and potentially miss the notification if it fails?
+
+    const resource = await dbRead.image.findFirst({
+      where: { id: entityId },
+      select: {
+        userId: true,
+        id: true,
+        postId: true,
+        resourceHelper: { select: { modelName: true } },
+      },
+    });
+
+    if (!resource) {
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'Failed to create notification',
+          details: { key: 'image-reaction-milestone' },
+          message: 'Could not find resource',
+        },
+        'notifications'
+      ).catch();
+      return;
+    }
+
+    const modelNames = resource.resourceHelper.map((r) => r.modelName).filter(isDefined);
+
+    const details = {
+      version: 2,
+      imageId: resource.id,
+      postId: resource.postId,
+      models: modelNames,
+      reactionCount: match,
+    };
+
+    createNotification({
+      type: 'image-reaction-milestone',
+      key: `image-reaction-milestone:${resource.id}:${match}`,
+      category: 'Milestone',
+      userId: resource.userId,
+      details,
+    }).catch();
   }
 };
