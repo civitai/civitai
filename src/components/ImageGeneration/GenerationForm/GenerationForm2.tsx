@@ -22,7 +22,7 @@ import {
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
-import { IconPlus, IconX } from '@tabler/icons-react';
+import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -86,6 +86,8 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { ButtonGroup } from '@mantine/core/lib/Button/ButtonGroup/ButtonGroup';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostBreakdown';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -984,6 +986,7 @@ function ReadySection() {
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const form = useGenerationForm();
 
   useEffect(() => {
     if (data) {
@@ -992,19 +995,36 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   return (
-    <GenerateButton
-      type="submit"
-      className="h-auto flex-1"
-      loading={isInitialLoading || props.isLoading}
-      cost={data?.cost}
-      error={
-        !isInitialLoading && isError
-          ? error
-            ? (error as any).message
-            : 'Error calculating cost. Please try updating your values'
-          : undefined
-      }
-    />
+    <Button.Group>
+      <GenerateButton
+        type="submit"
+        className="h-auto flex-1"
+        loading={isInitialLoading || props.isLoading}
+        cost={data?.cost}
+        error={
+          !isInitialLoading && isError
+            ? error
+              ? (error as any).message
+              : 'Error calculating cost. Please try updating your values'
+            : undefined
+        }
+      />
+      <GenerationCostPopover
+        width={300}
+        creatorTipInputOptions={{
+          value: (form.getValues('creatorTip') ?? 0) * 100,
+          onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
+        }}
+        civitaiTipInputOptions={{
+          value: (form.getValues('civitaiTip') ?? 0) * 100,
+          onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
+        }}
+      >
+        <Button variant="outline" px={8} size="lg" color="yellow.5">
+          <IconInfoCircle />
+        </Button>
+      </GenerationCostPopover>
+    </Button.Group>
   );
 }
 // #endregion

@@ -48,7 +48,7 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true })
   .extend({
-    tier: userTierSchema,
+    tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
     resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
     vae: extendedTextToImageResourceSchema.optional(),
@@ -77,6 +77,8 @@ const formSchema = textToImageParamsSchema
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
     aspectRatio: z.string(),
+    creatorTip: z.number().min(0).max(1).optional(),
+    civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
