@@ -63,6 +63,7 @@ export const useMarkReadNotification = () => {
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
         for (const key of Object.keys(newCounts)) {
+          // TODO fix issue here with category clearing out all when it shouldnt
           const keyMatch = !categoryStr || key === categoryStr || key === 'all';
           if (keyMatch) {
             if (all) newCounts[key] = 0;

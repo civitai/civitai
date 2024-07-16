@@ -93,7 +93,7 @@ export function NotificationBell() {
       </div>
       <Drawer
         position={mobile ? 'bottom' : 'right'}
-        size={mobile ? '100dvh' : '700px'}
+        size={mobile ? '100dvh' : '710px'}
         styles={(theme) => ({
           root: {
             [theme.fn.largerThan('xs')]: {
