@@ -233,11 +233,12 @@ const createResourceReviewNotification = async ({
   modelId,
   modelVersionId,
   recommended,
-  details: content,
   userId,
 }: ResourceReviewCreate & { userId: number }) => {
   // don't send a notification for bad reviews
   if (!recommended) return;
+
+  // TODO maybe add dedupe query
 
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
@@ -267,8 +268,8 @@ const createResourceReviewNotification = async ({
     where: { modelVersionId, image: { userId } },
   });
 
-  // if no content and no images, skip
-  if (!imageCount && !content) return;
+  // TODO if no content and no images, skip?
+  // if (!imageCount && !content) return;
 
   const u = await dbRead.user.findFirst({
     where: { id: userId },
@@ -289,7 +290,7 @@ const createResourceReviewNotification = async ({
 
   createNotification({
     type: 'new-review',
-    key: `new-review:${id}`,
+    key: `new-review:${modelVersionId}:${userId}`,
     category: 'Update',
     userId: modelVersion.model.userId,
     details: detailsObj,

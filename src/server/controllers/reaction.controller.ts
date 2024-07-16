@@ -248,7 +248,7 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const query = await notifDbRead.cancellableQuery<{ exists: number }>(Prisma.sql`
       SELECT 1 as exists
       FROM "Notification"
-      WHERE key = '${key}'
+      WHERE key = ${key}
     `);
     const items = await query.result();
     if (items.length > 0) return;
