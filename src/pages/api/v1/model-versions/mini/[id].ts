@@ -108,6 +108,8 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
+    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
+    checkPermission: modelVersion.checkPermission,
   };
   res.status(200).json(data);
 });
