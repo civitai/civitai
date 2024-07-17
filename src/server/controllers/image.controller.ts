@@ -159,7 +159,7 @@ export const setTosViolationHandler = async ({
     }
 
     // Create notifications in the background
-    createNotification({
+    await createNotification({
       userId: image.userId,
       type: 'tos-violation',
       category: 'System',

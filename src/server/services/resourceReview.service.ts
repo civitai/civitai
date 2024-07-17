@@ -288,7 +288,7 @@ const createResourceReviewNotification = async ({
     imageCount,
   };
 
-  createNotification({
+  await createNotification({
     type: 'new-review',
     key: `new-review:${modelVersionId}:${userId}`,
     category: 'Update',
@@ -306,7 +306,7 @@ export const upsertResourceReview = async ({
       data: { ...data, userId, thread: { create: {} } },
       select: resourceReviewSelect,
     });
-    createResourceReviewNotification({ ...ret, userId }).catch();
+    await createResourceReviewNotification({ ...ret, userId }).catch();
     return ret;
   } else {
     return dbWrite.resourceReview.update({
@@ -325,7 +325,7 @@ export const createResourceReview = async (
   data: CreateResourceReviewInput & { userId: number }
 ) => {
   const ret = await dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
-  createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
   return ret;
 };
 

@@ -226,7 +226,7 @@ export const toggleReactionHandler = async ({
       ]);
 
       // TODO unhandledRejection: Error: read ECONNRESET
-      createReactionNotification(input).catch();
+      await createReactionNotification(input).catch();
     }
     return result;
   } catch (error) {
@@ -236,6 +236,8 @@ export const toggleReactionHandler = async ({
 
 const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
   if (entityType === 'image') {
+    // could replace with metrics query
+    // select "reactionCount" from "ImageMetric" where "imageId" = X and timeframe = 'AllTime'
     const cnt = await dbRead.imageReaction.count({
       where: { imageId: entityId },
     });
@@ -286,7 +288,7 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
       reactionCount: match,
     };
 
-    createNotification({
+    await createNotification({
       type,
       key,
       category: 'Milestone',

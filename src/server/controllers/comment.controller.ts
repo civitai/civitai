@@ -21,6 +21,7 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -29,7 +30,6 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -326,8 +326,7 @@ export const setTosViolationHandler = async ({
       reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
     }
 
-    // Create notifications in the background
-    createNotification({
+    await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: 'System',

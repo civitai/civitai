@@ -282,7 +282,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }
 
       // does this work for email login? it should
-      createNotification({
+      await createNotification({
         type: 'join-community',
         userId: context.user.id,
         category: 'System',
