@@ -456,6 +456,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
               modelId: currentVersion.model.id,
               displayName: `${currentVersion.model.name}: ${currentVersion.name}`,
             },
+            key: `early-access-failed-to-publish:${currentVersion.id}`,
           }).catch((error) => {
             // Print out any errors
             // TODO.logs: sent to logger service

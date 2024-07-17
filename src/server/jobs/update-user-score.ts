@@ -2,11 +2,12 @@ import { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { AugmentedPool, pgDbWrite, templateHandler } from '~/server/db/pgDb';
+import { pgDbWrite } from '~/server/db/pgDb';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
+import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
 
 const BATCH_SIZE = 500;
 const log = createLogger('update-user-score');
