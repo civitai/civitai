@@ -5,12 +5,15 @@ import {
   NumberInputProps,
   Popover,
   PopoverProps,
-  Text,
 } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import {
+  DescriptionTable,
+  Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -23,8 +26,10 @@ const getEmojiByValue = (value: number) => {
 
 export function GenerationCostPopover({
   children,
+  baseCost,
   creatorTipInputOptions,
   civitaiTipInputOptions,
+  readOnly,
   ...popoverProps
 }: Props) {
   const handleShowExplanationClick: React.MouseEventHandler<HTMLButtonElement> = (e) => {
@@ -38,11 +43,53 @@ export function GenerationCostPopover({
     });
   };
 
-  const items = [
-    { label: 'Base Cost', value: <Text align="end">24 ⚡️</Text> },
-    { label: 'Size Cost', value: <Text align="end">24 ⚡️</Text> },
-    { label: 'Step Cost', value: <Text align="end">24 ⚡️</Text> },
-    { label: 'Workflow Cost', value: <Text align="end">24 ⚡️</Text> },
+  const items: DescriptionTableProps['items'] = [
+    {
+      label: 'Base Cost',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+    },
+    {
+      label: 'Size Cost',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+    },
+    {
+      label: 'Step Cost',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+    },
+    {
+      label: 'Workflow Cost',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+    },
+    {
+      label: <div className="font-semibold">Total</div>,
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !readOnly,
+    },
     {
       label: (
         <Group position="apart">
@@ -51,7 +98,8 @@ export function GenerationCostPopover({
             {...creatorTipInputOptions}
             min={0}
             max={100}
-            w={100}
+            w={110}
+            step={5}
             defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
             icon={getEmojiByValue(creatorTipInputOptions?.value ?? 0)}
@@ -64,7 +112,23 @@ export function GenerationCostPopover({
           />
         </Group>
       ),
-      value: <Text align="end">24 ⚡️</Text>,
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {Math.ceil((baseCost * (creatorTipInputOptions?.value ?? 0)) / 100)}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !readOnly,
+    },
+    {
+      label: 'Creator Tip',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!readOnly,
     },
     {
       label: (
@@ -74,7 +138,8 @@ export function GenerationCostPopover({
             {...civitaiTipInputOptions}
             min={0}
             max={100}
-            w={100}
+            w={110}
+            step={5}
             defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
             formatter={(value) => {
@@ -86,7 +151,23 @@ export function GenerationCostPopover({
           />
         </Group>
       ),
-      value: <Text align="end">24 ⚡️</Text>,
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {Math.ceil((baseCost * (civitaiTipInputOptions?.value ?? 0)) / 100)}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !readOnly,
+    },
+    {
+      label: 'Civitai Tip',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {baseCost}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!readOnly,
     },
   ];
 
@@ -146,6 +227,8 @@ function BreakdownExplanation() {
 }
 
 type Props = PopoverProps & {
-  creatorTipInputOptions: Pick<NumberInputProps, 'value' | 'onChange'>;
-  civitaiTipInputOptions: Pick<NumberInputProps, 'value' | 'onChange'>;
+  baseCost: number;
+  creatorTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
+  civitaiTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
+  readOnly?: boolean;
 };

@@ -86,8 +86,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { ButtonGroup } from '@mantine/core/lib/Button/ButtonGroup/ButtonGroup';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostBreakdown';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -120,8 +119,7 @@ export function GenerationForm2() {
 
 // #region [form component]
 export function GenerationFormContent() {
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
@@ -987,6 +985,7 @@ function ReadySection() {
 function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
+  const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip']);
 
   useEffect(() => {
     if (data) {
@@ -994,13 +993,16 @@ function SubmitButton(props: { isLoading?: boolean }) {
     }
   }, [data?.cost]); // eslint-disable-line
 
+  const cost = data?.cost ?? 0;
+  const totalCost = Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost);
+
   return (
     <Button.Group>
       <GenerateButton
         type="submit"
         className="h-auto flex-1"
         loading={isInitialLoading || props.isLoading}
-        cost={data?.cost}
+        cost={totalCost}
         error={
           !isInitialLoading && isError
             ? error
@@ -1011,12 +1013,13 @@ function SubmitButton(props: { isLoading?: boolean }) {
       />
       <GenerationCostPopover
         width={300}
+        baseCost={cost}
         creatorTipInputOptions={{
-          value: (form.getValues('creatorTip') ?? 0) * 100,
+          value: (creatorTip ?? 0) * 100,
           onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
         }}
         civitaiTipInputOptions={{
-          value: (form.getValues('civitaiTip') ?? 0) * 100,
+          value: (civitaiTip ?? 0) * 100,
           onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
         }}
       >
