@@ -129,6 +129,7 @@ const useStyles = createStyles((theme) => ({
         bottom: '0px',
         left: '0px',
         content: '""',
+        pointerEvents: 'none',
       },
     },
   },
