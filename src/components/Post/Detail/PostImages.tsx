@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { useState, Fragment } from 'react';
+import { useState, Fragment, useRef } from 'react';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -25,6 +25,7 @@ import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostCon
 import { PostContestCollectionItem } from '~/types/router';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CollectionItemStatus } from '@prisma/client';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -45,6 +46,7 @@ export function PostImages({
 }) {
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
+  const videoRef = useRef<EdgeVideoRef | null>(null);
 
   if (isLoading)
     return (
@@ -101,7 +103,13 @@ export function PostImages({
                       )}
                     </Group>
                     <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
-                    <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                    <RoutedDialogLink
+                      name="imageDetail"
+                      state={{ imageId: image.id, images }}
+                      onClick={() => {
+                        if (videoRef.current) videoRef.current.stop();
+                      }}
+                    >
                       {!safe ? (
                         <div
                           style={{
@@ -124,9 +132,10 @@ export function PostImages({
                           }
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
-                          // original={image.type === 'video'} -- Removed to fix site performance.
+                          original={image.type === 'video'}
                           anim={safe}
                           html5Controls={shouldDisplayHtmlControls(image)}
+                          videoRef={videoRef}
                         />
                       )}
                     </RoutedDialogLink>
