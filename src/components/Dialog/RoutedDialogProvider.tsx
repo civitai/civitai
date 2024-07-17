@@ -141,6 +141,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   className,
   passHref,
   style,
+  onClick,
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
@@ -148,6 +149,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   className?: string;
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
   style?: React.CSSProperties;
+  onClick?: () => void;
 }) {
   const router = useRouter();
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
@@ -158,6 +160,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       e.preventDefault();
       // e.stopPropagation();
       triggerRoutedDialog({ name, state });
+      onClick?.();
     }
   };
 

@@ -13,8 +13,11 @@ import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import useIsClient from '~/hooks/useIsClient';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 
-export function ImageDetailCarousel() {
+type ImageProps = { videoRef?: React.ForwardedRef<EdgeVideoRef> };
+
+export function ImageDetailCarousel(props: ImageProps) {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
@@ -84,7 +87,7 @@ export function ImageDetailCarousel() {
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
-            {slidesInView.includes(index) && <ImageContent image={image} {...connect} />}
+            {slidesInView.includes(index) && <ImageContent image={image} {...connect} {...props} />}
           </Carousel.Slide>
         ))}
       </Carousel>
@@ -92,7 +95,10 @@ export function ImageDetailCarousel() {
   );
 }
 
-function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) {
+function ImageContent({
+  image,
+  videoRef,
+}: { image: ImagesInfiniteModel } & ConnectProps & ImageProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -142,6 +148,7 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
               onMutedChange={(isMuted) => {
                 setDefaultMuted(isMuted);
               }}
+              videoRef={videoRef}
             />
           )}
         </div>
