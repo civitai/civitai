@@ -22,6 +22,8 @@ type VersionRow = {
   baseModel: BaseModel;
   status: string;
   type: ModelType;
+  earlyAccessEndsAt?: Date;
+  checkPermission: boolean;
 };
 type FileRow = {
   id: number;
