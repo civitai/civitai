@@ -1,14 +1,17 @@
 import { z } from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
-
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
+import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
+import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
+import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
+import { countReviewImages } from '~/server/jobs/count-review-images';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
@@ -17,38 +20,35 @@ import { handleLongTrainings } from '~/server/jobs/handle-long-trainings';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { Job } from '~/server/jobs/job';
+import { jobQueueJobs } from '~/server/jobs/job-queue';
+import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
+import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
+import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
+import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
+import { csamJobs } from '~/server/jobs/process-csam';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
+import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
+import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
-import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
+import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
-import { csamJobs } from '~/server/jobs/process-csam';
-import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
-import { cacheCleanup } from '~/server/jobs/cache-cleanup';
-import { applyTagRules } from '~/server/jobs/apply-tag-rules';
-import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
-import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
-import { processVaultItems } from '~/server/jobs/process-vault-items';
-import { clearVaultItems } from '~/server/jobs/clear-vault-items';
-import { jobQueueJobs } from '~/server/jobs/job-queue';
-import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
-import { countReviewImages } from '~/server/jobs/count-review-images';
-import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
-import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -96,6 +96,7 @@ export const jobs: Job[] = [
   countReviewImages,
   processingEngingEarlyAccess,
   updateUserScore,
+  tempSetMissingNsfwLevel,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -120,10 +121,12 @@ export default WebhookEndpoint(async (req, res) => {
     await lock(name, options.lockExpiration);
 
     const jobRunner = run();
+
     async function cancelHandler() {
       await jobRunner.cancel();
       await unlock(name);
     }
+
     res.on('close', cancelHandler);
     result = await jobRunner.result;
     res.off('close', cancelHandler);

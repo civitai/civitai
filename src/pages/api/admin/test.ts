@@ -1,25 +1,42 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { deleteImagesForModelVersionCache } from '~/server/services/image.service';
+import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
+import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
+import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  // const teamAccounts = eventEngine.getTeamAccounts('holiday2023');
-  // const accountIds = Object.values(teamAccounts);
-  // const start = dayjs().subtract(1, 'day').toDate();
-  // const dayContributorsByAccount = await getTopContributors({ accountIds, limit: 500, start });
-  // return res.send(dayContributorsByAccount);
+  const session = await getServerAuthSession({ req, res });
+  const user = session?.user;
+  if (!user) return;
 
-  // await eventEngine.processEngagement({
-  //   entityType: 'model',
-  //   type: 'published',
-  //   entityId: 218322,
-  //   userId: 969069,
-  // });
-  // const test = await getAllHiddenForUser({ userId: 5418, refreshCache: true });
-  // const test = await getAllHiddenForUser({ userId: 5, refreshCache: true });
-  await deleteImagesForModelVersionCache(11745);
+  let token = getEncryptedCookie({ req, res }, generationServiceCookie.name);
+  if (!token) {
+    token = await getTemporaryUserApiKey({
+      name: generationServiceCookie.name,
+      // make the db token live just slightly longer than the cookie token
+      maxAge: generationServiceCookie.maxAge + 5,
+      scope: ['Generate'],
+      type: 'System',
+      userId: user.id,
+    });
+    setEncryptedCookie(
+      { req, res },
+      {
+        name: generationServiceCookie.name,
+        maxAge: generationServiceCookie.maxAge,
+        value: token,
+      }
+    );
+  }
 
-  return res.status(200).json({
-    ok: true,
+  const { nextCursor, items } = await queryWorkflows({
+    token,
+    take: 10,
+    tags: ['civitai', 'img'],
   });
+
+  return res.status(200).json(items);
+  // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
 });

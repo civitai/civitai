@@ -45,7 +45,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -67,6 +66,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
+import { getBaseModelSet, getIsSdxl } from '~/shared/constants/generation.constants';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -116,7 +116,7 @@ export default function ResourceSelectModal({
   const { resources = [], canGenerate } = options;
   const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
     let aggregate: BaseModel[] = [];
-    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet) ?? [];
+    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet);
     if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
     return { type, baseModels: aggregate };
   });
@@ -322,9 +322,7 @@ function ResourceSelectCard({
   };
 
   const selectedVersion = data.versions.find((x) => x.id === selected);
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    selectedVersion?.baseModel as BaseModel
-  );
+  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
   const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =

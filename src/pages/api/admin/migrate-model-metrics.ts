@@ -4,10 +4,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import {
-  allInjectedNegatives,
-  allInjectedPositives,
-} from '~/shared/constants/generation.constants';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 
 const schema = z.object({
   cursor: z.coerce.number().min(0).optional().default(0),
@@ -192,7 +189,7 @@ type GenerationMetrics = {
   year: number;
   all_time: number;
 };
-const injectedVersionIds = [...allInjectedNegatives, ...allInjectedPositives].map((r) => r.id);
+const injectedVersionIds = allInjectableResourceIds;
 function modelGenerationMetrics(ctx: MigrationContext) {
   return async () => {
     if (ctx.stop || !clickhouse) return;

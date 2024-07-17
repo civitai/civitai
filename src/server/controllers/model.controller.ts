@@ -19,7 +19,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -100,11 +100,8 @@ import {
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
+import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import {
-  deleteResourceDataCache,
-  getUnavailableResources,
-} from '../services/generation/generation.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -1554,7 +1551,7 @@ export async function toggleCheckpointCoverageHandler({
 }) {
   try {
     const affectedVersionIds = await toggleCheckpointCoverage(input);
-    if (affectedVersionIds) await deleteResourceDataCache(affectedVersionIds);
+    if (affectedVersionIds) await resourceDataCache.bust(affectedVersionIds);
 
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },

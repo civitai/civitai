@@ -1,6 +1,6 @@
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { QS } from '../../utils/qs';
 import { startCase } from 'lodash-es';
+import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { QS } from '~/utils/qs';
 
 export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) => {
   const queryString = QS.stringify({
@@ -23,6 +23,10 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
   }[threadType as string] as string;
 };
 
+export const commentDedupeKey = 'new-comment|new-mention:';
+
+// Moveable (all)
+
 export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
@@ -31,7 +35,7 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
         SELECT DISTINCT
           m."userId" "ownerId",
@@ -49,25 +53,14 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
       )
-      INSERT
-      INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_comments r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Notification" n
-          WHERE n."userId" = r."ownerId"
-              AND n."createdAt" > now() - interval '1 hour'
-              AND n.type IN ('new-mention')
-              AND n.details->>'commentId' = r.details->>'commentId'
-        );
     `,
   },
   'new-comment-response': {
@@ -79,7 +72,7 @@ export const commentNotifications = createNotificationProcessor({
         details.parentId ?? details.commentId
       }&highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_comment_response AS (
         SELECT DISTINCT
           p."userId" "ownerId",
@@ -98,24 +91,14 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != p."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-response' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_comment_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-response')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Notification" n
-          WHERE n."userId" = r."ownerId"
-              AND n."createdAt" > now() - interval '1 hour'
-              AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
-              AND n.details->>'commentId' = r.details->>'commentId'
-        );
     `,
   },
   'new-comment-nested': {
@@ -125,7 +108,7 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_comments_nested AS (
         SELECT DISTINCT
           m."userId" "ownerId",
@@ -145,24 +128,14 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != m."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v1:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-nested' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_comments_nested r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-nested')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Notification" n
-          WHERE n."userId" = r."ownerId"
-              AND n."createdAt" > now() - interval '1 hour'
-              AND n.type IN ('new-thread-response', 'new-comment-response', 'new-mention', 'new-comment-nested')
-              AND n.details->>'commentId' = r.details->>'commentId'
-        );
     `,
   },
   'new-comment-reply': {
@@ -175,7 +148,7 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_comment_reply AS (
         SELECT DISTINCT
           pc."userId" "ownerId",
@@ -217,13 +190,11 @@ export const commentNotifications = createNotificationProcessor({
         JOIN "Thread" root ON root.id = t."rootThreadId"
         WHERE c."createdAt" > '${lastSent}' AND c."userId" != pc."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-comment-reply' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_comment_reply r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-comment-reply')
@@ -248,7 +219,7 @@ export const commentNotifications = createNotificationProcessor({
         url,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_thread_response AS (
         SELECT DISTINCT
           UNNEST((SELECT ARRAY_AGG("userId") FROM "Comment" cu WHERE cu."parentId" = c."parentId" AND cu."userId" != c."userId")) "ownerId",
@@ -340,24 +311,14 @@ export const commentNotifications = createNotificationProcessor({
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', case when details->>'version' is not null then 'v2:' else 'v1:' end, details->>'commentId') "key",
         "ownerId"    "userId",
         'new-thread-response' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_thread_response r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-thread-response')
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Notification" n
-          WHERE n."userId" = r."ownerId"
-              AND n."createdAt" > now() - interval '1 hour'
-              AND n.type IN ('new-comment-nested', 'new-comment-response', 'new-mention', 'new-article-comment', 'new-image-comment', 'new-comment-reply')
-              AND n.details->>'commentId' = r.details->>'commentId'
-        );
     `,
   },
   'new-review-response': {
@@ -376,7 +337,7 @@ export const commentNotifications = createNotificationProcessor({
         url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
     WITH new_review_response AS (
       SELECT DISTINCT
         r."userId" "ownerId",
@@ -387,7 +348,7 @@ export const commentNotifications = createNotificationProcessor({
           'reviewId', r.id,
           'modelName', m.name,
           'username', u.username
-        ) "details"
+        ) as "details"
       FROM "CommentV2" c
       JOIN "Thread" t ON t.id = c."threadId"
       JOIN "ResourceReview" r ON r.id = t."reviewId"
@@ -397,24 +358,14 @@ export const commentNotifications = createNotificationProcessor({
         AND c."createdAt" > '${lastSent}'
         AND c."userId" != r."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-      REPLACE(gen_random_uuid()::text, '-', ''),
-      "ownerId"    "userId",
-      'new-review-response' "type",
-      details,
-      '${category}'::"NotificationCategory" "category"
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
+        "ownerId"    "userId",
+        'new-review-response' "type",
+        details
       FROM new_review_response r
       WHERE
-      NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "Notification" n
-        WHERE n."userId" = r."ownerId"
-            AND n."createdAt" > now() - interval '1 hour'
-            AND n.type IN ('new-comment-nested', 'new-thread-response', 'new-mention')
-            AND n.details->>'commentId' = r.details->>'commentId'
-      );
+        NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-review-response')
     `,
   },
   'new-image-comment': {
@@ -451,7 +402,7 @@ export const commentNotifications = createNotificationProcessor({
 
       return { message, url };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_image_comment AS (
         SELECT DISTINCT
           i."userId" "ownerId",
@@ -477,13 +428,11 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != i."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-image-comment' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_image_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-image-comment');
@@ -496,7 +445,7 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_article_comment AS (
         SELECT DISTINCT
           a."userId" "ownerId",
@@ -515,13 +464,11 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '${lastSent}'
           AND c."userId" != a."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-article-comment' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_article_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-comment');
@@ -534,7 +481,7 @@ export const commentNotifications = createNotificationProcessor({
       message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
       url: `/bounties/${details.bountyId}?highlight=${details.commentId}#comments`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_bounty_comment AS (
         SELECT DISTINCT
           b."userId" "ownerId",
@@ -544,7 +491,7 @@ export const commentNotifications = createNotificationProcessor({
             'bountyTitle', b.name,
             'commentId', c.id,
             'username', u.username
-          ) "details"
+          ) as "details"
         FROM "CommentV2" c
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId" AND t."bountyId" IS NOT NULL
@@ -554,13 +501,11 @@ export const commentNotifications = createNotificationProcessor({
           AND c."createdAt" > '2024-02-24'
           AND c."userId" != b."userId"
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', 'v2:', details->>'commentId') "key",
         "ownerId"    "userId",
         'new-bounty-comment' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_bounty_comment
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-bounty-comment');

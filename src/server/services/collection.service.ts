@@ -1,20 +1,4 @@
-import { truncate, uniq, uniqBy } from 'lodash-es';
-import { dbWrite, dbRead } from '~/server/db/client';
 import {
-  BulkSaveCollectionItemsInput,
-  AddCollectionItemInput,
-  GetAllCollectionItemsSchema,
-  GetAllUserCollectionsInputSchema,
-  GetUserCollectionItemsByItemSchema,
-  UpdateCollectionItemsStatusInput,
-  UpsertCollectionInput,
-  GetAllCollectionsInfiniteSchema,
-  UpdateCollectionCoverImageInput,
-  CollectionMetadataSchema,
-} from '~/server/schema/collection.schema';
-import { SessionUser } from 'next-auth';
-import {
-  Collection,
   CollectionContributorPermission,
   CollectionItemStatus,
   CollectionMode,
@@ -28,18 +12,9 @@ import {
   Prisma,
   TagTarget,
 } from '@prisma/client';
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { isDefined } from '~/utils/type-guards';
-import type { ArticleGetAll } from '~/server/services/article.service';
-import { getArticles } from '~/server/services/article.service';
-import {
-  getModelsWithImagesAndModelVersions,
-  GetModelsWithImagesAndModelVersions,
-} from '~/server/services/model.service';
+import { uniq, uniqBy } from 'lodash-es';
+import { SessionUser } from 'next-auth';
+import { v4 as uuid } from 'uuid';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -50,27 +25,50 @@ import {
   PostSort,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  GetByIdInput,
+  UserPreferencesInput,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
+import {
+  AddCollectionItemInput,
+  BulkSaveCollectionItemsInput,
+  CollectionMetadataSchema,
+  GetAllCollectionItemsSchema,
+  GetAllCollectionsInfiniteSchema,
+  GetAllUserCollectionsInputSchema,
+  GetUserCollectionItemsByItemSchema,
+  UpdateCollectionCoverImageInput,
+  UpdateCollectionItemsStatusInput,
+  UpsertCollectionInput,
+} from '~/server/schema/collection.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionSelect } from '~/server/selectors/collection.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import type { ArticleGetAll } from '~/server/services/article.service';
+import { getArticles } from '~/server/services/article.service';
+import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import {
   deleteImageById,
   getAllImages,
   ImagesInfiniteModel,
   ingestImage,
 } from '~/server/services/image.service';
+import {
+  getModelsWithImagesAndModelVersions,
+  GetModelsWithImagesAndModelVersions,
+} from '~/server/services/model.service';
+import { createNotification } from '~/server/services/notification.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import {
-  GetByIdInput,
-  UserPreferencesInput,
-  userPreferencesSchema,
-} from '~/server/schema/base.schema';
-import { imageSelect } from '~/server/selectors/image.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { collectionsSearchIndex } from '~/server/search-index';
-import { createNotification } from '~/server/services/notification.service';
-import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { collectionSelect } from '~/server/selectors/collection.selector';
-import permission from '~/pages/api/admin/permission';
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1359,6 +1357,7 @@ export const updateCollectionItemsStatus = async ({
           type: 'contest-collection-item-status-change',
           userId: item.addedById,
           category: 'Update',
+          key: `contest-collection-item-status-change:${uuid()}`,
           details: {
             status,
             collectionId: collection.id,

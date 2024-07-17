@@ -3,6 +3,7 @@ import { CollectionMode } from '@prisma/client';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { useMutatePost } from '~/components/Post/post.utils';
 import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -32,7 +33,7 @@ export const useCollectionsForPostEditor = () => {
 
   useEffect(() => {
     if (!collectionId && post?.collectionId) {
-      updateCollection(post.collectionId);
+      updateCollection(post.collectionId, post.collectionTagId);
     }
   }, [post?.collectionId, collectionId]);
 
@@ -52,6 +53,8 @@ export const useCollectionsForPostEditor = () => {
 export const CollectionSelectDropdown = () => {
   const { post, collections, updateCollection, collectionId, collectionTagId, collectionIds } =
     useCollectionsForPostEditor();
+  const { updateCollectionTagId, updatingCollectionTagId } = useMutatePost();
+
   const writeableCollections = useMemo(() => {
     return collections.filter(
       (collection) => collection.permissions?.write || collection.permissions?.writeReview
@@ -70,6 +73,15 @@ export const CollectionSelectDropdown = () => {
     value: collection.id.toString(),
     label: getDisplayName(collection.name),
   }));
+
+  const handlePublishedPostCollectionTagUpdate = async (tagId: number) => {
+    await updateCollectionTagId({
+      id: post?.id as number,
+      collectionTagId: tagId,
+    });
+
+    updateCollection(collectionId as number, tagId);
+  };
 
   if (!writeableCollections.length || !collectionIds.length) {
     return null;
@@ -125,25 +137,50 @@ export const CollectionSelectDropdown = () => {
           )}
         </Group>
       ) : selectedCollection ? (
-        <Alert color="gray">
-          <Stack spacing={0}>
-            <Text size="sm">
-              This post has been created for the{' '}
-              <Text component="span" weight="bold">
-                {selectedCollection.name}
-              </Text>{' '}
-              collection.
-            </Text>
-            <Anchor
-              href={`/collections/${selectedCollection.id}`}
-              target="_blank"
-              rel="noopener noreferrer"
+        <Stack>
+          <Alert color="gray">
+            <Stack spacing={0}>
+              <Text size="sm">
+                This post has been created for the{' '}
+                <Text component="span" weight="bold">
+                  {selectedCollection.name}
+                </Text>{' '}
+                collection.
+              </Text>
+              <Anchor
+                href={`/collections/${selectedCollection.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="xs"
+              >
+                View collection
+              </Anchor>
+            </Stack>
+          </Alert>
+
+          {selectedCollection && selectedCollection.tags.length > 0 && (
+            <Select
+              label="Update Entry Category"
+              data={selectedCollection.tags.map((tag) => ({
+                value: tag.id.toString(),
+                label: toPascalCase(tag.name),
+              }))}
+              value={collectionTagId ? collectionTagId.toString() : null}
+              onChange={(value: string) => {
+                handlePublishedPostCollectionTagUpdate(parseInt(value, 10));
+              }}
+              disabled={updatingCollectionTagId}
+              placeholder="Select category"
+              radius="xl"
               size="xs"
-            >
-              View collection
-            </Anchor>
-          </Stack>
-        </Alert>
+              styles={{
+                input: {
+                  height: 32,
+                },
+              }}
+            />
+          )}
+        </Stack>
       ) : null}
 
       <Divider />

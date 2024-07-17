@@ -9,10 +9,11 @@ import {
   Paper,
   ScrollArea,
   Stack,
+  Switch,
   Text,
   Tooltip,
 } from '@mantine/core';
-import { useClickOutside } from '@mantine/hooks';
+import { useClickOutside, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
@@ -29,8 +30,15 @@ import {
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
+const notifLimit = 30;
+
 export function NotificationBell() {
   const mobile = useIsMobile();
+
+  const [hideRead, setHideRead] = useLocalStorage<boolean>({
+    key: 'notifications-hide-read',
+    defaultValue: false,
+  });
 
   const [opened, setOpened] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
@@ -45,7 +53,10 @@ export function NotificationBell() {
     hasNextPage,
     fetchNextPage,
     isRefetching,
-  } = useQueryNotifications({ limit: 20, category: selectedCategory }, { enabled: opened });
+  } = useQueryNotifications(
+    { limit: notifLimit, category: selectedCategory, unread: hideRead ? true : undefined },
+    { enabled: opened, keepPreviousData: false }
+  );
 
   const readNotificationMutation = useMarkReadNotification();
   const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
@@ -111,6 +122,12 @@ export function NotificationBell() {
               Notifications
             </Text>
             <Group spacing={8}>
+              <Switch
+                label="Hide Read"
+                labelPosition="left"
+                checked={hideRead}
+                onChange={(e) => setHideRead(e.currentTarget.checked)}
+              />
               <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
                 <ActionIcon
                   size="lg"

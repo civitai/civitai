@@ -54,6 +54,7 @@ import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -189,7 +190,7 @@ export function ModelCard({ data, forceInView }: Props) {
   const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
 
   const isPOI = data.poi;
-  const isMinor = data.minor;
+  const isSFWOnly = data.minor;
 
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
@@ -244,14 +245,14 @@ export function ModelCard({ data, forceInView }: Props) {
                               </Text>
                             </Badge>
                           )}
-                          {currentUser?.isModerator && isMinor && (
+                          {currentUser?.isModerator && isSFWOnly && (
                             <Badge
                               className={cx(classes.infoChip, classes.chip, classes.forMod)}
                               variant="light"
                               radius="xl"
                             >
                               <Text color="white" size="xs" transform="capitalize">
-                                Minor
+                                SFW
                               </Text>
                             </Badge>
                           )}

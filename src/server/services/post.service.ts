@@ -44,6 +44,7 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -60,6 +61,7 @@ import {
   PostUpdateInput,
   RemovePostTagInput,
   ReorderPostImagesInput,
+  UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
 
@@ -444,6 +446,38 @@ export const getPostsInfinite = async ({
   };
 };
 
+const getPostCollectionTagId = async ({
+  postCollectionId,
+  postId,
+  imageIds,
+}: {
+  postCollectionId: number;
+  postId: number;
+  imageIds?: number[];
+}) => {
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: {
+      collectionId: postCollectionId,
+      OR: [
+        {
+          postId,
+        },
+        {
+          imageId: { in: imageIds },
+        },
+      ],
+    },
+    select: { tagId: true },
+  });
+
+  const [item] = collectionItems;
+  if (item) {
+    return item.tagId;
+  }
+
+  return null;
+};
+
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const db = await getDbWithoutLag('post', id);
@@ -472,7 +506,17 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const images = await getPostEditImages({ id, user });
 
-  return { ...post, images };
+  let collectionTagId: null | number = null;
+  if (post.collectionId) {
+    // get tag Id for the first item
+    collectionTagId = await getPostCollectionTagId({
+      postCollectionId: post.collectionId,
+      postId: post.id,
+      imageIds: images.map((x) => x.id),
+    });
+  }
+
+  return { ...post, collectionTagId, images };
 };
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
@@ -524,10 +568,22 @@ export const createPost = async ({
     data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
+
   await preventReplicationLag('post', post.id);
+
+  let collectionTagId: null | number = null;
+  if (post.collectionId) {
+    // get tag Id for the first item
+    collectionTagId = await getPostCollectionTagId({
+      postCollectionId: post.collectionId,
+      postId: post.id,
+      imageIds: [],
+    });
+  }
 
   return {
     ...post,
+    collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
   };
@@ -890,5 +946,43 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
       ...item,
       collection,
     };
+  });
+};
+
+export const updatePostCollectionTagId = async ({
+  id,
+  collectionTagId,
+}: UpdatePostCollectionTagIdInput) => {
+  const post = await dbRead.post.findUnique({
+    where: { id },
+    select: { collectionId: true, userId: true },
+  });
+
+  if (!post || !post.collectionId) return;
+
+  const collection = await getCollectionById({ input: { id: post.collectionId } });
+
+  if (!collection || collection?.mode !== CollectionMode?.Contest) return;
+
+  if (!collection.tags.find((t) => t.id === collectionTagId))
+    throw throwBadRequestError('Invalid tag');
+
+  const isImageCollection = collection.type === CollectionType.Image;
+
+  const images = isImageCollection
+    ? await dbRead.image.findMany({
+        where: { postId: id },
+      })
+    : [];
+
+  await dbWrite.collectionItem.updateMany({
+    where: {
+      collectionId: post.collectionId,
+      postId: isImageCollection ? undefined : id,
+      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+    },
+    data: {
+      tagId: collectionTagId,
+    },
   });
 };

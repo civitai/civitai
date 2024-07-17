@@ -1,7 +1,113 @@
+import { Prisma } from '@prisma/client';
+import { Pool, QueryResult, QueryResultRow } from 'pg';
 import { env } from '~/env/server.mjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis } from '~/server/redis/client';
-import { Task, limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('pgDb', 'blue');
+
+type CancellableResult<R extends QueryResultRow = any> = {
+  query: Promise<QueryResult<R>>;
+  result: () => Promise<R[]>;
+  cancel: () => Promise<void>;
+};
+export type AugmentedPool = Pool & {
+  cancellableQuery: <R extends QueryResultRow = any>(
+    sql: Prisma.Sql | string
+  ) => Promise<CancellableResult<R>>;
+};
+
+export function getClient(
+  { readonly, isNotification }: { readonly: boolean; isNotification?: boolean } = {
+    readonly: false,
+    isNotification: false,
+  }
+) {
+  log(`Creating ${isNotification ? 'Notif' : 'PG'} client`);
+
+  const envUrl = isNotification
+    ? readonly
+      ? env.NOTIFICATION_DB_REPLICA_URL
+      : env.NOTIFICATION_DB_URL
+    : readonly
+    ? env.DATABASE_REPLICA_URL
+    : env.DATABASE_URL;
+
+  const connectionStringUrl = new URL(envUrl);
+  connectionStringUrl.searchParams.set('sslmode', 'no-verify');
+  const connectionString = connectionStringUrl.toString();
+
+  const appBaseName = isNotification ? 'notif-pg' : 'node-pg';
+
+  const pool = new Pool({
+    connectionString,
+    connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    max: env.DATABASE_POOL_MAX,
+    idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
+    statement_timeout: readonly ? env.DATABASE_READ_TIMEOUT : env.DATABASE_WRITE_TIMEOUT,
+    application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
+  }) as AugmentedPool;
+
+  pool.cancellableQuery = async function <R extends QueryResultRow = any>(
+    sql: Prisma.Sql | string
+  ) {
+    const connection = await pool.connect();
+    const pidQuery = await connection.query('SELECT pg_backend_pid()');
+    const pid = pidQuery.rows[0].pg_backend_pid;
+
+    // Fix dates
+    if (typeof sql === 'object') {
+      for (const i in sql.values) sql.values[i] = formatSqlType(sql.values[i]);
+    }
+
+    // Logging
+    log(readonly ? 'read' : 'write', sql);
+
+    let done = false;
+    const query = connection.query<R>(sql);
+    query.finally(() => {
+      done = true;
+      connection.release();
+    });
+
+    const cancel = async () => {
+      if (done) return;
+      const cancelConnection = await pool.connect();
+      await cancelConnection.query('SELECT pg_cancel_backend($1)', [pid]);
+      cancelConnection.release();
+      done = true;
+    };
+    const result = async () => {
+      const { rows } = await query;
+      return rows;
+    };
+
+    return { query, result, cancel };
+  };
+
+  return pool;
+}
+
+function formatSqlType(value: any): string {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.map(formatSqlType).join(',');
+    }
+    if (value === null) return 'null';
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+export function templateHandler<T>(fn: (value: string) => Promise<T> | T) {
+  return function (sql: TemplateStringsArray, ...values: any[]) {
+    const sqlString = sql.reduce((acc, part, i) => acc + part + formatSqlType(values[i] ?? ''), '');
+    return fn(sqlString);
+  };
+}
 
 type LaggingType =
   | 'model'
@@ -10,6 +116,7 @@ type LaggingType =
   | 'resourceReview'
   | 'post'
   | 'postImages';
+
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
   const value = await redis.get(`lag-helper:${type}:${id}`);
@@ -48,6 +155,7 @@ type DataProcessorOptions = {
     before?: Date;
   };
 };
+
 export async function dataProcessor({
   rangeFetcher,
   processor,

@@ -20,7 +20,7 @@ import { useBuzzTransaction } from './buzz.utils';
 type Props = ButtonProps & {
   buzzAmount: number;
   message?: string | ((requiredBalance: number) => string);
-  label: string;
+  label: React.ReactNode;
   onPerformTransaction?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   size?: MantineSize;

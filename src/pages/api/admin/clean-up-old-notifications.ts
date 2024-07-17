@@ -1,7 +1,8 @@
+import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { pgDbWrite } from '~/server/db/pgDb';
+import { notifDbWrite } from '~/server/db/notifDb';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { formatDateMin } from '~/utils/date-helpers';
@@ -38,9 +39,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       console.log(logKey);
       console.time(logKey);
 
-      const query = await pgDbWrite.cancellableQuery(`
-        DELETE FROM "Notification"
-        WHERE "createdAt" BETWEEN '${start.toISOString()}' AND '${end.toISOString()}';
+      const query = await notifDbWrite.cancellableQuery(Prisma.sql`
+        DELETE
+        FROM
+          "UserNotification"
+        WHERE
+          "createdAt" BETWEEN '${start.toISOString()}' AND '${end.toISOString()}';
       `);
       cancelFns.push(query.cancel);
       await query.result();
