@@ -1487,48 +1487,48 @@ export const getImagesForModelVersion = async ({
     (x) => !images.some((i) => i.modelVersionId === x)
   );
 
-  if (remainingModelVersionIds.length) {
-    const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
-        -- Get Community posts tied to the specific modelVersion via the post.
-        WITH targets AS (
-          SELECT
-            id,
-            "modelVersionId",
-            row_num
-          FROM (
-            SELECT
-              i.id,
-              p."modelVersionId",
-              row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
-            FROM "Image" i
-            JOIN "Post" p ON p.id = i."postId"
-            JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
-            WHERE p."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
-              AND ${Prisma.join(imageWhere, ' AND ')}
-          ) ranked
-          WHERE ranked.row_num <= 20
-        )
-        SELECT
-          i.id,
-          i."userId",
-          i.name,
-          i.url,
-          i."nsfwLevel",
-          i.width,
-          i.height,
-          i.hash,
-          i.type,
-          i.metadata,
-          t."modelVersionId",
-          p."availability"
-          ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
-        FROM targets t
-        JOIN "Image" i ON i.id = t.id
-        JOIN "Post" p ON p.id = i."postId"
-        ORDER BY t.row_num
-      `;
-    images = [...images, ...communityImages];
-  }
+  // if (remainingModelVersionIds.length) {
+  //   const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
+  //       -- Get Community posts tied to the specific modelVersion via the post.
+  //       WITH targets AS (
+  //         SELECT
+  //           id,
+  //           "modelVersionId",
+  //           row_num
+  //         FROM (
+  //           SELECT
+  //             i.id,
+  //             p."modelVersionId",
+  //             row_number() OVER (PARTITION BY p."modelVersionId" ORDER BY im."reactionCount" DESC) row_num
+  //           FROM "Image" i
+  //           JOIN "Post" p ON p.id = i."postId"
+  //           JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+  //           WHERE p."modelVersionId" IN (${Prisma.join(remainingModelVersionIds)})
+  //             AND ${Prisma.join(imageWhere, ' AND ')}
+  //         ) ranked
+  //         WHERE ranked.row_num <= 20
+  //       )
+  //       SELECT
+  //         i.id,
+  //         i."userId",
+  //         i.name,
+  //         i.url,
+  //         i."nsfwLevel",
+  //         i.width,
+  //         i.height,
+  //         i.hash,
+  //         i.type,
+  //         i.metadata,
+  //         t."modelVersionId",
+  //         p."availability"
+  //         ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+  //       FROM targets t
+  //       JOIN "Image" i ON i.id = t.id
+  //       JOIN "Post" p ON p.id = i."postId"
+  //       ORDER BY t.row_num
+  //     `;
+  //   images = [...images, ...communityImages];
+  // }
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
