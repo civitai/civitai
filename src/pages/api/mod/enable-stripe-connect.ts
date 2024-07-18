@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { addSystemPermission } from '~/server/services/system-cache';
 import { createUserStripeConnectAccount } from '~/server/services/user-stripe-connect.service';
@@ -22,7 +23,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       await createNotification({
         userId,
         type: 'creators-program-enabled',
-        category: 'System',
+        category: NotificationCategory.System,
         key: `creators-program-enabled:${userId}`,
         details: {},
       }).catch();

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { notifDbRead } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
@@ -236,11 +237,11 @@ export const toggleReactionHandler = async ({
 
 const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
   if (entityType === 'image') {
-    // could replace with metrics query
-    // select "reactionCount" from "ImageMetric" where "imageId" = X and timeframe = 'AllTime'
     const cnt = await dbRead.imageReaction.count({
       where: { imageId: entityId },
     });
+    if (!cnt) return;
+
     const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
     if (!match) return;
 
@@ -291,7 +292,7 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     await createNotification({
       type,
       key,
-      category: 'Milestone',
+      category: NotificationCategory.Milestone,
       userId: resource.userId,
       details,
     }).catch();

@@ -1,10 +1,11 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const reviewNotifications = createNotificationProcessor({
   // Moveable
   'new-review': {
     displayName: 'New reviews',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         const recommended = details.recommended ?? (!!details.rating && details.rating >= 3);

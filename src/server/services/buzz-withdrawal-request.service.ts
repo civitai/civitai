@@ -1,5 +1,6 @@
 import { BuzzWithdrawalRequestStatus, Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
+import { NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -397,7 +398,7 @@ export const updateBuzzWithdrawalRequest = async ({
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-approved',
-          category: 'System',
+          category: NotificationCategory.System,
           key: `creators-program-withdrawal-approved:${uuid()}`,
           details: {},
         }).catch();
@@ -406,7 +407,7 @@ export const updateBuzzWithdrawalRequest = async ({
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-rejected',
-          category: 'System',
+          category: NotificationCategory.System,
           key: `creators-program-withdrawal-rejected:${uuid()}`,
           details: {},
         }).catch();
@@ -415,7 +416,7 @@ export const updateBuzzWithdrawalRequest = async ({
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-transferred',
-          category: 'System',
+          category: NotificationCategory.System,
           key: `creators-program-withdrawal-transferred:${uuid()}`,
           details: {},
         }).catch();
@@ -424,7 +425,7 @@ export const updateBuzzWithdrawalRequest = async ({
         await createNotification({
           userId: request.userId as number,
           type: 'creators-program-withdrawal-reverted',
-          category: 'System',
+          category: NotificationCategory.System,
           key: `creators-program-withdrawal-reverted:${uuid()}`,
           details: {},
         }).catch();

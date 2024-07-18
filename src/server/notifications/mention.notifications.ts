@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { commentDedupeKey, threadUrlMap } from '~/server/notifications/comment.notifications';
 
@@ -6,7 +7,7 @@ import { commentDedupeKey, threadUrlMap } from '~/server/notifications/comment.n
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {

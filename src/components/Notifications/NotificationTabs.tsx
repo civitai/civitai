@@ -1,10 +1,10 @@
 import { Badge, createStyles, Tabs, TabsProps, Text } from '@mantine/core';
-import { NotificationCategory } from '@prisma/client';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
+import { NotificationCategory } from '~/server/common/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const tabs = ['all', ...Object.values(NotificationCategory)];

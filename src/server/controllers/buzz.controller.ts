@@ -1,6 +1,7 @@
 import { ClubAdminPermission, EntityType } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
@@ -225,7 +226,7 @@ export async function createBuzzTipTransactionHandler({
         await createNotification({
           type: 'tip-received',
           userId: toAccountId,
-          category: 'Buzz',
+          category: NotificationCategory.Buzz,
           key: `tip-received:${uuid()}`,
           details: {
             amount: amount,

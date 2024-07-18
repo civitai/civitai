@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -291,7 +292,7 @@ const createResourceReviewNotification = async ({
   await createNotification({
     type: 'new-review',
     key: `new-review:${modelVersionId}:${userId}`,
-    category: 'Update',
+    category: NotificationCategory.Update,
     userId: modelVersion.model.userId,
     details: detailsObj,
   }).catch();

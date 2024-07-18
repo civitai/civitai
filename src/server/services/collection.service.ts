@@ -21,6 +21,7 @@ import {
   CollectionSort,
   ImageSort,
   ModelSort,
+  NotificationCategory,
   NsfwLevel,
   PostSort,
   SearchIndexUpdateQueueAction,
@@ -1356,7 +1357,7 @@ export const updateCollectionItemsStatus = async ({
         await createNotification({
           type: 'contest-collection-item-status-change',
           userId: item.addedById,
-          category: 'Update',
+          category: NotificationCategory.Update,
           key: `contest-collection-item-status-change:${uuid()}`,
           details: {
             status,
