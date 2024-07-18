@@ -240,6 +240,13 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const cnt = await dbRead.imageReaction.count({
       where: { imageId: entityId },
     });
+
+    // const { reactionCount: cnt = 0 } =
+    //   (await dbRead.imageMetric.findFirst({
+    //     where: { imageId: entityId, timeframe: MetricTimeframe.AllTime },
+    //     select: { reactionCount: true },
+    //   })) ?? {};
+
     if (!cnt) return;
 
     const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
