@@ -183,9 +183,9 @@ export function QueueItem({
               {!!actualCost &&
                 dayjs(request.createdAt).toDate() >=
                   constants.buzz.generationBuzzChargingStartDate && (
-                  <GenerationCostPopover baseCost={actualCost} readOnly>
+                  <GenerationCostPopover workflowCost={request.cost ?? {}} readOnly>
                     {/* Wrapped in div for the popover to work properly */}
-                    <div>
+                    <div className="cursor-pointer">
                       <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
                     </div>
                   </GenerationCostPopover>

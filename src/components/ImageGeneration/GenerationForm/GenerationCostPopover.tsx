@@ -1,3 +1,4 @@
+import { WorkflowCost } from '@civitai/client';
 import {
   ActionIcon,
   Group,
@@ -26,7 +27,7 @@ const getEmojiByValue = (value: number) => {
 
 export function GenerationCostPopover({
   children,
-  baseCost,
+  workflowCost,
   creatorTipInputOptions,
   civitaiTipInputOptions,
   readOnly,
@@ -45,50 +46,40 @@ export function GenerationCostPopover({
 
   const items: DescriptionTableProps['items'] = [
     {
-      label: 'Base Cost',
+      label: 'Size',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {baseCost}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          {Math.round(((workflowCost.factors?.size ?? 0) - 1) * 100)}%
         </Group>
       ),
+      visible: !!workflowCost.factors?.size,
     },
     {
-      label: 'Size Cost',
+      label: 'Steps',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {baseCost}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          {Math.round(((workflowCost.factors?.steps ?? 0) - 1) * 100)}%
         </Group>
       ),
+      visible: !!workflowCost.factors?.steps,
     },
     {
-      label: 'Step Cost',
+      label: 'Sampler',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {baseCost}
-          <CurrencyIcon currency="BUZZ" size={16} />
+          {Math.round(((workflowCost.factors?.scheduler ?? 0) - 1) * 100)}%
         </Group>
       ),
+      visible: !!workflowCost.factors?.scheduler,
     },
     {
-      label: 'Workflow Cost',
+      label: <div className="font-bold">Base Cost</div>,
       value: (
-        <Group spacing={4} position="right" noWrap>
-          {baseCost}
+        <Group spacing={4} position="right" className="font-bold" noWrap>
+          {workflowCost.base ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-    },
-    {
-      label: <div className="font-semibold">Total</div>,
-      value: (
-        <Group spacing={4} position="right" noWrap>
-          {baseCost}
-          <CurrencyIcon currency="BUZZ" size={16} />
-        </Group>
-      ),
-      visible: !readOnly,
     },
     {
       label: (
@@ -114,7 +105,9 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil((baseCost * (creatorTipInputOptions?.value ?? 0)) / 100)}
+          {workflowCost.base && creatorTipInputOptions?.value
+            ? Math.ceil(((workflowCost.base ?? 0) * (creatorTipInputOptions?.value ?? 0)) / 100)
+            : '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -124,11 +117,11 @@ export function GenerationCostPopover({
       label: 'Creator Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {baseCost}
+          {workflowCost.tips?.creators ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-      visible: !!readOnly,
+      visible: !!readOnly && !!workflowCost.tips?.creators,
     },
     {
       label: (
@@ -153,7 +146,9 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil((baseCost * (civitaiTipInputOptions?.value ?? 0)) / 100)}
+          {workflowCost.base && civitaiTipInputOptions?.value
+            ? Math.ceil(((workflowCost.base ?? 0) * (civitaiTipInputOptions?.value ?? 0)) / 100)
+            : '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -163,11 +158,11 @@ export function GenerationCostPopover({
       label: 'Civitai Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {baseCost}
+          {workflowCost.base ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-      visible: !!readOnly,
+      visible: !!readOnly && !!workflowCost.tips?.civitai,
     },
   ];
 
@@ -227,7 +222,7 @@ function BreakdownExplanation() {
 }
 
 type Props = PopoverProps & {
-  baseCost: number;
+  workflowCost: WorkflowCost;
   creatorTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   civitaiTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   readOnly?: boolean;

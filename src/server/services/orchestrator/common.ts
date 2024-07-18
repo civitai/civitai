@@ -254,9 +254,9 @@ function getUpscaleSize(src: number, multiplier = 1) {
   return Math.ceil((src * multiplier) / 64) * 64;
 }
 
-function getStepCost(step: WorkflowStep) {
-  return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
-}
+// function getStepCost(step: WorkflowStep) {
+//   return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
+// }
 
 function getResources(step: WorkflowStep) {
   if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
@@ -292,11 +292,8 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
       id: workflow.id as string,
       status: workflow.status ?? ('unassignend' as WorkflowStatus),
       createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
-      totalCost:
-        workflow.transactions?.list?.reduce((acc, value) => {
-          if (value.type === 'debit') return acc + value.amount;
-          else return acc - value.amount;
-        }, 0) ?? 0,
+      totalCost: workflow.cost?.total ?? 0,
+      cost: workflow.cost,
       tags: workflow.tags ?? [],
       steps: workflow.steps.map((step) =>
         formatWorkflowStep({
@@ -446,7 +443,6 @@ export function formatTextToImageStep({
     status: step.status,
     metadata: metadata,
     resources: formatGenerationResources(resources.filter((x) => !injectableIds.includes(x.id))),
-    cost: getStepCost(step),
   };
 }
 
@@ -498,7 +494,6 @@ export function formatComfyStep({
         stepResources.some((x) => x.id === resource.id)
       )
     ),
-    cost: getStepCost(step),
   };
 }
 

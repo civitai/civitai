@@ -28,6 +28,7 @@ import { createComfy, createComfyStep } from '~/server/services/orchestrator/com
 import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -76,7 +77,7 @@ export const orchestratorRouter = router({
           await Promise.all(
             input.data.map(async (data) =>
               Object.entries(data.metadata.images)
-                .filter(([_, x]) => (x as any).feedback)
+                .filter(([, x]) => (x as any).feedback)
                 .map(([key]) =>
                   generatorFeedbackReward.apply({
                     userId: ctx.user.id,
@@ -130,7 +131,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
       };
 
-      let step: any;
+      let step: TextToImageStepTemplate | ComfyStepTemplate;
       if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
       else step = await createComfyStep(args);
 
@@ -144,15 +145,12 @@ export const orchestratorRouter = router({
         },
       });
 
-      let cost = 0,
-        ready = true,
+      let ready = true,
         eta = dayjs().add(10, 'minutes').toDate(),
         position = 0;
 
       for (const step of workflow.steps ?? []) {
         for (const job of step.jobs ?? []) {
-          cost += job.cost;
-
           const { queuePosition } = job;
           if (!queuePosition) continue;
 
@@ -166,7 +164,7 @@ export const orchestratorRouter = router({
       }
 
       return {
-        cost: Math.ceil(cost),
+        cost: workflow.cost,
         ready,
         eta,
         position,

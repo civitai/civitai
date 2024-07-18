@@ -64,7 +64,7 @@ export async function createTextToImageStep(
 export async function createTextToImage(
   args: z.infer<typeof generateImageSchema> & { user: SessionUser; token: string }
 ) {
-  const { params, resources, remix } = args;
+  const { params, resources, remix, tips } = args;
   const metadata = { params, resources, remix };
   const step = await createTextToImageStep(args);
   const workflow = (await submitWorkflow({
@@ -72,6 +72,7 @@ export async function createTextToImage(
     body: {
       tags: [WORKFLOW_TAGS.IMAGE, args.params.workflow, ...args.tags],
       steps: [step],
+      tips,
       metadata,
       callbacks: [
         {

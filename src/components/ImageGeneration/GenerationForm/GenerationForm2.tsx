@@ -204,7 +204,16 @@ export function GenerationFormContent() {
 
     const { cost = 0 } = useCostStore.getState();
 
-    const { model, resources: additionalResources, vae, remix, aspectRatio, ...params } = data;
+    const {
+      model,
+      resources: additionalResources,
+      vae,
+      remix,
+      aspectRatio,
+      civitaiTip = 0,
+      creatorTip = 0,
+      ...params
+    } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
 
     const resources = [model, ...additionalResources, vae]
@@ -217,6 +226,7 @@ export function GenerationFormContent() {
         await mutateAsync({
           resources,
           params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
+          tips: { creators: creatorTip, civitai: civitaiTip },
           remix,
         });
       } catch (e) {
@@ -229,7 +239,8 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    conditionalPerformTransaction(cost, performTransaction);
+    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
+    conditionalPerformTransaction(totalCost, performTransaction);
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
@@ -989,11 +1000,11 @@ function SubmitButton(props: { isLoading?: boolean }) {
 
   useEffect(() => {
     if (data) {
-      useCostStore.setState({ cost: data.cost });
+      useCostStore.setState({ cost: data.cost?.base ?? 0 });
     }
   }, [data?.cost]); // eslint-disable-line
 
-  const cost = data?.cost ?? 0;
+  const cost = data?.cost?.base ?? 0;
   const totalCost = Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost);
 
   return (
@@ -1013,7 +1024,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
       />
       <GenerationCostPopover
         width={300}
-        baseCost={cost}
+        workflowCost={data?.cost ?? {}}
         creatorTipInputOptions={{
           value: (creatorTip ?? 0) * 100,
           onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
@@ -1023,7 +1034,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
           onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
         }}
       >
-        <Button variant="outline" px={8} size="lg" color="yellow.5">
+        <Button variant="outline" px={8} size="lg" color="yellow.5" disabled={!data?.cost}>
           <IconInfoCircle />
         </Button>
       </GenerationCostPopover>
