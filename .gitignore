@@ -54,3 +54,4 @@ yarn-error.log*
 # SEO
 /public/sitemap*.xml
 /public/robots.txt
+ca-certificate.crt

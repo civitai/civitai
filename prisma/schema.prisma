@@ -7,6 +7,17 @@
 // 3. review and revise your migration then manually apply it to the DB.
 // 4. `npm run db:applied` to mark the last migration as applied.
 
+generator kysely {
+  provider = "prisma-kysely"
+
+  // Optionally provide a destination directory for the generated file
+  // and a filename of your choice
+  output       = "../src/server/kysely-db"
+  fileName     = "kyesely.types.ts"
+  // Optionally generate runtime enums to a separate file
+  enumFileName = "kysely.enums.ts"
+}
+
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["metrics"]
