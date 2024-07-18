@@ -4,7 +4,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 import { humanizeList } from '~/utils/humanizer';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
-export const imageReactionMilestones = [2, 5, 10, 20, 50, 100] as const;
+export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
 const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 // const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 
