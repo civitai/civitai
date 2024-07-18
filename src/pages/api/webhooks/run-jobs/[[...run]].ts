@@ -47,6 +47,8 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { updateUserScore } from '~/server/jobs/update-user-score';
+import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -92,6 +94,8 @@ export const jobs: Job[] = [
   clearVaultItems,
   ...jobQueueJobs,
   countReviewImages,
+  processingEngingEarlyAccess,
+  updateUserScore,
   tempSetMissingNsfwLevel,
 ];
 

@@ -1,4 +1,10 @@
-import { ModelFileVisibility, ModelModifier, ModelType, Prisma } from '@prisma/client';
+import {
+  Availability,
+  ModelFileVisibility,
+  ModelModifier,
+  ModelType,
+  Prisma,
+} from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
@@ -12,6 +18,7 @@ import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
+import { EntityAccessPermission } from '~/server/common/enums';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -161,12 +168,14 @@ export const getFileForModelVersion = async ({
       },
       name: true,
       trainedWords: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
+      earlyAccessConfig: true,
       createdAt: true,
       vaeId: true,
       requireAuth: true,
     },
   });
+
   if (!modelVersion) return { status: 'not-found' };
 
   const [entityAccess] = await hasEntityAccess({
@@ -176,9 +185,8 @@ export const getFileForModelVersion = async ({
     isModerator: user?.isModerator ?? undefined,
   });
 
-  if (!(entityAccess?.hasAccess ?? true)) {
-    return { status: 'unauthorized' };
-  }
+  const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
+  const inEarlyAccess = deadline !== undefined && new Date() < deadline;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
   if (!noAuth && archived) return { status: 'archived' };
@@ -191,19 +199,25 @@ export const getFileForModelVersion = async ({
     isMod ||
     isOwner ||
     (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
+
   if (!canDownload) return { status: 'not-found' };
 
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  const deadline = getEarlyAccessDeadline({
-    versionCreatedAt: modelVersion.createdAt,
-    publishedAt: modelVersion.model.publishedAt,
-    earlyAccessTimeframe: modelVersion.earlyAccessTimeFrame,
-  });
-  const inEarlyAccess = deadline !== undefined && new Date() < deadline;
-  if (!noAuth && !user?.tier && !isMod && !isOwner && inEarlyAccess) {
-    return { status: 'early-access', details: { deadline } };
+  if (!(entityAccess?.hasAccess ?? true)) {
+    // Check the early access scenario:
+    if (
+      !noAuth &&
+      (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) != 0 &&
+      !isMod &&
+      !isOwner &&
+      inEarlyAccess
+    ) {
+      return { status: 'early-access', details: { deadline } };
+    }
+
+    return { status: 'unauthorized' };
   }
 
   // Get the correct file

@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { UserMeta } from '~/server/schema/user.schema';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
@@ -58,6 +59,7 @@ export type CivitaiSessionUser = SessionUser & {
   blurNsfw: boolean;
   disableHidden?: boolean;
   browsingLevel: number;
+  meta?: UserMeta;
 };
 
 // for reference: https://github.com/pacocoursey/state/blob/main/context.js
