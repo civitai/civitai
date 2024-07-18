@@ -125,51 +125,56 @@ export const orchestratorRouter = router({
     .input(generateImageWhatIfSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {
-      const args = {
-        ...input,
-        resources: input.resources.map((id) => ({ id, strength: 1 })),
-        user: ctx.user,
-        token: ctx.token,
-      };
+      try {
+        const args = {
+          ...input,
+          resources: input.resources.map((id) => ({ id, strength: 1 })),
+          user: ctx.user,
+          token: ctx.token,
+        };
 
-      let step: TextToImageStepTemplate | ComfyStepTemplate;
-      if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
-      else step = await createComfyStep(args);
+        let step: TextToImageStepTemplate | ComfyStepTemplate;
+        if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
+        else step = await createComfyStep(args);
 
-      const workflow = await submitWorkflow({
-        token: args.token,
-        body: {
-          steps: [step],
-        },
-        query: {
-          whatif: true,
-        },
-      });
+        const workflow = await submitWorkflow({
+          token: args.token,
+          body: {
+            steps: [step],
+          },
+          query: {
+            whatif: true,
+          },
+        });
 
-      let ready = true,
-        eta = dayjs().add(10, 'minutes').toDate(),
-        position = 0;
+        let ready = true,
+          eta = dayjs().add(10, 'minutes').toDate(),
+          position = 0;
 
-      for (const step of workflow.steps ?? []) {
-        for (const job of step.jobs ?? []) {
-          const { queuePosition } = job;
-          if (!queuePosition) continue;
+        for (const step of workflow.steps ?? []) {
+          for (const job of step.jobs ?? []) {
+            const { queuePosition } = job;
+            if (!queuePosition) continue;
 
-          const { precedingJobs, startAt, support } = queuePosition;
-          if (support !== 'available' && ready) ready = false;
-          if (precedingJobs && precedingJobs < position) {
-            position = precedingJobs;
-            if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
+            const { precedingJobs, startAt, support } = queuePosition;
+            if (support !== 'available' && ready) ready = false;
+            if (precedingJobs && precedingJobs < position) {
+              position = precedingJobs;
+              if (startAt && new Date(startAt).getTime() < eta.getTime()) eta = new Date(startAt);
+            }
           }
         }
-      }
 
-      return {
-        cost: workflow.cost,
-        ready,
-        eta,
-        position,
-      };
+        return {
+          cost: workflow.cost,
+          ready,
+          eta,
+          position,
+        };
+      } catch (e) {
+        logToAxiom({ name: 'generate-image-what-if', type: 'error', payload: input, error: e });
+        throw e;
+      }
     }),
   // #endregion
 

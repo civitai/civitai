@@ -18,6 +18,7 @@ import {
   useMantineTheme,
   LoadingOverlay,
   ActionIcon,
+  Group,
 } from '@mantine/core';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -1008,37 +1009,39 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const totalCost = Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost);
 
   return (
-    <Button.Group>
-      <GenerateButton
-        type="submit"
-        className="h-auto flex-1"
-        loading={isInitialLoading || props.isLoading}
-        cost={totalCost}
-        error={
-          !isInitialLoading && isError
-            ? error
-              ? (error as any).message
-              : 'Error calculating cost. Please try updating your values'
-            : undefined
-        }
-      />
-      <GenerationCostPopover
-        width={300}
-        workflowCost={data?.cost ?? {}}
-        creatorTipInputOptions={{
-          value: (creatorTip ?? 0) * 100,
-          onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
-        }}
-        civitaiTipInputOptions={{
-          value: (civitaiTip ?? 0) * 100,
-          onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
-        }}
-      >
-        <Button variant="outline" px={8} size="lg" color="yellow.5" disabled={!data?.cost}>
-          <IconInfoCircle />
-        </Button>
-      </GenerationCostPopover>
-    </Button.Group>
+    <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
+      <Group className="flex-1" spacing={6} noWrap>
+        <GenerateButton
+          type="submit"
+          className="h-full flex-1"
+          loading={isInitialLoading || props.isLoading}
+          cost={totalCost}
+          error={
+            !isInitialLoading && isError
+              ? error
+                ? (error as any).message
+                : 'Error calculating cost. Please try updating your values'
+              : undefined
+          }
+        />
+        <GenerationCostPopover
+          width={300}
+          workflowCost={data?.cost ?? {}}
+          creatorTipInputOptions={{
+            value: (creatorTip ?? 0) * 100,
+            onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
+          }}
+          civitaiTipInputOptions={{
+            value: (civitaiTip ?? 0) * 100,
+            onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
+          }}
+        >
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
+            <IconInfoCircle stroke={2.5} />
+          </ActionIcon>
+        </GenerationCostPopover>
+      </Group>
+    </Paper>
   );
 }
 // #endregion

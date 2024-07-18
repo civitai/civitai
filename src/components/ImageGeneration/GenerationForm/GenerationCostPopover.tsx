@@ -1,6 +1,7 @@
 import { WorkflowCost } from '@civitai/client';
 import {
   ActionIcon,
+  createStyles,
   Group,
   NumberInput,
   NumberInputProps,
@@ -25,6 +26,23 @@ const getEmojiByValue = (value: number) => {
   return '😇';
 };
 
+const useStyles = createStyles((theme) => ({
+  tableCell: {
+    height: '50px !important',
+    backgroundColor:
+      theme.colorScheme === 'dark'
+        ? `${theme.colors.dark[6]} !important`
+        : `${theme.white} !important`,
+  },
+
+  baseCostCell: {
+    backgroundColor:
+      theme.colorScheme === 'dark'
+        ? `${theme.colors.dark[4]} !important`
+        : `${theme.colors.gray[1]} !important`,
+  },
+}));
+
 export function GenerationCostPopover({
   children,
   workflowCost,
@@ -33,6 +51,8 @@ export function GenerationCostPopover({
   readOnly,
   ...popoverProps
 }: Props) {
+  const { classes, cx } = useStyles();
+
   const handleShowExplanationClick: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -49,10 +69,11 @@ export function GenerationCostPopover({
       label: 'Size',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.round(((workflowCost.factors?.size ?? 0) - 1) * 100)}%
+          {workflowCost.factors?.size}x
         </Group>
       ),
-      visible: !!workflowCost.factors?.size,
+      visible: !!workflowCost.factors?.size && workflowCost.factors?.size > 1,
+      className: classes.tableCell,
     },
     {
       label: 'Steps',
@@ -61,7 +82,8 @@ export function GenerationCostPopover({
           {Math.round(((workflowCost.factors?.steps ?? 0) - 1) * 100)}%
         </Group>
       ),
-      visible: !!workflowCost.factors?.steps,
+      visible: !!workflowCost.factors?.steps && workflowCost.factors?.steps !== 1,
+      className: classes.tableCell,
     },
     {
       label: 'Sampler',
@@ -70,7 +92,8 @@ export function GenerationCostPopover({
           {Math.round(((workflowCost.factors?.scheduler ?? 0) - 1) * 100)}%
         </Group>
       ),
-      visible: !!workflowCost.factors?.scheduler,
+      visible: !!workflowCost.factors?.scheduler && workflowCost.factors?.scheduler !== 1,
+      className: classes.tableCell,
     },
     {
       label: <div className="font-bold">Base Cost</div>,
@@ -80,6 +103,7 @@ export function GenerationCostPopover({
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
+      className: cx(classes.tableCell, classes.baseCostCell),
     },
     {
       label: (
@@ -112,6 +136,7 @@ export function GenerationCostPopover({
         </Group>
       ),
       visible: !readOnly,
+      className: classes.tableCell,
     },
     {
       label: 'Creator Tip',
@@ -122,6 +147,7 @@ export function GenerationCostPopover({
         </Group>
       ),
       visible: !!readOnly && !!workflowCost.tips?.creators,
+      className: classes.tableCell,
     },
     {
       label: (
@@ -135,6 +161,7 @@ export function GenerationCostPopover({
             step={5}
             defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
+            icon={getEmojiByValue(civitaiTipInputOptions?.value ?? 0)}
             formatter={(value) => {
               if (!value) return '%';
               const parsedValue = parseFloat(value);
@@ -153,6 +180,7 @@ export function GenerationCostPopover({
         </Group>
       ),
       visible: !readOnly,
+      className: classes.tableCell,
     },
     {
       label: 'Civitai Tip',
@@ -163,6 +191,7 @@ export function GenerationCostPopover({
         </Group>
       ),
       visible: !!readOnly && !!workflowCost.tips?.civitai,
+      className: classes.tableCell,
     },
   ];
 
@@ -172,7 +201,9 @@ export function GenerationCostPopover({
       <Popover.Dropdown p={0}>
         <DescriptionTable
           title={
-            <div className="flex items-center justify-between gap-4 p-2">
+            <div
+              className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}
+            >
               <div className="font-semibold">Generation Cost Breakdown</div>
               <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
                 <IconInfoCircle size={18} />

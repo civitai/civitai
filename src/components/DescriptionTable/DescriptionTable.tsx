@@ -32,6 +32,7 @@ export function DescriptionTable({
       <Box component="tr" key={i}>
         <Box
           component="td"
+          className={item.className}
           sx={(theme) => ({
             backgroundColor:
               theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
@@ -41,7 +42,7 @@ export function DescriptionTable({
         >
           {labelEl}
         </Box>
-        <Box component="td" sx={{ padding: '7px 7px !important' }}>
+        <Box component="td" className={item.className} sx={{ padding: '7px 7px !important' }}>
           {item.value}
         </Box>
       </Box>
@@ -80,6 +81,7 @@ export type Props = Omit<TableProps, 'title'> & {
     value: React.ReactNode;
     visible?: boolean;
     info?: React.ReactNode;
+    className?: string;
   }>;
   title?: React.ReactNode;
   labelWidth?: React.CSSProperties['width'];
