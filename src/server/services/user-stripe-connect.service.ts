@@ -1,6 +1,7 @@
 import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
+import { NotificationCategory } from '~/server/common/enums';
 import { env } from '../../env/server.mjs';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
@@ -111,7 +112,7 @@ export async function updateByStripeConnectAccount({
       await createNotification({
         userId: userStripeConnect.userId,
         type: 'creators-program-payments-enabled',
-        category: 'System',
+        category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${uuid()}`,
         details: {},
       }).catch();
@@ -130,7 +131,7 @@ export async function updateByStripeConnectAccount({
       await createNotification({
         userId: userStripeConnect.userId,
         type: 'creators-program-rejected-stripe',
-        category: 'System',
+        category: NotificationCategory.System,
         key: `creators-program-rejected-stripe:${uuid()}`,
         details: {},
       }).catch();

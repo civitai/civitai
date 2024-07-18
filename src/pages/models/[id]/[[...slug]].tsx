@@ -993,22 +993,25 @@ export default function ModelDetailsV2({
         ) : null}
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-        <AssociatedModels
-          fromId={model.id}
-          type="Suggested"
-          label={
-            <Group spacing={8} noWrap>
-              Suggested Resources{' '}
-              <InfoPopover>
-                <Text size="sm" weight={400}>
-                  These are resources suggested by the creator of this model. They may be related to
-                  this model or created by the same user.
-                </Text>
-              </InfoPopover>
-            </Group>
-          }
-          ownerId={model.user.id}
-        />
+        <Stack>
+          <AssociatedModels
+            fromId={model.id}
+            type="Suggested"
+            versionId={selectedVersion?.id}
+            label={
+              <Group spacing={8} noWrap>
+                Suggested Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources suggested by the creator of this model. They may be related
+                    to this model or created by the same user.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
+        </Stack>
       )}
       {canLoadBelowTheFold &&
         (!model.locked ? (

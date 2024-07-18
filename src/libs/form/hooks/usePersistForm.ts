@@ -8,7 +8,7 @@ import {
   FieldValues,
 } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getDeepPartialWithoutChecks } from '~/utils/zod-helpers';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
@@ -49,7 +49,7 @@ export function usePersistForm<
     _storageSchema.current = z.object({
       state: z.object({}).passthrough(),
       // state: schema ? getDeepPartialWithoutChecks(schema) : z.object({}).passthrough(),
-      version: z.number(),
+      version: z.number().default(version),
     });
 
   const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
@@ -107,6 +107,7 @@ export function usePersistForm<
 
   function getParsedStorage() {
     const str = getStorage().getItem(storageKey);
+    console.log({ str });
     return str ? parseStorage(str).state : {};
   }
 

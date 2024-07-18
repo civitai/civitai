@@ -339,3 +339,17 @@ ol {
     height: 100%;
   }
 }
+
+[data-type="strawPoll"] {
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 8px;
+
+}
+[data-type="strawPoll"] iframe {
+  flex-grow: 1;
+}

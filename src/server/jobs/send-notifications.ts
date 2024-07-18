@@ -1,8 +1,9 @@
-import { NotificationCategory, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { chunk, isEmpty } from 'lodash-es';
 import { isPromise } from 'util/types';
 import { z } from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';

@@ -65,6 +65,7 @@ import { orchestratorRouter } from '~/server/routers/orchestrator.router';
 import { modRouter } from '~/server/routers/moderator';
 import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
 import { gamesRouter } from '~/server/routers/games.router';
+import { recommendersRouter } from './recommenders.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -97,6 +98,7 @@ export const appRouter = router({
   post: postRouter,
   question: questionRouter,
   reaction: reactionRouter,
+  recommenders: recommendersRouter,
   report: reportRouter,
   resourceReview: resourceReviewRouter,
   signals: signalsRouter,

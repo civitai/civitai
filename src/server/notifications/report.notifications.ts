@@ -1,10 +1,11 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const reportNotifications = createNotificationProcessor({
   // Moveable
   'report-actioned': {
     displayName: 'Report actioned',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `The ${

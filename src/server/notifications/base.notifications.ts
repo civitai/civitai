@@ -1,6 +1,6 @@
 import { ClickHouseClient } from '@clickhouse/client';
-import { NotificationCategory } from '@prisma/client';
 import { z } from 'zod';
+import { NotificationCategory } from '~/server/common/enums';
 
 export type NotificationProcessor = {
   displayName: string;

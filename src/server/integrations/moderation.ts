@@ -14,7 +14,7 @@ function removeFalsePositiveTriggers(prompt: string) {
   return prompt;
 }
 
-async function moderatePrompt(prompt: string) {
+async function moderatePrompt(prompt: string): Promise<{ flagged: false; categories: string[] }> {
   if (!env.EXTERNAL_MODERATION_TOKEN || !env.EXTERNAL_MODERATION_ENDPOINT)
     return { flagged: false, categories: [] };
 

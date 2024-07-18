@@ -83,7 +83,7 @@ const createContextStore = (post?: PostDetailEditable) =>
           })) ?? [],
         isReordering: false,
         collectionId: post?.collectionId,
-        collectionTagId: null,
+        collectionTagId: post?.collectionTagId ?? null,
         /**
          * @deprecated
          */

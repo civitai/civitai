@@ -28,6 +28,7 @@ import { createComfy, createComfyStep } from '~/server/services/orchestrator/com
 import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { logToAxiom } from '~/server/logging/client';
 import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {

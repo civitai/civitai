@@ -1,11 +1,10 @@
-import { NotificationCategory } from '@prisma/client';
 import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SignalMessages } from '~/server/common/enums';
+import { NotificationCategory, SignalMessages } from '~/server/common/enums';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
 import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
@@ -63,6 +62,7 @@ export const useMarkReadNotification = () => {
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
         for (const key of Object.keys(newCounts)) {
+          // TODO fix issue here with category clearing out all when it shouldnt
           const keyMatch = !categoryStr || key === categoryStr || key === 'all';
           if (keyMatch) {
             if (all) newCounts[key] = 0;

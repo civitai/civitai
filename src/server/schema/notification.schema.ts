@@ -1,5 +1,5 @@
-import { NotificationCategory } from '@prisma/client';
 import { z } from 'zod';
+import { NotificationCategory } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 

@@ -1,9 +1,10 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const imageNotifications = createNotificationProcessor({
   'profile-picture-blocked': {
     displayName: 'Avatar blocked',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: () => ({
       message: 'Your avatar has been blocked.',

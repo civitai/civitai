@@ -1,7 +1,9 @@
-import { NotificationCategory, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { NotificationSingleRowFull } from '~/server/jobs/send-notifications';
+import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
   notificationCache,
@@ -30,36 +32,52 @@ export const createNotification = async (
     userIds?: number[];
   }
 ) => {
-  if (!data.userIds) data.userIds = [];
-  if (data.userId) data.userIds.push(data.userId);
-  if (data.userIds.length === 0) return;
+  try {
+    if (!data.userIds) data.userIds = [];
+    if (data.userId) data.userIds.push(data.userId);
+    if (data.userIds.length === 0) return;
 
-  const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
-    where: { userId: { in: data.userIds }, type: data.type },
-  });
-  // TODO fix below for multiple userIds
-  //   also, does this block notifications from users youve blocked? we'd have to know the "origin" user
-  const blockedUsers = await Promise.all([
-    BlockedUsers.getCached({ userId: data.userId }),
-    BlockedByUsers.getCached({ userId: data.userId }),
-  ]);
-  const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
-  const targets = data.userIds.filter(
-    (x) => !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x)
-  );
-  // If the user has this notification type disabled, don't create a notification.
-  if (targets.length === 0) return;
+    const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
+      where: { userId: { in: data.userIds }, type: data.type },
+    });
+    // TODO fix below for multiple userIds
+    //   also, does this block notifications from users youve blocked? we'd have to know the "origin" user
+    const blockedUsers = await Promise.all([
+      BlockedUsers.getCached({ userId: data.userId }),
+      BlockedByUsers.getCached({ userId: data.userId }),
+    ]);
+    const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
+    const targets = data.userIds.filter(
+      (x) =>
+        !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x) && x !== -1
+    );
+    // If the user has this notification type disabled, don't create a notification.
+    if (targets.length === 0) return;
 
-  await notifDbWrite.cancellableQuery(Prisma.sql`
-    INSERT INTO "PendingNotification" (key, type, category, users, details)
-    VALUES
-      (${data.key},
-       ${data.type},
-       ${data.category}::"NotificationCategory",
-       ${'{' + targets.join(',') + '}'},
-       ${JSON.stringify(data.details)}::jsonb)
-    ON CONFLICT DO NOTHING
-  `);
+    await notifDbWrite.cancellableQuery(Prisma.sql`
+      INSERT INTO "PendingNotification" (key, type, category, users, details)
+      VALUES
+        (${data.key},
+         ${data.type},
+         ${data.category}::"NotificationCategory",
+         ${'{' + targets.join(',') + '}'},
+         ${JSON.stringify(data.details)}::jsonb)
+      ON CONFLICT DO NOTHING
+    `);
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'Failed to create notification',
+        details: { key: data.key },
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'notifications'
+    ).catch();
+  }
 };
 
 export async function getUserNotifications({

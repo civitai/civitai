@@ -15,7 +15,6 @@ import {
 } from '@mantine/core';
 import { useClickOutside, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { NotificationCategory } from '@prisma/client';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -29,6 +28,7 @@ import {
 } from '~/components/Notifications/notifications.utils';
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { NotificationCategory } from '~/server/common/enums';
 
 const notifLimit = 30;
 
@@ -93,7 +93,7 @@ export function NotificationBell() {
       </div>
       <Drawer
         position={mobile ? 'bottom' : 'right'}
-        size={mobile ? '100dvh' : '700px'}
+        size={mobile ? '100dvh' : '710px'}
         styles={(theme) => ({
           root: {
             [theme.fn.largerThan('xs')]: {

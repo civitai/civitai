@@ -6,7 +6,8 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostSort } from '~/server/common/enums';
-import { PostsQueryInput } from '~/server/schema/post.schema';
+import { PostsQueryInput, UpdatePostCollectionTagIdInput } from '~/server/schema/post.schema';
+import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -75,5 +76,39 @@ export const usePostContestCollectionDetails = (
   return {
     collectionItems,
     ...rest,
+  };
+};
+
+export const useMutatePost = () => {
+  const updateCollectionTagId = trpc.post.updateCollectionTagId.useMutation({
+    onError(error) {
+      onError(error, 'Failed to create a withdrawal request');
+    },
+  });
+
+  const onError = (error: any, message = 'There was an error while performing your request') => {
+    try {
+      // If failed in the FE - TRPC error is a JSON string that contains an array of errors.
+      const parsedError = JSON.parse(error.message);
+      showErrorNotification({
+        title: message,
+        error: parsedError,
+      });
+    } catch (e) {
+      // Report old error as is:
+      showErrorNotification({
+        title: message,
+        error: new Error(error.message),
+      });
+    }
+  };
+
+  const handleUpdateCollectionTagId = async (input: UpdatePostCollectionTagIdInput) => {
+    await updateCollectionTagId.mutateAsync(input);
+  };
+
+  return {
+    updateCollectionTagId: handleUpdateCollectionTagId,
+    updatingCollectionTagId: updateCollectionTagId.isLoading,
   };
 };

@@ -90,8 +90,23 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   html = useMemo(
     () =>
       sanitizeHtml(html, {
-        parseStyleAttributes: false,
+        parseStyleAttributes: true,
+        allowedAttributes: {
+          div: ['data-youtube-video', 'data-type', 'style'],
+        },
+        allowedStyles: {
+          div: {
+            height: [/^\d+px$/],
+          },
+        },
         transformTags: {
+          div: function (tagName, attribs) {
+            if (attribs['data-type'] !== 'strawPoll') delete attribs.style;
+            return {
+              tagName,
+              attribs,
+            };
+          },
           span: function (tagName, attribs) {
             const dataType = attribs['data-type'];
             const isMention = dataType === 'mention';

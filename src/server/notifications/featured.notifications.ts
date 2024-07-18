@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 // Moveable only if submitted through an api
@@ -6,7 +7,7 @@ export const featuredNotifications = createNotificationProcessor({
   // TODO can models only be featured once?
   'featured-model': {
     displayName: 'Model featured',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${details.modelName} model has been featured on the homepage`,
@@ -38,7 +39,7 @@ export const featuredNotifications = createNotificationProcessor({
   },
   'featured-image': {
     displayName: 'Image featured',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your image has been featured on the homepage`,
@@ -69,7 +70,7 @@ export const featuredNotifications = createNotificationProcessor({
   },
   'featured-post': {
     displayName: 'Post featured',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => {
       let message = `Congrats! Your post has been featured on the homepage`;
@@ -104,7 +105,7 @@ export const featuredNotifications = createNotificationProcessor({
   },
   'featured-article': {
     displayName: 'Article featured',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your article "${details.articleTitle}" has been featured on the homepage`,
