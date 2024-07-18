@@ -16,9 +16,9 @@ import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
 import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
-import { logToAxiom } from '~/server/logging/client';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
@@ -283,26 +283,13 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }
 
       // does this work for email login? it should
-      createNotification({
+      await createNotification({
         type: 'join-community',
         userId: context.user.id,
-        category: 'System',
+        category: NotificationCategory.System,
         key: `join-community:${context.user.id}`,
         details: {},
-      }).catch((e) => {
-        const error = e as Error;
-        logToAxiom(
-          {
-            type: 'warning',
-            name: 'Failed to create notification',
-            details: { key: 'join-community' },
-            message: error.message,
-            stack: error.stack,
-            cause: error.cause,
-          },
-          'notifications'
-        ).catch();
-      });
+      }).catch();
     } else {
       loginCounter?.inc();
     }

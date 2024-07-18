@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const cosmeticShopNotifications = createNotificationProcessor({
@@ -5,7 +6,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   'cosmetic-shop-item-added-to-section': {
     defaultDisabled: true,
     displayName: 'Shop: New Products Available',
-    category: 'System',
+    category: NotificationCategory.System,
     prepareMessage: () => ({
       message: `New items have been added to the shop! Check 'em out now!`,
       url: `/shop`,
@@ -31,7 +32,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   // Moveable
   'cosmetic-shop-item-sold': {
     displayName: "Shop: Your Item got bought (Creator's club exclusive)",
-    category: 'System',
+    category: NotificationCategory.System,
     prepareMessage: ({ details }) => ({
       message: `You got paid ${details.buzzAmount} Buzz for selling 1 "${details.shopItemTitle}" item`,
       url: `/user/transactions`,

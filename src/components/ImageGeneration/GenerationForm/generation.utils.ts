@@ -8,9 +8,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 
-export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
-  persist(() => ({}), { name: 'generation-form-2', version: 0 })
-);
+// export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
+//   persist(() => ({}), { name: 'generation-form-2', version: 0 })
+// );
 
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {

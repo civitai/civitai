@@ -12,8 +12,12 @@ import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { constants } from '~/server/common/constants';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
+import useIsClient from '~/hooks/useIsClient';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 
-export function ImageDetailCarousel() {
+type ImageProps = { videoRef?: React.ForwardedRef<EdgeVideoRef> };
+
+export function ImageDetailCarousel(props: ImageProps) {
   const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
@@ -83,7 +87,7 @@ export function ImageDetailCarousel() {
       >
         {images.map((image, index) => (
           <Carousel.Slide key={image.id}>
-            {slidesInView.includes(index) && <ImageContent image={image} {...connect} />}
+            {slidesInView.includes(index) && <ImageContent image={image} {...connect} {...props} />}
           </Carousel.Slide>
         ))}
       </Carousel>
@@ -91,17 +95,25 @@ export function ImageDetailCarousel() {
   );
 }
 
-function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) {
+function ImageContent({
+  image,
+  videoRef,
+}: { image: ImagesInfiniteModel } & ConnectProps & ImageProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
     defaultValue: true,
   });
 
+  // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
+  const isClient = useIsClient();
+
   const { setRef, height, width } = useAspectRatioFit({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
   });
+
+  const isVideo = image?.type === 'video';
 
   return (
     <ImageGuardContent image={image}>
@@ -126,16 +138,17 @@ function ImageContent({ image }: { image: ImagesInfiniteModel } & ConnectProps) 
                 className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
-              width={image.width}
-              anim
+              width={!isVideo || isClient ? image.width : 450}
+              anim={isClient}
               controls
               quality={90}
-              original={image.type === 'video' ? true : undefined}
+              original={isVideo && isClient ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
                 setDefaultMuted(isMuted);
               }}
+              videoRef={videoRef}
             />
           )}
         </div>

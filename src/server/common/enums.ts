@@ -259,3 +259,13 @@ export enum EntityAccessPermission {
   EarlyAccessDownload = 2,
   All = 1 + 2, // Sum of all prev. permissions.
 }
+
+export enum NotificationCategory {
+  Comment = 'Comment',
+  Update = 'Update',
+  Milestone = 'Milestone',
+  Bounty = 'Bounty',
+  Buzz = 'Buzz',
+  System = 'System',
+  Other = 'Other',
+}

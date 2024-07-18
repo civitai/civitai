@@ -50,7 +50,7 @@ const formSchema = textToImageParamsSchema
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
-    resources: extendedTextToImageResourceSchema.array().min(0).max(9).default([]),
+    resources: extendedTextToImageResourceSchema.array().min(0).default([]),
     vae: extendedTextToImageResourceSchema.optional(),
     prompt: z
       .string()
@@ -205,7 +205,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 0,
+    version: 1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,

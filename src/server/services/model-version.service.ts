@@ -1,5 +1,9 @@
 import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '@prisma/client';
-import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  EntityAccessPermission,
+  NotificationCategory,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 import { BaseModel, BaseModelSetType, baseModelSets, constants } from '~/server/common/constants';
@@ -449,7 +453,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
           createNotification({
             userId: currentVersion.model.userId,
             type: 'early-access-failed-to-publish',
-            category: 'System',
+            category: NotificationCategory.System,
             details: {
               error: e,
               modelVersionId: currentVersion.id,

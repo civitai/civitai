@@ -240,7 +240,7 @@ export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
-  // Early access related:
+  allowAIRecommendations?: boolean;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

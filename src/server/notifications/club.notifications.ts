@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -6,7 +7,7 @@ export const clubNotifications = createNotificationProcessor({
   // Moveable
   'club-new-member-joined': {
     displayName: 'New Member Joined your club!',
-    category: 'Update',
+    category: NotificationCategory.Update,
     toggleable: false,
     prepareMessage: ({ details }) => {
       return {
@@ -54,7 +55,7 @@ export const clubNotifications = createNotificationProcessor({
   },
   'club-billing-toggled': {
     displayName: 'Monthly billing for a club you are a member of has been toggled',
-    category: 'Update',
+    category: NotificationCategory.Update,
     toggleable: false,
     prepareMessage: ({ details }) => {
       return {
@@ -70,7 +71,7 @@ export const clubNotifications = createNotificationProcessor({
   // Moveable
   'club-new-post-created': {
     displayName: 'A new club post has been created!',
-    category: 'Update',
+    category: NotificationCategory.Update,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `New club post has been added to ${details.name} club.`,
@@ -102,7 +103,7 @@ export const clubNotifications = createNotificationProcessor({
   // Moveable
   'club-new-resource-added': {
     displayName: 'A new club resouce has been created!',
-    category: 'Update',
+    category: NotificationCategory.Update,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `New ${

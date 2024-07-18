@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
   ImageSort,
+  NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
@@ -159,10 +160,10 @@ export const setTosViolationHandler = async ({
     }
 
     // Create notifications in the background
-    createNotification({
+    await createNotification({
       userId: image.userId,
       type: 'tos-violation',
-      category: 'System',
+      category: NotificationCategory.System,
       key: `tos-violation:image:${uuid()}`,
       details: {
         modelName: image.post?.title ?? `post #${image.postId}`,

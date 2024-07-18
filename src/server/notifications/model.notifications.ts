@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
@@ -8,7 +9,7 @@ const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model download milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${
         details.modelName
@@ -66,7 +67,7 @@ export const modelNotifications = createNotificationProcessor({
   },
   'model-like-milestone': {
     displayName: 'Model like milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       const count = details.favoriteCount || details.thumbsUpCount;
 
@@ -116,7 +117,7 @@ export const modelNotifications = createNotificationProcessor({
   // Moveable
   'new-model-version': {
     displayName: 'New versions of models you follow',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model has a new version: ${details.versionName}`,
       url: `/models/${details.modelId}${
@@ -176,7 +177,7 @@ export const modelNotifications = createNotificationProcessor({
   // Moveable
   'new-model-from-following': {
     displayName: 'New models from followed users',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `${details.username} released a new ${getDisplayName(
         details.modelType
@@ -213,7 +214,7 @@ export const modelNotifications = createNotificationProcessor({
   'early-access-complete': {
     toggleable: false,
     displayName: 'Early Access Complete',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
       url: `/models/${details.modelId}?modelVersionId=${details.versionId}`,
@@ -255,7 +256,7 @@ export const modelNotifications = createNotificationProcessor({
   },
   'old-draft': {
     displayName: 'Old Model Draft Deletion Reminder',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
@@ -285,7 +286,7 @@ export const modelNotifications = createNotificationProcessor({
 
   'early-access-failed-to-publish': {
     displayName: 'Model version failed to publish.',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more buzz to publish.`,

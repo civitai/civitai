@@ -5,7 +5,7 @@ import { blockedRequest } from '~/server/schema/generation.schema';
 import {
   // getFormData,
   // useDerivedGenerationState,
-  useGenerationFormStore,
+  // useGenerationFormStore,
   keyupEditAttention,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -935,7 +935,7 @@ export const GenerationForm = (args: { onSuccess?: () => void }) => {
           <Text size="xl" weight={500}>
             Account Restricted
           </Text>
-          <Text className="leading-snug text-center">
+          <Text className="text-center leading-snug">
             Your account is under review for potential Terms of Service violations. You will receive
             a decision within 48 hours.
           </Text>

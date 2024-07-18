@@ -197,7 +197,6 @@ model User {
   links                UserLink[]
   comments             Comment[]
   commentReactions     CommentReaction[]
-  notifications        Notification[]
   notificationSettings UserNotificationSettings[]
   webhooks             Webhook[]
   interests            ModelInterest[]
@@ -1317,6 +1316,7 @@ model ImageMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   viewCount         Int             @default(0)
+  reactionCount     Int
   updatedAt         DateTime        @default(now())
 
   @@id([imageId, timeframe])
@@ -1690,33 +1690,6 @@ model Log {
   event     String
   details   Json?
   createdAt DateTime @default(now())
-}
-
-enum NotificationCategory {
-  Comment
-  Update
-  Milestone
-  Bounty
-  Buzz
-  System
-  Other
-}
-
-model Notification {
-  id        String               @id @default(cuid())
-  userId    Int
-  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  category  NotificationCategory @default(Other)
-  details   Json?
-  createdAt DateTime             @default(now())
-
-  @@index([userId, createdAt])
-}
-
-model NotificationViewed {
-  id     String @id
-  userId Int
 }
 
 model UserNotificationSettings {

@@ -401,7 +401,8 @@ export const getModelsRaw = async ({
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
-      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')})
+        AND mv."modelId" = m."id"
     )`);
   }
 

@@ -12,7 +12,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { NotificationCategory } from '@prisma/client';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -25,6 +24,7 @@ import {
   useQueryNotifications,
 } from '~/components/Notifications/notifications.utils';
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
+import { NotificationCategory } from '~/server/common/enums';
 
 export default function Notifications() {
   const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
