@@ -70,6 +70,8 @@ import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCo
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { useRef } from 'react';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -124,6 +126,7 @@ export function ImageDetail2() {
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+  const videoRef = useRef<EdgeVideoRef | null>(null);
 
   if (isLoading) return <PageLoader />;
   if (!image || isBlocked) return <NotFound />;
@@ -175,6 +178,9 @@ export function ImageDetail2() {
           name="postDetail"
           state={{ postId: image.postId }}
           className="hidden @md:block"
+          onClick={() => {
+            if (videoRef.current) videoRef.current.stop();
+          }}
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
@@ -279,7 +285,7 @@ export function ImageDetail2() {
                   </div>
                 </div>
                 {/* IMAGE CAROUSEL */}
-                <ImageDetailCarousel />
+                <ImageDetailCarousel videoRef={videoRef} />
                 {/* FOOTER */}
                 <div className="flex flex-col gap-3 p-3">
                   <div className="flex justify-center">

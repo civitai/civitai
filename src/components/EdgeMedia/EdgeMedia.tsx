@@ -2,7 +2,7 @@ import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '@prisma/client';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
-import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
+import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
 import { VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
 
@@ -16,6 +16,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     muted?: boolean;
     html5Controls?: boolean;
     onMutedChange?: (muted: boolean) => void;
+    videoRef?: React.ForwardedRef<EdgeVideoRef>;
   };
 
 export function EdgeMedia({
@@ -43,6 +44,7 @@ export function EdgeMedia({
   muted,
   html5Controls,
   onMutedChange,
+  videoRef,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -97,6 +99,7 @@ export function EdgeMedia({
           muted={muted}
           html5Controls={html5Controls}
           onMutedChange={onMutedChange}
+          ref={videoRef}
         />
       );
     case 'audio':
