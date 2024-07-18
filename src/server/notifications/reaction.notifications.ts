@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { humanizeList } from '~/utils/humanizer';
 
@@ -10,7 +11,7 @@ const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
     displayName: 'Comment reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
@@ -58,7 +59,7 @@ export const reactionNotifications = createNotificationProcessor({
   },
   'image-reaction-milestone': {
     displayName: 'Image reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
@@ -86,7 +87,7 @@ export const reactionNotifications = createNotificationProcessor({
   },
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
 

@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
@@ -13,7 +14,7 @@ export const articleNotifications = createNotificationProcessor({
       }" has received ${details.viewCount.toLocaleString()} views`,
       url: `/articles/${details.articleId}`,
     }),
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareQuery: async ({ lastSent, clickhouse }) => {
       const affected = (await clickhouse
         ?.query({
@@ -66,7 +67,7 @@ export const articleNotifications = createNotificationProcessor({
   },
   'article-like-milestone': {
     displayName: 'Article like milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your article, "${
         details.articleTitle
@@ -118,7 +119,7 @@ export const articleNotifications = createNotificationProcessor({
   // Moveable
   'new-article-from-following': {
     displayName: 'New articles from followed users',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `${details.username} published a new ${details.articleCategory} article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}`,

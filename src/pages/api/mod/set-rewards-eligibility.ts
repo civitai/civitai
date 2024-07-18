@@ -2,6 +2,7 @@ import { RewardsEligibility } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { userMultipliersCache } from '~/server/redis/caches';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -33,7 +34,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   await userMultipliersCache.bust(userId);
   await createNotification({
     userId,
-    category: 'System',
+    category: NotificationCategory.System,
     type: 'system-announcement',
     key: `system-announcement:rewards:${uuid()}`,
     details: {

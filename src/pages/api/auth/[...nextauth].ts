@@ -16,6 +16,7 @@ import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
 import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
@@ -285,7 +286,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       await createNotification({
         type: 'join-community',
         userId: context.user.id,
-        category: 'System',
+        category: NotificationCategory.System,
         key: `join-community:${context.user.id}`,
         details: {},
       }).catch();

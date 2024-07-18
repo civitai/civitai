@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const reactionMilestones = [5, 10, 20, 50, 100] as const;
@@ -7,7 +8,7 @@ export const bountyNotifications = createNotificationProcessor({
   // Moveable
   'benefactor-joined': {
     displayName: 'Supporter joined bounty',
-    category: 'Bounty',
+    category: NotificationCategory.Bounty,
     toggleable: false, // Disabling since we've disabled split bounties
     prepareMessage: ({ details }) => ({
       message: `${details.benefactorUsername} added ${details.amount} to your bounty "${details.bountyName}"`,
@@ -44,7 +45,7 @@ export const bountyNotifications = createNotificationProcessor({
   // nb: this will only trigger once, not again if entry date is postponed
   'bounty-ending': {
     displayName: 'Bounty you are involved in is ending',
-    category: 'Bounty',
+    category: NotificationCategory.Bounty,
     prepareMessage: ({ details }) => ({
       message: `The bounty "${details.bountyName}" is ending in 24 hours`,
       url: `/bounties/${details.bountyId}`,
@@ -102,7 +103,7 @@ export const bountyNotifications = createNotificationProcessor({
   // Moveable
   'bounty-awarded': {
     displayName: 'Bounty awarded to you',
-    category: 'Bounty',
+    category: NotificationCategory.Bounty,
     prepareMessage: ({ details }) => ({
       message: `Congrats! You have been awarded ${details.awardAmount} by ${details.benefactorUsername} for your work on "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}`,
@@ -139,7 +140,7 @@ export const bountyNotifications = createNotificationProcessor({
   },
   'bounty-reaction-milestone': {
     displayName: 'Bounty entry reaction milestones',
-    category: 'Bounty',
+    category: NotificationCategory.Bounty,
     prepareMessage: ({ details }) => ({
       message: `Your bounty entry on "${
         details.bountyName
@@ -190,7 +191,7 @@ export const bountyNotifications = createNotificationProcessor({
   // Moveable
   'bounty-entry': {
     displayName: 'New entry on bounty you are involved in',
-    category: 'Bounty',
+    category: NotificationCategory.Bounty,
     prepareMessage: ({ details }) => ({
       message: `${details.hunterUsername} has submitted an entry to the bounty "${details.bountyName}"`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,

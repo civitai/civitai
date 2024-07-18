@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { type UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { slugit } from '~/utils/string-helpers';
@@ -6,7 +7,7 @@ export const unpublishNotifications = createNotificationProcessor({
   // Moveable (maybe)
   'model-version-unpublished': {
     displayName: 'Model version unpublished',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -48,7 +49,7 @@ export const unpublishNotifications = createNotificationProcessor({
   },
   'model-unpublished': {
     displayName: 'Model unpublished',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -83,7 +84,7 @@ export const unpublishNotifications = createNotificationProcessor({
   },
   'model-republish-declined': {
     displayName: 'Model republish declined',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => {
       let message = `Your republish request for ${details.modelName} has been declined`;

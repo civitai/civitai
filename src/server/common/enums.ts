@@ -252,3 +252,13 @@ export enum GenerationRequestStatus {
   Error = 'Error',
   Succeeded = 'Succeeded',
 }
+
+export enum NotificationCategory {
+  Comment = 'Comment',
+  Update = 'Update',
+  Milestone = 'Milestone',
+  Bounty = 'Bounty',
+  Buzz = 'Buzz',
+  System = 'System',
+  Other = 'Other',
+}
