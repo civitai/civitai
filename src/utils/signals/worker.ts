@@ -1,4 +1,9 @@
-import { HttpTransportType, HubConnection, HubConnectionBuilder, HubConnectionState, } from '@microsoft/signalr';
+import {
+  HttpTransportType,
+  HubConnection,
+  HubConnectionBuilder,
+  HubConnectionState,
+} from '@microsoft/signalr';
 import { env } from '~/env/client.mjs';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
@@ -12,7 +17,8 @@ interface SharedWorkerGlobalScope {
 
 const _self: SharedWorkerGlobalScope = self as any;
 
-let connection: HubConnection | undefined;
+let connection: HubConnection | null = null;
+let pingInterval: NodeJS.Timer | null = null;
 const events: Record<string, (data: unknown) => void> = {};
 const deferred = new Deferred<void>();
 
@@ -20,6 +26,7 @@ const emitter = new EventEmitter<{
   connectionReady: undefined;
   connectionClosed: { message?: string };
   connectionError: { message?: string };
+  connectionReconnecting: { message?: string };
   connectionReconnected: undefined;
   eventReceived: { target: string; payload: any };
   pong: undefined;
@@ -43,26 +50,29 @@ const getConnection = async ({ token }: { token: string }) => {
       emitter.emit('connectionReady', undefined);
       emitter.emit('connectionReconnected', undefined);
     });
-    connection.onreconnecting((error) =>
-      emitter.emit('connectionError', { message: JSON.stringify(error) })
-    );
-    connection.onclose((error) =>
-      emitter.emit('connectionClosed', { message: JSON.stringify(error) })
-    );
+    connection.onreconnecting((error) => {
+      emitter.emit('connectionReconnecting', { message: JSON.stringify(error) });
+    });
+    connection.onclose((error) => {
+      emitter.emit('connectionClosed', { message: JSON.stringify(error) });
+      connection = null;
+      if (pingInterval) clearInterval(pingInterval);
+    });
 
+    // TODO - attach intervals to variables and clear on close
     // send a ping every 5 minutes
-    setInterval(async () => {
+    pingInterval = setInterval(async () => {
       if (!connection || connection.state !== HubConnectionState.Connected) return;
       await connection.send('ping');
     }, 5 * 60 * 1000);
 
     // try to reconnect every 5 seconds
-    setInterval(async () => {
-      if (!connection) return;
-      if (connection.state === HubConnectionState.Disconnected) {
-        await connection.start();
-      }
-    }, 5 * 1000);
+    // setInterval(async () => {
+    //   if (!connection) return;
+    //   if (connection.state === HubConnectionState.Disconnected) {
+    //     await connection.start();
+    //   }
+    // }, 5 * 1000);
   } catch (e) {
     emitter.emit('connectionError', { message: JSON.stringify(e) });
   }
@@ -98,6 +108,9 @@ const start = async (port: MessagePort) => {
     ),
     emitter.on('connectionError', ({ message }) =>
       postMessage({ type: 'connection:error', message })
+    ),
+    emitter.on('connectionReconnecting', ({ message }) =>
+      postMessage({ type: 'connection:reconnecting', message })
     ),
     emitter.on('eventReceived', ({ target, payload }) =>
       postMessage({ type: 'event:received', target, payload })
