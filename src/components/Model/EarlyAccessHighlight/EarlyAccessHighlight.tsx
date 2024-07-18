@@ -16,10 +16,12 @@ import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { IconArrowRight } from '@tabler/icons-react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const ITEMS_PER_ROW = 7;
 
 export const EarlyAccessHighlight = () => {
+  const features = useFeatureFlags();
   const modelFilters = useModelFilters();
 
   const { setFilters } = useFiltersContext((state) => ({
@@ -46,7 +48,7 @@ export const EarlyAccessHighlight = () => {
     setFilters({ earlyAccess: true });
   };
 
-  if (modelFilters.earlyAccess) {
+  if (modelFilters.earlyAccess || !features.earlyAccessModel) {
     return null;
   }
 
