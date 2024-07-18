@@ -84,6 +84,7 @@ export function AssociatedModels({
               <MasonryCarousel
                 itemWrapperProps={{ style: { paddingTop: 4, paddingBottom: 4 } }}
                 data={combinedData}
+                viewportClassName="py-4"
                 render={({ data, ...props }) =>
                   data.resourceType === 'model' ? (
                     <ModelCard
@@ -107,7 +108,6 @@ export function AssociatedModels({
                   )
                 }
                 itemId={(x) => x.id}
-                loop={false}
               />
             ) : (
               <Group spacing="xs" mt="xs">

@@ -15,7 +15,7 @@ type Props<TData> = {
   id?: string | number;
   empty?: React.ReactNode;
   itemWrapperProps?: React.HTMLAttributes<HTMLDivElement>;
-  loop?: boolean;
+  viewportClassName?: string;
 };
 
 export function MasonryCarousel<TData>({
@@ -27,9 +27,9 @@ export function MasonryCarousel<TData>({
   id,
   empty,
   itemWrapperProps,
-  loop = true,
+  viewportClassName,
 }: Props<TData>) {
-  const { classes } = useStyles({ loop });
+  const { classes } = useStyles();
   const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContext();
 
   const totalItems = data.length + (extra ? 1 : 0);
@@ -38,14 +38,14 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Carousel
       key={id}
-      classNames={classes}
+      classNames={{ ...classes, viewport: viewportClassName }}
       slideSize={`${100 / columnCount}%`}
       slideGap="md"
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}
       // height={columnCount === 1 ? maxSingleColumnWidth : '100%'}
-      loop={loop}
+      loop
       sx={{
         width: columnCount === 1 ? maxSingleColumnWidth : '100%',
         maxWidth: '100%',
@@ -68,7 +68,7 @@ export function MasonryCarousel<TData>({
   );
 }
 
-const useStyles = createStyles<string, { loop?: boolean }>((_theme, params) => ({
+const useStyles = createStyles(() => ({
   control: {
     svg: {
       width: 32,
@@ -84,9 +84,6 @@ const useStyles = createStyles<string, { loop?: boolean }>((_theme, params) => (
       opacity: 0,
       cursor: 'default',
     },
-  },
-  viewport: {
-    overflow: params.loop ? 'hidden' : 'visible',
   },
 }));
 
