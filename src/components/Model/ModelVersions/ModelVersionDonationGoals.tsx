@@ -19,6 +19,7 @@ import { useQueryModelVersionDonationGoals } from '~/components/Model/ModelVersi
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelVersionDonationGoal } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 
@@ -146,6 +147,11 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
   const { donationGoals, isLoading } = useQueryModelVersionDonationGoals({
     modelVersionId: modelVersionId,
   });
+  const features = useFeatureFlags();
+
+  if (!features.donationGoals) {
+    return null;
+  }
 
   if (donationGoals?.length === 0 && !isLoading) {
     return null;

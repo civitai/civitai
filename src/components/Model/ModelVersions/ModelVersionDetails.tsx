@@ -111,7 +111,6 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -198,6 +197,16 @@ export function ModelVersionDetails({
         router.push(url);
         return;
       } else {
+        if (!features.earlyAccessModel) {
+          showErrorNotification({
+            error: new Error('Unauthorized'),
+            title: 'Unauthorized',
+            reason:
+              'This model will be available for download once early access is enabled to the public. Please check back later.',
+          });
+          return;
+        }
+
         dialogStore.trigger({
           component: ModelVersionEarlyAccessPurchase,
           props: { modelVersionId: version.id },

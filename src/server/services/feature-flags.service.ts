@@ -72,6 +72,7 @@ const featureFlags = createFeatureFlags({
   membershipsV2: ['mod'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
+  donationGoals: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
