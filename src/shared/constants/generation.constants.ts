@@ -205,12 +205,19 @@ export const defaultCheckpoints: Record<
 };
 
 // #region [utils]
+// some base models, such as SD1.5 can work with different base model set types
+
 export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelSetType) {
   defaultType ??= 'SD1';
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
     ([key, baseModels]) => key === baseModel || (baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
+}
+
+export function getResourcesBaseModelSetType(resources: GenerationResource[]) {
+  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
+  if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
 }
 
 export function getBaseModelSet(baseModel?: string) {
@@ -322,15 +329,12 @@ export function sanitizeParamsByWorkflowDefinition(
     if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
   }
 }
+
 // #endregion
 
 // #region [config]
-// pixel upscaler vs latent upscaler
-// pixel upscalers trained on a style
-// latent upscalers trained on a base model type
-
-export type SupportedBaseModel = 'SD1' | 'SDXL' | 'Pony';
 export type BaseModelResourceTypes = typeof baseModelResourceTypes;
+export type SupportedBaseModel = keyof BaseModelResourceTypes;
 export const baseModelResourceTypes = {
   SD1: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1] },
@@ -368,4 +372,22 @@ export const baseModelResourceTypes = {
   ],
 };
 
+export function getBaseModelSetTypes({
+  modelType,
+  baseModel,
+  defaultType = 'SD1',
+}: {
+  modelType: ModelType;
+  baseModel?: string;
+  defaultType?: SupportedBaseModel;
+}) {
+  if (!baseModel) return [defaultType];
+  return Object.entries(baseModelResourceTypes)
+    .filter(([key, config]) => {
+      if (key === baseModel) return true;
+      const baseModels = (config.find((x) => x.type === modelType)?.baseModels ?? []) as string[];
+      return baseModels.includes(baseModel);
+    })
+    .map(([key]) => key) as SupportedBaseModel[];
+}
 // #endregion

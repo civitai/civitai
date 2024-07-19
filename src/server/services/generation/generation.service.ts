@@ -228,11 +228,12 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
     const [vae] = await resourceDataCache.fetch([resource.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
-  const baseModel = getBaseModelSetType(resource.baseModel);
   return {
     resources: uniqBy(formatGenerationResources(resources), 'id'),
     params: {
-      baseModel,
+      // only pass base model if model is checkpoint
+      baseModel:
+        resource.model.type === 'Checkpoint' ? getBaseModelSetType(resource.baseModel) : undefined,
       clipSkip: resource.clipSkip ?? undefined,
     },
     remix: {
