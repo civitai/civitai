@@ -165,7 +165,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         : false
       : true,
     earlyAccessConfig:
-      version?.earlyAccessConfig && features.earlyAccessModel
+      version?.earlyAccessConfig &&
+      !!version?.earlyAccessConfig?.timeframe &&
+      features.earlyAccessModel
         ? {
             ...(version?.earlyAccessConfig ?? {}),
             timeframe:
@@ -213,6 +215,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
+
+    console.log(data.earlyAccessConfig);
 
     if (
       isDirty ||
@@ -265,7 +269,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             : false
           : true,
         earlyAccessConfig:
-          version?.earlyAccessConfig && features.earlyAccessModel
+          version?.earlyAccessConfig &&
+          version?.earlyAccessConfig?.timeframe &&
+          features.earlyAccessModel
             ? version?.earlyAccessConfig
             : null,
         recommendedResources: version.recommendedResources ?? [],
