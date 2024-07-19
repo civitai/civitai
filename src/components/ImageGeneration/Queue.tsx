@@ -56,7 +56,6 @@ export function Queue() {
       <Button
         component="a"
         href="/api/generation/history"
-        download
         disabled={downloading}
         onClick={handleSetDownloading}
       >
@@ -107,7 +106,6 @@ export function Queue() {
               td="underline"
               component="a"
               href="/api/generation/history"
-              download
               onClick={handleSetDownloading}
             >
               Download images created before {formatDate(orchestratorIntegrationDate)}
