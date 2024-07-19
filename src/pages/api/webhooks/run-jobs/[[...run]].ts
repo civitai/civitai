@@ -49,6 +49,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
+import { logToAxiom } from '~/server/logging/client';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -156,10 +157,12 @@ async function isLocked(name: string) {
 
 async function lock(name: string, lockExpiration: number) {
   if (!isProd || name === 'prepare-leaderboard') return;
+  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks');
   await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
 }
 
 async function unlock(name: string) {
   if (!isProd || name === 'prepare-leaderboard') return;
+  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks');
   await redis?.del(`job:${name}`);
 }
