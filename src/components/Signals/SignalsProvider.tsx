@@ -104,7 +104,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     if (!accessToken) return;
     console.log('attempting to reconnect signal services');
     workerRef.current?.init(accessToken);
-  }, 3 * 1000);
+  }, 30 * 1000);
 
   useEffect(() => {
     if (!status || status === 'connected') interval.stop();
