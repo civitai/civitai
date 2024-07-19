@@ -32,7 +32,8 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
@@ -49,11 +50,14 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -91,10 +95,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -795,14 +795,12 @@ export const getAllImages = async ({
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
-    else {
-      if (from.indexOf(`irr`) !== -1) {
-        // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
-        orderBy = `irr."imageId" DESC`;
-      } else {
-        orderBy = `i."id" DESC`;
-      }
+    else if (sort === ImageSort.Oldest) {
+      orderBy = 'i."sortAt" ASC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
+    } else {
+      orderBy = 'i."sortAt" DESC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
     }
   }
 
