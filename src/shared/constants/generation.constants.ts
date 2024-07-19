@@ -369,6 +369,10 @@ export const baseModelResourceTypes = {
       type: ModelType.LoCon,
       baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL],
+    },
   ],
 };
 
