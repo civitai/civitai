@@ -1,7 +1,7 @@
 import { ScrollArea } from '@mantine/core';
 import { useElementSize } from '@mantine/hooks';
 import { useMasonry, UseMasonryOptions, usePositioner, useResizeObserver } from 'masonic';
-import { useState, useLayoutEffect } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 
 /**
  * Taken from https://github.com/jaredLunde/mini-virtual-list/blob/5791a19581e25919858c43c37a2ff0eabaf09bfe/src/index.tsx#L414
@@ -12,7 +12,9 @@ const useScroller = <T extends HTMLElement = HTMLElement>(
   const [isScrolling, setIsScrolling] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
 
-  useLayoutEffect(() => {
+  const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
+
+  useIsomorphicLayoutEffect(() => {
     const { current } = ref;
     let tick: number | undefined;
 
@@ -34,7 +36,7 @@ const useScroller = <T extends HTMLElement = HTMLElement>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref.current]);
 
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     setIsScrolling(true);
     const to = window.setTimeout(() => {
       // This is here to prevent premature bail outs while maintaining high resolution
