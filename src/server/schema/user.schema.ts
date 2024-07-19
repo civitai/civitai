@@ -223,7 +223,11 @@ export const dismissAlertSchema = z.object({ alertId: z.string() });
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({ step: z.literal(OnboardingSteps.TOS), recaptchaToken: z.string() }),
-  z.object({ step: z.literal(OnboardingSteps.Profile), username: z.string(), email: z.string() }),
+  z.object({
+    step: z.literal(OnboardingSteps.Profile),
+    username: usernameInputSchema,
+    email: z.string(),
+  }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
     step: z.literal(OnboardingSteps.Buzz),
