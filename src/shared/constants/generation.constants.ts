@@ -246,6 +246,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       maxStrength: settings?.maxStrength ?? 2,
       covered: resource.covered,
       minor: resource.model.minor,
+      available: resource.available,
     };
   });
 }
@@ -320,13 +321,6 @@ export function sanitizeParamsByWorkflowDefinition(
   for (const key in features) {
     if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
   }
-}
-
-export function availableResourcesFilter(resource: ResourceData) {
-  return (
-    resource.covered &&
-    (resource.availability === 'EarlyAccess' || resource.availability === 'Public')
-  );
 }
 // #endregion
 

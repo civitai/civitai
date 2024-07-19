@@ -36,10 +36,11 @@ const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   modelType: z.nativeEnum(ModelType),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  covered: z.boolean().optional(),
+  covered: z.boolean().default(true),
   baseModel: z.string(),
   image: imageSchema.pick({ url: true }).optional(),
   minor: z.boolean().default(false),
+  available: z.boolean().default(true),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
@@ -50,8 +51,17 @@ const formSchema = textToImageParamsSchema
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
+    // .refine(
+    //   (x) => x.available !== false,
+    //   'This resource is unavailable for generation'
+    // ),
     resources: extendedTextToImageResourceSchema.array().min(0).default([]),
+    // .refine(
+    //   (resources) => !resources.length || resources.some((x) => x.available !== false),
+    //   'One or more resources are unavailable for generation'
+    // ),
     vae: extendedTextToImageResourceSchema.optional(),
+    // .refine((x) => x?.available !== false, 'This resource is unavailable for generation'),
     prompt: z
       .string()
       .nonempty('Prompt cannot be empty')
@@ -146,9 +156,10 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   const config = getGenerationConfig(baseModel);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
-  if (getBaseModelSetType(checkpoint?.baseModel) !== baseModel) checkpoint = config.checkpoint;
+  if (!checkpoint || getBaseModelSetType(checkpoint.baseModel) !== baseModel)
+    checkpoint = config.checkpoint;
   // if current vae doesn't match baseModel, set vae to undefined
-  if (getBaseModelSetType(vae?.modelType) !== baseModel) vae = undefined;
+  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel) vae = undefined;
   // filter out any additional resources that don't belong
   const resources = data.resources
     .filter((resource) => {
@@ -231,7 +242,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
       const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
 
-      const data = { ...formatGenerationData({ ...responseData, resources }), workflow };
+      const data = {
+        ...formatGenerationData({
+          ...responseData,
+          resources: resources.filter((x) => x.available),
+        }),
+        workflow,
+      };
 
       setValues(runType === 'run' ? removeEmpty(data) : data);
     }

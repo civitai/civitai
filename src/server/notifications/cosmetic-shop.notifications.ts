@@ -13,20 +13,33 @@ export const cosmeticShopNotifications = createNotificationProcessor({
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_items AS (
-        SELECT MAX(COALESCE(si."availableFrom", ssi."createdAt")) as last_item
-        FROM "CosmeticShopSectionItem" ssi
+        SELECT * FROM "CosmeticShopSectionItem" ssi
         JOIN "CosmeticShopItem" si ON si.id = ssi."shopItemId"
-        WHERE (ssi."createdAt" > '${lastSent}'::timestamp OR (si."availableFrom" BETWEEN '${lastSent}'::timestamp AND now()))
-          AND (si."availableTo" >= NOW() OR si."availableTo" IS NULL)
+        JOIN "CosmeticShopSection" ss ON ss.id = ssi."shopSectionId"
+        WHERE (
+          (
+            ssi."createdAt" > '${lastSent}'::timestamp
+            AND si."availableFrom" IS NULL
+          )
+          OR
+          (
+            si."availableFrom" BETWEEN '${lastSent}'::timestamp
+            AND now()
+          )
+        )
+        AND (si."availableTo" >= NOW() OR si."availableTo" IS NULL)
+        AND ss."published" = TRUE
+        ORDER BY si."availableFrom" DESC, ssi."createdAt" DESC
+        LIMIT 1
       )
         SELECT
-          CONCAT('cosmetic-shop-item-added-to-section:', '${lastSent}') "key",
+          CONCAT('cosmetic-shop-item-added-to-section:', ni."shopItemId") "key",
           uns."userId" as "userId",
           'cosmetic-shop-item-added-to-section' as "type",
           '{}'::jsonb "details"
         FROM new_items ni
         JOIN "UserNotificationSettings" uns ON uns."type" = 'cosmetic-shop-item-added-to-section'
-        WHERE ni.last_item IS NOT NULL
+        WHERE ni."shopItemId" IS NOT NULL
     `,
   },
   // Moveable

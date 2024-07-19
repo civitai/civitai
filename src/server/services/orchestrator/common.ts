@@ -14,7 +14,6 @@ import {
   InjectableResource,
   WORKFLOW_TAGS,
   allInjectableResourceIds,
-  availableResourcesFilter,
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
@@ -123,12 +122,6 @@ export async function parseGenerateImageInput({
     })
   );
 
-  // check for unavailable resources
-  const resources = resourceData.resources.filter(availableResourcesFilter);
-  if (resources.length !== resourceData.resources.length) {
-    throw throwBadRequestError(`Some of the resources you selected are unavailable for generation`);
-  }
-
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
       .length > resourceLimit
@@ -150,7 +143,7 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => !!x.covered))
+  if (!resourceData.resources.every((x) => x.available))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
         .filter((x) => !x.covered)
