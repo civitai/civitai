@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -288,10 +289,10 @@ const createResourceReviewNotification = async ({
     imageCount,
   };
 
-  createNotification({
+  await createNotification({
     type: 'new-review',
     key: `new-review:${modelVersionId}:${userId}`,
-    category: 'Update',
+    category: NotificationCategory.Update,
     userId: modelVersion.model.userId,
     details: detailsObj,
   }).catch();
@@ -306,7 +307,7 @@ export const upsertResourceReview = async ({
       data: { ...data, userId, thread: { create: {} } },
       select: resourceReviewSelect,
     });
-    createResourceReviewNotification({ ...ret, userId }).catch();
+    await createResourceReviewNotification({ ...ret, userId }).catch();
     return ret;
   } else {
     return dbWrite.resourceReview.update({
@@ -325,7 +326,7 @@ export const createResourceReview = async (
   data: CreateResourceReviewInput & { userId: number }
 ) => {
   const ret = await dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
-  createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
   return ret;
 };
 

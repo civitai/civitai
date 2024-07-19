@@ -1,7 +1,8 @@
-import { ActionIcon, Autocomplete, Badge, Card, Group, Loader, Stack, Text } from '@mantine/core';
+import { ActionIcon, Autocomplete, Badge, Card, Loader, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
 import { trpc } from '~/utils/trpc';
@@ -58,34 +59,59 @@ export function HiddenUsersSection() {
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack spacing={5}>
-          {hiddenUsers.length > 0 && (
-            <Group spacing={4}>
-              {hiddenUsers.map((user) => (
-                <Badge
-                  key={user.id}
-                  sx={{ paddingRight: 3 }}
-                  rightSection={
-                    <ActionIcon
-                      size="xs"
-                      color="blue"
-                      radius="xl"
-                      variant="transparent"
-                      onClick={() => handleToggleBlocked(user)}
-                    >
-                      <IconX size={10} />
-                    </ActionIcon>
-                  }
-                >
-                  {user.username}
-                </Badge>
-              ))}
-            </Group>
-          )}
+          <BasicMasonryGrid
+            items={hiddenUsers}
+            render={UserBadge}
+            maxHeight={250}
+            columnGutter={4}
+            columnWidth={140}
+          />
           <Text color="dimmed" size="xs">
             {`We'll hide content from these users throughout the site.`}
           </Text>
         </Stack>
       </Card.Section>
     </Card>
+  );
+}
+
+function UserBadge({
+  data,
+  width,
+}: {
+  data: { id: number; username?: string | null };
+  width: number;
+}) {
+  const toggleHiddenMutation = useToggleHiddenPreferences();
+
+  const handleToggleBlocked = async ({
+    id,
+    username,
+  }: {
+    id: number;
+    username?: string | null;
+  }) => {
+    await toggleHiddenMutation.mutateAsync({ kind: 'user', data: [{ id, username }] });
+  };
+
+  return (
+    <Badge
+      key={data.id}
+      sx={{ paddingRight: 3 }}
+      w={width}
+      rightSection={
+        <ActionIcon
+          size="xs"
+          color="blue"
+          radius="xl"
+          variant="transparent"
+          onClick={() => handleToggleBlocked(data)}
+        >
+          <IconX size={10} />
+        </ActionIcon>
+      }
+    >
+      {data.username ?? '[deleted]'}
+    </Badge>
   );
 }

@@ -4,6 +4,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
+  ImageResource,
   Prisma,
   TagTarget,
   TagType,
@@ -794,7 +795,36 @@ export const addPostImage = async ({
   });
 
   try {
-    await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+    // Disable the single-pass read+write for now
+    // await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+
+    // Read the resources based on complex metadata and hash matches
+    const resources = await dbWrite.$queryRaw<
+      ImageResource[]
+    >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
+    const resourcesJson = JSON.stringify(resources);
+
+    // Write the resources to the image
+    await dbWrite.$executeRaw`
+      WITH json_data AS (
+          SELECT
+              jsonb_array_elements(${resourcesJson}::jsonb) AS elem
+      )
+      INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
+      SELECT
+          (elem->>'id')::int,
+          (elem->>'modelversionid')::int,
+          elem->>'name',
+          elem->>'hash',
+          (elem->>'strength')::int,
+          (elem->>'detected')::boolean
+      FROM json_data
+      ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
+      SET
+          detected = excluded.detected,
+          hash = excluded.hash,
+          strength = excluded.strength;
+    `;
   } catch (e) {
     console.error(e);
   }

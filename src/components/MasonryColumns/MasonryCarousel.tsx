@@ -15,6 +15,7 @@ type Props<TData> = {
   id?: string | number;
   empty?: React.ReactNode;
   itemWrapperProps?: React.HTMLAttributes<HTMLDivElement>;
+  viewportClassName?: string;
 };
 
 export function MasonryCarousel<TData>({
@@ -26,6 +27,7 @@ export function MasonryCarousel<TData>({
   id,
   empty,
   itemWrapperProps,
+  viewportClassName,
 }: Props<TData>) {
   const { classes } = useStyles();
   const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContext();
@@ -36,7 +38,7 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Carousel
       key={id}
-      classNames={classes}
+      classNames={{ ...classes, viewport: viewportClassName }}
       slideSize={`${100 / columnCount}%`}
       slideGap="md"
       align={totalItems <= columnCount ? 'start' : 'end'}
@@ -54,25 +56,19 @@ export function MasonryCarousel<TData>({
       {data.map((item, index) => {
         const key = itemId ? itemId(item) : index;
         return (
-          <Carousel.Slide key={key} id={key.toString()}>
-            <div style={{ position: 'relative', paddingTop: '100%' }} {...itemWrapperProps}>
-              {createRenderElement(RenderComponent, index, item, height)}
-            </div>
+          <Carousel.Slide {...itemWrapperProps} key={key} id={key.toString()}>
+            {createRenderElement(RenderComponent, index, item, height)}
           </Carousel.Slide>
         );
       })}
-      {extra && (
-        <Carousel.Slide>
-          <div style={{ position: 'relative', paddingTop: '100%' }}>{extra}</div>
-        </Carousel.Slide>
-      )}
+      {extra && <Carousel.Slide>{extra}</Carousel.Slide>}
     </Carousel>
   ) : (
     <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   control: {
     svg: {
       width: 32,
@@ -82,6 +78,11 @@ const useStyles = createStyles((theme) => ({
         minWidth: 16,
         minHeight: 16,
       },
+    },
+
+    '&[data-inactive]': {
+      opacity: 0,
+      cursor: 'default',
     },
   },
 }));

@@ -1,4 +1,4 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
+import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
 import {
   Icon,
   IconArrowsDiagonal,
@@ -6,6 +6,7 @@ import {
   IconGridDots,
   IconProps,
   IconClockHour9,
+  IconWifiOff,
 } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
@@ -15,6 +16,7 @@ import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'reac
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
+import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -39,6 +41,20 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 
   return (
     <>
+      <SignalStatusNotification
+        icon={<IconWifiOff size={20} stroke={2} />}
+        // title={(status) => `Connection status: ${status}`}
+        radius={0}
+      >
+        {(status) => (
+          <p className="leading-4">
+            <span className="font-medium">
+              {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
+            </span>
+            : image generation results paused
+          </p>
+        )}
+      </SignalStatusNotification>
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
           <div className="flex-1">

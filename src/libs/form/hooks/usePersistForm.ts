@@ -107,7 +107,6 @@ export function usePersistForm<
 
   function getParsedStorage() {
     const str = getStorage().getItem(storageKey);
-    console.log({ str });
     return str ? parseStorage(str).state : {};
   }
 

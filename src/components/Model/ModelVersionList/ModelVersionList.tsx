@@ -13,6 +13,7 @@ import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconBan,
+  IconBolt,
   IconBrush,
   IconChevronLeft,
   IconChevronRight,
@@ -31,7 +32,10 @@ import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.ut
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ModelById } from '~/types/router';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ModelById } from '~/types/router';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Currency } from '@prisma/client';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -171,6 +175,8 @@ export function ModelVersionList({
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
+          const isEarlyAccess =
+            version.earlyAccessEndsAt && new Date(version.earlyAccessEndsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
 
           const versionButton = (
@@ -210,6 +216,16 @@ export function ModelVersionList({
                     sx={{ backgroundColor: 'transparent' }}
                   >
                     {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
+                  </ThemeIcon>
+                ) : isEarlyAccess ? (
+                  <ThemeIcon
+                    color="yellow"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <CurrencyIcon currency={Currency.BUZZ} size={14} />
                   </ThemeIcon>
                 ) : undefined
               }

@@ -355,6 +355,18 @@ export const constants = {
   entityCollaborators: {
     maxCollaborators: 15,
   },
+  earlyAccess: {
+    buzzChargedPerDay: 100,
+    timeframeValues: [3, 5, 7, 9, 12, 15],
+    scoreTimeFrameUnlock: [
+      [900, 3],
+      [1800, 5],
+      [2200, 7],
+      [8500, 9],
+      [18000, 12],
+      [40000, 15],
+    ],
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)

@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { notifDbRead } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
@@ -226,7 +227,7 @@ export const toggleReactionHandler = async ({
       ]);
 
       // TODO unhandledRejection: Error: read ECONNRESET
-      createReactionNotification(input).catch();
+      await createReactionNotification(input).catch();
     }
     return result;
   } catch (error) {
@@ -239,6 +240,15 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const cnt = await dbRead.imageReaction.count({
       where: { imageId: entityId },
     });
+
+    // const { reactionCount: cnt = 0 } =
+    //   (await dbRead.imageMetric.findFirst({
+    //     where: { imageId: entityId, timeframe: MetricTimeframe.AllTime },
+    //     select: { reactionCount: true },
+    //   })) ?? {};
+
+    if (!cnt) return;
+
     const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
     if (!match) return;
 
@@ -286,10 +296,10 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
       reactionCount: match,
     };
 
-    createNotification({
+    await createNotification({
       type,
       key,
-      category: 'Milestone',
+      category: NotificationCategory.Milestone,
       userId: resource.userId,
       details,
     }).catch();

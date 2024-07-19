@@ -22,6 +22,8 @@ type VersionRow = {
   baseModel: BaseModel;
   status: string;
   type: ModelType;
+  earlyAccessEndsAt?: Date;
+  checkPermission: boolean;
 };
 type FileRow = {
   id: number;
@@ -56,7 +58,19 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
-      m.type
+      m.type,
+      mv."earlyAccessEndsAt",
+      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
+      (
+        CASE
+          mv."earlyAccessConfig"->>'chargeForGeneration'
+        WHEN 'true'
+        THEN 
+          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10) 
+        ELSE 
+          NULL
+        END
+      ) AS "freeTrialLimit"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
@@ -94,6 +108,8 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
+    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
+    checkPermission: modelVersion.checkPermission,
   };
   res.status(200).json(data);
 });

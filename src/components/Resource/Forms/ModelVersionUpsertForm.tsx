@@ -1,7 +1,19 @@
-import { Alert, Card, Divider, Group, Input, Stack, Text, ThemeIcon } from '@mantine/core';
+import {
+  Alert,
+  Card,
+  Divider,
+  Group,
+  Input,
+  SegmentedControl,
+  Stack,
+  Switch,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
+import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
@@ -10,6 +22,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputMultiSelect,
@@ -34,22 +47,34 @@ import {
   generationResourceSchema,
 } from '~/server/schema/generation.schema';
 import {
+  earlyAccessConfigInput,
+  ModelVersionEarlyAccessConfig,
   ModelVersionUpsertInput,
   modelVersionUpsertSchema2,
   RecommendedSettingsSchema,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 const schema = modelVersionUpsertSchema2
   .extend({
     skipTrainedWords: z.boolean().default(false),
-    earlyAccessTimeFrame: z.string().refine((value) => ['0', '1', '3', '7', '14'].includes(value), {
-      message: 'Invalid value',
-    }),
+    earlyAccessConfig: earlyAccessConfigInput
+      .omit({
+        originalPublishedAt: true,
+      })
+      .extend({
+        timeframe: z
+          .number()
+          .refine((v) => constants.earlyAccess.timeframeValues.some((x) => x === v), {
+            message: 'Invalid value',
+          }),
+      })
+      .nullish(),
     useMonetization: z.boolean().default(false),
     recommendedResources: generationResourceSchema
       .merge(recommendedSettingsSchema)
@@ -94,6 +119,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const features = useFeatureFlags();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const acceptsTrainedWords = [
     'Checkpoint',
@@ -107,6 +133,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
+  const isEarlyAccessOver =
+    version?.status === 'Published' &&
+    (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
+
+  const MAX_EARLY_ACCCESS = 15;
 
   // Get VAE options
   const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
@@ -133,10 +164,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         ? !version.trainedWords.length
         : false
       : true,
-    earlyAccessTimeFrame:
-      version?.earlyAccessTimeFrame && features.earlyAccessModel
-        ? String(version.earlyAccessTimeFrame)
-        : '0',
+    earlyAccessConfig:
+      version?.earlyAccessConfig && features.earlyAccessModel
+        ? {
+            ...(version?.earlyAccessConfig ?? {}),
+            timeframe:
+              version.earlyAccessConfig?.timeframe ?? constants.earlyAccess.timeframeValues[0],
+          }
+        : null,
     modelId: model?.id ?? -1,
     description: version?.description ?? null,
     epochs: version?.epochs ?? null,
@@ -160,6 +195,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ]) as number[];
   const { isDirty } = form.formState;
   const canMonetize = !model?.poi;
+  const earlyAccessConfig = form.watch('earlyAccessConfig');
   const canSave = SD3_BANNED && baseModel !== 'SD 3';
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -178,7 +214,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
-    if (isDirty || !version?.id || templateId || bountyId) {
+    if (
+      isDirty ||
+      !version?.id ||
+      templateId ||
+      bountyId ||
+      !isEqual(data.earlyAccessConfig, version.earlyAccessConfig)
+    ) {
       const recommendedResources =
         rawRecommendedResources?.map(({ id, strength }) => ({
           resourceId: id,
@@ -191,7 +233,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessTimeFrame: Number(data.earlyAccessTimeFrame),
+        earlyAccessConfig: !data.earlyAccessConfig ? null : data.earlyAccessConfig,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
@@ -222,23 +264,27 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             ? !version.trainedWords.length
             : false
           : true,
-        earlyAccessTimeFrame:
-          version.earlyAccessTimeFrame && features.earlyAccessModel
-            ? String(version.earlyAccessTimeFrame)
-            : '0',
+        earlyAccessConfig:
+          version?.earlyAccessConfig && features.earlyAccessModel
+            ? version?.earlyAccessConfig
+            : null,
         recommendedResources: version.recommendedResources ?? [],
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
-  const atEarlyAccess = isEarlyAccess({
-    publishedAt: model?.publishedAt ?? new Date(),
-    earlyAccessTimeframe: version?.earlyAccessTimeFrame ?? 0,
-    versionCreatedAt: version?.createdAt ?? new Date(),
-  });
-  const showEarlyAccessInput = version?.status !== 'Published' || atEarlyAccess;
+  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
+    .map(([score, days]) => ((currentUser?.meta?.scores?.total ?? 0) >= score ? days : null))
+    .filter(isDefined);
+  const atEarlyAccess = !!version?.earlyAccessEndsAt;
+  const showEarlyAccessInput =
+    features.earlyAccessModel &&
+    earlyAccessUnlockedDays.length > 0 &&
+    (version?.status !== 'Published' || atEarlyAccess);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
-  const maxEarlyAccessValue = canIncreaseEarlyAccess ? 14 : version?.earlyAccessTimeFrame ?? 0;
+  const maxEarlyAccessValue = canIncreaseEarlyAccess
+    ? MAX_EARLY_ACCCESS
+    : version?.earlyAccessConfig?.timeframe ?? 0;
 
   return (
     <>
@@ -251,59 +297,191 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             withAsterisk
             maxLength={25}
           />
+
           {showEarlyAccessInput && (
-            <Input.Wrapper
-              label="Early Access"
-              description={
-                <DismissibleAlert
-                  id="ea-info"
-                  size="sm"
-                  title="Get feedback on your model before full release"
-                  content={
-                    <>
-                      {`This puts your model in the "Early Access" list of models
-                  available to `}
-                      <Text component={NextLink} href="/pricing" variant="link" target="_blank">
-                        Civitai members
-                      </Text>
-                      {
-                        ' of the community. This can be a great way to get feedback from an engaged community before your model is available to the general public. If you choose to enable Early Access, your model will be released to the public after the selected time frame.'
-                      }
-                    </>
-                  }
-                  mb="xs"
-                />
-              }
-              error={form.formState.errors.earlyAccessTimeFrame?.message}
-            >
-              <InputSegmentedControl
-                name="earlyAccessTimeFrame"
-                data={[
-                  { label: 'None', value: '0', disabled: maxEarlyAccessValue < 0 },
-                  { label: '1 day', value: '1', disabled: maxEarlyAccessValue < 1 },
-                  { label: '3 days', value: '3', disabled: maxEarlyAccessValue < 3 },
-                  { label: '1 week', value: '7', disabled: maxEarlyAccessValue < 7 },
-                  { label: '2 weeks', value: '14', disabled: maxEarlyAccessValue < 14 },
-                ]}
-                color="blue"
-                size="xs"
-                styles={(theme) => ({
-                  root: {
-                    border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                    }`,
-                    background: 'none',
-                    marginTop: theme.spacing.xs * 0.5, // 5px
-                  },
-                })}
-                fullWidth
+            <Stack spacing={0}>
+              <Divider label="Early Access Set Up" mb="md" />
+
+              <DismissibleAlert
+                id="ea-info"
+                size="sm"
+                color="yellow"
+                title="Earn Buzz with early access!"
+                content={
+                  <>
+                    <Text size="xs">
+                      Early access allows you to charge a fee for early access to your model. This
+                      fee is paid by users who want to access your model before it is available to
+                      the public. Once the early access period ends, your model will be available to
+                      the public for free.
+                    </Text>
+                  </>
+                }
+                mb="xs"
               />
-              {!canIncreaseEarlyAccess && (
-                <Text size="xs" color="dimmed" mt="sm">
-                  You cannot increase early access value after a model has been published
+              {isEarlyAccessOver && (
+                <Text size="xs" color="red">
+                  Early access has ended for this model version. You cannot make changes to early
+                  access settings.
                 </Text>
               )}
-            </Input.Wrapper>
+              <Switch
+                my="sm"
+                label="I want to make this version part of the Early Access Program"
+                checked={earlyAccessConfig !== null}
+                onChange={(e) =>
+                  form.setValue(
+                    'earlyAccessConfig',
+                    e.target.checked
+                      ? {
+                          timeframe: constants.earlyAccess.timeframeValues[0],
+                          downloadPrice: 500,
+                          chargeForGeneration: false,
+                          generationPrice: 100,
+                          generationTrialLimit: 10,
+                          donationGoalEnabled: false,
+                          donationGoal: 1000,
+                        }
+                      : null
+                  )
+                }
+                disabled={isEarlyAccessOver}
+              />
+              {earlyAccessConfig && (
+                <Stack>
+                  <Input.Wrapper
+                    label="Early Access Time Frame"
+                    description="How long would you like to offer early access to your version from the date of publishing?"
+                    error={form.formState.errors.earlyAccessConfig?.message}
+                  >
+                    <SegmentedControl
+                      onChange={(value) =>
+                        form.setValue('earlyAccessConfig.timeframe', parseInt(value, 10))
+                      }
+                      value={
+                        earlyAccessConfig?.timeframe?.toString() ??
+                        constants.earlyAccess.timeframeValues[0]
+                      }
+                      data={[0, ...earlyAccessUnlockedDays].map((v) => ({
+                        label: v === 0 ? 'None' : `${v} days`,
+                        value: v.toString(),
+                        disabled: maxEarlyAccessValue < v,
+                      }))}
+                      color="blue"
+                      size="xs"
+                      styles={(theme) => ({
+                        root: {
+                          border: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[4]
+                          }`,
+                          background: 'none',
+                          marginTop: theme.spacing.xs * 0.5, // 5px
+                        },
+                      })}
+                      fullWidth
+                      disabled={isEarlyAccessOver}
+                    />
+                    {earlyAccessUnlockedDays.length !==
+                      constants.earlyAccess.timeframeValues.length && (
+                      <Group noWrap>
+                        <Text size="xs" color="dimmed">
+                          You will unlock more early access day over time by posting models, images,
+                          reactions and more to the site.
+                        </Text>
+                      </Group>
+                    )}
+                    {!canIncreaseEarlyAccess && (
+                      <Text size="xs" color="dimmed" mt="sm">
+                        You cannot increase early access value after a model has been published
+                      </Text>
+                    )}
+                  </Input.Wrapper>
+                  <Stack mt="sm">
+                    <InputNumber
+                      name="earlyAccessConfig.downloadPrice"
+                      label="Download price"
+                      description="How much would you like to charge for your version download?"
+                      min={500}
+                      step={100}
+                      icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                      withAsterisk
+                      disabled={isEarlyAccessOver}
+                    />
+                    <InputSwitch
+                      name="earlyAccessConfig.chargeForGeneration"
+                      label="Allow users to pay for generation only - no download."
+                      description={
+                        'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
+                      }
+                      disabled={isEarlyAccessOver}
+                    />
+                    {earlyAccessConfig?.chargeForGeneration && (
+                      <Stack>
+                        <InputNumber
+                          name="earlyAccessConfig.generationPrice"
+                          label="Generation price"
+                          description="How much would you like to charge for your version download?"
+                          min={100}
+                          max={earlyAccessConfig?.downloadPrice}
+                          step={100}
+                          icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                          disabled={isEarlyAccessOver}
+                        />
+                        <InputNumber
+                          name="earlyAccessConfig.generationTrialLimit"
+                          label="Free Trial Limit"
+                          description="How many free generations would you like to offer to users who have not paid for generation or download?"
+                          min={10}
+                          disabled={isEarlyAccessOver}
+                        />
+                      </Stack>
+                    )}
+                    {(version?.status !== 'Published' ||
+                      version?.earlyAccessConfig?.donationGoalId) &&
+                      features.donationGoals && (
+                        <>
+                          <InputSwitch
+                            name="earlyAccessConfig.donationGoalEnabled"
+                            label="Enable donation goal"
+                            description={
+                              'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met. Please note that after the model is published, you cannot change this value.'
+                            }
+                            disabled={
+                              !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
+                            }
+                          />
+                          {earlyAccessConfig?.donationGoalEnabled && (
+                            <Stack>
+                              <InputNumber
+                                name="earlyAccessConfig.donationGoal"
+                                label="Donation Goal Amount"
+                                description="How much BUZZ would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
+                                min={1000}
+                                step={100}
+                                icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                                disabled={
+                                  !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
+                                }
+                              />
+                            </Stack>
+                          )}
+                        </>
+                      )}
+                  </Stack>
+                </Stack>
+              )}
+
+              {version?.earlyAccessConfig && !earlyAccessConfig && (
+                <Text size="xs" color="red">
+                  You will not be able to add this model to early access again after removing it.
+                  Also, your payment for early access will be lost. Please consider this before
+                  removing early access.
+                </Text>
+              )}
+              <Divider my="md" />
+            </Stack>
           )}
           <Group spacing="xs" grow>
             <InputSelect
@@ -628,6 +806,8 @@ type VersionInput = Omit<ModelVersionUpsertInput, 'recommendedResources'> & {
   > &
     RecommendedSettingsSchema)[];
   clubs?: ClubResourceSchema[];
+  earlyAccessEndsAt: Date | null;
+  earlyAccessConfig: ModelVersionEarlyAccessConfig | null;
 };
 type Props = {
   onSubmit: (version?: ModelVersionUpsertInput) => void;

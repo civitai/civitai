@@ -68,8 +68,8 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
+import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { decreaseDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -80,6 +80,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -400,7 +401,8 @@ export const getModelsRaw = async ({
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
-      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')})
+        AND mv."modelId" = m."id"
     )`);
   }
 
@@ -1078,19 +1080,15 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessTimeFrame, createdAt, publishedAt, ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
     ...v,
-    isEarlyAccess: isEarlyAccess({
-      earlyAccessTimeframe: earlyAccessTimeFrame,
-      publishedAt,
-      versionCreatedAt: createdAt,
-    }),
+    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
   }));
 };
 
@@ -1364,14 +1362,6 @@ export const publishModelById = async ({
           publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
           deletedAt: null,
-          modelVersions: includeVersions
-            ? {
-                updateMany: {
-                  where: { id: { in: versionIds } },
-                  data: { status, publishedAt: !republishing ? publishedAt : undefined },
-                },
-              }
-            : undefined,
         },
         select: {
           id: true,
@@ -1383,6 +1373,20 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
+        if (status === ModelStatus.Published) {
+          // Publish model versions with early access check:
+          await publishModelVersionsWithEarlyAccess({
+            modelVersionIds: versionIds,
+            publishedAt: !republishing ? publishedAt : undefined,
+          });
+        } else if (status === ModelStatus.Scheduled) {
+          // Schedule model versions:
+          await tx.modelVersion.updateMany({
+            where: { id: { in: versionIds } },
+            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+          });
+        }
+
         await tx.$executeRaw`
           UPDATE "Post"
           SET
@@ -1616,32 +1620,20 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
       publishedAt: true,
       modelVersions: {
         where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessTimeFrame: true, createdAt: true },
+        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
       },
     },
   });
   if (!model) throw throwNotFoundError();
 
   const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find(
-    (v) =>
-      v.earlyAccessTimeFrame > 0 &&
-      isEarlyAccess({
-        earlyAccessTimeframe: v.earlyAccessTimeFrame,
-        versionCreatedAt: v.createdAt,
-        publishedAt: model.publishedAt,
-      })
-  );
+  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
 
   if (nextEarlyAccess) {
     await updateModelById({
       id,
       data: {
-        earlyAccessDeadline: getEarlyAccessDeadline({
-          earlyAccessTimeframe: nextEarlyAccess.earlyAccessTimeFrame,
-          versionCreatedAt: nextEarlyAccess.createdAt,
-          publishedAt: model.publishedAt,
-        }),
+        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
       },
     });
   } else {

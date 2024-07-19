@@ -101,11 +101,11 @@ export function GenerationForm2() {
 
   return (
     <IsClient>
-      {(currentUser?.id === 1 || currentUser?.id === 5) && (
+      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
         <div className="p-3">
           <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
         </div>
-      )}
+      )} */}
 
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>

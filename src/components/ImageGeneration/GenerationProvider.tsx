@@ -63,7 +63,6 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationStore((state) => state.opened);
-  const { connected } = useSignalContext();
   const {
     data: requests,
     steps,

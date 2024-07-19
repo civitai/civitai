@@ -1,4 +1,5 @@
 import { startCase } from 'lodash-es';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { QS } from '~/utils/qs';
 
@@ -30,7 +31,7 @@ export const commentDedupeKey = 'new-comment|new-mention:';
 export const commentNotifications = createNotificationProcessor({
   'new-comment': {
     displayName: 'New comments on your models',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
@@ -65,7 +66,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-response': {
     displayName: 'New comment responses (Models)',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${
@@ -103,7 +104,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-nested': {
     displayName: 'New responses to comments and reviews on your models',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to a ${details.parentType} on your ${details.modelName} model`,
       url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
@@ -140,7 +141,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-comment-reply': {
     displayName: 'New comment replies',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       const url = threadUrlMap(details);
       return {
@@ -202,7 +203,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-thread-response': {
     displayName: 'New replies to comment threads you are in',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       if (!details.version) {
         return {
@@ -323,7 +324,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-review-response': {
     displayName: 'New review responses',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       if (details.version !== 2) {
         return {
@@ -370,7 +371,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-image-comment': {
     displayName: 'New comments on your images',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       if (details.version === 2) {
         let message = `${details.username} commented on your image`;
@@ -440,7 +441,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-article-comment': {
     displayName: 'New comments on your articles',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
@@ -476,7 +477,7 @@ export const commentNotifications = createNotificationProcessor({
   },
   'new-bounty-comment': {
     displayName: 'New comments on your bounty',
-    category: 'Comment',
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your bounty: "${details.bountyTitle}"`,
       url: `/bounties/${details.bountyId}?highlight=${details.commentId}#comments`,

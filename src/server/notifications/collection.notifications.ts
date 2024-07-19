@@ -1,9 +1,10 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const collectionNotifications = createNotificationProcessor({
   'contest-collection-item-status-change': {
     displayName: 'Your item has been reviewed',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `The item you submitted to the contest "${details.collectionName}" has been ${details.status}.`,
       url: details.imageId

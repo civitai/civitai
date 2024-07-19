@@ -1,4 +1,5 @@
-import { NotificationCategory, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { NotificationSingleRowFull } from '~/server/jobs/send-notifications';
