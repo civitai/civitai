@@ -8,10 +8,10 @@ export type WorkflowDefinition = {
   description?: string;
   selectable?: boolean;
   template: string;
-  enabled?: boolean;
   features?: (typeof workflowDefinitionFeatures)[number][];
   inputs?: InputSchema[];
   remix?: WorkflowDefinitionKey;
+  status?: 'mod-only' | 'published' | 'disabled';
 };
 
 // TODO - these will need to be defined as an input schema first, then as a workflow input schema
