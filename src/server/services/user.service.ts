@@ -66,26 +66,31 @@ import { kyselyDbRead, jsonObjectFrom } from '~/server/kysely-db';
 import { Expression, SqlBool } from 'kysely';
 
 export const getUserCreator = async ({ ...where }: { username?: string; id?: number }) => {
-  const user = await kyselyDbRead
-    .selectFrom('User')
+  const userQuery = kyselyDbRead
+    .selectFrom('User as u')
+    .leftJoin('Image as i', 'Image.id', 'profilePictureId')
     .select([
-      'id',
-      'image',
-      'username',
-      'muted',
-      'bannedAt',
-      'deletedAt',
-      'createdAt',
-      'publicSettings',
-      'excludeFromLeaderboards',
+      'u.id',
+      'u.image',
+      'u.username',
+      'u.muted',
+      'u.bannedAt',
+      'u.deletedAt',
+      'u.createdAt',
+      'u.publicSettings',
+      'u.excludeFromLeaderboards',
     ])
+    // .select([''])
     .where((eb) => {
       const ors: Expression<SqlBool>[] = [];
       if (where.id) ors.push(eb('User.id', '=', where.id));
       if (where.username) ors.push(eb('User.username', '=', where.username));
       return eb.or(ors);
-    })
-    .executeTakeFirstOrThrow();
+    });
+
+  const user = await userQuery.executeTakeFirstOrThrow();
+
+  // TODO - query profile picture on every user query (joins?)
 
   const linksQuery = kyselyDbRead
     .selectFrom('UserLink')

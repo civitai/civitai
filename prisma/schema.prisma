@@ -13,9 +13,9 @@ generator kysely {
   // Optionally provide a destination directory for the generated file
   // and a filename of your choice
   output       = "../src/server/kysely-db"
-  fileName     = "kyesely.types.ts"
+  fileName     = "types.ts"
   // Optionally generate runtime enums to a separate file
-  enumFileName = "kysely.enums.ts"
+  enumFileName = "enums.ts"
 }
 
 generator client {

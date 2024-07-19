@@ -2,7 +2,15 @@ import { SqlBool, Expression } from 'kysely';
 import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 
 export class UserRepository {
-  async getUserCreator({ id, username }: { id?: number; username?: string }) {
+  async getUserCreator({
+    id,
+    username,
+    include,
+  }: {
+    id?: number;
+    username?: string;
+    include?: Array<'links' | 'stats' | 'rank' | 'cosmetics' | 'modelCount'>;
+  }) {
     const user = await kyselyDbRead
       .selectFrom('User')
       .select([
@@ -70,11 +78,11 @@ export class UserRepository {
       .where('status', '=', 'Published');
 
     const [links, stats, rank, cosmetics, models] = await Promise.all([
-      linksQuery.execute(),
-      statsQuery.executeTakeFirst(),
-      rankQuery.executeTakeFirst(),
-      cosmeticsQuery.execute(),
-      modelQuery.execute(),
+      include?.includes('links') ? linksQuery.execute() : undefined,
+      include?.includes('stats') ? statsQuery.executeTakeFirst() : undefined,
+      include?.includes('rank') ? rankQuery.executeTakeFirst() : undefined,
+      include?.includes('cosmetics') ? cosmeticsQuery.execute() : undefined,
+      include?.includes('modelCount') ? modelQuery.execute() : undefined,
     ]);
 
     return {
@@ -84,7 +92,7 @@ export class UserRepository {
       rank,
       cosmetics,
       _count: {
-        models: Number(models[0].count),
+        models: models ? Number(models[0].count) : undefined,
       },
     };
   }
