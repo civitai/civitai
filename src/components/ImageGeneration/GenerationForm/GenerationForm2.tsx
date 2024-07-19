@@ -209,7 +209,7 @@ export function GenerationFormContent() {
 
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.covered !== false);
+      .filter((x) => x.available !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');

@@ -574,8 +574,9 @@ export const generation = {
       minStrength: -1,
       maxStrength: 2,
       covered: true,
-      image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
+      // image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   maxValues: {
@@ -617,6 +618,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   SDXL: {
@@ -645,6 +647,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   Pony: {
@@ -685,6 +688,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
 };
