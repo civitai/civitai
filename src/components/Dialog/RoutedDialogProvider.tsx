@@ -11,6 +11,7 @@ import { NextRouter, resolveHref } from 'next/dist/shared/lib/router/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
+import { Anchor, AnchorProps } from '@mantine/core';
 
 type DialogKey = keyof typeof dialogs;
 
@@ -142,6 +143,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   passHref,
   style,
   onClick,
+  variant = 'text',
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
@@ -150,6 +152,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
   style?: React.CSSProperties;
   onClick?: () => void;
+  variant?: AnchorProps['variant'];
 }) {
   const router = useRouter();
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
@@ -174,9 +177,15 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   }
 
   return (
-    <a href={asPath} onClick={handleClick} className={className} style={style}>
+    <Anchor
+      href={asPath}
+      onClick={handleClick}
+      className={className}
+      style={style}
+      variant={variant}
+    >
       {children}
-    </a>
+    </Anchor>
   );
 }
 
