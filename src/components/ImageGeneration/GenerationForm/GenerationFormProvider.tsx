@@ -30,6 +30,7 @@ import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.s
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
+import { showNotification } from '@mantine/notifications';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -176,6 +177,7 @@ function formatGenerationData(
   // if current vae doesn't match baseModel, set vae to undefined
   if (!vae || getBaseModelSetType(vae.modelType) !== baseModel) vae = undefined;
   // filter out any additional resources that don't belong
+  // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources
     .filter((resource) => {
       if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') return false;
@@ -279,6 +281,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       );
 
       const data = { ...formatted, workflow };
+      if (resources.length && resources.some((x) => !x.available)) {
+        showNotification({
+          color: 'yellow',
+          title: 'Remix',
+          message: 'Some resources used to generate this image are unavailable',
+        });
+      }
 
       setValues(runType === 'run' ? removeEmpty(data) : data);
     }
