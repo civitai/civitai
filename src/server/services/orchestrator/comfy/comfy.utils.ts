@@ -4,11 +4,15 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/orchestrator/types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 
+const replacementWorkflows: Record<string, string> = {};
+
 export async function getWorkflowDefinitions() {
   const workflowsJsons = await redis.hGetAll(REDIS_KEYS.GENERATION.WORKFLOWS);
   if (!workflowsJsons) throw new Error('No workflows found');
   const workflows = Object.values(workflowsJsons).map((json) => {
     const workflow = JSON.parse(json) as WorkflowDefinition;
+    if (workflow.key in replacementWorkflows)
+      workflow.template = replacementWorkflows[workflow.key];
     return {
       ...workflow,
       label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
@@ -28,7 +32,9 @@ export async function clearWorkflowDefinitions() {
 export async function getWorkflowDefinition(key: string) {
   const workflowJson = await redis.hGet(REDIS_KEYS.GENERATION.WORKFLOWS, key);
   if (!workflowJson) throw new Error('Workflow not found');
-  return JSON.parse(workflowJson) as WorkflowDefinition;
+  const workflow = JSON.parse(workflowJson) as WorkflowDefinition;
+  if (workflow.key in replacementWorkflows) workflow.template = replacementWorkflows[workflow.key];
+  return workflow;
 }
 
 export async function setWorkflowDefinition(key: string, data: WorkflowDefinition) {
