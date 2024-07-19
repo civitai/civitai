@@ -139,7 +139,7 @@ export function SignalStatusNotification({
   title?: (status: SignalStatus) => React.ReactNode;
 }) {
   const { status } = useSignalContext();
-  if (!status || status !== 'connected') return null;
+  if (!status || status === 'connected') return null;
 
   return (
     <Notification
