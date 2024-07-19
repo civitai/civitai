@@ -5,12 +5,12 @@ import {
   Card,
   Center,
   Checkbox,
+  createStyles,
   Group,
   Loader,
   Menu,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -18,6 +18,7 @@ import {
   IconArrowsShuffle,
   IconCheck,
   IconDotsVertical,
+  IconExternalLink,
   IconHourglass,
   IconInfoCircle,
   IconInfoHexagon,
@@ -31,21 +32,21 @@ import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
+import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
-import { generationStore } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   NormalizedGeneratedImage,
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
+import { generationStore } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
-import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 
 export function GeneratedImage({
   image,
@@ -90,6 +91,10 @@ export function GeneratedImage({
       component: GeneratedImageLightbox,
       props: { image, request },
     });
+  };
+
+  const handleAuxClick = () => {
+    window.open(image.url, '_blank');
   };
 
   const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
@@ -179,7 +184,7 @@ export function GeneratedImage({
             className={classes.imageWrapper}
             style={available ? { cursor: 'pointer' } : undefined}
           >
-            <Box onClick={handleImageClick}>
+            <Box onClick={handleImageClick} onAuxClick={handleAuxClick}>
               <Box className={classes.innerGlow} />
               {!available ? (
                 <Center className={classes.centeredAbsolute} p="xs">
@@ -291,6 +296,12 @@ export function GeneratedImage({
                   onClick={() => copy(image.jobId)}
                 >
                   Copy Job ID
+                </Menu.Item>
+                <Menu.Item
+                  icon={<IconExternalLink size={14} stroke={1.5} />}
+                  onClick={handleAuxClick}
+                >
+                  Open in New Tab
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>

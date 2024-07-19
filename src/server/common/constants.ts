@@ -665,6 +665,7 @@ export const generationConfig = {
         baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
       },
       { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
+      { type: ModelType.VAE, baseModelSet: 'SDXL' },
     ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
