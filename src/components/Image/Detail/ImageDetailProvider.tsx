@@ -78,9 +78,7 @@ export function ImageDetailProvider({
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
     // TODO: Hacky way to prevent sending the username when filtering by reactions
     { ...filters, username: !!reactions?.length ? undefined : username, postId, browsingLevel },
-    {
-      enabled: shouldFetchMany,
-    }
+    { enabled: shouldFetchMany }
   );
   const images = initialImages.length > 0 ? initialImages : queryImages;
 
