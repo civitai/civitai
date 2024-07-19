@@ -321,6 +321,13 @@ export function sanitizeParamsByWorkflowDefinition(
     if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
   }
 }
+
+export function availableResourcesFilter(resource: ResourceData) {
+  return (
+    resource.covered &&
+    (resource.availability === 'EarlyAccess' || resource.availability === 'Public')
+  );
+}
 // #endregion
 
 // #region [config]

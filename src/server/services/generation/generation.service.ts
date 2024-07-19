@@ -29,6 +29,7 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { ResourceData, resourceDataCache } from '~/server/redis/caches';
 import {
+  availableResourcesFilter,
   defaultCheckpoints,
   formatGenerationResources,
   GenerationResource,
@@ -284,11 +285,17 @@ const getImageGenerationData = async (id: number) => {
 
   const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
   const resourceData = await resourceDataCache.fetch(versionIds);
-  const resources = formatGenerationResources(resourceData);
+
+  // filter out unavailable resources
+  const availableResources = resourceData.filter(availableResourcesFilter);
+  const unavailableResources = resourceData.filter(
+    (resource) => !availableResourcesFilter(resource)
+  );
+  const resources = formatGenerationResources(availableResources);
 
   // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
   let checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
-  if (!checkpoint?.covered && checkpoint?.modelType) {
+  if (checkpoint) {
     const baseModel = getBaseModelSetType(checkpoint.baseModel);
     const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel] : undefined;
     if (baseModel && defaultCheckpoint) {
@@ -310,16 +317,14 @@ const getImageGenerationData = async (id: number) => {
   }
 
   // dedupe resources and add image resource strength/hashes
-  const deduped = uniqBy(resources, 'id')
-    .filter((x) => x.covered)
-    .map((resource) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
-      return {
-        ...resource,
-        strength: imageResource?.strength ? imageResource.strength / 100 : 1,
-        hash: imageResource?.hash ?? undefined,
-      };
-    });
+  const deduped = uniqBy(resources, 'id').map((resource) => {
+    const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+    return {
+      ...resource,
+      strength: imageResource?.strength ? imageResource.strength / 100 : 1,
+      hash: imageResource?.hash ?? undefined,
+    };
+  });
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {

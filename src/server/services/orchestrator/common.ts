@@ -14,12 +14,11 @@ import {
   InjectableResource,
   WORKFLOW_TAGS,
   allInjectableResourceIds,
+  availableResourcesFilter,
   formatGenerationResources,
   getBaseModelSetType,
-  getClosestAspectRatio,
   getInjectablResources,
   getSizeFromAspectRatio,
-  getWorkflowDefinitionFeatures,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
@@ -98,7 +97,7 @@ export async function getResourceDataWithInjects<T extends AirResourceData>(
 export async function parseGenerateImageInput({
   user,
   params: originalParams,
-  resources,
+  resources: originalResources,
   workflowDefinition,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
@@ -116,13 +115,19 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError('Generation is currently disabled');
 
   const resourceData = await getResourceDataWithInjects(
-    resources.map((x) => x.id),
+    originalResources.map((x) => x.id),
     (resource) => ({
       ...resource,
-      ...resources.find((x) => x.id === resource.id),
+      ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
     })
   );
+
+  // check for unavailable resources
+  const resources = resourceData.resources.filter(availableResourcesFilter);
+  if (resources.length !== resourceData.resources.length) {
+    throw throwBadRequestError(`Some of the resources you selected are unavailable for generation`);
+  }
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
