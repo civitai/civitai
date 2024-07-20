@@ -149,6 +149,7 @@ export const getUserCreatorHandler = async ({
   input: GetUserByUsernameSchema;
   ctx: Context;
 }) => {
+  username = username?.toLowerCase();
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
 
