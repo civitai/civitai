@@ -46,10 +46,12 @@ export async function populateWorkflowDefinition(key: string, data: any) {
   const populated = template
     .replace(/"\{\{\{(\w+)\}\}\}"/g, '{{$1}}')
     .replace(/{\s*{\s*([\w]+)\s*}\s*}/g, (_: any, match: any) => {
-      return data[match];
+      let toInject = data[match];
+      if (typeof toInject === 'string') toInject = JSON.stringify(toInject).replace(/^"|"$/g, '');
+      return toInject;
     });
   try {
-    return JSON.parse(populated.replace(/\n/g, '\\n'));
+    return JSON.parse(populated);
   } catch (e) {
     throw new Error('Failed to populate workflow');
   }

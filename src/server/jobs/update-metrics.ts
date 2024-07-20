@@ -41,7 +41,7 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
       return stats;
     },
     {
-      lockExpiration: 30 * 60,
+      lockExpiration: metrics[0].lockTime ?? 30 * 60,
       queue: 'metrics',
     }
   )
