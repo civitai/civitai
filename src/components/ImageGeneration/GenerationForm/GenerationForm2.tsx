@@ -680,9 +680,10 @@ export function GenerationFormContent() {
               <div className="flex flex-col gap-3">
                 <Watch {...form} fields={['draft', 'baseModel']}>
                   {({ draft, baseModel }) => {
-                    const cfgDisabled = !!draft;
-                    const samplerDisabled = !!draft;
-                    const stepsDisabled = !!draft;
+                    const isDraft = features.draft && !!draft;
+                    const cfgDisabled = isDraft;
+                    const samplerDisabled = isDraft;
+                    const stepsDisabled = isDraft;
                     const isSDXL = getIsSdxl(baseModel);
 
                     return (
@@ -698,7 +699,7 @@ export function GenerationFormContent() {
                             </Text>
                           }
                           zIndex={2}
-                          visible={!!draft}
+                          visible={isDraft}
                         />
                         <InputNumberSlider
                           name="cfgScale"
