@@ -63,6 +63,7 @@ export const imageMetrics = createMetricProcessor({
         AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
+  lockTime: 5 * 60,
 });
 
 async function getReactionTasks(ctx: MetricProcessorRunContext) {
