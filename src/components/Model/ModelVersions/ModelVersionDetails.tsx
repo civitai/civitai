@@ -1123,8 +1123,6 @@ export function ModelVersionDetails({
                   color="dimmed"
                   sx={{
                     whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
                     lineHeight: 1.1,
                   }}
                 >
@@ -1178,9 +1176,14 @@ export function ModelVersionDetails({
             )}
             <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
           </Group>
-          {model.type === 'Checkpoint' && license?.notice && (
+          {license?.notice && (
             <Text size="xs" color="dimmed">
               {license.notice}
+            </Text>
+          )}
+          {license?.poweredBy && (
+            <Text size="xs" weight={500}>
+              {license.poweredBy}
             </Text>
           )}
           {hasPendingClaimReport && (

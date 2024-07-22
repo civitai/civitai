@@ -421,6 +421,7 @@ type LicenseDetails = {
   url: string;
   name: string;
   notice?: string;
+  poweredBy?: string;
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
@@ -461,6 +462,13 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
+  'SAI CLA': {
+    url: '',
+    name: 'Stability AI Community License Agreement',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
+    poweredBy: 'Powered by Stability AI',
+  },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     name: 'Tencent Hunyuan Community License Agreement',
@@ -481,7 +489,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1': baseLicenses['openrail'],
   'SD 2.1 768': baseLicenses['openrail'],
   'SD 2.1 Unclip': baseLicenses['openrail'],
-  'SD 3': baseLicenses['SAI NC RC'],
+  'SD 3': baseLicenses['SAI CLA'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
