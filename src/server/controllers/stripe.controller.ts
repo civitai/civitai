@@ -151,15 +151,20 @@ export const getPaymentIntentHandler = async ({
 
     if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-    const riskScore = await createRecaptchaAssesment({
+    const { score, reasons } = await createRecaptchaAssesment({
       token: recaptchaToken,
       recaptchaAction: RECAPTCHA_ACTIONS.STRIPE_TRANSACTION,
     });
 
-    if ((riskScore || 0) < 0.7)
-      throw throwAuthorizationError(
-        'We are unable to process your payment at this time. Please try again later.'
-      );
+    if ((score || 0) < 0.7) {
+      if (reasons.length) {
+        throw throwAuthorizationError(
+          `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
+        );
+      } else {
+        throw throwAuthorizationError('We could not verify the authenticity of your request.');
+      }
+    }
 
     const result = await getPaymentIntent({
       ...input,
