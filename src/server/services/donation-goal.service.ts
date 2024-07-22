@@ -83,7 +83,7 @@ export const donateToGoal = async ({
       },
     });
 
-    // Retuns an updated copy of the goal.
+    // Returns an updated copy of the goal.
     const updatedDonationGoal = await donationGoalById({ id: donationGoalId, userId });
 
     if (
