@@ -177,7 +177,7 @@
     "run-queue": "^2.0.1",
     "sanitize-html": "^2.7.3",
     "semver": "^7.6.0",
-    "sharp": "^0.31.2",
+    "sharp": "^0.32.6",
     "slate": "^0.94.1",
     "slate-history": "^0.93.0",
     "slate-react": "^0.95.0",
