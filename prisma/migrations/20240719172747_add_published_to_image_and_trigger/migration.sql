@@ -1,6 +1,5 @@
 ALTER TABLE "Image"
   ADD COLUMN "sortAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
-CREATE INDEX "Image_sortAt_idx" ON "Image" ("sortAt");
 
 --
 
@@ -38,9 +37,38 @@ CREATE OR REPLACE TRIGGER new_image_sort_at
   FOR EACH ROW
 EXECUTE FUNCTION update_new_image_sort_at();
 
-COMMENT ON FUNCTION update_new_image_sort_at() IS 'When an image is created or its postId is updated, set sortAt based on the post. If publishedAt is null, use createdAt.'
+COMMENT ON FUNCTION update_new_image_sort_at() IS 'When an image is created or its postId is updated, set sortAt based on the post. If publishedAt is null, use createdAt.';
 
 --
 
 -- -- Migration
--- UPDATE "Image" i SET "sortAt" = coalesce(p."publishedAt", i."createdAt") FROM "Post" p where i."postId" = p.id
+-- DO
+-- $$
+--     DECLARE
+--         page   int := 10000;
+--         min_id int; max_id int; j int; tot int;
+--         cnt int := 0;
+--     BEGIN
+--         SELECT max(id), min(id) INTO max_id,min_id FROM "Image";
+--         tot := ceil((max_id - min_id) / page) + 1;
+--         RAISE INFO 'Running from % to % | Loops: %', min_id, max_id, tot;
+--
+--         FOR j IN min_id..max_id BY page
+--             LOOP
+--                 cnt := cnt + 1;
+--                 RAISE INFO '%: % to % | %/%', now()::timestamp(0), j, j + page - 1, cnt, tot;
+--
+--                 UPDATE "Image" i
+--                 SET "sortAt" = coalesce(p."publishedAt", i."createdAt")
+--                 FROM "Image" i2
+--                          LEFT JOIN "Post" p ON i2."postId" = p.id
+--                 WHERE i.id = i2.id
+--                   AND i2.id >= j
+--                   AND i2.id < j + page;
+--
+--                 COMMIT;
+--             END LOOP;
+--     END;
+-- $$;
+
+CREATE INDEX "Image_sortAt_idx" ON "Image" ("sortAt");
