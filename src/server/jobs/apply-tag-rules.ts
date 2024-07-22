@@ -89,6 +89,7 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
         INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
         SELECT "imageId", ${fromId}, automated, confidence, "needsReview", source
         FROM "TagsOnImage"
+        JOIN "Image" ON "imageId" = id -- Ensure image exists
         WHERE "tagId" = ${toId}
           AND NOT disabled
           AND "imageId" >= ${start}
