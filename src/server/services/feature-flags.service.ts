@@ -8,7 +8,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 // --------------------------
 const featureAvailability = ['dev', 'mod', 'public', 'user', 'member', 'granted'] as const;
 const featureFlags = createFeatureFlags({
-  earlyAccessModel: ['dev'],
+  earlyAccessModel: ['mod'],
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod', 'member'],
@@ -72,6 +72,7 @@ const featureFlags = createFeatureFlags({
   membershipsV2: ['mod'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
+  donationGoals: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

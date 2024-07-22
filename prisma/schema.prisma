@@ -172,6 +172,7 @@ model User {
   bannedAt                DateTime?
   autoplayGifs            Boolean?              @default(true)
   filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  meta                    Json?                 @default("{}")
   leaderboardShowcase     String?
   referral                UserReferral?
   excludeFromLeaderboards Boolean               @default(false)
@@ -265,6 +266,8 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  donationGoals              DonationGoal[]
+  donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
 }
@@ -633,35 +636,36 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                   Int             @id @default(autoincrement())
-  index                Int?
-  name                 String
-  description          String?
-  modelId              Int
-  model                Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords         String[]
-  steps                Int?
-  epochs               Int?
-  clipSkip             Int?
-  vaeId                Int?
-  vae                  ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  publishedAt          DateTime?
-  status               ModelStatus     @default(Draft)
-  trainingStatus       TrainingStatus?
-  trainingDetails      Json?
-  fromImport           Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId         Int?
-  inaccurate           Boolean         @default(false)
-  baseModel            String
-  baseModelType        String?
-  meta                 Json            @default("{}")
-  earlyAccessTimeFrame Int             @default(0)
-  requireAuth          Boolean         @default(false)
-  settings             Json?
-  availability         Availability    @default(Public)
-  nsfwLevel            Int             @default(0)
+  id                Int             @id @default(autoincrement())
+  index             Int?
+  name              String
+  description       String?
+  modelId           Int
+  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords      String[]
+  steps             Int?
+  epochs            Int?
+  clipSkip          Int?
+  vaeId             Int?
+  vae               ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  publishedAt       DateTime?
+  status            ModelStatus     @default(Draft)
+  trainingStatus    TrainingStatus?
+  trainingDetails   Json?
+  fromImport        Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId      Int?
+  inaccurate        Boolean         @default(false)
+  baseModel         String
+  baseModelType     String?
+  meta              Json            @default("{}")
+  requireAuth       Boolean         @default(false)
+  settings          Json?
+  availability      Availability    @default(Public)
+  nsfwLevel         Int             @default(0)
+  earlyAccessEndsAt DateTime?
+  earlyAccessConfig Json?
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -679,6 +683,7 @@ model ModelVersion {
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
+  DonationGoal            DonationGoal[]
 
   @@index([modelId], type: Hash)
 }
@@ -2603,6 +2608,7 @@ enum Availability {
   Public
   Unsearchable // Ignored from search results.
   Private
+  EarlyAccess
 }
 
 model EntityAccess {
@@ -2613,6 +2619,8 @@ model EntityAccess {
   addedById    Int
   addedBy      User     @relation(fields: [addedById], references: [id])
   addedAt      DateTime @default(now())
+  permissions  Int      @default(1024)
+  meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
 }
@@ -3087,6 +3095,35 @@ model ImageTechnique {
 
   @@id([imageId, techniqueId])
   @@index([techniqueId])
+}
+
+model DonationGoal {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  goalAmount     Int
+  paidAmount     Int           @default(0)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  isEarlyAccess  Boolean       @default(false)
+  active         Boolean       @default(true)
+
+  donations Donation[]
+}
+
+model Donation {
+  id                Int          @id @default(autoincrement())
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  donationGoalId    Int
+  donationGoal      DonationGoal @relation(fields: [donationGoalId], references: [id], onDelete: Cascade)
+  amount            Int
+  buzzTransactionId String
+  notes             String?
+  createdAt         DateTime     @default(now())
 }
 
 /// @view

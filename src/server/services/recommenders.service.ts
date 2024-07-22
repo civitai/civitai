@@ -1,3 +1,4 @@
+import { dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import recommendersCaller from '~/server/http/recommenders/recommenders.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -28,7 +29,7 @@ export async function toggleResourceRecommendation({
     throw throwAuthorizationError("You don't have permission to toggle this setting");
 
   const versionMeta = modelVersion.meta as ModelVersionMeta;
-  const updatedVersion = await db.modelVersion.update({
+  const updatedVersion = await dbWrite.modelVersion.update({
     where: { id: resourceId },
     data: {
       meta: { ...versionMeta, allowAIRecommendations: !versionMeta.allowAIRecommendations },

@@ -1,12 +1,10 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 
 import { produce } from 'immer';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { createStore, useStore } from 'zustand';
 import { devtools } from 'zustand/middleware';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { useDebouncer } from '~/utils/debouncer';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { UserTier } from '~/server/schema/user.schema';
 import {
@@ -63,7 +61,6 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationStore((state) => state.opened);
-  const { connected } = useSignalContext();
   const {
     data: requests,
     steps,

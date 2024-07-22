@@ -13,7 +13,7 @@ type ModelVersionForEarlyAccessReward = {
   id: number;
   createdAt: Date;
   publishedAt: Date;
-  earlyAccessTimeFrame: number;
+  earlyAccessEndsAt: Date | null;
   meta: ModelVersionMeta;
   modelName: string;
   modelVersionName: string;
@@ -52,7 +52,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
         mv.id,
         mv."createdAt",
         mv."publishedAt",
-        mv."earlyAccessTimeFrame",
+        mv."earlyAccessEndsAt",
         mv."meta",
         m.name as "modelName",
         mv.name as "modelVersionName",
@@ -93,11 +93,11 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
     await Promise.all(
       modelVersions.map(async (version) => {
         // First, check that it's still early access:
-        const isEarlyAccessBool = isEarlyAccess({
-          versionCreatedAt: version.createdAt,
-          earlyAccessTimeframe: version.earlyAccessTimeFrame,
-          publishedAt: version.publishedAt,
-        });
+        const isEarlyAccessBool = !!version.earlyAccessEndsAt;  
+
+        if (!isEarlyAccessBool) {
+          return;
+        }
 
         const downloadData = modelVersionData
           .filter(
@@ -106,7 +106,7 @@ export const processCreatorProgramEarlyAccessRewards = createJob(
               dayjs(x.createdDate).endOf('day').isAfter(version.publishedAt) &&
               dayjs(x.createdDate)
                 .startOf('day')
-                .isBefore(dayjs(version.publishedAt).add(version.earlyAccessTimeFrame, 'day'))
+                .isBefore(version.earlyAccessEndsAt ?? new Date())
           )
           .map((d) => ({
             date: d.createdDate,

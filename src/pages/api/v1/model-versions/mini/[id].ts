@@ -11,6 +11,7 @@ import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -22,6 +23,9 @@ type VersionRow = {
   baseModel: BaseModel;
   status: string;
   type: ModelType;
+  earlyAccessEndsAt?: Date;
+  checkPermission: boolean;
+  covered?: boolean;
 };
 type FileRow = {
   id: number;
@@ -56,7 +60,20 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
-      m.type
+      m.type,
+      mv."earlyAccessEndsAt",
+      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
+      (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      (
+        CASE
+          mv."earlyAccessConfig"->>'chargeForGeneration'
+        WHEN 'true'
+        THEN
+          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10)
+        ELSE
+          NULL
+        END
+      ) AS "freeTrialLimit"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
@@ -83,6 +100,14 @@ export default MixedAuthEndpoint(async function handler(
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
 
+  // Check unavailable resources:
+  let canGenerate = modelVersion.covered ?? false;
+  if (canGenerate) {
+    const unavailableResources = await getUnavailableResources();
+    const isUnavailable = unavailableResources.some((r) => r === modelVersion.id);
+    if (isUnavailable) canGenerate = false;
+  }
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -94,6 +119,9 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
+    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
+    checkPermission: modelVersion.checkPermission,
+    canGenerate,
   };
   res.status(200).json(data);
 });

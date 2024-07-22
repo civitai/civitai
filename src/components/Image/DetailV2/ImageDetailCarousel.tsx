@@ -79,15 +79,15 @@ export function ImageDetailCarousel(props: ImageProps) {
         onSlideChange={handleSlideChange}
         getEmblaApi={setEmbla}
         height="100%"
-        initialSlide={slidesInView[0]}
+        initialSlide={index}
         draggable={!isDesktop && canNavigate}
         loop
         withKeyboardEvents={false}
         // withIndicators={images.length <= maxIndicators && images.length > 1}
       >
-        {images.map((image, index) => (
+        {images.map((image, i) => (
           <Carousel.Slide key={image.id}>
-            {slidesInView.includes(index) && <ImageContent image={image} {...connect} {...props} />}
+            {index === i && <ImageContent image={image} {...connect} {...props} />}
           </Carousel.Slide>
         ))}
       </Carousel>

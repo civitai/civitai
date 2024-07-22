@@ -56,7 +56,6 @@ export function Queue() {
       <Button
         component="a"
         href="/api/generation/history"
-        download
         disabled={downloading}
         onClick={handleSetDownloading}
       >
@@ -102,18 +101,15 @@ export function Queue() {
             {/* <Text span td="underline">
               {`You'll be able to download older images soon.`}
             </Text> */}
-            {!downloading && (
-              <Text
-                variant="link"
-                td="underline"
-                component="a"
-                href="/api/generation/history"
-                download
-                onClick={handleSetDownloading}
-              >
-                Download images created before {formatDate(orchestratorIntegrationDate)}
-              </Text>
-            )}
+            <Text
+              variant="link"
+              td="underline"
+              component="a"
+              href="/api/generation/history"
+              onClick={handleSetDownloading}
+            >
+              Download images created before {formatDate(orchestratorIntegrationDate)}
+            </Text>
           </Text>
         )}
         {/* {data.map((request) =>

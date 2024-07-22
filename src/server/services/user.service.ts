@@ -28,6 +28,7 @@ import {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
+  UserMeta,
 } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
@@ -627,6 +628,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     autoplayGifs: response.autoplayGifs ?? undefined,
     leaderboardShowcase: response.leaderboardShowcase ?? undefined,
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
+    meta: (response.meta ?? {}) as UserMeta,
   };
 
   const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;

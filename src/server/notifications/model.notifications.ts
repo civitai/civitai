@@ -283,4 +283,14 @@ export const modelNotifications = createNotificationProcessor({
       FROM to_add
     `,
   },
+
+  'early-access-failed-to-publish': {
+    displayName: 'Model version failed to publish.',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more buzz to publish.`,
+      url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
+    }),
+  },
 });

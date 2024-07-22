@@ -29,7 +29,7 @@ export function UpscaleImageModal({
   }, [params.image]);
 
   const { data, isLoading, isInitialLoading, isError } =
-    trpc.orchestrator.generateImageWhatIf.useQuery({
+    trpc.orchestrator.getImageWhatIf.useQuery({
       resources: resources.map((x) => x.id),
       params: {
         ...params,

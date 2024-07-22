@@ -184,10 +184,7 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
-  const isSDXL = getIsSdxl(data.version?.baseModel);
-
-  const isPony = data.version?.baseModel === 'Pony';
-  const isOdor = data.version?.baseModel === 'ODOR';
+  const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
   const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
@@ -282,19 +279,21 @@ export function ModelCard({ data, forceInView }: Props) {
                             )}
                           </Badge>
 
-                          {(isNew || isUpdated) && (
+                          {(isNew || isUpdated || isEarlyAccess) && (
                             <Badge
                               className={classes.chip}
                               variant="filled"
                               radius="xl"
                               sx={(theme) => ({
-                                backgroundColor: isUpdated
+                                backgroundColor: isEarlyAccess
                                   ? theme.colors.success[5]
+                                  : isUpdated
+                                  ? theme.colors.teal[5]
                                   : theme.colors.blue[theme.fn.primaryShade()],
                               })}
                             >
                               <Text color="white" size="xs" transform="capitalize">
-                                {isUpdated ? 'Updated' : 'New'}
+                                {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
                               </Text>
                             </Badge>
                           )}

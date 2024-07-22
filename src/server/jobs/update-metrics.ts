@@ -6,16 +6,16 @@ const metricSets = {
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
-  clubs: [
-    // metrics.clubPostMetrics, metrics.clubMetrics // disable clubs
-  ],
+  // clubs: [
+  //   metrics.clubPostMetrics, metrics.clubMetrics // disable clubs
+  // ],
   posts: [metrics.postMetrics],
   tags: [metrics.tagMetrics],
   collections: [metrics.collectionMetrics],
   articles: [metrics.articleMetrics],
-  other: [
-    // metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
-  ],
+  // other: [
+  //   metrics.answerMetrics, metrics.questionMetrics // disable questions and answers
+  // ],
 };
 
 export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
@@ -41,7 +41,7 @@ export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
       return stats;
     },
     {
-      lockExpiration: 30 * 60,
+      lockExpiration: metrics[0].lockTime ?? 30 * 60,
       queue: 'metrics',
     }
   )
