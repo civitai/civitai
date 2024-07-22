@@ -6,6 +6,7 @@ import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 import { SignalWorker, createSignalWorker } from '~/utils/signals';
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
+import { useInterval } from '@mantine/hooks';
 
 type SignalState = {
   connected: boolean;
@@ -98,6 +99,17 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     if (!accessToken) return;
     workerRef.current?.init(accessToken);
   }, [accessToken]); //eslint-disable-line
+
+  const interval = useInterval(() => {
+    if (!accessToken) return;
+    console.log('attempting to reconnect signal services');
+    workerRef.current?.init(accessToken);
+  }, 30 * 1000);
+
+  useEffect(() => {
+    if (!status || status === 'connected') interval.stop();
+    else interval.start();
+  }, [status]);
 
   // useEffect(() => {
   //   const status = 'closed';

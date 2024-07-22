@@ -58,7 +58,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const [debounced] = useDebouncedValue(query, 100);
 
-  const result = trpc.orchestrator.generateImageWhatIf.useQuery(debounced, {
+  const result = trpc.orchestrator.getImageWhatIf.useQuery(debounced, {
     enabled: debounced && enabled,
   });
 

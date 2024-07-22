@@ -66,7 +66,11 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
-import { getBaseModelSet, getIsSdxl } from '~/shared/constants/generation.constants';
+import {
+  GenerationResource,
+  getBaseModelSet,
+  getIsSdxl,
+} from '~/shared/constants/generation.constants';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -95,7 +99,7 @@ const ResourceSelectContext = React.createContext<{
   isTraining?: boolean;
   resources: { type: ModelType; baseModels: BaseModel[] }[];
   onSelect: (
-    value: Generation.Resource & { image: SearchIndexDataMap['models'][number]['images'][number] }
+    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
   ) => void;
 } | null>(null);
 
@@ -146,7 +150,7 @@ export default function ResourceSelectModal({
     }
   }
 
-  const handleSelect = (value: Generation.Resource) => {
+  const handleSelect = (value: GenerationResource) => {
     onSelect(value);
     context.closeModal(id);
   };
@@ -315,6 +319,8 @@ function ResourceSelectCard({
       minor: data.minor,
       image: image,
       covered: data.canGenerate,
+      available:
+        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
@@ -516,8 +522,8 @@ function ResourceSelectCard({
                         alt={
                           image.meta
                             ? truncate((image.meta as ImageMetaProps).prompt, {
-                              length: constants.altTruncateLength,
-                            })
+                                length: constants.altTruncateLength,
+                              })
                             : image.name ?? undefined
                         }
                         type={image.type}

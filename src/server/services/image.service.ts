@@ -1479,7 +1479,7 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  let images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
   const remainingModelVersionIds = modelVersionIds.filter(
     (x) => !images.some((i) => i.modelVersionId === x)

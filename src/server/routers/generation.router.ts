@@ -26,10 +26,14 @@ import {
 import { z } from 'zod';
 
 export const generationRouter = router({
-  getWorkflowDefinitions: publicProcedure.query(() =>
+  getWorkflowDefinitions: publicProcedure.query(({ ctx }) =>
     getWorkflowDefinitions().then((res) =>
       res
-        .filter((x) => x.enabled !== false)
+        .filter((x) => {
+          if (x.status === 'disabled') return false;
+          if (x.status === 'mod-only' && !ctx.user?.isModerator) return false;
+          return true;
+        })
         .map(({ type, key, name, features, description, selectable, label }) => ({
           type,
           key,

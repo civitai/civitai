@@ -16,10 +16,8 @@ import {
   allInjectableResourceIds,
   formatGenerationResources,
   getBaseModelSetType,
-  getClosestAspectRatio,
   getInjectablResources,
   getSizeFromAspectRatio,
-  getWorkflowDefinitionFeatures,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
@@ -98,7 +96,7 @@ export async function getResourceDataWithInjects<T extends AirResourceData>(
 export async function parseGenerateImageInput({
   user,
   params: originalParams,
-  resources,
+  resources: originalResources,
   workflowDefinition,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
@@ -116,10 +114,10 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError('Generation is currently disabled');
 
   const resourceData = await getResourceDataWithInjects(
-    resources.map((x) => x.id),
+    originalResources.map((x) => x.id),
     (resource) => ({
       ...resource,
-      ...resources.find((x) => x.id === resource.id),
+      ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
     })
   );
@@ -145,7 +143,7 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => !!x.covered))
+  if (!resourceData.resources.every((x) => x.available))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
         .filter((x) => !x.covered)

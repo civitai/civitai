@@ -18,12 +18,14 @@ export function createMetricProcessor({
   updateInterval = DEFAULT_UPDATE_INTERVAL,
   clearDay,
   rank,
+  lockTime,
 }: {
   name: string;
   update: MetricContextProcessor;
   updateInterval?: number;
   clearDay?: MetricContextProcessor;
   rank?: MetricRankOptions;
+  lockTime?: number;
 }) {
   return {
     name,
@@ -94,6 +96,7 @@ export function createMetricProcessor({
       if (!Array.isArray(ids)) ids = [ids];
       await addToQueue('metric-update:' + name.toLowerCase(), ids);
     },
+    lockTime,
   };
 }
 

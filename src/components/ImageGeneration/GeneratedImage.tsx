@@ -87,6 +87,7 @@ export function GeneratedImage({
 
   const handleImageClick = () => {
     if (!image || !available) return;
+
     dialogStore.trigger({
       component: GeneratedImageLightbox,
       props: { image, request },
@@ -94,7 +95,7 @@ export function GeneratedImage({
   };
 
   const handleAuxClick = () => {
-    window.open(image.url, '_blank');
+    if (image) window.open(image.url, '_blank');
   };
 
   const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
@@ -184,7 +185,12 @@ export function GeneratedImage({
             className={classes.imageWrapper}
             style={available ? { cursor: 'pointer' } : undefined}
           >
-            <Box onClick={handleImageClick} onAuxClick={handleAuxClick}>
+            <Box
+              onClick={handleImageClick}
+              onMouseDown={(e) => {
+                if (e.button === 1) return handleAuxClick();
+              }}
+            >
               <Box className={classes.innerGlow} />
               {!available ? (
                 <Center className={classes.centeredAbsolute} p="xs">

@@ -120,7 +120,7 @@ export const orchestratorRouter = router({
         throw e;
       }
     }),
-  generateImageWhatIf: orchestratorGuardedProcedure
+  getImageWhatIf: orchestratorGuardedProcedure
     .input(generateImageWhatIfSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {

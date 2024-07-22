@@ -22,20 +22,19 @@ export function ProfileLayout({
   username: string;
   children: React.ReactNode;
 }) {
-  const { isLoading, data: user } = trpc.userProfile.get.useQuery({
-    username,
-  });
+  const enabled = username.toLowerCase() !== 'civitai';
+  const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username }, { enabled });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.some((x) => x.id === user?.id);
 
   const stats = user?.stats;
   const { classes } = useStyles();
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return <PageLoader />;
   }
 
-  if (!user || !user.username) {
+  if (!user || !user.username || !enabled) {
     return <NotFound />;
   }
 
