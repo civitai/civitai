@@ -8,6 +8,7 @@ import {
   UpdatePostImageInput,
   GetPostTagsInput,
   PostsQueryInput,
+  UpdatePostCollectionTagIdInput,
 } from './../schema/post.schema';
 import {
   createPost,
@@ -24,6 +25,7 @@ import {
   getPostsInfinite,
   getPostResources,
   getPostContestCollectionDetails,
+  updatePostCollectionTagId,
 } from './../services/post.service';
 import { TRPCError } from '@trpc/server';
 import { PostCreateInput } from '~/server/schema/post.schema';
@@ -524,6 +526,19 @@ export const getPostContestCollectionDetailsHandler = async ({
   try {
     const items = await getPostContestCollectionDetails({ ...input });
     return items;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const updatePostCollectionTagIdHandler = async ({
+  input,
+}: {
+  input: UpdatePostCollectionTagIdInput;
+}) => {
+  try {
+    return updatePostCollectionTagId({ ...input });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

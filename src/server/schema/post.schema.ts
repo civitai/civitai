@@ -138,3 +138,9 @@ export const postEditQuerySchema = z.object({
   collectionId: z.coerce.number().optional(),
   collectionTagId: z.coerce.number().optional(),
 });
+
+export type UpdatePostCollectionTagIdInput = z.infer<typeof updatePostCollectionTagIdInput>;
+export const updatePostCollectionTagIdInput = z.object({
+  id: z.number(),
+  collectionTagId: z.number(),
+});

@@ -236,6 +236,7 @@ export function ImageDetailByProps({
                     <VotableTags
                       entityType="image"
                       entityId={image.id}
+                      nsfwLevel={image.nsfwLevel}
                       canAdd
                       collapsible
                       px="sm"

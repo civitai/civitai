@@ -14,12 +14,14 @@ import {
   UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
   IconBookmark,
   IconBrandWechat,
+  IconBrush,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
@@ -29,47 +31,46 @@ import {
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
-  IconShare3,
   IconProps,
+  IconShare3,
 } from '@tabler/icons-react';
+import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
+import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
+import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { DownloadImage } from '~/components/Image/DownloadImage';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { useLocalStorage } from '@mantine/hooks';
-
-import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
-import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
-import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { DownloadImage } from '~/components/Image/DownloadImage';
-import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
-import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
-import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -124,6 +125,7 @@ export function ImageDetail2() {
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+  const videoRef = useRef<EdgeVideoRef | null>(null);
 
   if (isLoading) return <PageLoader />;
   if (!image || isBlocked) return <NotFound />;
@@ -175,6 +177,9 @@ export function ImageDetail2() {
           name="postDetail"
           state={{ postId: image.postId }}
           className="hidden @md:block"
+          onClick={() => {
+            if (videoRef.current) videoRef.current.stop();
+          }}
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
@@ -279,7 +284,7 @@ export function ImageDetail2() {
                   </div>
                 </div>
                 {/* IMAGE CAROUSEL */}
-                <ImageDetailCarousel />
+                <ImageDetailCarousel videoRef={videoRef} />
                 {/* FOOTER */}
                 <div className="flex flex-col gap-3 p-3">
                   <div className="flex justify-center">
@@ -348,6 +353,7 @@ export function ImageDetail2() {
           } @md:w-[450px] @md:min-w-[450px] ${
             !sidebarOpen ? '@md:hidden' : ''
           } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
+          style={{ wordBreak: 'break-word' }}
         >
           <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
             <div className="flex gap-1">{LeftImageControls}</div>

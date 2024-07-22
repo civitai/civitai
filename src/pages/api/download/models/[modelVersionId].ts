@@ -109,12 +109,9 @@ export default PublicEndpoint(
         return res.status(403).json({
           error: 'Early Access',
           deadline: fileResult.details.deadline,
-          message: 'This asset is in Early Access and you need to be a member to download it',
+          message: 'This asset is in Early Access. You can use Buzz access it now!',
         });
-      else
-        return res.redirect(
-          getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
-        );
+      else return res.redirect(`/model-versions/${modelVersionId}`);
     }
     if (fileResult.status === 'unauthorized') {
       if (!isBrowser)

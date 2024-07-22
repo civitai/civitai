@@ -16,6 +16,7 @@ import {
   getPostsInfiniteHandler,
   getPostResourcesHandler,
   getPostContestCollectionDetailsHandler,
+  updatePostCollectionTagIdHandler,
 } from './../controllers/post.controller';
 import {
   postCreateSchema,
@@ -27,6 +28,7 @@ import {
   updatePostImageSchema,
   getPostTagsSchema,
   postsQuerySchema,
+  updatePostCollectionTagIdInput,
 } from './../schema/post.schema';
 import { dbWrite } from '~/server/db/client';
 import { router, protectedProcedure, middleware } from '~/server/trpc';
@@ -121,4 +123,8 @@ export const postRouter = router({
   getContestCollectionDetails: publicProcedure
     .input(getByIdSchema)
     .query(getPostContestCollectionDetailsHandler),
+  updateCollectionTagId: protectedProcedure
+    .input(updatePostCollectionTagIdInput)
+    .use(isOwnerOrModerator)
+    .mutation(updatePostCollectionTagIdHandler),
 });

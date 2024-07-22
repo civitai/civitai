@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { BuzzEventContext, createEvent, DonationCosmeticData } from './base.event';
 
@@ -77,9 +78,9 @@ export const holiday2023 = createEvent('holiday2023', {
     if (!milestoneCosmeticId) return;
     await createNotification({
       userId,
-      id: `holiday2023:${userId}:${milestone}lights`,
+      key: `holiday2023:${userId}:${milestone}lights`,
       type: 'system-announcement',
-      category: 'System',
+      category: NotificationCategory.System,
       details: {
         message: `You've earned the ${milestone} lights badge! Claim it now.`,
         url: `/claim/cosmetic/${milestoneCosmeticId}`,
@@ -112,21 +113,21 @@ export const holiday2023 = createEvent('holiday2023', {
     if (!badgeId) return;
 
     // Send notification to winner
-    const details = {
-      message: `Your team won the Holiday 2023 event! Claim your animated victory badge now!`,
-      url: `/claim/cosmetic/${badgeId}`,
-    };
-
-    await db.$executeRaw`
-      INSERT INTO "Notification" ("id", "userId", "type", "details")
-      SELECT
-        CONCAT('holiday2023:', "userId", ':winner'),
-        "userId",
-        'system-announcement',
-        ${JSON.stringify(details)}::jsonb
-      FROM "UserCosmetic"
-      WHERE "cosmeticId" = ${winnerCosmeticId}
-    `;
+    // const details = {
+    //   message: `Your team won the Holiday 2023 event! Claim your animated victory badge now!`,
+    //   url: `/claim/cosmetic/${badgeId}`,
+    // };
+    //
+    // await db.$executeRaw`
+    //   INSERT INTO "Notification" ("id", "userId", "type", "details")
+    //   SELECT
+    //     CONCAT('holiday2023:', "userId", ':winner'),
+    //     "userId",
+    //     'system-announcement',
+    //     ${JSON.stringify(details)}::jsonb
+    //   FROM "UserCosmetic"
+    //   WHERE "cosmeticId" = ${winnerCosmeticId}
+    // `;
   },
 });
 
@@ -146,9 +147,9 @@ async function handleDonationMilestones(buzzEvent: BuzzEventContext) {
     if (!milestoneCosmeticId) return;
     await createNotification({
       userId: buzzEvent.userId,
-      id: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
+      key: `holiday2023:${buzzEvent.userId}:${milestone}donated`,
       type: 'system-announcement',
-      category: 'System',
+      category: NotificationCategory.System,
       details: {
         message: `You've earned the ${key} badge! Claim it now.`,
         url: `/claim/cosmetic/${milestoneCosmeticId}`,

@@ -6,6 +6,7 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
+import models from '~/pages/api/v1/models';
 import { constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
@@ -222,7 +223,11 @@ export const dismissAlertSchema = z.object({ alertId: z.string() });
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({ step: z.literal(OnboardingSteps.TOS), recaptchaToken: z.string() }),
-  z.object({ step: z.literal(OnboardingSteps.Profile), username: z.string(), email: z.string() }),
+  z.object({
+    step: z.literal(OnboardingSteps.Profile),
+    username: usernameInputSchema,
+    email: z.string(),
+  }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
     step: z.literal(OnboardingSteps.Buzz),
@@ -236,3 +241,19 @@ export const setLeaderboardEligbilitySchema = z.object({
   setTo: z.boolean(),
 });
 export type SetLeaderboardEligibilitySchema = z.infer<typeof setLeaderboardEligbilitySchema>;
+
+export type UserScoreMeta = z.infer<typeof userScoreMetaSchema>;
+export const userScoreMetaSchema = z.object({
+  total: z.number(),
+  models: z.number().optional(),
+  articles: z.number().optional(),
+  images: z.number().optional(),
+  users: z.number().optional(),
+  reportsActioned: z.number().optional(),
+  reportsAgainst: z.number().optional(),
+});
+export const userMeta = z.object({
+  firstImage: z.date().optional(),
+  scores: userScoreMetaSchema.optional(),
+});
+export type UserMeta = z.infer<typeof userMeta>;

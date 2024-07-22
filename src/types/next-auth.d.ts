@@ -25,6 +25,7 @@ interface ExtendedUser {
   leaderboardShowcase?: string; // client only
   referral?: { id: number }; // client only
   memberInBadState?: boolean;
+  meta?: UserMeta;
   // TODO.briant - clean up user session data
   /*
     remove `deletedAt` from session user data

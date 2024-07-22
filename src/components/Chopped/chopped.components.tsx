@@ -39,7 +39,6 @@ import {
 } from '@tabler/icons-react';
 import React, { Component, ErrorInfo, useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import {
   GameState,
   GlobalState,

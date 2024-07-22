@@ -1,7 +1,8 @@
-import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
 import { clickhouse } from '~/server/clickhouse/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { userMultipliersCache } from '~/server/redis/caches';
@@ -52,8 +53,9 @@ export const rewardsAbusePrevention = createJob(
       await userMultipliersCache.bust(affected.map((user) => user.id));
       await createNotification({
         userIds: affected.map((user) => user.id),
-        category: 'System',
+        category: NotificationCategory.System,
         type: 'system-announcement',
+        key: `system-announcement:rewards:${uuid()}`,
         details: {
           message: 'Your Buzz rewards have been disabled due to suspicious activity.',
           url: '/articles/5799',

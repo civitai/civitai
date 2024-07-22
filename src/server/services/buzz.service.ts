@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
+import { v4 as uuid } from 'uuid';
 import { env } from '~/env/server.mjs';
 import { clickhouse } from '~/server/clickhouse/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { userMultipliersCache } from '~/server/redis/caches';
@@ -286,7 +288,8 @@ export async function upsertBuzzTip({
     await createNotification({
       type: 'tip-received',
       userId: toAccountId,
-      category: 'Buzz',
+      category: NotificationCategory.Buzz,
+      key: `tip-received:${uuid()}`,
       details: {
         amount: amount,
         user: fromUser?.username,

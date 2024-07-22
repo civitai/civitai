@@ -50,6 +50,7 @@ export type ResourceReviewRatingTotals = ResourceReviewRouter['getRatingTotals']
 export type ResourceReviewPaged = ResourceReviewRouter['getPaged'];
 export type ResourceReviewPagedModel = ResourceReviewRouter['getPaged']['items'][number];
 export type ResourceReviewGetById = ResourceReviewRouter['get'];
+export type ResourceReviewCreate = ResourceReviewRouter['create'];
 
 type ArticleRouter = RouterOutput['article'];
 export type ArticleGetById = ArticleRouter['getById'];
@@ -120,4 +121,8 @@ export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
 
+export type ModelVersionDonationGoal = Exclude<
+  RouterOutput['modelVersion']['donationGoals'],
+  undefined
+>[number];
 export type PostContestCollectionItem = RouterOutput['post']['getContestCollectionDetails'][number];

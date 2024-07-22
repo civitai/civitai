@@ -1,6 +1,5 @@
 import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
-import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
@@ -99,7 +98,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const handleScheduleClick = () => {
     dialogStore.trigger({
       component: SchedulePostModal,
-      props: { onSubmit: handlePublish, publishedAt: post.publishedAt },
+      props: {
+        onSubmit: handlePublish,
+        publishedAt: post.publishedAt,
+        publishingModel: !!post.modelVersionId,
+      },
     });
   };
 
@@ -111,7 +114,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   return (
     <>
-      <div className="5 flex flex-col gap-0">
+      <div className="flex flex-col gap-0">
         <div className="flex items-center justify-between">
           <Title size="sm">POST</Title>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">

@@ -16,7 +16,7 @@ function Preview({ image }: { image: PostEditMediaDetail }) {
   const handleRemoveClick = () =>
     setImages((images) => images.filter((x) => x.data.url !== image.url));
   return (
-    <div className="rounded-lg overflow-hidden relative">
+    <div className="relative overflow-hidden rounded-lg">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={image.url} alt={image.name} />
       <Alert
@@ -49,19 +49,19 @@ function EditDetail({ image }: { image: PostEditMediaDetail }) {
   return (
     <Alert
       color="red"
-      className="p-3 rounded-lg @container"
+      className="rounded-lg p-3 @container"
       classNames={{ message: 'flex flex-row-reverse flex-wrap @sm:flex-nowrap gap-3' }}
     >
       <div className="w-full @sm:w-4/12">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={image.url} alt={image.name} className="rounded-lg" />
       </div>
-      <CustomCard className="flex flex-col gap-3 flex-1 overflow-hidden">
+      <CustomCard className="flex flex-1 flex-col gap-3 overflow-hidden">
         <Alert color="red" className="-mx-3 -mt-3 rounded-none">
           <Text className="text-2xl font-semibold leading-none ">TOS Violation</Text>
         </Alert>
         <h3 className="text-xl font-semibold leading-none text-dark-7 dark:text-gray-0">Prompt</h3>
-        {meta?.prompt && <Text className="leading-5 line-clamp-3 ">{meta.prompt}</Text>}
+        {meta?.prompt && <Text className="line-clamp-3 leading-5 ">{meta.prompt}</Text>}
         {image.blockedFor && (
           <Text className="flex flex-wrap items-center gap-1">
             <span>Blocked for:</span>

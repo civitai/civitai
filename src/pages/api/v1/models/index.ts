@@ -18,6 +18,7 @@ import {
 import { booleanString } from '~/utils/zod-helpers';
 import { getUserBookmarkCollections } from '~/server/services/user.service';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
+import { Flags } from '~/shared/utils';
 
 type Metadata = {
   currentPage?: number;
@@ -147,11 +148,15 @@ export default MixedAuthEndpoint(async function handler(
                   }))
                 : [],
               images: includeImages
-                ? images.map(({ url, id, ...image }) => ({
-                    id,
-                    url: getEdgeUrl(url, { width: 450, name: id.toString() }),
-                    ...image,
-                  }))
+                ? images
+                    .filter(
+                      (x) => parsedParams.data.nsfw || Flags.hasFlag(x.nsfwLevel, browsingLevel)
+                    )
+                    .map(({ url, id, ...image }) => ({
+                      id,
+                      url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+                      ...image,
+                    }))
                 : [],
               downloadUrl: includeDownloadUrl
                 ? `${baseUrl.origin}${createModelFileDownloadUrl({

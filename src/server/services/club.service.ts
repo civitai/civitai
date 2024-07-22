@@ -1,4 +1,12 @@
+import { Availability, ClubAdminPermission, Prisma } from '@prisma/client';
+import { isEqual } from 'lodash-es';
+import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { notifDbWrite } from '~/server/db/notifDb';
+import { pgDbRead } from '~/server/db/pgDb';
+import { NotificationSingleRow } from '~/server/jobs/send-notifications';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   GetClubTiersInput,
   GetInfiniteClubSchema,
@@ -10,26 +18,22 @@ import {
   UpsertClubResourceInput,
   UpsertClubTierInput,
 } from '~/server/schema/club.schema';
-import { Availability, ClubAdminPermission, Prisma } from '@prisma/client';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
-import { createEntityImages } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { isDefined } from '~/utils/type-guards';
-import { GetByIdInput } from '~/server/schema/base.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import {
   entityAvailabilityUpdate,
   entityOwnership,
   entityRequiresClub,
 } from '~/server/services/common.service';
+import { createEntityImages } from '~/server/services/image.service';
+import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { userWithCosmeticsSelect } from '../selectors/user.selector';
-import { bustCacheTag } from '../utils/cache-helpers';
-import { isEqual } from 'lodash-es';
+import { isDefined } from '~/utils/type-guards';
 import { ClubSort } from '../common/enums';
 import { clubMetrics } from '../metrics';
+import { userWithCosmeticsSelect } from '../selectors/user.selector';
+import { bustCacheTag } from '../utils/cache-helpers';
 
 export const userContributingClubs = async ({
   userId,
@@ -230,7 +234,7 @@ export const updateClub = async ({
     const notificationQuery = Prisma.sql`
     WITH data AS (
         SELECT
-          c.id "clubId",
+          c.id as "clubId",
           c.name "clubName",
           c.billing,
           cm."userId",
@@ -240,9 +244,8 @@ export const updateClub = async ({
         JOIN "ClubTier" ct ON cm."clubTierId" = ct.id
         WHERE ct."oneTimeFee" = false AND cm."expiresAt" IS NULL AND cm."cancelledAt" IS NULL AND cm."nextBillingAt" IS NOT NULL
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details")
         SELECT
-          REPLACE(gen_random_uuid()::text, '-', ''),
+          'club-billing-toggled:${uuid()}' as "key",
           "userId",
           'club-billing-toggled' "type",
           jsonb_build_object(
@@ -250,12 +253,25 @@ export const updateClub = async ({
             'clubName', "clubName",
             'billing', "billing",
             'nextBillingAt', "nextBillingAt"
-          )
+          ) as "details"
         FROM data
-      ON CONFLICT("id") DO NOTHING;
       `;
 
-    await dbWrite.$executeRaw(notificationQuery);
+    const request = await pgDbRead.cancellableQuery<NotificationSingleRow>(notificationQuery);
+    const reqList = await request.result();
+    const reqData = reqList[0];
+
+    if (reqData) {
+      const reqUsers = reqList.map((r) => r.userId);
+      await notifDbWrite.cancellableQuery(Prisma.sql`
+        INSERT INTO "PendingNotification" (key, type, category, users, details)
+        VALUES
+          (${reqData.key}, ${reqData.type}, 'Update', ${'{' + reqUsers.join(',') + '}'}, ${
+        reqData.details
+      })
+        ON CONFLICT DO NOTHING
+      `);
+    }
   }
 
   return club;

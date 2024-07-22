@@ -54,6 +54,7 @@ import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -183,12 +184,13 @@ export function ModelCard({ data, forceInView }: Props) {
     data.publishedAt &&
     data.lastVersionAt > aDayAgo &&
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+  const isEarlyAccess = data.earlyAccessDeadline && data.earlyAccessDeadline > new Date();
   const isArchived = data.mode === ModelModifier.Archived;
   const onSite = !!data.version.trainingStatus;
   const baseModelIndicator = BaseModelIndicator[data.version.baseModel as BaseModel];
 
   const isPOI = data.poi;
-  const isMinor = data.minor;
+  const isSFWOnly = data.minor;
 
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
@@ -243,14 +245,14 @@ export function ModelCard({ data, forceInView }: Props) {
                               </Text>
                             </Badge>
                           )}
-                          {currentUser?.isModerator && isMinor && (
+                          {currentUser?.isModerator && isSFWOnly && (
                             <Badge
                               className={cx(classes.infoChip, classes.chip, classes.forMod)}
                               variant="light"
                               radius="xl"
                             >
                               <Text color="white" size="xs" transform="capitalize">
-                                Minor
+                                SFW
                               </Text>
                             </Badge>
                           )}
@@ -277,19 +279,21 @@ export function ModelCard({ data, forceInView }: Props) {
                             )}
                           </Badge>
 
-                          {(isNew || isUpdated) && (
+                          {(isNew || isUpdated || isEarlyAccess) && (
                             <Badge
                               className={classes.chip}
                               variant="filled"
                               radius="xl"
                               sx={(theme) => ({
-                                backgroundColor: isUpdated
+                                backgroundColor: isEarlyAccess
                                   ? theme.colors.success[5]
+                                  : isUpdated
+                                  ? theme.colors.teal[5]
                                   : theme.colors.blue[theme.fn.primaryShade()],
                               })}
                             >
                               <Text color="white" size="xs" transform="capitalize">
-                                {isUpdated ? 'Updated' : 'New'}
+                                {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
                               </Text>
                             </Badge>
                           )}

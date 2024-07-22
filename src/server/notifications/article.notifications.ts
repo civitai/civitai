@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 const articleViewMilestones = [100, 500, 1000, 10000, 50000, 100000, 500000, 1000000] as const;
@@ -13,8 +14,8 @@ export const articleNotifications = createNotificationProcessor({
       }" has received ${details.viewCount.toLocaleString()} views`,
       url: `/articles/${details.articleId}`,
     }),
-    category: 'Milestone',
-    prepareQuery: async ({ lastSent, clickhouse, category }) => {
+    category: NotificationCategory.Milestone,
+    prepareQuery: async ({ lastSent, clickhouse }) => {
       const affected = (await clickhouse
         ?.query({
           query: `
@@ -54,29 +55,26 @@ export const articleNotifications = createNotificationProcessor({
           JOIN milestones ms ON ms.value <= val.view_count
           WHERE a."createdAt" > '${milestoneNotificationFix}'
         )
-        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
-          CONCAT('milestone:article-view:', details->>'articleId', ':', details->>'viewCount'),
+          CONCAT('article-view-milestone:', details->>'articleId', ':', details->>'viewCount') "key",
           "ownerId"    "userId",
           'article-view-milestone' "type",
-          details,
-          '${category}'::"NotificationCategory" "category"
+          details
         FROM milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-view-milestone')
-        ON CONFLICT (id) DO NOTHING;
       `;
     },
   },
   'article-like-milestone': {
     displayName: 'Article like milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your article, "${
         details.articleTitle
       }" has received ${details.favoriteCount.toLocaleString()} likes`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -109,26 +107,24 @@ export const articleNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= val.favorite_count
         WHERE a."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:article-like:', details->>'articleId', ':', details->>'favoriteCount'),
+        CONCAT('article-like-milestone:', details->>'articleId', ':', details->>'favoriteCount') "key",
         "ownerId"    "userId",
         'article-like-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-like-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
+  // Moveable
   'new-article-from-following': {
     displayName: 'New articles from followed users',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `${details.username} published a new ${details.articleCategory}: "${details.articleTitle}"`,
+      message: `${details.username} published a new ${details.articleCategory} article: "${details.articleTitle}"`,
       url: `/articles/${details.articleId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH article_categories AS (
         SELECT
           t.id,
@@ -159,16 +155,13 @@ export const articleNotifications = createNotificationProcessor({
         JOIN "UserEngagement" ue ON ue."targetUserId" = a."userId" AND a."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE a."publishedAt" > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-article-from-following:', details->>'articleId', ':', "ownerId"),
+        CONCAT('new-article-from-following:', details->>'articleId') "key",
         "ownerId"    "userId",
         'new-article-from-following' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_article
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-article-from-following')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
 });

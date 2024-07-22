@@ -1,15 +1,22 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
-import { Icon, IconArrowsDiagonal, IconBrush, IconGridDots, IconProps } from '@tabler/icons-react';
+import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
+import {
+  Icon,
+  IconArrowsDiagonal,
+  IconBrush,
+  IconGridDots,
+  IconProps,
+  IconClockHour9,
+  IconWifiOff,
+} from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
-import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
 import { useRouter } from 'next/router';
-import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
+import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -33,7 +40,21 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   }, [isImageFeedSeparate, view]);
 
   return (
-    <GenerationProvider>
+    <>
+      <SignalStatusNotification
+        icon={<IconWifiOff size={20} stroke={2} />}
+        // title={(status) => `Connection status: ${status}`}
+        radius={0}
+      >
+        {(status) => (
+          <p className="leading-4">
+            <span className="font-medium">
+              {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
+            </span>
+            : image generation results paused
+          </p>
+        )}
+      </SignalStatusNotification>
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
           <div className="flex-1">
@@ -78,10 +99,10 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
             />
           </div>
         </div>
-        {view !== 'generate' && <GeneratedImageActions />}
+        {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
       <View />
-    </GenerationProvider>
+    </>
   );
 }
 
@@ -98,7 +119,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: GenerationForm,
+    Component: GenerationForm2,
   },
   queue: {
     Icon: IconClockHour9,

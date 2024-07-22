@@ -1,21 +1,22 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { humanizeList } from '~/utils/humanizer';
 
 const commentReactionMilestones = [5, 10, 20, 50, 100] as const;
-const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
-const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
+export const imageReactionMilestones = [5, 10, 20, 50, 100] as const;
 const articleReactionMilestones = [5, 10, 20, 50, 100] as const;
+// const reviewReactionMilestones = [5, 10, 20, 50, 100] as const;
 
 export const reactionNotifications = createNotificationProcessor({
   'comment-reaction-milestone': {
     displayName: 'Comment reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Your comment on ${details.modelName} has received ${details.reactionCount} reactions`,
       url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.rootCommentId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${commentReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -47,21 +48,18 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= a.reaction_count
         WHERE c."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:comment-reaction:', details->>'commentId', ':', details->>'reactionCount'),
+        CONCAT('comment-reaction-milestone:', details->>'commentId', ':', details->>'reactionCount') "key",
         "ownerId"    "userId",
         'comment-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'comment-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'image-reaction-milestone': {
     displayName: 'Image reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       let message: string;
       if (details.version === 2) {
@@ -86,65 +84,16 @@ export const reactionNotifications = createNotificationProcessor({
 
       return { message, url: `/images/${details.imageId}?postId=${details.postId}` };
     },
-    prepareQuery: ({ lastSent, category }) => `
-      WITH milestones AS (
-        SELECT * FROM (VALUES ${imageReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
-      ), affected AS (
-        SELECT DISTINCT
-          "imageId" affected_id
-        FROM "ImageReaction"
-        WHERE "createdAt" > '${lastSent}'
-      ), affected_value AS (
-        SELECT
-          a.affected_id,
-          COUNT(r."imageId") reaction_count
-        FROM "ImageReaction" r
-        JOIN affected a ON a.affected_id = r."imageId"
-        GROUP BY a.affected_id
-        HAVING COUNT(*) >= ${imageReactionMilestones[0]}
-      ), reaction_milestone AS (
-        SELECT
-          i."userId" "ownerId",
-          JSON_BUILD_OBJECT(
-            'version', 2,
-            'imageId', i.id,
-            'postId', i."postId",
-            'models', ir.models,
-            'reactionCount', ms.value
-          ) "details"
-        FROM affected_value a
-        JOIN "Image" i on i.id = a.affected_id
-        LEFT JOIN (
-          SELECT ir."imageId", json_agg(m.name) models
-          FROM "ImageResource" ir
-          JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
-          JOIN "Model" m ON m.id = mv."modelId"
-          GROUP BY ir."imageId"
-        ) ir ON ir."imageId" = i.id
-        JOIN milestones ms ON ms.value <= a.reaction_count
-        WHERE i."createdAt" > '${milestoneNotificationFix}'
-      )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
-      SELECT
-        CONCAT('milestone:image-reaction:', details->>'imageId', ':', details->>'reactionCount'),
-        "ownerId"    "userId",
-        'image-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
-      FROM reaction_milestone
-      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'image-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
-    `,
   },
   'article-reaction-milestone': {
     displayName: 'Article reaction milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       const message = `Your article, "${details.articleTitle}" has received ${details.reactionCount} reactions`;
 
       return { message, url: `/articles/${details.articleId}` };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${articleReactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -173,16 +122,13 @@ export const reactionNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= af.reaction_count
             AND a."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:article-reaction:', details->>'articleId', ':', details->>'reactionCount'),
+        CONCAT('article-reaction-milestone:', details->>'articleId', ':', details->>'reactionCount') "key",
         "ownerId"    "userId",
         'article-reaction-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM reaction_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'article-reaction-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
 });

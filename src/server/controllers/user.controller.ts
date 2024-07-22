@@ -1,20 +1,24 @@
-import {
-  CosmeticType,
-  ModelEngagementType,
-  ModelVersionEngagementType,
-  NotificationCategory,
-} from '@prisma/client';
+import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
+import { isProd } from '~/env/other';
 import { clickhouse } from '~/server/clickhouse/client';
-import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
+import { constants, RECAPTCHA_ACTIONS } from '~/server/common/constants';
+import {
+  NotificationCategory,
+  OnboardingComplete,
+  OnboardingSteps,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { redis } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
+import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import {
-  BatchBlockTagsSchema,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -24,7 +28,6 @@ import {
   ReportProhibitedRequestInput,
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
-  ToggleBlockedTagSchema,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -36,49 +39,61 @@ import {
   UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
+import { usersSearchIndex } from '~/server/search-index';
 import {
   BadgeCosmetic,
+  ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
-  ContentDecorationCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getUserNotificationCount } from '~/server/services/notification.service';
+import {
+  getResourceReviewsByUserId,
+  getUserResourceReview,
+} from '~/server/services/resourceReview.service';
+import {
+  createCustomer,
+  deleteCustomerPaymentMethod,
+  getCustomerPaymentMethods,
+} from '~/server/services/stripe.service';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteUserProfilePictureCache,
+  equipCosmetic,
   getCreators,
+  getUserBookmarkCollections,
   getUserById,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserEngagedModelVersions,
+  getUserDownloads,
   getUserEngagedModels,
+  getUserEngagedModelVersions,
+  getUserPurchasedRewards,
   getUsers,
+  getUserSettings,
   isUsernamePermitted,
+  setLeaderboardEligibility,
+  setUserSetting,
   toggleBan,
+  toggleBookmarked,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelNotify,
+  toggleModelEngagement,
   toggleModelHide,
+  toggleModelNotify,
+  toggleReview,
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
+  unequipCosmeticByType,
   updateLeaderboardRank,
   updateUserById,
   userByReferralCode,
-  equipCosmetic,
-  deleteUserProfilePictureCache,
-  getUserSettings,
-  setUserSetting,
-  unequipCosmeticByType,
-  getUserBookmarkCollections,
-  getUserPurchasedRewards,
-  toggleModelEngagement,
-  toggleBookmarked,
-  toggleReview,
-  getUserDownloads,
-  setLeaderboardEligibility,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -90,36 +105,15 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { Flags } from '~/shared/utils';
 import { isUUID } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { createRecaptchaAssesment } from '../recaptcha/client';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
-import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
-import {
-  createCustomer,
-  deleteCustomerPaymentMethod,
-  getCustomerPaymentMethods,
-} from '~/server/services/stripe.service';
-import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
-import { isProd } from '~/env/other';
-import { getUserNotificationCount } from '~/server/services/notification.service';
-import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
-import { isDefined } from '~/utils/type-guards';
-import {
-  OnboardingComplete,
-  OnboardingSteps,
-  SearchIndexUpdateQueueAction,
-} from '~/server/common/enums';
-import { Flags } from '~/shared/utils';
-import {
-  getResourceReviewsByUserId,
-  getUserResourceReview,
-} from '~/server/services/resourceReview.service';
-import { usersSearchIndex } from '~/server/search-index';
-import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -155,6 +149,7 @@ export const getUserCreatorHandler = async ({
   input: GetUserByUsernameSchema;
   ctx: Context;
 }) => {
+  username = username?.toLowerCase();
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
 

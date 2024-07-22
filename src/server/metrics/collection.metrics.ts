@@ -32,7 +32,7 @@ export const collectionMetrics = createMetricProcessor({
       UPDATE "CollectionMetric"
         SET "followerCount" = 0, "itemCount" = 0, "contributorCount" = 0
       WHERE timeframe = 'Day'
-        AND "createdAt" > date_trunc('day', now() - interval '1 day');
+        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
   rank: {

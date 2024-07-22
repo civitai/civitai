@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
@@ -8,14 +9,14 @@ const modelLikeMilestones = [100, 500, 1000, 10000, 50000] as const;
 export const modelNotifications = createNotificationProcessor({
   'model-download-milestone': {
     displayName: 'Model download milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => ({
       message: `Congrats! Your ${
         details.modelName
       } model has received ${details.downloadCount.toLocaleString()} downloads`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent, clickhouse, category }) => {
+    prepareQuery: async ({ lastSent, clickhouse }) => {
       const affected = (await clickhouse
         ?.query({
           query: `
@@ -54,22 +55,19 @@ export const modelNotifications = createNotificationProcessor({
           JOIN milestones ms ON ms.value <= mval.download_count
           WHERE m."createdAt" > '${milestoneNotificationFix}'
         )
-        INSERT INTO "Notification"("id", "userId", "type", "details", "category")
         SELECT
-          CONCAT('milestone:model-download:', details->>'modelId', ':', details->>'downloadCount') as "id",
+          CONCAT('model-download-milestone:', details->>'modelId', ':', details->>'downloadCount') as "key",
           "ownerId"    "userId",
           'model-download-milestone' "type",
-          details,
-          '${category}'::"NotificationCategory" "category"
+          details
         FROM model_milestone
         WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-download-milestone')
-        ON CONFLICT (id) DO NOTHING;
       `;
     },
   },
   'model-like-milestone': {
     displayName: 'Model like milestones',
-    category: 'Milestone',
+    category: NotificationCategory.Milestone,
     prepareMessage: ({ details }) => {
       const count = details.favoriteCount || details.thumbsUpCount;
 
@@ -80,7 +78,7 @@ export const modelNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH milestones AS (
         SELECT * FROM (VALUES ${modelLikeMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), model_value AS (
@@ -107,28 +105,26 @@ export const modelNotifications = createNotificationProcessor({
         JOIN milestones ms ON ms.value <= mval.thumbs_up_count
         WHERE m."createdAt" > '${milestoneNotificationFix}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('milestone:model-like:', details->>'modelId', ':', details->>'thumbsUpCount'),
+        CONCAT('model-like-milestone:', details->>'modelId', ':', details->>'thumbsUpCount') "key",
         "ownerId"    "userId",
         'model-like-milestone' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM model_milestone
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'model-like-milestone')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
+  // Moveable
   'new-model-version': {
     displayName: 'New versions of models you follow',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `The ${details.modelName} model has a new version: ${details.versionName}`,
       url: `/models/${details.modelId}${
         details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
       }`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_model_version AS (
         SELECT
           m."userId",
@@ -169,28 +165,26 @@ export const modelNotifications = createNotificationProcessor({
           WHERE type = 'Notify'
         ) t
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-model-version:', details->>'modelVersionId', ':', "userId"),
+        CONCAT('new-model-version:', details->>'modelVersionId') "key",
         "userId",
         'new-model-version' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM followers n
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" uns WHERE uns."userId" = n."userId" AND type = 'new-model-version')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
+  // Moveable
   'new-model-from-following': {
     displayName: 'New models from followed users',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `${details.username} released a new ${getDisplayName(
         details.modelType
       ).toLowerCase()}: ${details.modelName}`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_model_from_following AS (
         SELECT DISTINCT
           ue."userId" "ownerId",
@@ -208,28 +202,24 @@ export const modelNotifications = createNotificationProcessor({
           AND m."publishedAt" BETWEEN '${lastSent}' AND now()
           AND m.status IN ('Published', 'Scheduled')
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        CONCAT('new-model-from-following:', details->>'modelId', ':', "ownerId"),
+        CONCAT('new-model-from-following:', details->>'modelId') "key",
         "ownerId"    "userId",
         'new-model-from-following' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_model_from_following
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-model-from-following')
-      ON CONFLICT (id) DO NOTHING;
     `,
   },
   'early-access-complete': {
     toggleable: false,
     displayName: 'Early Access Complete',
-    category: 'Update',
+    category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
       url: `/models/${details.modelId}?modelVersionId=${details.versionId}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
-      -- early access complete
+    prepareQuery: ({ lastSent }) => `
       WITH early_access_versions AS (
         SELECT
           mv.id version_id,
@@ -256,25 +246,23 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
         WHERE ev.early_access_deadline > '${lastSent}' AND ev.early_access_deadline < now()
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
-        owner_id,
-        'early-access-complete',
-        details,
-        '${category}'::"NotificationCategory" "category"
+        concat('early-access-complete:', details->>'versionId') "key",
+        owner_id "userId",
+        'early-access-complete' "type",
+        details
       FROM early_access_complete;
     `,
   },
   'old-draft': {
     displayName: 'Old Model Draft Deletion Reminder',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
-    prepareQuery: ({ category }) => `
+    prepareQuery: ({ lastSent }) => `
       with to_add AS (
         SELECT DISTINCT
           m."userId",
@@ -285,17 +273,24 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
-        AND m."updatedAt" < now() - INTERVAL '23 days'
+        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '23 days' AND NOW() - INTERVAL '23 days'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",
         "userId",
-        'old-draft',
-        details,
-        '${category}'::"NotificationCategory" "category"
+        'old-draft' "type",
+        details
       FROM to_add
-      WHERE NOT EXISTS (SELECT 1 FROM "Notification" no WHERE no."userId" = to_add."userId" AND type = 'old-draft' AND no.details->>'modelId' = to_add.details->>'modelId');
     `,
+  },
+
+  'early-access-failed-to-publish': {
+    displayName: 'Model version failed to publish.',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more buzz to publish.`,
+      url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
+    }),
   },
 });

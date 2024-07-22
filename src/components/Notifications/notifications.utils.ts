@@ -1,14 +1,15 @@
-import { useMemo } from 'react';
-import { trpc } from '~/utils/trpc';
-import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { NotificationCategory } from '@prisma/client';
+import { useCallback, useMemo } from 'react';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { NotificationCategory, SignalMessages } from '~/server/common/enums';
+import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
+import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
+import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
-import { NotificationGetAll } from '~/types/router';
+import { trpc } from '~/utils/trpc';
 
 const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Comment]: 'Comments',
@@ -61,6 +62,7 @@ export const useMarkReadNotification = () => {
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
         for (const key of Object.keys(newCounts)) {
+          // TODO fix issue here with category clearing out all when it shouldnt
           const keyMatch = !categoryStr || key === categoryStr || key === 'all';
           if (keyMatch) {
             if (all) newCounts[key] = 0;
@@ -118,4 +120,52 @@ export const useNotificationSettings = (enabled = true) => {
   }, [userNotificationSettings]);
 
   return { hasNotifications, hasCategory, notificationSettings, isLoading };
+};
+
+export const useNotificationSignal = () => {
+  const queryClient = useQueryClient();
+  const queryUtils = trpc.useUtils();
+
+  const onUpdate = useCallback(
+    async (updated: NotificationGetAllItem) => {
+      const queryKey = getQueryKey(trpc.notification.getAllByUser);
+
+      // nb: this shouldn't run if "old" doesn't exist, but can't test that yet, and produce doesn't allow async
+      let newUpdated = updated;
+      try {
+        const newUpdatedResp = await fetch('/api/notification/getDetails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updated),
+        });
+        if (newUpdatedResp.ok) {
+          const newUpdatedJson: NotificationGetAllItem = await newUpdatedResp.json();
+          newUpdated = { ...newUpdated, ...newUpdatedJson };
+        }
+      } catch {}
+
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+        { queryKey, exact: false },
+        produce((old) => {
+          if (!old || !old.pages || !old.pages.length) return;
+          const firstPage = old.pages[0];
+          firstPage.items.unshift(newUpdated);
+        })
+      );
+
+      queryUtils.user.checkNotifications.setData(undefined, (old) => {
+        const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
+        newCounts[updated.category.toLowerCase()] =
+          (newCounts[updated.category.toLowerCase()] ?? 0) + 1;
+        newCounts['all']++;
+
+        return newCounts;
+      });
+    },
+    [queryClient, queryUtils]
+  );
+
+  useSignalConnection(SignalMessages.NotificationNew, onUpdate);
 };

@@ -1,93 +1,59 @@
 import { getByIdSchema } from './../schema/base.schema';
 import {
-  bulkDeleteGeneratedImagesSchema,
   checkResourcesCoverageSchema,
-  createGenerationRequestSchema,
-  generationRequestTestRunSchema,
-  getGenerationRequestsSchema,
+  getGenerationDataSchema,
   getGenerationResourcesSchema,
-  sendFeedbackSchema,
+  // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
-  bulkDeleteGeneratedImages,
   checkResourcesCoverage,
-  createGenerationRequest,
-  deleteAllGenerationRequests,
-  deleteGenerationRequest,
-  getGenerationRequests,
+  getGenerationData,
   getGenerationResources,
   getGenerationStatus,
   getUnavailableResources,
   getUnstableResources,
-  sendGenerationFeedback,
-  textToImage,
-  textToImageTestRun,
+  // textToImage,
+  // textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
-import {
-  guardedProcedure,
-  isFlagProtected,
-  moderatorProcedure,
-  protectedProcedure,
-  publicProcedure,
-  router,
-} from '~/server/trpc';
+import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
-import { TRPCError } from '@trpc/server';
-import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
+import {
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { z } from 'zod';
 
 export const generationRouter = router({
-  // #region [requests related]
-  getRequests: protectedProcedure
-    .input(getGenerationRequestsSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .query(({ input, ctx }) => getGenerationRequests({ ...input, userId: ctx.user.id })),
-  createRequest: guardedProcedure
-    .input(createGenerationRequestSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .mutation(async ({ input, ctx }) => {
-      try {
-        return await createGenerationRequest({
-          ...input,
-          userId: ctx.user.id,
-          userTier: ctx.user.tier,
-          isModerator: ctx.user.isModerator,
-        });
-      } catch (e) {
-        // Handle prohibited prompt
-        if (
-          e instanceof TRPCError &&
-          e.code === 'BAD_REQUEST' &&
-          e.message.startsWith('Your prompt was flagged')
-        ) {
-          await reportProhibitedRequestHandler({
-            input: {
-              prompt: input.params.prompt,
-              negativePrompt: input.params.negativePrompt,
-              source: 'External',
-            },
-            ctx,
-          });
-        }
-        throw e;
-      }
-    }),
-  deleteRequest: protectedProcedure
-    .input(getByIdSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .mutation(({ input, ctx }) => deleteGenerationRequest({ ...input, userId: ctx.user.id })),
-  bulkDeleteImages: protectedProcedure
-    .input(bulkDeleteGeneratedImagesSchema)
-    .use(isFlagProtected('imageGeneration'))
-    .mutation(({ input, ctx }) => bulkDeleteGeneratedImages({ ...input, userId: ctx.user.id })),
-  deleteAllRequests: protectedProcedure.mutation(({ ctx }) =>
-    deleteAllGenerationRequests({ userId: ctx.user.id })
+  getWorkflowDefinitions: publicProcedure.query(({ ctx }) =>
+    getWorkflowDefinitions().then((res) =>
+      res
+        .filter((x) => {
+          if (x.status === 'disabled') return false;
+          if (x.status === 'mod-only' && !ctx.user?.isModerator) return false;
+          return true;
+        })
+        .map(({ type, key, name, features, description, selectable, label }) => ({
+          type,
+          key,
+          name,
+          features,
+          description,
+          selectable,
+          label,
+        }))
+    )
   ),
-  // #endregion
+  setWorkflowDefinition: moderatorProcedure
+    .input(z.any())
+    .mutation(({ input }) => setWorkflowDefinition(input.key, input)),
   getResources: publicProcedure
     .input(getGenerationResourcesSchema)
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
+  getGenerationData: publicProcedure
+    .input(getGenerationDataSchema)
+    .query(({ input }) => getGenerationData(input)),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
@@ -104,23 +70,4 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
-  sendFeedback: protectedProcedure
-    .input(sendFeedbackSchema)
-    .mutation(({ input, ctx }) =>
-      sendGenerationFeedback({ ...input, userId: ctx.user.id, ip: ctx.ip })
-    ),
-  textToImage: protectedProcedure
-    .input(createGenerationRequestSchema)
-    .mutation(({ input, ctx }) => {
-      return textToImage({
-        input: {
-          ...input,
-          userId: ctx.user.id,
-        },
-      });
-    }),
-  estimateTextToImage: publicProcedure
-    .input(generationRequestTestRunSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(({ input }) => textToImageTestRun(input)),
 });

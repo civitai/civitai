@@ -2,90 +2,110 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
-  Button,
   Card,
   Center,
   Checkbox,
+  createStyles,
   Group,
   Loader,
   Menu,
   Stack,
   Text,
-  ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
-  IconBan,
   IconCheck,
   IconDotsVertical,
+  IconExternalLink,
   IconHourglass,
   IconInfoCircle,
   IconInfoHexagon,
-  IconPlayerPlayFilled,
   IconPlayerTrackNextFilled,
   IconThumbDown,
   IconThumbUp,
   IconTrash,
-  IconWindowMaximize,
+  IconWand,
 } from '@tabler/icons-react';
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
-import { generationImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useDeleteGenerationRequestImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
+import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  NormalizedGeneratedImage,
+  NormalizedGeneratedImageResponse,
+  NormalizedGeneratedImageStep,
+} from '~/server/services/orchestrator';
 import { generationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useGenerationQualityFeedback } from './GenerationForm/generation.utils';
-import { GENERATION_QUALITY } from '~/server/schema/generation.schema';
-import { openGenQualityFeedbackModal } from '../Modals/GenerationQualityFeedbackModal';
+import { trpc } from '~/utils/trpc';
 
 export function GeneratedImage({
   image,
   request,
+  step,
 }: {
-  image: Generation.Image;
-  request: Generation.Request;
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
+  step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '600px' });
-  const selected = generationImageSelect.useIsSelected(image.id);
-  const toggleSelect = (checked?: boolean) => generationImageSelect.toggle(image.id, checked);
+  const selected = orchestratorImageSelect.useIsSelected({
+    workflowId: request.id,
+    stepName: step.name,
+    imageId: image.id,
+  });
+
+  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
+
+  // if (request.id.indexOf('-') !== request.id.lastIndexOf('-')) {
+  //   console.log({ workflowId: request.id, stepName: step.name, imageId: image.id, selected });
+  // }
+
+  const toggleSelect = (checked?: boolean) =>
+    orchestratorImageSelect.toggle(
+      {
+        workflowId: request.id,
+        stepName: step.name,
+        imageId: image.id,
+      },
+      checked
+    );
   const { copied, copy } = useClipboard();
 
-  const [selectedFeedback, setSelectedFeedback] = useState<GENERATION_QUALITY | null>(null);
-
-  const bulkDeleteImagesMutation = useDeleteGenerationRequestImages();
-  const { sendFeedback, sending } = useGenerationQualityFeedback();
+  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();
 
   const handleImageClick = () => {
-    if (!image || !image.available) return;
+    if (!image || !available) return;
+
     dialogStore.trigger({
       component: GeneratedImageLightbox,
       props: { image, request },
     });
   };
 
-  const handleGenerate = () => {
-    const { resources, params } = request;
+  const handleAuxClick = () => {
+    if (image) window.open(image.url, '_blank');
+  };
+
+  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
     generationStore.setData({
-      type: 'remix',
-      data: { resources, params: { ...params, seed: undefined } },
+      resources: step.resources,
+      params: { ...step.params, seed, ...rest },
     });
   };
 
-  const handleGenerateWithSeed = () => {
-    generationStore.setData({
-      type: 'remix',
-      data: { ...request, params: { ...request.params, seed: image.seed ?? request.params.seed } },
-    });
-  };
+  const handleSelectWorkflow = (workflow: string) => handleGenerate({ workflow, image: image.url });
 
   const handleDeleteImage = () => {
     openConfirmModal({
@@ -94,72 +114,94 @@ export function GeneratedImage({
         'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
       confirmProps: { color: 'red' },
-      onConfirm: () => bulkDeleteImagesMutation.mutate({ ids: [image.id] }),
+      onConfirm: () =>
+        updateImages([
+          {
+            workflowId: request.id,
+            stepName: step.name,
+            imageId: image.id,
+            hidden: true,
+          },
+        ]),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
   };
 
-  const handleSendFeedback = async ({
-    quality,
-    message,
-  }: {
-    quality: GENERATION_QUALITY;
-    message?: string;
-  }) => {
-    if (sending) return;
-
-    setSelectedFeedback(quality);
-    await sendFeedback({ jobId: image.hash, reason: quality, message })
-      // Error handled in hook
-      .catch(() => setSelectedFeedback(null));
-  };
-
-  const handleThumbsDownClick = () => {
-    openGenQualityFeedbackModal({
-      jobId: image.hash,
-      onSubmit: () => setSelectedFeedback(GENERATION_QUALITY.BAD),
-      onFailed: () => setSelectedFeedback(null),
+  const handleUpscale = (workflow: string) => {
+    dialogStore.trigger({
+      component: UpscaleImageModal,
+      props: {
+        resources: step.resources,
+        params: {
+          ...step.params,
+          image: image.url,
+          seed: image.seed ?? step.params.seed,
+          workflow,
+        },
+      },
     });
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
-  const isLandscape = request.params.width > request.params.height;
-  const removedForSafety = image.removedForSafety && image.available;
 
-  const badFeedbackSelected = selectedFeedback === GENERATION_QUALITY.BAD;
-  const goodFeedbackSelected = selectedFeedback === GENERATION_QUALITY.GOOD;
+  const feedback = step.metadata?.images?.[image.id]?.feedback;
+  const badFeedbackSelected = feedback === 'disliked';
+  const goodFeedbackSelected = feedback === 'liked';
+  const available = image.status === 'succeeded';
 
-  if (!image.available) return <></>;
+  function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
+    if (feedback !== 'disliked' && newFeedback === 'disliked') {
+      dialogStore.trigger({
+        component: TextToImageQualityFeedbackModal,
+        props: {
+          workflowId: request.id,
+          imageId: image.id,
+          comments: step.metadata?.images?.[image.id]?.comments,
+          stepName: step.name,
+        },
+      });
+    }
+    updateImages([
+      {
+        workflowId: request.id,
+        stepName: step.name,
+        imageId: image.id,
+        feedback: newFeedback,
+      },
+    ]);
+  }
+
+  if (!available) return <></>;
+
+  const canRemix = step.params.workflow !== 'img2img-upscale';
 
   return (
-    <AspectRatio ratio={request.params.width / request.params.height} ref={ref}>
+    <AspectRatio ratio={step.params.width / step.params.height} ref={ref}>
       {inView && (
         <>
-          {/* TODO - move this to new dialog trigger */}
-          {/* <CreateVariantsModal
-            opened={state.variantModalOpened}
-            onClose={() =>
-              setState((current) => ({ ...current, variantModalOpened: false, selectedItems: [] }))
-            }
-          /> */}
           <Card
             p={0}
             className={classes.imageWrapper}
-            style={image.available ? { cursor: 'pointer' } : undefined}
+            style={available ? { cursor: 'pointer' } : undefined}
           >
-            <Box onClick={handleImageClick}>
+            <Box
+              onClick={handleImageClick}
+              onMouseDown={(e) => {
+                if (e.button === 1) return handleAuxClick();
+              }}
+            >
               <Box className={classes.innerGlow} />
-              {!image.available ? (
+              {!available ? (
                 <Center className={classes.centeredAbsolute} p="xs">
-                  {image.status === 'Started' ? (
+                  {image.status === 'processing' ? (
                     <Stack align="center">
                       <Loader size={24} />
                       <Text color="dimmed" size="xs" align="center">
                         Generating
                       </Text>
                     </Stack>
-                  ) : image.status === 'Error' ? (
+                  ) : image.status === 'failed' ? (
                     <Text color="dimmed" size="xs" align="center">
                       Could not load image
                     </Text>
@@ -172,52 +214,6 @@ export function GeneratedImage({
                     </Stack>
                   )}
                 </Center>
-              ) : removedForSafety ? (
-                <Center className={classes.centeredAbsolute} p="xs">
-                  <Stack align="center" spacing={0}>
-                    <Box
-                      className={classes.blockedMessage}
-                      sx={{
-                        flexDirection: isLandscape ? 'row' : 'column',
-                      }}
-                    >
-                      <ThemeIcon
-                        color="red"
-                        size={isLandscape ? 36 : 48}
-                        className={classes.iconBlocked}
-                        radius="xl"
-                        variant="light"
-                        sx={(theme) => ({
-                          marginBottom: isLandscape ? 0 : theme.spacing.sm,
-                          marginRight: isLandscape ? theme.spacing.sm : 0,
-                        })}
-                      >
-                        <IconBan size={isLandscape ? 24 : 36} />
-                      </ThemeIcon>
-                      <Stack spacing={0} align={isLandscape ? undefined : 'center'}>
-                        <Text
-                          color="red.5"
-                          weight={500}
-                          size="sm"
-                          align="center"
-                          sx={{ overflow: 'hidden', whiteSpace: 'nowrap' }}
-                        >
-                          Blocked by Provider
-                        </Text>
-                        <Text
-                          size="xs"
-                          component="a"
-                          td="underline"
-                          color="dimmed"
-                          href="/blocked-by-provider"
-                          target="_blank"
-                        >
-                          Why?
-                        </Text>
-                      </Stack>
-                    </Box>
-                  </Stack>
-                </Center>
               ) : (
                 // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
                 <img
@@ -225,7 +221,9 @@ export function GeneratedImage({
                   alt=""
                   src={image.url}
                   style={{ zIndex: 2, width: '100%' }}
-                  onDragStart={(e) => e.dataTransfer.setData('text/uri-list', image.url)}
+                  onDragStart={(e) => {
+                    if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
+                  }}
                 />
               )}
             </Box>
@@ -251,18 +249,22 @@ export function GeneratedImage({
                 </div>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Item
-                  onClick={handleGenerate}
-                  icon={<IconArrowsShuffle size={14} stroke={1.5} />}
-                >
-                  Remix
-                </Menu.Item>
-                <Menu.Item
-                  onClick={handleGenerateWithSeed}
-                  icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-                >
-                  Remix (with seed)
-                </Menu.Item>
+                {canRemix && (
+                  <>
+                    <Menu.Item
+                      onClick={() => handleGenerate()}
+                      icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+                    >
+                      Remix
+                    </Menu.Item>
+                    <Menu.Item
+                      onClick={() => handleGenerate({ seed: image.seed })}
+                      icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+                    >
+                      Remix (with seed)
+                    </Menu.Item>
+                  </>
+                )}
                 <Menu.Item
                   color="red"
                   onClick={handleDeleteImage}
@@ -270,14 +272,23 @@ export function GeneratedImage({
                 >
                   Delete
                 </Menu.Item>
-                <Menu.Divider />
-                <Menu.Label>Coming soon</Menu.Label>
-                <Menu.Item disabled icon={<IconArrowsShuffle size={14} stroke={1.5} />}>
-                  Create variant
-                </Menu.Item>
-                <Menu.Item disabled icon={<IconWindowMaximize size={14} stroke={1.5} />}>
-                  Upscale
-                </Menu.Item>
+                {!!img2imgWorkflows?.length && canRemix && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Label>Image-to-image workflows</Menu.Label>
+                    {img2imgWorkflows?.map((workflow) => (
+                      <Menu.Item
+                        key={workflow.key}
+                        onClick={() => {
+                          if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                          else handleSelectWorkflow(workflow.key);
+                        }}
+                      >
+                        {workflow.name}
+                      </Menu.Item>
+                    ))}
+                  </>
+                )}
                 <Menu.Divider />
                 <Menu.Label>System</Menu.Label>
                 <Menu.Item
@@ -288,45 +299,75 @@ export function GeneratedImage({
                       <IconInfoHexagon size={14} stroke={1.5} />
                     )
                   }
-                  onClick={() => copy(image.hash)}
+                  onClick={() => copy(image.jobId)}
                 >
                   Copy Job ID
                 </Menu.Item>
+                <Menu.Item
+                  icon={<IconExternalLink size={14} stroke={1.5} />}
+                  onClick={handleAuxClick}
+                >
+                  Open in New Tab
+                </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-            {image.available && (
+            {available && (
               <Group className={classes.info} w="100%" position="apart">
                 <Group spacing={4} className={classes.actionsWrapper}>
-                  {(!selectedFeedback || goodFeedbackSelected) && (
-                    <ActionIcon
-                      size="md"
-                      variant={goodFeedbackSelected ? 'light' : undefined}
-                      color={goodFeedbackSelected ? 'green' : undefined}
-                      onClick={
-                        !goodFeedbackSelected
-                          ? () => handleSendFeedback({ quality: GENERATION_QUALITY.GOOD })
-                          : undefined
-                      }
+                  <ActionIcon
+                    size="md"
+                    variant={goodFeedbackSelected ? 'light' : undefined}
+                    color={goodFeedbackSelected ? 'green' : undefined}
+                    disabled={isLoading}
+                    onClick={() => handleToggleFeedback('liked')}
+                  >
+                    <IconThumbUp size={16} />
+                  </ActionIcon>
+
+                  <ActionIcon
+                    size="md"
+                    variant={badFeedbackSelected ? 'light' : undefined}
+                    color={badFeedbackSelected ? 'red' : undefined}
+                    disabled={isLoading}
+                    onClick={() => handleToggleFeedback('disliked')}
+                  >
+                    <IconThumbDown size={16} />
+                  </ActionIcon>
+
+                  {!!img2imgWorkflows?.length && canRemix && (
+                    <Menu
+                      zIndex={400}
+                      trigger="hover"
+                      openDelay={100}
+                      closeDelay={100}
+                      transition="fade"
+                      transitionDuration={150}
                     >
-                      <IconThumbUp size={16} />
-                    </ActionIcon>
-                  )}
-                  {(!selectedFeedback || badFeedbackSelected) && (
-                    <ActionIcon
-                      size="md"
-                      variant={badFeedbackSelected ? 'light' : undefined}
-                      color={badFeedbackSelected ? 'red' : undefined}
-                      onClick={!badFeedbackSelected ? handleThumbsDownClick : undefined}
-                    >
-                      <IconThumbDown size={16} />
-                    </ActionIcon>
+                      <Menu.Target>
+                        <ActionIcon size="md">
+                          <IconWand size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown className={classes.improveMenu}>
+                        {img2imgWorkflows?.map((workflow) => (
+                          <Menu.Item
+                            key={workflow.key}
+                            onClick={() => {
+                              if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                              else handleSelectWorkflow(workflow.key);
+                            }}
+                          >
+                            {workflow.name}
+                          </Menu.Item>
+                        ))}
+                      </Menu.Dropdown>
+                    </Menu>
                   )}
                 </Group>
                 <ImageMetaPopover
-                  meta={request.params}
+                  meta={step.params}
                   zIndex={constants.imageGeneration.drawerZIndex + 1}
                   hideSoftware
-                  // generationProcess={image.generationProcess ?? undefined} // TODO.generation - determine if we will be returning the image generation process
                 >
                   <ActionIcon variant="transparent" size="md">
                     <IconInfoCircle
@@ -347,11 +388,11 @@ export function GeneratedImage({
   );
 }
 
-export function GenerationPlaceholder({ request }: { request: Generation.Request }) {
+export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
   const { classes } = useStyles();
 
   return (
-    <AspectRatio ratio={request.params.width / request.params.height}>
+    <AspectRatio ratio={width / height}>
       <Card p={0} className={classes.imageWrapper}>
         <Box className={classes.innerGlow} />
         <Center className={classes.centeredAbsolute} p="xs">
@@ -458,6 +499,16 @@ const useStyles = createStyles((theme, _params, getRef) => {
       [theme.fn.smallerThan('sm')]: {
         opacity: 0.7,
       },
+    },
+    improveMenu: {
+      borderRadius: theme.radius.sm,
+      background: theme.fn.rgba(
+        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+        0.6
+      ),
+      border: 'none',
+      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+      padding: 4,
     },
   };
 });

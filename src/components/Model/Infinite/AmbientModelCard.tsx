@@ -63,6 +63,7 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 
 const useStyles = createStyles((theme, _, getRef) => {
   const infoRef = getRef('info');
@@ -201,7 +202,7 @@ export function AmbientModelCard({ data, height }: Props) {
     </Text>
   );
 
-  const isSDXL = baseModelSets.SDXL.includes(data.version.baseModel as BaseModel);
+  const isSDXL = getIsSdxl(data.version.baseModel);
   const modelBadges = (
     <>
       <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">

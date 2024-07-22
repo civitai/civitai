@@ -1,14 +1,18 @@
+import { ClubAdminPermission, EntityType } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { v4 as uuid } from 'uuid';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
+import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
+  ClubTransactionSchema,
   CompleteStripeBuzzPurchaseTransactionInput,
-  CreateBuzzTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
-  ClubTransactionSchema,
 } from '~/server/schema/buzz.schema';
 import {
   completeStripeBuzzTransaction,
@@ -19,6 +23,12 @@ import {
   getUserBuzzTransactions,
   upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
+import { getImageById } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import { isDefined } from '~/utils/type-guards';
+import { userContributingClubs } from '../services/club.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -26,15 +36,6 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
-import { dbRead } from '~/server/db/client';
-import { userContributingClubs } from '../services/club.service';
-import { ClubAdminPermission, EntityType } from '@prisma/client';
-import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
-import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
-import { getImageById } from '~/server/services/image.service';
-import { v4 as uuid } from 'uuid';
-import { isDefined } from '~/utils/type-guards';
-import { amIBlockedByUser } from '~/server/services/user.service';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -213,6 +214,28 @@ export async function createBuzzTipTransactionHandler({
         entityType: entityType as string,
         entityId: entityId as number,
       });
+    } else {
+      const toAccountId = transactions[0].toAccountId;
+      const description = transactions[0].description;
+      if (toAccountId !== 0) {
+        const fromUser = await dbRead.user.findUnique({
+          where: { id: fromAccountId },
+          select: { username: true },
+        });
+
+        await createNotification({
+          type: 'tip-received',
+          userId: toAccountId,
+          category: NotificationCategory.Buzz,
+          key: `tip-received:${uuid()}`,
+          details: {
+            amount: amount,
+            user: fromUser?.username,
+            fromUserId: fromAccountId,
+            message: description,
+          },
+        });
+      }
     }
 
     return data;

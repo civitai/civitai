@@ -1,113 +1,16 @@
-import {
-  BaseModel,
-  BaseModelSetType,
-  baseModelSets,
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-  draftMode,
-} from '~/server/common/constants';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { isDefined } from '~/utils/type-guards';
-import { RunType } from '~/store/generation.store';
-import { uniqBy } from 'lodash-es';
-import {
-  GenerateFormModel,
-  GenerationRequestTestRunSchema,
-  generationStatusSchema,
-  SendFeedbackInput,
-} from '~/server/schema/generation.schema';
-import React, { useMemo, useCallback } from 'react';
+
+import { GenerateFormModel, generationStatusSchema } from '~/server/schema/generation.schema';
+import React, { useMemo, useCallback, useState, useEffect } from 'react';
 import { trpc } from '~/utils/trpc';
-import { Generation } from '~/server/services/generation/generation.types';
-import { findClosest } from '~/utils/number-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getBaseModelSetKey } from '~/shared/constants/generation.constants';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 
-export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
-  persist(() => ({}), { name: 'generation-form-2', version: 0 })
-);
-
-export const useDerivedGenerationState = () => {
-  const status = useGenerationStatus();
-  const { cost, ready, isCalculatingCost, costEstimateError } = useEstimateTextToImageJobCost();
-
-  const selectedResources = useGenerationFormStore(({ resources = [], model }) => {
-    return model ? resources.concat([model]).filter(isDefined) : resources.filter(isDefined);
-  });
-  const { unstableResources: allUnstableResources } = useUnstableResources();
-
-  const { baseModel } = useGenerationFormStore(
-    useCallback(
-      ({ model }) => {
-        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-        return {
-          baseModel,
-        };
-      },
-      [status]
-    )
-  );
-
-  const hasResources = useGenerationFormStore(
-    ({ resources = [], vae }) => [...resources, vae].filter(isDefined).length > 0
-  );
-
-  const additionalResourcesCount = useGenerationFormStore(({ resources = [] }) => resources.length);
-
-  const resources = useGenerationFormStore((state) => state.resources);
-  const isLCM = useGenerationFormStore(
-    (state) =>
-      (state.model?.baseModel.includes('LCM') ||
-        state.resources?.some((x) => x.baseModel.includes('LCM'))) ??
-      false
-  );
-  const trainedWords = useMemo(
-    () => resources?.flatMap((x) => x.trainedWords).filter(isDefined) ?? [],
-    [resources]
-  );
-
-  const samplerCfgOffset = useGenerationFormStore(({ sampler, cfgScale }) => {
-    const castedSampler = sampler as keyof typeof samplerOffsets;
-    const samplerOffset = samplerOffsets[castedSampler] ?? 0;
-    const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
-
-    return samplerOffset + cfgOffset;
-  });
-
-  const unstableResources = useMemo(
-    () => selectedResources.filter((x) => allUnstableResources.includes(x.id)),
-    [selectedResources, allUnstableResources]
-  );
-
-  const minorFlaggedResources = useMemo(
-    () => selectedResources.filter((x) => x.minor),
-    [selectedResources]
-  );
-
-  const draft = useGenerationFormStore((x) => x.draft);
-
-  return {
-    cost,
-    ready,
-    baseModel,
-    hasResources,
-    trainedWords,
-    additionalResourcesCount,
-    samplerCfgOffset,
-    isSDXL: baseModel === 'SDXL' || baseModel === 'Pony',
-    isLCM,
-    unstableResources,
-    isCalculatingCost,
-    draft,
-    costEstimateError,
-    minorFlaggedResources,
-  };
-};
+// export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
+//   persist(() => ({}), { name: 'generation-form-2', version: 0 })
+// );
 
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
@@ -124,54 +27,7 @@ export const useGenerationStatus = () => {
     const limits = status.limits[tier];
 
     return { ...status, tier, limits };
-  }, [data]);
-};
-
-export const useEstimateTextToImageJobCost = () => {
-  const status = useGenerationStatus();
-  const model = useGenerationFormStore((state) => state.model);
-
-  const input = useGenerationFormStore(
-    useCallback(
-      (state) => {
-        const { aspectRatio, steps, quantity, sampler, draft, staging, resources } = state;
-        const baseModel = model?.baseModel ? getBaseModelSetKey(model.baseModel) : undefined;
-        if (!status.charge || !baseModel) return null;
-
-        return {
-          model: status.checkResourceAvailability
-            ? model?.id ?? generation.defaultValues.model.id
-            : undefined,
-          baseModel: baseModel ?? generation.defaultValues.model.baseModel,
-          aspectRatio: aspectRatio ?? generation.defaultValues.aspectRatio,
-          steps: steps ?? generation.defaultValues.steps,
-          quantity: quantity ?? generation.defaultValues.quantity,
-          sampler: sampler ?? generation.defaultValues.sampler,
-          resources: status.checkResourceAvailability
-            ? resources?.map((x) => x.id).sort()
-            : undefined,
-          staging,
-          draft,
-        };
-      },
-      [model, status.charge, status.checkResourceAvailability]
-    )
-  );
-
-  const {
-    data: result,
-    isLoading,
-    isError,
-  } = trpc.generation.estimateTextToImage.useQuery(input as GenerationRequestTestRunSchema, {
-    enabled: !!input,
-  });
-
-  return {
-    ...(result ?? {}),
-    cost: status.charge ? result?.cost ?? 0 : 0,
-    isCalculatingCost: input ? isLoading : false,
-    costEstimateError: !isLoading && isError,
-  };
+  }, [data, currentUser]);
 };
 
 export const useUnstableResources = () => {
@@ -226,144 +82,13 @@ export const useUnsupportedResources = () => {
   };
 };
 
-export const getFormData = (
-  type: RunType,
-  { resources = [], params }: Partial<Generation.Data>
-) => {
-  const state = useGenerationFormStore.getState();
-  let formData = { ...state, ...params };
-  if (state.negativePrompt && !params?.negativePrompt)
-    formData.negativePrompt = params?.negativePrompt;
-
-  formData.model = resources.find((x) => x.modelType === 'Checkpoint') ?? formData.model;
-
-  /* baseModel needs to be determined as soon as possible
-    if(type === 'run') selected resource determines the baseModel
-    else baseModel is based off checkpoint model */
-  let baseModel = getBaseModelSetKey(formData.model?.baseModel) ?? 'SD1';
-  if (type === 'run') {
-    const resource = resources[0];
-    const newBaseModel = getBaseModelSetKey(resource.baseModel) ?? baseModel;
-    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') {
-      baseModel = newBaseModel;
-    } else {
-      // only use generationConfig for previous and new baseModels
-      const config = Object.entries(generationConfig)
-        .filter(([key]) => [baseModel, newBaseModel].includes(key as BaseModelSetType))
-        .map(([, value]) => value);
-
-      const shouldUpdate = !config.every(({ additionalResourceTypes }) => {
-        return additionalResourceTypes.some(({ type, baseModelSet, baseModels }) => {
-          if (type !== resource.modelType) return false;
-          let allSupportedBaseModels = getBaseModelSet(baseModelSet) ?? [];
-          if (baseModels) {
-            for (const baseModel of baseModels) {
-              allSupportedBaseModels = [
-                ...new Set(allSupportedBaseModels.concat(getBaseModelSet(baseModel) ?? [])),
-              ];
-            }
-          }
-          return allSupportedBaseModels.includes(resource.baseModel as BaseModel);
-        });
-      });
-      if (shouldUpdate) baseModel = newBaseModel;
-    }
-  }
-
-  const { additionalResourceTypes, checkpoint } = getGenerationConfig(baseModel);
-
-  // filter out any additional resources that don't belong
-  const resourceFilter = (resource: Generation.Resource) => {
-    const baseModelSetKey = getBaseModelSetKey(resource.baseModel);
-    return additionalResourceTypes.some((x) => {
-      const modelTypeMatches = x.type === resource.modelType;
-      const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
-      const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
-      return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
-    });
-  };
-
-  if (type === 'run') {
-    formData.vae =
-      resources.filter((x) => x.modelType === 'VAE').filter(resourceFilter)[0] ?? formData.vae;
-    formData.resources = [...(formData.resources ?? []), ...resources]
-      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
-      .filter(resourceFilter);
-  } else if (type === 'remix') {
-    formData.vae = resources.find((x) => x.modelType === 'VAE') ?? formData.vae;
-    formData.resources = resources
-      .filter((x) => x.modelType !== 'Checkpoint' && x.modelType !== 'VAE')
-      .filter(resourceFilter);
-  }
-
-  if (params) {
-    if (params.width || params.height)
-      formData.aspectRatio = getClosestAspectRatio(
-        params?.width,
-        params?.height,
-        params?.baseModel
-      );
-    if (params.sampler)
-      formData.sampler = generation.samplers.includes(
-        params.sampler as (typeof generation.samplers)[number]
-      )
-        ? params.sampler
-        : undefined;
-  }
-
-  // set default model
-  const baseModelMatches = getBaseModelSetKey(formData.model?.baseModel) === baseModel;
-  if (!baseModelMatches) {
-    formData.model = checkpoint;
-  }
-
-  const maxValueKeys = Object.keys(generation.maxValues);
-  for (const item of maxValueKeys) {
-    const key = item as keyof typeof generation.maxValues;
-    if (formData[key]) {
-      formData[key] = Math.min(formData[key] ?? 0, generation.maxValues[key]);
-    }
-  }
-
-  if (type !== 'remix') formData = removeEmpty(formData);
-  formData.resources = formData.resources?.length
-    ? uniqBy(formData.resources, 'id').slice(0, 9)
-    : undefined;
-
-  // Look through data for Draft resource.
-  // If we find them, toggle draft and remove the resource.
-  const isSDXL = baseModel === 'SDXL' || baseModel === 'Pony' || baseModel === 'SDXLDistilled';
-  const draftResourceId = draftMode[isSDXL ? 'sdxl' : 'sd1'].resourceId;
-  const draftResourceIndex = formData.resources?.findIndex((x) => x.id === draftResourceId) ?? -1;
-  if (draftResourceIndex !== -1) {
-    formData.draft = true;
-    formData.resources?.splice(draftResourceIndex, 1);
-  }
-  if (isSDXL) formData.clipSkip = 2;
-
-  return {
-    ...formData,
-    baseModel,
-  };
-};
-
-export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
-  width = width ?? (baseModel === 'SDXL' ? 1024 : 512);
-  height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
-  const ratios = aspectRatios.map((x) => x.width / x.height);
-  const closest = findClosest(ratios, width / height);
-  const index = ratios.indexOf(closest);
-  return `${index ?? 0}`;
-};
-
 // TODO - move these somewhere that makes more sense
-export const getBaseModelSet = (baseModel?: string) => {
-  if (!baseModel) return undefined;
-  return Object.entries(baseModelSets).find(
-    ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
-  )?.[1];
-};
+// export const getBaseModelSet = (baseModel?: string) => {
+//   if (!baseModel) return undefined;
+//   return Object.entries(baseModelSets).find(
+//     ([key, set]) => key === baseModel || set.includes(baseModel as BaseModel)
+//   )?.[1];
+// };
 
 /**
  * Taken from stable-diffusion-webui github repo and modified to fit our needs
@@ -490,25 +215,31 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.selectionEnd = selectionEnd;
 }
 
-export const useGenerationQualityFeedback = () => {
-  const sendFeedbackMutation = trpc.generation.sendFeedback.useMutation({
-    onError(error) {
-      showErrorNotification({
-        title: 'Unable to send feedback',
-        error: new Error(error.message),
-      });
-    },
-  });
+// const workflowDefinitionKey = 'workflow-definition';
+// export function useSelectedWorkflowDefinition(value?: string) {
+//   const [selected, setSelected] = useState(value ?? getLocalValue());
 
-  const handleSendFeedback = useCallback(
-    (payload: SendFeedbackInput) => {
-      return sendFeedbackMutation.mutateAsync(payload);
-    },
-    [sendFeedbackMutation]
-  );
+//   useEffect(() => {
+//     if (value) return;
+//     const newValue = getLocalValue();
+//     if (value !== newValue) setSelected(newValue);
+//   }, [value]);
 
-  return {
-    sendFeedback: handleSendFeedback,
-    sending: sendFeedbackMutation.isLoading,
-  };
-};
+//   function getLocalValue() {
+//     if (typeof window === 'undefined') return 'txt2img';
+//     const item = localStorage.getItem(workflowDefinitionKey);
+//     return item ?? 'txt2img';
+//   }
+
+//   function handleSetSelected(val: string | ((args: string) => string)) {
+//     setSelected((selected) => {
+//       const value = typeof val === 'string' ? val : val(selected);
+//       if (value.startsWith('txt2img')) localStorage.setItem(workflowDefinitionKey, value);
+//       return value;
+//     });
+//   }
+
+//   console.log({ selected });
+
+//   return [selected, handleSetSelected] as const;
+// }

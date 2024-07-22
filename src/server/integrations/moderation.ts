@@ -1,8 +1,11 @@
 import { env } from '~/env/server.mjs';
 
 const falsePositiveTriggers = Object.entries({
-  '1\\s*girl': 'woman',
-  '1\\s*boy': 'man',
+  '\\d*girl': 'woman',
+  '\\d*boy': 'man',
+  '\\d*girls': 'women',
+  '\\d*boys': 'men',
+  'school uniform': 'uniform',
 }).map(([k, v]) => ({ regex: new RegExp(`\\b${k}\\b`, 'gi'), replacement: v }));
 function removeFalsePositiveTriggers(prompt: string) {
   for (const trigger of falsePositiveTriggers) {
@@ -11,7 +14,7 @@ function removeFalsePositiveTriggers(prompt: string) {
   return prompt;
 }
 
-async function moderatePrompt(prompt: string) {
+async function moderatePrompt(prompt: string): Promise<{ flagged: false; categories: string[] }> {
   if (!env.EXTERNAL_MODERATION_TOKEN || !env.EXTERNAL_MODERATION_ENDPOINT)
     return { flagged: false, categories: [] };
 

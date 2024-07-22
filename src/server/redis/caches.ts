@@ -5,16 +5,13 @@ import {
   CosmeticType,
   ModelStatus,
   Prisma,
-  UserEngagementType,
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  GenerationResourceSelect,
-  generationResourceSelect,
-} from '~/server/selectors/generation.selector';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import {
@@ -24,6 +21,7 @@ import {
 } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: number[] }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
@@ -231,19 +229,31 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   },
 });
 
-export const resourceDataCache = createCachedArray<GenerationResourceSelect>({
+export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
+export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   idKey: 'id',
   lookupFn: async (ids) => {
-    const dbResults = await dbRead.modelVersion.findMany({
-      where: { id: { in: ids as number[] } },
-      select: generationResourceSelect,
+    const dbResults = (
+      await dbRead.modelVersion.findMany({
+        where: { id: { in: ids as number[] } },
+        select: generationResourceSelect,
+      })
+    ).map(({ generationCoverage, settings = {}, ...result }) => {
+      const covered = generationCoverage?.covered ?? false;
+      return removeEmpty({
+        ...result,
+        settings: settings as RecommendedSettingsSchema,
+        covered,
+        available:
+          covered && (result.availability === 'Public' || result.availability === 'EarlyAccess'),
+      });
     });
 
-    const results = dbResults.reduce((acc, result) => {
+    const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
       acc[result.id] = result;
       return acc;
-    }, {} as Record<string, GenerationResourceSelect>);
+    }, {});
     return results;
   },
   ttl: CacheTTL.hour,
@@ -329,48 +339,5 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
     for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
     for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
     return results;
-  },
-});
-
-export const userBlockedUsersCache = createCachedObject<{ userId: number; blockedUsers: number[] }>(
-  {
-    key: REDIS_KEYS.CACHES.BLOCKED_USERS,
-    idKey: 'userId',
-    ttl: CacheTTL.day,
-    lookupFn: async (ids) => {
-      const [userId] = ids;
-
-      const blockedUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
-        SELECT
-          ue."targetUserId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."targetUserId") "username"
-        FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
-      `;
-
-      return { [userId]: blockedUsers };
-    },
-  }
-);
-
-export const userBlockedByUsersCache = createCachedObject<{
-  userId: number;
-  blockedByUsers: number[];
-}>({
-  key: REDIS_KEYS.CACHES.BLOCKED_USERS,
-  idKey: 'userId',
-  ttl: CacheTTL.day,
-  lookupFn: async (ids) => {
-    const [userId] = ids;
-
-    const blockedByUsers = await dbWrite.$queryRaw<{ id: number; username: string | null }[]>`
-        SELECT
-          ue."userId" "id",
-          (SELECT u.username FROM "User" u WHERE u.id = ue."userId") "username"
-        FROM "UserEngagement" ue
-        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
-      `;
-
-    return { [userId]: blockedByUsers };
   },
 });

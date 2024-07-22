@@ -1,17 +1,23 @@
-import { toggleReaction } from './../services/reaction.service';
-import { ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
-import { dbRead } from '../db/client';
-import { ReactionType } from '../clickhouse/client';
+import { notifDbRead } from '~/server/db/notifDb';
+import { logToAxiom } from '~/server/logging/client';
+import { imageReactionMilestones } from '~/server/notifications/reaction.notifications';
 import { encouragementReward, goodContentReward } from '~/server/rewards';
-import {
-  NsfwLevelDeprecated,
-  getNsfwLevelDeprecatedReverseMapping,
-} from '~/shared/constants/browsingLevel.constants';
+import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
-import dayjs from 'dayjs';
+import { createNotification } from '~/server/services/notification.service';
+import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  getNsfwLevelDeprecatedReverseMapping,
+  NsfwLevelDeprecated,
+} from '~/shared/constants/browsingLevel.constants';
 import { isFutureDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { ReactionType } from '../clickhouse/client';
+import { dbRead } from '../db/client';
+import { toggleReaction } from './../services/reaction.service';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -219,9 +225,83 @@ export const toggleReactionHandler = async ({
           )
           .catch(handleLogError),
       ]);
+
+      // TODO unhandledRejection: Error: read ECONNRESET
+      await createReactionNotification(input).catch();
     }
     return result;
   } catch (error) {
     throw throwDbError(error);
+  }
+};
+
+const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
+  if (entityType === 'image') {
+    const cnt = await dbRead.imageReaction.count({
+      where: { imageId: entityId },
+    });
+
+    // const { reactionCount: cnt = 0 } =
+    //   (await dbRead.imageMetric.findFirst({
+    //     where: { imageId: entityId, timeframe: MetricTimeframe.AllTime },
+    //     select: { reactionCount: true },
+    //   })) ?? {};
+
+    if (!cnt) return;
+
+    const match = imageReactionMilestones.toReversed().find((e) => e <= cnt);
+    if (!match) return;
+
+    const type = 'image-reaction-milestone';
+    const key = `${type}:${entityId}:${match}`;
+
+    const query = await notifDbRead.cancellableQuery<{ exists: number }>(Prisma.sql`
+      SELECT 1 as exists
+      FROM "Notification"
+      WHERE key = ${key}
+    `);
+    const items = await query.result();
+    if (items.length > 0) return;
+
+    const resource = await dbRead.image.findFirst({
+      where: { id: entityId },
+      select: {
+        userId: true,
+        id: true,
+        postId: true,
+        resourceHelper: { select: { modelName: true } },
+      },
+    });
+
+    if (!resource) {
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'Failed to create notification',
+          details: { key: type },
+          message: 'Could not find resource',
+        },
+        'notifications'
+      ).catch();
+      return;
+    }
+
+    const modelNames = resource.resourceHelper.map((r) => r.modelName).filter(isDefined);
+
+    const details = {
+      version: 2,
+      imageId: resource.id,
+      postId: resource.postId,
+      models: modelNames,
+      reactionCount: match,
+    };
+
+    await createNotification({
+      type,
+      key,
+      category: NotificationCategory.Milestone,
+      userId: resource.userId,
+      details,
+    }).catch();
   }
 };

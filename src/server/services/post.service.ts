@@ -4,6 +4,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
+  ImageResource,
   Prisma,
   TagTarget,
   TagType,
@@ -44,6 +45,7 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -60,6 +62,7 @@ import {
   PostUpdateInput,
   RemovePostTagInput,
   ReorderPostImagesInput,
+  UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
 
@@ -444,6 +447,38 @@ export const getPostsInfinite = async ({
   };
 };
 
+const getPostCollectionTagId = async ({
+  postCollectionId,
+  postId,
+  imageIds,
+}: {
+  postCollectionId: number;
+  postId: number;
+  imageIds?: number[];
+}) => {
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: {
+      collectionId: postCollectionId,
+      OR: [
+        {
+          postId,
+        },
+        {
+          imageId: { in: imageIds },
+        },
+      ],
+    },
+    select: { tagId: true },
+  });
+
+  const [item] = collectionItems;
+  if (item) {
+    return item.tagId;
+  }
+
+  return null;
+};
+
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const db = await getDbWithoutLag('post', id);
@@ -472,7 +507,17 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
   const images = await getPostEditImages({ id, user });
 
-  return { ...post, images };
+  let collectionTagId: null | number = null;
+  if (post.collectionId) {
+    // get tag Id for the first item
+    collectionTagId = await getPostCollectionTagId({
+      postCollectionId: post.collectionId,
+      postId: post.id,
+      imageIds: images.map((x) => x.id),
+    });
+  }
+
+  return { ...post, collectionTagId, images };
 };
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
@@ -524,10 +569,22 @@ export const createPost = async ({
     data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
     select: postSelect,
   });
+
   await preventReplicationLag('post', post.id);
+
+  let collectionTagId: null | number = null;
+  if (post.collectionId) {
+    // get tag Id for the first item
+    collectionTagId = await getPostCollectionTagId({
+      postCollectionId: post.collectionId,
+      postId: post.id,
+      imageIds: [],
+    });
+  }
 
   return {
     ...post,
+    collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
   };
@@ -738,7 +795,36 @@ export const addPostImage = async ({
   });
 
   try {
-    await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+    // Disable the single-pass read+write for now
+    // await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
+
+    // Read the resources based on complex metadata and hash matches
+    const resources = await dbWrite.$queryRaw<
+      ImageResource[]
+    >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
+    const resourcesJson = JSON.stringify(resources);
+
+    // Write the resources to the image
+    await dbWrite.$executeRaw`
+      WITH json_data AS (
+          SELECT
+              jsonb_array_elements(${resourcesJson}::jsonb) AS elem
+      )
+      INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
+      SELECT
+          (elem->>'id')::int,
+          (elem->>'modelversionid')::int,
+          elem->>'name',
+          elem->>'hash',
+          (elem->>'strength')::int,
+          (elem->>'detected')::boolean
+      FROM json_data
+      ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
+      SET
+          detected = excluded.detected,
+          hash = excluded.hash,
+          strength = excluded.strength;
+    `;
   } catch (e) {
     console.error(e);
   }
@@ -892,5 +978,43 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
       ...item,
       collection,
     };
+  });
+};
+
+export const updatePostCollectionTagId = async ({
+  id,
+  collectionTagId,
+}: UpdatePostCollectionTagIdInput) => {
+  const post = await dbRead.post.findUnique({
+    where: { id },
+    select: { collectionId: true, userId: true },
+  });
+
+  if (!post || !post.collectionId) return;
+
+  const collection = await getCollectionById({ input: { id: post.collectionId } });
+
+  if (!collection || collection?.mode !== CollectionMode?.Contest) return;
+
+  if (!collection.tags.find((t) => t.id === collectionTagId))
+    throw throwBadRequestError('Invalid tag');
+
+  const isImageCollection = collection.type === CollectionType.Image;
+
+  const images = isImageCollection
+    ? await dbRead.image.findMany({
+        where: { postId: id },
+      })
+    : [];
+
+  await dbWrite.collectionItem.updateMany({
+    where: {
+      collectionId: post.collectionId,
+      postId: isImageCollection ? undefined : id,
+      imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
+    },
+    data: {
+      tagId: collectionTagId,
+    },
   });
 };

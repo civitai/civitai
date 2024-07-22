@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import orchestratorCaller from '~/server/http/orchestrator/orchestrator.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { isDefined } from '~/utils/type-guards';
 
 type ScheduledEntity = {
@@ -32,11 +33,13 @@ export const processScheduledPublishing = createJob(
         mv.id,
         m."userId",
         JSON_BUILD_OBJECT(
-          'modelId', m.id
+          'modelId', m.id,
+          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now};
+      WHERE mv.status = 'Scheduled'
+        AND mv."publishedAt" <= ${now}
     `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
@@ -89,13 +92,25 @@ export const processScheduledPublishing = createJob(
     }
 
     if (scheduledModelVersions.length) {
-      const scheduledModelVersionIds = scheduledModelVersions.map(({ id }) => id);
+      const earlyAccess = scheduledModelVersions
+        .filter((item) => !!item.extras?.hasEarlyAccess)
+        .map(({ id }) => id);
+
       transaction.push(dbWrite.$executeRaw`
         -- Update scheduled versions published
         UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelVersionIds)})
+        WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
           AND status = 'Scheduled' AND "publishedAt" <= ${now};
       `);
+
+      if (earlyAccess.length) {
+        // The only downside to this failing is that the model version will be published with no early access.
+        // Initially, I think this will be OK.
+        await publishModelVersionsWithEarlyAccess({
+          modelVersionIds: earlyAccess,
+          continueOnError: true,
+        });
+      }
     }
 
     await dbWrite.$transaction(transaction);
@@ -116,7 +131,7 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await orchestratorCaller.bustModelCache({ modelVersionId: modelVersion.id });
+      await bustOrchestratorModelCache([modelVersion.id]);
     }
     for (const post of scheduledPosts) {
       await eventEngine.processEngagement({

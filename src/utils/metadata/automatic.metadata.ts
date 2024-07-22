@@ -1,5 +1,6 @@
 import { unescape } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
 import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
 
@@ -27,7 +28,7 @@ const automaticSDKeyMap = new Map<string, string>([
   ['Clip skip', 'clipSkip'],
 ]);
 const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
-const decoder = new TextDecoder('utf-16le');
+
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
@@ -84,51 +85,6 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
-
-/**
- * Swap the byte order of a Uint8Array from big-endian to little-endian.
- * @param buffer - The input Uint8Array with big-endian byte order.
- * @returns A new Uint8Array with little-endian byte order.
- */
-function swapByteOrder(buffer: Uint8Array): Uint8Array {
-  const swapped = new Uint8Array(buffer.length);
-  for (let i = 0; i < buffer.length; i += 2) {
-    swapped[i] = buffer[i + 1];
-    swapped[i + 1] = buffer[i];
-  }
-  return swapped;
-}
-
-/**
- * Remove Unicode header bytes if present.
- * @param buffer - The input Uint8Array.
- * @returns A new Uint8Array without BOM or header bytes.
- */
-const unicodeHeader = new Uint8Array([85, 78, 73, 67, 79, 68, 69, 0]);
-function removeUnicodeHeader(buffer: Uint8Array): Uint8Array {
-  if (buffer.length < unicodeHeader.length) return buffer;
-
-  // Check for BOM (Byte Order Mark) for big-endian UTF-16 (0xFEFF) and remove it if present
-  for (let i = 0; i < unicodeHeader.length; i++) {
-    if (buffer[i] !== unicodeHeader[i]) return buffer;
-  }
-  return buffer.slice(unicodeHeader.length);
-}
-
-/**
- * Decode a big-endian UTF-16 (Unicode) encoded buffer to a string.
- * @param buffer - The input Uint8Array with big-endian byte order.
- * @returns The decoded string.
- */
-function decodeBigEndianUTF16(buffer: Uint8Array): string {
-  // Remove BOM or unwanted header bytes if present
-  const bufferWithoutBOM = removeUnicodeHeader(buffer);
-  // Swap the byte order from big-endian to little-endian
-  const littleEndianBuffer = swapByteOrder(bufferWithoutBOM);
-  // Use TextDecoder to decode the little-endian buffer
-  return decoder.decode(littleEndianBuffer);
-}
-
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -168,7 +124,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       }
     }
 
-    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '));
+    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '))?.replace(/\,\s*$/, '');
     // Strip it from the meta lines
     if (detailsLine) metaLines.splice(metaLines.indexOf(detailsLine), 1);
     // Remove meta keys I wish I hadn't made... :(
