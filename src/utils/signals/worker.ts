@@ -65,16 +65,9 @@ const getConnection = async ({ token }: { token: string }) => {
       if (!connection || connection.state !== HubConnectionState.Connected) return;
       await connection.send('ping');
     }, 5 * 60 * 1000);
-
-    // try to reconnect every 5 seconds
-    // setInterval(async () => {
-    //   if (!connection) return;
-    //   if (connection.state === HubConnectionState.Disconnected) {
-    //     await connection.start();
-    //   }
-    // }, 5 * 1000);
   } catch (e) {
     emitter.emit('connectionError', { message: JSON.stringify(e) });
+    connection = null;
   }
 
   return connection;
@@ -121,7 +114,8 @@ const start = async (port: MessagePort) => {
   // incoming messages
   port.onmessage = async ({ data }: { data: WorkerIncomingMessage }) => {
     if (data.type === 'connection:init')
-      getConnection({ token: data.token }).then(() => {
+      getConnection({ token: data.token }).then((connection) => {
+        if (!connection) return;
         emitter.emit('connectionReady', undefined);
         deferred.resolve();
       });

@@ -484,8 +484,6 @@ export const getModelsRaw = async ({
   // eslint-disable-next-line prefer-const
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
   if (cursorClause) AND.push(cursorClause);
-  if (orderBy === `m."lastVersionAt" DESC NULLS LAST`)
-    orderBy = 'COALESCE(m."lastVersionAt", \'infinity\') DESC';
 
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (

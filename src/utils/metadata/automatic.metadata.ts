@@ -124,7 +124,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       }
     }
 
-    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '));
+    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '))?.replace(/\,\s*$/, '');
     // Strip it from the meta lines
     if (detailsLine) metaLines.splice(metaLines.indexOf(detailsLine), 1);
     // Remove meta keys I wish I hadn't made... :(

@@ -112,7 +112,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
       WHERE t."postId" IS NOT NULL AND t."postId" IN (${ids})
       GROUP BY t."postId", tf.timeframe
       ON CONFLICT ("postId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "createdAt" = NOW()
+        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -145,7 +145,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
       WHERE ci."postId" IS NOT NULL AND ci."postId" IN (${ids})
       GROUP BY ci."postId", tf.timeframe
       ON CONFLICT ("postId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "createdAt" = NOW()
+        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });

@@ -239,13 +239,16 @@ export const resourceDataCache = createCachedArray({
         where: { id: { in: ids as number[] } },
         select: generationResourceSelect,
       })
-    ).map(({ generationCoverage, settings = {}, ...result }) =>
-      removeEmpty({
+    ).map(({ generationCoverage, settings = {}, ...result }) => {
+      const covered = generationCoverage?.covered ?? false;
+      return removeEmpty({
         ...result,
         settings: settings as RecommendedSettingsSchema,
-        covered: generationCoverage?.covered,
-      })
-    );
+        covered,
+        available:
+          covered && (result.availability === 'Public' || result.availability === 'EarlyAccess'),
+      });
+    });
 
     const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
       acc[result.id] = result;

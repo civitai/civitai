@@ -87,12 +87,13 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     return async () => {
       await dbWrite.$executeRaw`
         INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
-        SELECT "imageId", ${fromId}, automated, confidence, "needsReview", source
-        FROM "TagsOnImage"
+        SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
+        FROM "TagsOnImage" toi
         WHERE "tagId" = ${toId}
           AND NOT disabled
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
+          AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
           ${sinceClause}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
       `;

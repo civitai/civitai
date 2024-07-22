@@ -228,11 +228,12 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
     const [vae] = await resourceDataCache.fetch([resource.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
-  const baseModel = getBaseModelSetType(resource.baseModel);
   return {
     resources: uniqBy(formatGenerationResources(resources), 'id'),
     params: {
-      baseModel,
+      // only pass base model if model is checkpoint
+      baseModel:
+        resource.model.type === 'Checkpoint' ? getBaseModelSetType(resource.baseModel) : undefined,
       clipSkip: resource.clipSkip ?? undefined,
     },
     remix: {
@@ -255,7 +256,7 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
   };
 };
 
-const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
+// const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
 const getImageGenerationData = async (id: number) => {
   const [image, imageResources] = await dbRead.$transaction([
     dbRead.image.findUnique({
@@ -284,42 +285,18 @@ const getImageGenerationData = async (id: number) => {
 
   const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
   const resourceData = await resourceDataCache.fetch(versionIds);
+
   const resources = formatGenerationResources(resourceData);
 
-  // if the checkpoint exists but isn't covered, add a default based off checkpoint `modelType`
-  let checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
-  if (!checkpoint?.covered && checkpoint?.modelType) {
-    const baseModel = getBaseModelSetType(checkpoint.baseModel);
-    const defaultCheckpoint = baseModel ? defaultCheckpoints[baseModel] : undefined;
-    if (baseModel && defaultCheckpoint) {
-      // fetch default base model data
-      if (!defaultCheckpointData[baseModel]) {
-        const [resource] = await resourceDataCache.fetch([defaultCheckpoint.version]);
-        if (resource) {
-          defaultCheckpointData[baseModel] = { ...resource, covered: true };
-        }
-      }
-
-      // add default base model data to front of resources
-      const defaultBaseModel = defaultCheckpointData[baseModel];
-      if (defaultBaseModel) {
-        const [formattedResource] = formatGenerationResources([defaultBaseModel]);
-        resources.unshift(formattedResource);
-      }
-    }
-  }
-
   // dedupe resources and add image resource strength/hashes
-  const deduped = uniqBy(resources, 'id')
-    .filter((x) => x.covered)
-    .map((resource) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
-      return {
-        ...resource,
-        strength: imageResource?.strength ? imageResource.strength / 100 : 1,
-        hash: imageResource?.hash ?? undefined,
-      };
-    });
+  const deduped = uniqBy(resources, 'id').map((resource) => {
+    const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+    return {
+      ...resource,
+      strength: imageResource?.strength ? imageResource.strength / 100 : 1,
+      hash: imageResource?.hash ?? undefined,
+    };
+  });
 
   if (meta.hashes && meta.prompt) {
     for (const [key, hash] of Object.entries(meta.hashes)) {
@@ -338,7 +315,7 @@ const getImageGenerationData = async (id: number) => {
     }
   }
 
-  checkpoint = deduped.find((x) => x.modelType === 'Checkpoint');
+  const checkpoint = deduped.find((x) => x.modelType === 'Checkpoint');
   const baseModel = getBaseModelSetType(checkpoint?.baseModel);
 
   // Clean-up bad values

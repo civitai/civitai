@@ -421,6 +421,7 @@ type LicenseDetails = {
   url: string;
   name: string;
   notice?: string;
+  poweredBy?: string;
 };
 export const baseLicenses: Record<string, LicenseDetails> = {
   openrail: {
@@ -461,6 +462,13 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     notice:
       'This Stability AI Model is licensed under the Stability AI Non-Commercial Research Community License, Copyright (c) Stability AI Ltd. All Rights Reserved.',
   },
+  'SAI CLA': {
+    url: '',
+    name: 'Stability AI Community License Agreement',
+    notice:
+      'This Stability AI Model is licensed under the Stability AI Community License, Copyright (c)  Stability AI Ltd. All Rights Reserved.',
+    poweredBy: 'Powered by Stability AI',
+  },
   'hunyuan community': {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     name: 'Tencent Hunyuan Community License Agreement',
@@ -481,7 +489,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1': baseLicenses['openrail'],
   'SD 2.1 768': baseLicenses['openrail'],
   'SD 2.1 Unclip': baseLicenses['openrail'],
-  'SD 3': baseLicenses['SAI NC RC'],
+  'SD 3': baseLicenses['SAI CLA'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
@@ -574,8 +582,9 @@ export const generation = {
       minStrength: -1,
       maxStrength: 2,
       covered: true,
-      image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
+      // image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   maxValues: {
@@ -617,6 +626,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   SDXL: {
@@ -645,6 +655,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
   Pony: {
@@ -665,6 +676,7 @@ export const generationConfig = {
         baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
       },
       { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
+      { type: ModelType.VAE, baseModelSet: 'SDXL' },
     ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -684,6 +696,7 @@ export const generationConfig = {
       maxStrength: 2,
       covered: true,
       minor: false,
+      available: true,
     } as GenerationResource,
   },
 };

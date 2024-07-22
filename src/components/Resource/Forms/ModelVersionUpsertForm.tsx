@@ -113,8 +113,6 @@ const querySchema = z.object({
   bountyId: z.coerce.number().optional(),
 });
 
-const SD3_BANNED = true;
-
 export function ModelVersionUpsertForm({ model, version, children, onSubmit }: Props) {
   const features = useFeatureFlags();
   const router = useRouter();
@@ -165,7 +163,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         : false
       : true,
     earlyAccessConfig:
-      version?.earlyAccessConfig && features.earlyAccessModel
+      version?.earlyAccessConfig &&
+      !!version?.earlyAccessConfig?.timeframe &&
+      features.earlyAccessModel
         ? {
             ...(version?.earlyAccessConfig ?? {}),
             timeframe:
@@ -196,7 +196,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const { isDirty } = form.formState;
   const canMonetize = !model?.poi;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
-  const canSave = SD3_BANNED && baseModel !== 'SD 3';
+  const canSave = true;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     onError(error) {
@@ -213,6 +213,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const schemaResult = querySchema.safeParse(router.query);
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
+
+    console.log(data.earlyAccessConfig);
 
     if (
       isDirty ||
@@ -265,7 +267,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             : false
           : true,
         earlyAccessConfig:
-          version?.earlyAccessConfig && features.earlyAccessModel
+          version?.earlyAccessConfig &&
+          version?.earlyAccessConfig?.timeframe &&
+          features.earlyAccessModel
             ? version?.earlyAccessConfig
             : null,
         recommendedResources: version.recommendedResources ?? [],
@@ -501,17 +505,17 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               />
             )}
           </Group>
-          {SD3_BANNED && baseModel === 'SD 3' && (
-            <Alert color="yellow" title="Temporary Ban on SD3">
+          {baseModel === 'SD 3' && (
+            <Alert color="yellow" title="SD3 Unbanned">
               <Text>
-                Unfortunately due to a lack of clarity in the license associated with Stable
-                Diffusion 3, we have temporarily banned all SD3 derivative models.{' '}
+                Licensing concerns associated Stable Diffusion 3 have been resolved and it's been
+                unbanned. On-site generation with SD3 is unsupported.{' '}
                 <Text
                   variant="link"
                   td="underline"
                   component="a"
                   target="_blank"
-                  href="/articles/5732"
+                  href="/articles/6221"
                 >
                   Learn more
                 </Text>

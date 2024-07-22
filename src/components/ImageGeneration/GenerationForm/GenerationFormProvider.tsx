@@ -14,7 +14,10 @@ import {
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
+  GenerationResource,
   getBaseModelSetType,
+  getBaseModelSetTypes,
+  getResourcesBaseModelSetType,
   getSizeFromAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -26,6 +29,8 @@ import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { uniqBy } from 'lodash-es';
+import { isDefined } from '~/utils/type-guards';
+import { showNotification } from '@mantine/notifications';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -36,10 +41,11 @@ const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   modelType: z.nativeEnum(ModelType),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  covered: z.boolean().optional(),
+  covered: z.boolean().default(true),
   baseModel: z.string(),
   image: imageSchema.pick({ url: true }).optional(),
   minor: z.boolean().default(false),
+  available: z.boolean().default(true),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
@@ -50,8 +56,17 @@ const formSchema = textToImageParamsSchema
   .extend({
     tier: userTierSchema,
     model: extendedTextToImageResourceSchema,
+    // .refine(
+    //   (x) => x.available !== false,
+    //   'This resource is unavailable for generation'
+    // ),
     resources: extendedTextToImageResourceSchema.array().min(0).default([]),
+    // .refine(
+    //   (resources) => !resources.length || resources.some((x) => x.available !== false),
+    //   'One or more resources are unavailable for generation'
+    // ),
     vae: extendedTextToImageResourceSchema.optional(),
+    // .refine((x) => x?.available !== false, 'This resource is unavailable for generation'),
     prompt: z
       .string()
       .nonempty('Prompt cannot be empty')
@@ -130,26 +145,39 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(data: GenerationData): PartialFormData {
+function formatGenerationData(
+  data: GenerationData,
+  baseResource?: GenerationResource
+): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
+  let baseModel = getBaseModelSetType(checkpoint?.baseModel);
 
-  // use versionId to set the resource we want to use to derive the baseModel
-  // (ie, a lora is used to derive the baseModel instead of the checkpoint)
-  const baseResource = checkpoint ?? data.resources[0];
-  const baseModel = getBaseModelSetType(
-    baseResource ? baseResource.baseModel : data.params.baseModel
-  );
+  if (baseResource && checkpoint) {
+    if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
+    else {
+      const possibleBaseModelSetTypes = getBaseModelSetTypes({
+        modelType: baseResource.modelType,
+        baseModel: baseResource.baseModel,
+      });
+      if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
+        baseModel = possibleBaseModelSetTypes[0];
+      }
+    }
+  }
 
   const config = getGenerationConfig(baseModel);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
-  if (getBaseModelSetType(checkpoint?.baseModel) !== baseModel) checkpoint = config.checkpoint;
+  if (!checkpoint || getBaseModelSetType(checkpoint.baseModel) !== baseModel) {
+    checkpoint = config.checkpoint;
+  }
   // if current vae doesn't match baseModel, set vae to undefined
-  if (getBaseModelSetType(vae?.modelType) !== baseModel) vae = undefined;
+  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel) vae = undefined;
   // filter out any additional resources that don't belong
+  // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources
     .filter((resource) => {
       if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') return false;
@@ -223,15 +251,43 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (!input) return;
       const runType = input.type === 'modelVersion' ? 'run' : 'remix';
       const formData = form.getValues();
-      const resources =
-        runType === 'remix'
-          ? responseData.resources
-          : uniqBy([...(formData.resources ?? []), ...responseData.resources], 'id');
 
       const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
       const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
 
-      const data = { ...formatGenerationData({ ...responseData, resources }), workflow };
+      let resources: GenerationResource[];
+      let baseResource: GenerationResource | undefined;
+      if (runType === 'remix') {
+        resources = responseData.resources;
+      } else {
+        baseResource = responseData.resources[0];
+        resources = uniqBy(
+          [
+            ...responseData.resources,
+            formData.model,
+            ...(formData.resources ?? []),
+            formData.vae,
+          ].filter(isDefined),
+          'id'
+        );
+      }
+
+      const formatted = formatGenerationData(
+        {
+          ...responseData,
+          resources: resources.filter((x) => x.available),
+        },
+        baseResource
+      );
+
+      const data = { ...formatted, workflow };
+      if (resources.length && resources.some((x) => !x.available)) {
+        showNotification({
+          color: 'yellow',
+          title: 'Remix',
+          message: 'Some resources used to generate this image are unavailable',
+        });
+      }
 
       setValues(runType === 'run' ? removeEmpty(data) : data);
     }
