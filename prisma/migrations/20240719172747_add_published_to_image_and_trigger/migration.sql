@@ -27,7 +27,7 @@ CREATE OR REPLACE FUNCTION update_new_image_sort_at()
   RETURNS TRIGGER AS
 $$
 BEGIN
-  UPDATE "Image" i SET "sortAt" = coalesce(p."publishedAt", "createdAt") FROM "Post" p WHERE NEW."postId" = p.id AND "id" = NEW."id";
+  UPDATE "Image" i SET "sortAt" = coalesce(p."publishedAt", i."createdAt") FROM "Post" p WHERE NEW."postId" = p.id AND i."id" = NEW."id";
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -43,4 +43,4 @@ COMMENT ON FUNCTION update_new_image_sort_at() IS 'When an image is created or i
 --
 
 -- -- Migration
--- UPDATE "Image" i SET "sortAt" = coalesce(p."publishedAt", "createdAt") FROM "Post" p where i."postId" = p.id
+-- UPDATE "Image" i SET "sortAt" = coalesce(p."publishedAt", i."createdAt") FROM "Post" p where i."postId" = p.id
