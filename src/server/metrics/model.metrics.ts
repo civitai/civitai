@@ -38,6 +38,7 @@ export const modelMetrics = createMetricProcessor({
       getDownloadTasks(ctx),
       getGenerationTasks(ctx),
       getVersionRatingTasks(ctx),
+      getVersionBuzzTasks(ctx),
     ]);
     log('modelVersionMetrics update', versionTasks.flat().length, 'tasks');
     for (const tasks of versionTasks) await limitConcurrency(tasks, 5);
@@ -289,6 +290,41 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
         SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
     `;
     log('getRatingTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
+async function getVersionBuzzTasks(ctx: ModelMetricContext) {
+  const affected = await getAffected(ctx, 'ModelVersion')`
+    -- get recent version donations. These are the only way to "tip" a model version 
+    SELECT "modelVersionId" as id
+    FROM "Donation" d
+    JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
+    WHERE "modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}' OR d."updatedAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getRatingTasks', i + 1, 'of', tasks.length);
+    await executeRefresh(ctx)`
+      -- update version rating metrics
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount")
+      SELECT
+        dg."modelVersionId",
+        tf.timeframe,
+        ${snippets.timeframeSum('d."createdAt"', 'd."userId"', 'amount')} "tippedCount",
+        ${snippets.timeframeCount('d."createdAt"', 'd."userId"', 'amount')} "tippedAmountCount"
+      FROM "Donation" d
+      JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
+      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      WHERE dg."modelVersionId" IN (${ids})
+        and d."buzzTransactionId" IS NOT NULL
+      GROUP BY dg."modelVersionId", tf.timeframe
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = now();
+    `;
+    log('getVersionBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
