@@ -32,7 +32,8 @@ export default function VideosPage() {
             })}
           />
           <IsClient>
-            <ImageCategories />
+            {/* TODO.imageTags: Bring back once we support tags again.  */}
+            {/* <ImageCategories /> */}
             <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof showAds />
           </IsClient>
         </Stack>

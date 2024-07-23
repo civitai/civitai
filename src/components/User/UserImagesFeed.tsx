@@ -19,6 +19,7 @@ export function UserImagesFeed({ username }: Props) {
             <SortFilter type="images" />
             <PeriodFilter type="images" />
           </Group>
+          {/* TODO.imageTags: Bring back once we support tags again.  */}
           {/* <ImageCategories /> */}
           <ImagesInfinite
             filters={{ username, types: undefined, withMeta: undefined, hidden: undefined }}

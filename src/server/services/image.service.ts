@@ -682,7 +682,7 @@ export const getAllImages = async ({
   }
 
   // Filter to specific tags
-  // TODO.fix bring back tag on image filtering
+  // TODO.imageTags.fix bring back tag on image filtering
   // if (tags?.length) {
   //   AND.push(Prisma.sql`i.id IN (
   //     SELECT "imageId"
