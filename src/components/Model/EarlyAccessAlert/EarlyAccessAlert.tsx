@@ -66,7 +66,7 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
     toggleNotifyMutation.mutate({ id: versionId });
   };
 
-  if (!inEarlyAccess || currentUser?.isMember) return null;
+  if (!inEarlyAccess) return null;
 
   return (
     <AlertWithIcon
