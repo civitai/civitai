@@ -7,6 +7,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { kyselyDbRead } from '~/server/kysely-db';
 import { sql } from 'kysely';
+import { userRepository } from '~/server/repository/user.repository';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
@@ -41,16 +42,24 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   // return res.status(200).json(items);
 
-  const images = await kyselyDbRead
-    .selectFrom('Image as i')
-    .fullJoin('Post as p', 'p.id', 'i.postId')
-    .select(['i.id', 'p.title', 'p.id as postId', 'i.nsfwLevel'])
-    .where((eb) => eb(eb('i.nsfwLevel', '&', 3), '!=', 0))
-    // .where(sql`i."nsfwLevel" & 3`, '!=', 0)
-    .limit(10)
-    .execute();
+  // const images = await kyselyDbRead
+  //   .selectFrom('Image as i')
+  //   .fullJoin('Post as p', 'p.id', 'i.postId')
+  //   .select(['i.id', 'p.title', 'p.id as postId', 'i.nsfwLevel'])
+  //   .where((eb) => eb(eb('i.nsfwLevel', '&', 3), '!=', 0))
+  //   // .where(sql`i."nsfwLevel" & 3`, '!=', 0)
+  //   .limit(10)
+  //   .execute();
 
-  return res.status(200).json(images);
+  const users = await userRepository.findMany(
+    {
+      ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      limit: 100,
+    },
+    { select: 'profileUser' }
+  );
+
+  return res.status(200).json(users);
 
   // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
 });

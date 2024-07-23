@@ -1,7 +1,85 @@
 import { SqlBool, Expression } from 'kysely';
-import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
+import { jsonObjectFrom } from '~/server/kysely-db';
+import { Repository } from './infrastructure/repository';
+import { imageRepository } from '~/server/repository/image.repository';
+import { userCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
+import { userLinkRepository } from '~/server/repository/user-link.repository';
+import { userRankRepository } from '~/server/repository/user-rank.repository';
+import { userStatRepository } from '~/server/repository/user-stats.repository';
 
-export class UserRepository {
+type UserIncludes = 'profilePicture' | 'cosmetics' | 'settings';
+
+type Options = { select?: 'emailUser' | 'simpleUser' | 'cosmeticUser' | 'profileUser' };
+
+class UserRepository extends Repository {
+  private get simpleUserSelect() {
+    return this.dbRead
+      .selectFrom('User')
+      .select((eb) => [
+        'id',
+        'username',
+        'deletedAt',
+        'muted',
+        'bannedAt',
+        'createdAt',
+        'image',
+        imageRepository.findByIdRef(eb.ref('User.profilePictureId')).as('profilePicture'),
+      ]);
+  }
+
+  private get cosmeticUserSelect() {
+    return this.simpleUserSelect.select((eb) => [
+      'leaderboardShowcase',
+      userCosmeticRepository.findManyByIdRef(eb.ref('User.id')).as('cosmetics'),
+    ]);
+  }
+
+  private get profileUserSelect() {
+    return this.simpleUserSelect.select((eb) => [
+      userCosmeticRepository
+        .findManyByIdRef(eb.ref('User.id'), { select: 'private' })
+        .as('cosmetics'),
+      userLinkRepository.findManyByIdRef(eb.ref('User.id')).as('links'),
+      userRankRepository.findOneByIdRef(eb.ref('User.id')).as('rank'),
+      userStatRepository.findOneByIdRef(eb.ref('User.id')).as('stats'),
+    ]);
+  }
+
+  private buildSelect({ select = 'simpleUser' }: Options) {
+    switch (select) {
+      case 'simpleUser':
+        return this.simpleUserSelect;
+      case 'cosmeticUser':
+        return this.cosmeticUserSelect;
+      case 'profileUser':
+        return this.profileUserSelect;
+      default:
+        throw new Error('not implemented');
+    }
+  }
+
+  async findOne(id: number, options: Options = {}) {
+    const user = await this.buildSelect(options).where('User.id', '=', id).executeTakeFirst();
+    return { ...user };
+  }
+
+  async findMany(
+    {
+      ids,
+      limit,
+    }: {
+      ids?: number[];
+      limit: number;
+    },
+    options: Options = {}
+  ) {
+    let query = this.buildSelect(options).limit(limit);
+
+    if (ids?.length) query = query.where('User.id', 'in', ids);
+
+    return await query.execute();
+  }
+
   async getUserCreator({
     id,
     username,
@@ -11,7 +89,7 @@ export class UserRepository {
     username?: string;
     include?: Array<'links' | 'stats' | 'rank' | 'cosmetics' | 'modelCount'>;
   }) {
-    const user = await kyselyDbRead
+    const user = await this.dbRead
       .selectFrom('User')
       .select([
         'id',
@@ -32,12 +110,12 @@ export class UserRepository {
       })
       .executeTakeFirstOrThrow();
 
-    const linksQuery = kyselyDbRead
+    const linksQuery = this.dbRead
       .selectFrom('UserLink')
       .select(['url', 'type'])
       .where('userId', '=', user.id);
 
-    const statsQuery = kyselyDbRead
+    const statsQuery = this.dbRead
       .selectFrom('UserStat')
       .select([
         'ratingAllTime',
@@ -52,12 +130,12 @@ export class UserRepository {
       ])
       .where('userId', '=', user.id);
 
-    const rankQuery = kyselyDbRead
+    const rankQuery = this.dbRead
       .selectFrom('UserRank')
       .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic'])
       .where('userId', '=', user.id);
 
-    const cosmeticsQuery = kyselyDbRead
+    const cosmeticsQuery = this.dbRead
       .selectFrom('UserCosmetic')
       .select((eb) => [
         'UserCosmetic.data',
@@ -71,7 +149,7 @@ export class UserRepository {
       .where('UserCosmetic.userId', '=', user.id)
       .where('equippedAt', 'is not', null);
 
-    const modelQuery = kyselyDbRead
+    const modelQuery = this.dbRead
       .selectFrom('Model')
       .select((eb) => [eb.fn.countAll().as('count')])
       .where('userId', '=', user.id)
@@ -98,4 +176,4 @@ export class UserRepository {
   }
 }
 
-type UserCreator = AsyncReturnType<UserRepository['getUserCreator']>;
+export const userRepository = new UserRepository();

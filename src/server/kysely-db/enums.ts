@@ -284,16 +284,6 @@ export const KeyScope = {
   Generate: 'Generate',
 } as const;
 export type KeyScope = (typeof KeyScope)[keyof typeof KeyScope];
-export const NotificationCategory = {
-  Comment: 'Comment',
-  Update: 'Update',
-  Milestone: 'Milestone',
-  Bounty: 'Bounty',
-  Buzz: 'Buzz',
-  System: 'System',
-  Other: 'Other',
-} as const;
-export type NotificationCategory = (typeof NotificationCategory)[keyof typeof NotificationCategory];
 export const TagEngagementType = {
   Hide: 'Hide',
   Follow: 'Follow',
@@ -438,6 +428,7 @@ export const Availability = {
   Public: 'Public',
   Unsearchable: 'Unsearchable',
   Private: 'Private',
+  EarlyAccess: 'EarlyAccess',
 } as const;
 export type Availability = (typeof Availability)[keyof typeof Availability];
 export const EntityCollaboratorStatus = {

@@ -44,7 +44,6 @@ import type {
   PartnerPricingModel,
   ApiKeyType,
   KeyScope,
-  NotificationCategory,
   TagEngagementType,
   CosmeticType,
   CosmeticSource,
@@ -1068,6 +1067,27 @@ export type CustomerSubscription = {
   endedAt: Timestamp | null;
   updatedAt: Timestamp | null;
 };
+export type Donation = {
+  id: Generated<number>;
+  userId: number;
+  donationGoalId: number;
+  amount: number;
+  buzzTransactionId: string;
+  notes: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type DonationGoal = {
+  id: Generated<number>;
+  userId: number;
+  title: string;
+  description: string | null;
+  goalAmount: number;
+  paidAmount: Generated<number>;
+  modelVersionId: number | null;
+  createdAt: Generated<Timestamp>;
+  isEarlyAccess: Generated<boolean>;
+  active: Generated<boolean>;
+};
 export type DownloadHistory = {
   userId: number;
   modelVersionId: number;
@@ -1081,6 +1101,8 @@ export type EntityAccess = {
   accessorType: string;
   addedById: number;
   addedAt: Generated<Timestamp>;
+  permissions: Generated<number>;
+  meta: Generated<unknown | null>;
 };
 export type EntityCollaborator = {
   entityType: EntityType;
@@ -1177,6 +1199,7 @@ export type ImageMetric = {
   tippedCount: Generated<number>;
   tippedAmountCount: Generated<number>;
   viewCount: Generated<number>;
+  reactionCount: number;
   updatedAt: Generated<Timestamp>;
 };
 export type ImageModHelper = {
@@ -1560,11 +1583,12 @@ export type ModelVersion = {
   baseModel: string;
   baseModelType: string | null;
   meta: Generated<unknown>;
-  earlyAccessTimeFrame: Generated<number>;
   requireAuth: Generated<boolean>;
   settings: unknown | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  earlyAccessEndsAt: Timestamp | null;
+  earlyAccessConfig: unknown | null;
 };
 export type ModelVersionEngagement = {
   userId: number;
@@ -1608,18 +1632,6 @@ export type ModelVersionSponsorshipSettings = {
   type: Generated<ModelVersionSponsorshipSettingsType>;
   currency: Generated<Currency>;
   unitAmount: number;
-};
-export type Notification = {
-  id: string;
-  userId: number;
-  type: string;
-  category: Generated<NotificationCategory>;
-  details: unknown | null;
-  createdAt: Generated<Timestamp>;
-};
-export type NotificationViewed = {
-  id: string;
-  userId: number;
 };
 export type Partner = {
   id: Generated<number>;
@@ -2228,6 +2240,7 @@ export type User = {
   bannedAt: Timestamp | null;
   autoplayGifs: Generated<boolean | null>;
   filePreferences: Generated<unknown>;
+  meta: Generated<unknown | null>;
   leaderboardShowcase: string | null;
   excludeFromLeaderboards: Generated<boolean>;
   rewardsEligibility: Generated<RewardsEligibility>;
@@ -2581,6 +2594,8 @@ export type DB = {
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CsamReport: CsamReport;
   CustomerSubscription: CustomerSubscription;
+  Donation: Donation;
+  DonationGoal: DonationGoal;
   DownloadHistory: DownloadHistory;
   EntityAccess: EntityAccess;
   EntityCollaborator: EntityCollaborator;
@@ -2629,8 +2644,6 @@ export type DB = {
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
-  Notification: Notification;
-  NotificationViewed: NotificationViewed;
   Partner: Partner;
   Post: Post;
   PostHelper: PostHelper;

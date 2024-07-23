@@ -68,7 +68,7 @@ import { Expression, SqlBool } from 'kysely';
 export const getUserCreator = async ({ ...where }: { username?: string; id?: number }) => {
   const userQuery = kyselyDbRead
     .selectFrom('User as u')
-    .leftJoin('Image as i', 'Image.id', 'profilePictureId')
+    .leftJoin('Image as i', 'i.id', 'profilePictureId')
     .select([
       'u.id',
       'u.image',
@@ -83,8 +83,8 @@ export const getUserCreator = async ({ ...where }: { username?: string; id?: num
     // .select([''])
     .where((eb) => {
       const ors: Expression<SqlBool>[] = [];
-      if (where.id) ors.push(eb('User.id', '=', where.id));
-      if (where.username) ors.push(eb('User.username', '=', where.username));
+      if (where.id) ors.push(eb('u.id', '=', where.id));
+      if (where.username) ors.push(eb('u.username', '=', where.username));
       return eb.or(ors);
     });
 
