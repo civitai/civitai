@@ -895,11 +895,15 @@ export const getAllImages = async ({
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (isModerator) {
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else {
+      AND.push(
+        browsingLevel
+          ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+          : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+      );
+    }
   }
 
   // TODO: Adjust ImageMetric
