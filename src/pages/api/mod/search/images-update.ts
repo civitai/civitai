@@ -1,16 +1,13 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { z } from 'zod';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { IMAGES_SEARCH_INDEX } from '../../../../server/common/constants';
-import { updateDocs } from '../../../../server/meilisearch/client';
 import { CosmeticSource, CosmeticType, ImageIngestionStatus, Prisma } from '@prisma/client';
-import { isDefined } from '../../../../utils/type-guards';
-import { withRetries } from '../../../../server/utils/errorHandling';
-import {
-  ImageModelWithIngestion,
-  profileImageSelect,
-} from '../../../../server/selectors/image.selector';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { z } from 'zod';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
+import { updateDocs } from '~/server/meilisearch/client';
+import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
@@ -28,6 +25,8 @@ const IMAGE_WHERE: (idOffset: number) => Prisma.Sql[] = (idOffset: number) => [
 const schema = z.object({
   update: z.enum(['user']),
 });
+
+// TODO add sortAt
 
 const updateUserDetails = (idOffset: number) =>
   withRetries(async () => {
