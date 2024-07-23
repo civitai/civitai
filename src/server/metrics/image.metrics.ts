@@ -8,6 +8,7 @@ import { createLogger } from '~/utils/logging';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { ImageMetric, MetricTimeframe } from '@prisma/client';
 import { templateHandler } from '~/server/db/db-helpers';
+import { getJobDate } from '~/server/jobs/job';
 
 const log = createLogger('metrics:image');
 
@@ -15,7 +16,11 @@ export const imageMetrics = createMetricProcessor({
   name: 'Image',
   async update(baseCtx) {
     const ctx = baseCtx as ImageMetricContext;
+    const [lastViewUpdateDate, setLastViewUpdate] = await getJobDate('metric:image:views');
+    const lastViewUpdate = dayjs(lastViewUpdateDate);
     ctx.updates = {};
+    ctx.lastViewUpdate = lastViewUpdate;
+    ctx.setLastViewUpdate = setLastViewUpdate;
 
     // Get the metric tasks
     //---------------------------------------
@@ -26,6 +31,7 @@ export const imageMetrics = createMetricProcessor({
       getBuzzTasks(ctx),
       getViewTasks(ctx),
     ]);
+    const hasViewTasks = taskBatches[4].length > 0;
     log('imageMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
@@ -73,6 +79,7 @@ export const imageMetrics = createMetricProcessor({
       log('update metrics', i + 1, 'of', tasks.length, 'done');
     });
     await limitConcurrency(tasks, 1);
+    if (hasViewTasks) await setLastViewUpdate();
 
     // Update the search index
     //---------------------------------------
@@ -114,12 +121,15 @@ export const imageMetrics = createMetricProcessor({
     `;
   },
   lockTime: 5 * 60,
+  updateInterval: 30 * 60,
 });
 
 type ImageMetricKey = keyof ImageMetric;
 type TimeframeData = [number, number, number, number, number];
 type ImageMetricContext = MetricProcessorRunContext & {
   updates: Record<number, Record<ImageMetricKey, TimeframeData | number>>;
+  lastViewUpdate: dayjs.Dayjs;
+  setLastViewUpdate: () => void;
 };
 const metrics = [
   'heartCount',
@@ -288,6 +298,8 @@ type ImageMetricView = {
   all_time: number;
 };
 async function getViewTasks(ctx: ImageMetricContext) {
+  if (ctx.lastViewUpdate.isAfter(ctx.lastViewUpdate.subtract(1, 'day'))) return [];
+
   const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
   const viewed = await ctx.ch.$query<ImageMetricView>`
     WITH targets AS (
