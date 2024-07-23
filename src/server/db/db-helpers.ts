@@ -174,7 +174,8 @@ export async function dataProcessor({
   const context = { ...params, cancelFns };
 
   if (stop) return;
-  const range = !start || !end ? await rangeFetcher(context) : { start, end };
+  const range =
+    start === undefined || end === undefined ? await rangeFetcher(context) : { start, end };
 
   let cursor = range.start ?? params.start;
   const maxCursor = range.end;
