@@ -682,14 +682,13 @@ export const getAllImages = async ({
   }
 
   // Filter to specific tags
-  // TODO.imageTags.fix bring back tag on image filtering
-  // if (tags?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "TagsOnImage"
-  //     WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
-  //   )`);
-  // }
+  if (tags?.length) {
+    AND.push(Prisma.sql`i.id IN (
+      SELECT "imageId"
+      FROM "TagsOnImage"
+      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
+    )`);
+  }
 
   // Filter to specific generation process
   if (generation?.length) {
