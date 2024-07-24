@@ -1,24 +1,14 @@
-import { Expression } from 'kysely';
-import { jsonObjectFrom } from '~/server/kysely-db';
-import { Repository } from '~/server/repository/infrastructure/repository';
+import { Expression, InferResult } from 'kysely';
+import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 
-class UserRankRepository extends Repository {
-  private get userRankSelect() {
-    return this.dbRead
-      .selectFrom('UserRank')
-      .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic']);
-  }
+const userRankSelect = kyselyDbRead
+  .selectFrom('UserRank')
+  .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic']);
 
-  findOneByIdRef(foreignKey: Expression<number>) {
-    return jsonObjectFrom(this.userRankSelect.where('UserRank.userId', '=', foreignKey));
-  }
+export type UserRankModel = InferResult<typeof userRankSelect>;
 
-  async findOne(userId: number) {
-    return await this.userRankSelect.where('userId', '=', userId).executeTakeFirst();
-  }
-  async findMany(userIds: number[]) {
-    return await this.userRankSelect.select(['userId']).where('userId', 'in', userIds).execute();
-  }
-}
-
-export const userRankRepository = new UserRankRepository();
+export const userRankRepository = {
+  findOneByUserIdRef(foreignKey: Expression<number>) {
+    return jsonObjectFrom(userRankSelect.where('UserRank.userId', '=', foreignKey));
+  },
+};

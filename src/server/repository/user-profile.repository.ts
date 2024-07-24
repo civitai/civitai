@@ -1,34 +1,29 @@
+import { InferResult } from 'kysely';
+import { kyselyDbRead } from '~/server/kysely-db';
 import { imageRepository } from '~/server/repository/image.repository';
-import { Repository } from '~/server/repository/infrastructure/repository';
 
-class UserProfileRepository extends Repository {
-  private get userProfileSelect() {
-    this.dbRead.selectFrom('UserProfile').select((eb) => []);
-  }
+const userProfileSelect = kyselyDbRead
+  .selectFrom('UserProfile')
+  .select((eb) => [
+    'bio',
+    'coverImageId',
+    'message',
+    'messageAddedAt',
+    'profileSectionsSettings',
+    'privacySettings',
+    'showcaseItems',
+    'location',
+    'nsfw',
+    'userId',
+    imageRepository.findOneListImageByIdRef(eb.ref('UserProfile.coverImageId')).as('coverImage'),
+  ]);
 
-  private buildQuery() {
-    return this.dbRead.selectFrom('UserProfile').select((eb) => [
-      'bio',
-      'coverImageId',
-      'message',
-      'messageAddedAt',
-      'profileSectionsSettings',
-      'privacySettings',
-      'showcaseItems',
-      'location',
-      'nsfw',
-      'userId',
-      // imageRepository.findManyByRef('UserProfile.coverImageId').as('coverImage'),
-      imageRepository.findByIdRef(eb.ref('UserProfile.coverImageId')).as('coverImage'),
-      // jsonObjectFrom(eb.selectFrom('Image').select(['id']).whereRef()).as('cosmetic'),
-    ]);
-  }
+export type UserProfileModel = InferResult<typeof userProfileSelect>;
 
-  // async findOne(userId: number) {}
+// type FindOneArgs = { userId?: number; username?: never } | { userId?: never; username?: string };
 
-  async findMany(userIds: number[]) {
-    return await this.buildQuery().select(['userId']).where('userId', 'in', userIds).execute();
-  }
-}
-
-export const userProfileRepository = new UserProfileRepository();
+export const userProfileRepository = {
+  async findOne(userId: number) {
+    return await userProfileSelect.where('UserProfile.userId', '=', userId);
+  },
+};

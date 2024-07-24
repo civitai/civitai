@@ -64,95 +64,84 @@ import { preventReplicationLag } from '~/server/db/db-helpers';
 import { Flags } from '~/shared/utils';
 import { kyselyDbRead, jsonObjectFrom } from '~/server/kysely-db';
 import { Expression, SqlBool } from 'kysely';
+import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
+import { profileImageSelect } from '~/server/selectors/image.selector';
+import { constants } from '~/server/common/constants';
 
 export const getUserCreator = async ({ ...where }: { username?: string; id?: number }) => {
-  const userQuery = kyselyDbRead
-    .selectFrom('User as u')
-    .leftJoin('Image as i', 'i.id', 'profilePictureId')
-    .select([
-      'u.id',
-      'u.image',
-      'u.username',
-      'u.muted',
-      'u.bannedAt',
-      'u.deletedAt',
-      'u.createdAt',
-      'u.publicSettings',
-      'u.excludeFromLeaderboards',
-    ])
-    // .select([''])
-    .where((eb) => {
-      const ors: Expression<SqlBool>[] = [];
-      if (where.id) ors.push(eb('u.id', '=', where.id));
-      if (where.username) ors.push(eb('u.username', '=', where.username));
-      return eb.or(ors);
-    });
+  const user = await dbRead.user.findFirst({
+    where: {
+      ...where,
+      deletedAt: null,
+      AND: [
+        { id: { not: constants.system.user.id } },
+        { username: { not: constants.system.user.username } },
+      ],
+    },
+    select: {
+      id: true,
+      image: true,
+      username: true,
+      muted: true,
+      bannedAt: true,
+      deletedAt: true,
+      createdAt: true,
+      publicSettings: true,
+      excludeFromLeaderboards: true,
+      links: {
+        select: {
+          url: true,
+          type: true,
+        },
+      },
+      stats: {
+        select: {
+          ratingAllTime: true,
+          ratingCountAllTime: true,
+          downloadCountAllTime: true,
+          favoriteCountAllTime: true,
+          thumbsUpCountAllTime: true,
+          followerCountAllTime: true,
+          reactionCountAllTime: true,
+          uploadCountAllTime: true,
+          generationCountAllTime: true,
+        },
+      },
+      rank: {
+        select: {
+          leaderboardRank: true,
+          leaderboardId: true,
+          leaderboardTitle: true,
+          leaderboardCosmetic: true,
+        },
+      },
+      cosmetics: {
+        where: { equippedAt: { not: null } },
+        select: {
+          data: true,
+          cosmetic: {
+            select: simpleCosmeticSelect,
+          },
+        },
+      },
+      profilePicture: {
+        select: profileImageSelect,
+      },
+    },
+  });
+  if (!user) return null;
 
-  const user = await userQuery.executeTakeFirstOrThrow();
-
-  // TODO - query profile picture on every user query (joins?)
-
-  const linksQuery = kyselyDbRead
-    .selectFrom('UserLink')
-    .select(['url', 'type'])
-    .where('userId', '=', user.id);
-
-  const statsQuery = kyselyDbRead
-    .selectFrom('UserStat')
-    .select([
-      'ratingAllTime',
-      'ratingCountAllTime',
-      'downloadCountAllTime',
-      'favoriteCountAllTime',
-      'thumbsUpCountAllTime',
-      'followerCountAllTime',
-      'reactionCountAllTime',
-      'uploadCountAllTime',
-      'generationCountAllTime',
-    ])
-    .where('userId', '=', user.id);
-
-  const rankQuery = kyselyDbRead
-    .selectFrom('UserRank')
-    .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic'])
-    .where('userId', '=', user.id);
-
-  const cosmeticsQuery = kyselyDbRead
-    .selectFrom('UserCosmetic')
-    .select((eb) => [
-      'UserCosmetic.data',
-      jsonObjectFrom(
-        eb
-          .selectFrom('Cosmetic')
-          .select(['id', 'name', 'description', 'type', 'source', 'data'])
-          .whereRef('UserCosmetic.cosmeticId', '=', 'Cosmetic.id')
-      ).as('cosmetic'),
-    ])
-    .where('UserCosmetic.userId', '=', user.id)
-    .where('equippedAt', 'is not', null);
-
-  const modelQuery = kyselyDbRead
-    .selectFrom('Model')
-    .select((eb) => [eb.fn.countAll().as('count')])
-    .where('userId', '=', user.id)
-    .where('status', '=', 'Published');
-
-  const [links, stats, rank, cosmetics, models] = await Promise.all([
-    linksQuery.execute(),
-    statsQuery.executeTakeFirst(),
-    rankQuery.executeTakeFirst(),
-    cosmeticsQuery.execute(),
-    modelQuery.execute(),
-  ]);
+  const modelCount = dbRead.model.count({
+    where: {
+      userId: user?.id,
+      status: 'Published',
+    },
+  });
 
   return {
     ...user,
-    links,
-    stats,
-    rank,
-    cosmetics,
     _count: {
-      models: Number(models[0].count),
+      models: Number(modelCount),
     },
   };
 };

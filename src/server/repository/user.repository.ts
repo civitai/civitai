@@ -1,6 +1,5 @@
 import { SqlBool, Expression, InferResult } from 'kysely';
-import { jsonObjectFrom } from '~/server/kysely-db';
-import { Repository } from './infrastructure/repository';
+import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 import { imageRepository } from '~/server/repository/image.repository';
 import { userCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
 import { userLinkRepository } from '~/server/repository/user-link.repository';
@@ -8,177 +7,52 @@ import { userRankRepository } from '~/server/repository/user-rank.repository';
 import { userStatRepository } from '~/server/repository/user-stats.repository';
 import { modelRepository } from '~/server/repository/model.repository';
 
-type Options = { select?: 'emailUser' | 'simpleUser' | 'cosmeticUser' | 'profileUser' };
+const baseUserSelect = kyselyDbRead
+  .selectFrom('User')
+  .select(['id', 'username', 'deletedAt', 'muted', 'bannedAt', 'createdAt']);
 
-class UserRepository extends Repository {
-  private get simpleUserSelect() {
-    return this.dbRead
-      .selectFrom('User')
-      .select((eb) => [
-        'id',
-        'username',
-        'deletedAt',
-        'muted',
-        'bannedAt',
-        'createdAt',
-        'image',
-        imageRepository
-          .findByIdRef(eb.ref('User.profilePictureId'), { select: 'default' })
-          .as('profilePicture'),
-      ]);
-  }
+const cosmeticUserSelect = baseUserSelect.select((eb) => [
+  'leaderboardShowcase',
+  'image',
+  imageRepository.findOneBaseImageByIdRef(eb.ref('User.profilePictureId')).as('profilePicture'),
+  userCosmeticRepository.findManyByUserIdRef(eb.ref('User.id')).as('cosmetics'),
+]);
 
-  private get cosmeticUserSelect() {
-    return this.simpleUserSelect.select((eb) => [
-      'leaderboardShowcase',
-      userCosmeticRepository.findManyByIdRef(eb.ref('User.id')).as('cosmetics'),
-    ]);
-  }
+const creatorUserSelect = cosmeticUserSelect.select((eb) => [
+  'publicSettings',
+  userLinkRepository.findManyByUserIdRef(eb.ref('User.id')).as('links'),
+  userRankRepository.findOneByUserIdRef(eb.ref('User.id')).as('rank'),
+  userStatRepository.findOneByUserIdRef(eb.ref('User.id')).as('stats'),
+  modelRepository.getCountByUserIdRef(eb.ref('User.id')).as('modelCount'),
+]);
 
-  private get profileUserSelect() {
-    return this.simpleUserSelect.select((eb) => [
-      'publicSettings',
-      userCosmeticRepository
-        .findManyByIdRef(eb.ref('User.id'), { select: 'private' })
-        .as('cosmetics'),
-      userLinkRepository.findManyByIdRef(eb.ref('User.id')).as('links'),
-      userRankRepository.findOneByIdRef(eb.ref('User.id')).as('rank'),
-      userStatRepository.findOneByIdRef(eb.ref('User.id')).as('stats'),
-      modelRepository.getCountByUserIdRef(eb.ref('User.id')).as('modelCount'),
-    ]);
-  }
+export type UserBaseModel = InferResult<typeof baseUserSelect>;
+export type UserCosmeticModel = InferResult<typeof cosmeticUserSelect>;
+export type UserCreatorModel = InferResult<typeof creatorUserSelect>;
 
-  private buildSelect({ select = 'simpleUser' }: Options) {
-    switch (select) {
-      case 'simpleUser':
-        return this.simpleUserSelect;
-      case 'cosmeticUser':
-        return this.cosmeticUserSelect;
-      case 'profileUser':
-        return this.profileUserSelect;
-      default:
-        throw new Error('not implemented');
-    }
-  }
+export const userRepository = {
+  findManyByIdRef(foreignKey: Expression<number>) {
+    return jsonObjectFrom(baseUserSelect.whereRef('User.id', '=', foreignKey));
+  },
 
-  async findOne(id: number, options: Options = {}) {
-    const user = await this.buildSelect(options).where('User.id', '=', id).executeTakeFirst();
-    return { ...user };
-  }
-
-  async findMany(
-    {
-      ids,
-      limit,
-    }: {
-      ids?: number[];
-      limit: number;
-    },
-    options: Options = {}
+  async findOneUserCreator(
+    args: { id?: number; username?: never } | { id?: never; username?: string }
   ) {
-    let query = this.buildSelect(options).limit(limit);
+    return await creatorUserSelect
+      .where(({ eb, and }) => {
+        const ands: Expression<SqlBool>[] = [];
+        if (args.id) ands.push(eb('User.id', '=', args.id));
+        if (args.username) ands.push(eb('User.username', '=', args.username));
+        return and([...ands, eb('User.deletedAt', 'is', null)]);
+      })
+      .executeTakeFirst();
+  },
 
-    if (ids?.length) query = query.where('User.id', 'in', ids);
+  async findMany(args: { ids?: number[]; limit: number }) {
+    let query = cosmeticUserSelect.limit(args.limit);
+
+    if (args.ids?.length) query = query.where('User.id', 'in', args.ids);
 
     return await query.execute();
-  }
-
-  async getUserCreator({
-    id,
-    username,
-    include,
-  }: {
-    id?: number;
-    username?: string;
-    include?: Array<'links' | 'stats' | 'rank' | 'cosmetics' | 'modelCount'>;
-  }) {
-    const user = await this.dbRead
-      .selectFrom('User')
-      .select([
-        'id',
-        'image',
-        'username',
-        'muted',
-        'bannedAt',
-        'deletedAt',
-        'createdAt',
-        'publicSettings',
-        'excludeFromLeaderboards',
-      ])
-      .where((eb) => {
-        const ors: Expression<SqlBool>[] = [];
-        if (id) ors.push(eb('User.id', '=', id));
-        if (username) ors.push(eb('User.username', '=', username));
-        return eb.or(ors);
-      })
-      .executeTakeFirstOrThrow();
-
-    const linksQuery = this.dbRead
-      .selectFrom('UserLink')
-      .select(['url', 'type'])
-      .where('userId', '=', user.id);
-
-    const statsQuery = this.dbRead
-      .selectFrom('UserStat')
-      .select([
-        'ratingAllTime',
-        'ratingCountAllTime',
-        'downloadCountAllTime',
-        'favoriteCountAllTime',
-        'thumbsUpCountAllTime',
-        'followerCountAllTime',
-        'reactionCountAllTime',
-        'uploadCountAllTime',
-        'generationCountAllTime',
-      ])
-      .where('userId', '=', user.id);
-
-    const rankQuery = this.dbRead
-      .selectFrom('UserRank')
-      .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic'])
-      .where('userId', '=', user.id);
-
-    const cosmeticsQuery = this.dbRead
-      .selectFrom('UserCosmetic')
-      .select((eb) => [
-        'UserCosmetic.data',
-        jsonObjectFrom(
-          eb
-            .selectFrom('Cosmetic')
-            .select(['id', 'name', 'description', 'type', 'source', 'data'])
-            .whereRef('UserCosmetic.cosmeticId', '=', 'Cosmetic.id')
-        ).as('cosmetic'),
-      ])
-      .where('UserCosmetic.userId', '=', user.id)
-      .where('equippedAt', 'is not', null);
-
-    const modelQuery = this.dbRead
-      .selectFrom('Model')
-      .select((eb) => [eb.fn.countAll().as('count')])
-      .where('userId', '=', user.id)
-      .where('status', '=', 'Published');
-
-    const [links, stats, rank, cosmetics, models] = await Promise.all([
-      include?.includes('links') ? linksQuery.execute() : undefined,
-      include?.includes('stats') ? statsQuery.executeTakeFirst() : undefined,
-      include?.includes('rank') ? rankQuery.executeTakeFirst() : undefined,
-      include?.includes('cosmetics') ? cosmeticsQuery.execute() : undefined,
-      include?.includes('modelCount') ? modelQuery.execute() : undefined,
-    ]);
-
-    return {
-      ...user,
-      links,
-      stats,
-      rank,
-      cosmetics,
-      _count: {
-        models: models ? Number(models[0].count) : undefined,
-      },
-    };
-  }
-}
-
-export const userRepository = new UserRepository();
-
-export type ProfileUserModel = InferResult<UserRepository['profileUserSelect']>;
+  },
+};

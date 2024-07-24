@@ -1,13 +1,11 @@
 import { Expression } from 'kysely';
-import { Repository } from '~/server/repository/infrastructure/repository';
+import { kyselyDbRead } from '~/server/kysely-db';
 
-class ModelRepository extends Repository {
+export const modelRepository = {
   getCountByUserIdRef(foreignKey: Expression<number>) {
-    return this.dbRead
+    return kyselyDbRead
       .selectFrom('Model')
       .select((eb) => [eb.fn.countAll<number>().as('count')])
       .whereRef('Model.userId', '=', foreignKey);
-  }
-}
-
-export const modelRepository = new ModelRepository();
+  },
+};

@@ -1,19 +1,16 @@
-import { Expression } from 'kysely';
-import { jsonArrayFrom } from '~/server/kysely-db';
-import { Repository } from '~/server/repository/infrastructure/repository';
+import { Expression, InferResult } from 'kysely';
+import { jsonArrayFrom, kyselyDbRead } from '~/server/kysely-db';
 
-class UserLinkRepository extends Repository {
-  private get selectLinks() {
-    return this.dbRead.selectFrom('UserLink').select(['id', 'userId', 'url', 'type']);
-  }
+const userLinkSelect = kyselyDbRead.selectFrom('UserLink').select(['id', 'userId', 'url', 'type']);
 
-  findManyByIdRef(foreignKey: Expression<number>) {
-    return jsonArrayFrom(this.selectLinks.whereRef('UserLink.userId', '=', foreignKey));
-  }
+export type UserLinkModel = InferResult<typeof userLinkSelect>;
+
+export const userLinkRepository = {
+  findManyByUserIdRef(foreignKey: Expression<number>) {
+    return jsonArrayFrom(userLinkSelect.whereRef('UserLink.userId', '=', foreignKey));
+  },
 
   async findMany(userIds: number[]) {
-    return await this.selectLinks.where('userId', 'in', userIds).execute();
-  }
-}
-
-export const userLinkRepository = new UserLinkRepository();
+    return await userLinkSelect.where('userId', 'in', userIds).execute();
+  },
+};
