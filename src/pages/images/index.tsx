@@ -36,8 +36,7 @@ export default function ImagesPage() {
             })}
           />
           <IsClient>
-            {/* TODO.imageTags: Bring back once we support tags again.  */}
-            {/* <ImageCategories /> */}
+            <ImageCategories />
             <ImagesInfinite showEof showAds />
           </IsClient>
         </Stack>
