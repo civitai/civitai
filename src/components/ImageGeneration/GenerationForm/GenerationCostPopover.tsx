@@ -69,7 +69,7 @@ export function GenerationCostPopover({
       label: 'Size',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.factors?.size}x
+          {Math.ceil(workflowCost.factors?.size ?? 0)}x
         </Group>
       ),
       visible: !!workflowCost.factors?.size && workflowCost.factors?.size > 1,

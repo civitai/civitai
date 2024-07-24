@@ -1,9 +1,11 @@
 import {
   Center,
+  Grid,
   Group,
   Loader,
   MultiSelect,
   Paper,
+  ScrollArea,
   Select,
   Stack,
   Text,
@@ -25,9 +27,8 @@ import dayjs from 'dayjs';
 import { useMemo, useState } from 'react';
 import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
-import { constants } from '~/server/common/constants';
 import { getDatesAsList, maxDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -76,7 +77,7 @@ export const DailyBuzzPayout = () => {
         y: {
           title: {
             display: true,
-            text: 'Images generated',
+            text: '⚡️ Buzz earned',
             color: labelColor,
           },
           stacked: true,
@@ -95,6 +96,7 @@ export const DailyBuzzPayout = () => {
       },
       plugins: {
         legend: {
+          display: false,
           labels: {
             boxWidth: 10,
             boxHeight: 10,
@@ -109,7 +111,6 @@ export const DailyBuzzPayout = () => {
         tooltip: {
           callbacks: {
             title(tooltipItems) {
-              console.log({ tooltipItems });
               const sum = tooltipItems.reduce((acc, item) => acc + item.parsed.y, 0);
               return `Total: ⚡️ ${formatCurrencyForDisplay(sum, 'BUZZ')}`;
             },
@@ -164,73 +165,110 @@ export const DailyBuzzPayout = () => {
     return null;
   }
 
+  const totalBuzz = modelVersions.reduce((acc, version) => acc + version.generations, 0);
+
   return (
-    <Group>
-      <Paper withBorder className={classes.tileCard} h="100%">
-        <Stack p="md">
-          <Group spacing={8} position="apart">
-            <Title order={3}>Generation Buzz Earned</Title>
-            <Select
-              data={dateOptions}
-              defaultValue={dateOptions[0].value}
-              onChange={(value) =>
-                setSelectedDate(dateOptions.find((x) => x.value === value)?.value ?? selectedDate)
-              }
-            />
-          </Group>
-          <Stack spacing={0}>
-            <Text>
-              As a member of the Civitai Creators Program, we will give you buzz for images
-              generated with your models.
-            </Text>
-            <Text>
-              For every 1,000 images generated with your resource, you will receive{' '}
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                unitAmount={constants.creatorsProgram.rewards.generatedImageWithResource * 1000}
-              />{' '}
-              at the end of the month.
-            </Text>
-          </Stack>
-          {!isLoading && modelVersions.length > 0 ? (
-            <Stack>
-              <MultiSelect
-                data={multiselectItems}
-                value={filteredVersionIds.map((id) => id.toString())}
-                onChange={(data) => setFilteredVersionIds(data.map((x) => Number(x)))}
-                searchable
-                placeholder="Search models"
-                nothingFound="No models found..."
-                label="Filter models. "
-                description="By default, we only show you your 10 most performant models. Only models with generated images are shown."
-                limit={50}
-              />
-              <Bar
-                key={filteredVersionIds.join('-')}
-                options={options}
-                data={{
-                  labels,
-                  datasets,
-                }}
-              />
+    <Grid gutter="xs">
+      <Grid.Col xs={12} md={8}>
+        <Paper withBorder className={classes.tileCard} h="100%">
+          <Stack p="md">
+            <Stack spacing={0}>
+              <Group spacing={8} position="apart">
+                <Title order={3}>Generation Buzz Earned</Title>
+                <Select
+                  data={dateOptions}
+                  defaultValue={dateOptions[0].value}
+                  onChange={(value) =>
+                    setSelectedDate(
+                      dateOptions.find((x) => x.value === value)?.value ?? selectedDate
+                    )
+                  }
+                />
+              </Group>
+              <Group position="left" spacing={4}>
+                <CurrencyIcon currency={Currency.BUZZ} size={24} />
+                <Text
+                  size="xl"
+                  color="yellow.7"
+                  weight="bold"
+                  style={{ fontVariant: 'tabular-nums' }}
+                >
+                  {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
+                </Text>
+              </Group>
             </Stack>
-          ) : isLoading ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : (
-            <Center>
-              <Text color="dimmed">
-                Whoops! Looks like we are still collecting data on your models for this month. Come
-                back later
-              </Text>
-            </Center>
-          )}
-        </Stack>
-      </Paper>
-      <Paper>
-        <Title order={3}>Top Earning Resources</Title>
-      </Paper>
-    </Group>
+            {!isLoading && modelVersions.length > 0 ? (
+              <Stack>
+                <MultiSelect
+                  data={multiselectItems}
+                  value={filteredVersionIds.map((id) => id.toString())}
+                  onChange={(data) => setFilteredVersionIds(data.map((x) => Number(x)))}
+                  searchable
+                  placeholder="Search models"
+                  nothingFound="No models found..."
+                  label="Filter models"
+                  description="By default, we only show you your 10 most performant models"
+                  limit={50}
+                />
+                <Bar
+                  key={filteredVersionIds.join('-')}
+                  options={options}
+                  data={{
+                    labels,
+                    datasets,
+                  }}
+                />
+              </Stack>
+            ) : isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
+            ) : (
+              <Center>
+                <Text color="dimmed">
+                  Whoops! Looks like we are still collecting data on your models for this month.
+                  Come back later
+                </Text>
+              </Center>
+            )}
+          </Stack>
+        </Paper>
+      </Grid.Col>
+      <Grid.Col xs={12} md={4}>
+        <Paper withBorder className={classes.tileCard} h="100%" p="md">
+          <Title order={3} mb="xs">
+            Top Earning Resources
+          </Title>
+          <ScrollArea style={{ height: 400 }}>
+            <Stack>
+              {modelVersions.map((version) => (
+                <Group key={version.id} position="apart" spacing={8} noWrap>
+                  <Stack spacing={0}>
+                    <Text size="sm" weight="bold" lineClamp={1}>
+                      {version.modelName}
+                    </Text>
+                    <Text size="xs" color="dimmed" lineClamp={1}>
+                      {version.modelVersionName}
+                    </Text>
+                  </Stack>
+
+                  <Group spacing={4} noWrap>
+                    <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                    <Text
+                      size="sm"
+                      color="yellow.7"
+                      weight="bold"
+                      style={{ fontVariant: 'tabular-nums' }}
+                    >
+                      {formatCurrencyForDisplay(version.generations, Currency.BUZZ)}
+                    </Text>
+                  </Group>
+                </Group>
+              ))}
+            </Stack>
+          </ScrollArea>
+        </Paper>
+      </Grid.Col>
+    </Grid>
   );
 };
