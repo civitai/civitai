@@ -7,16 +7,16 @@ const cosmeticSelect = kyselyDbRead
 
 export type CosmeticModel = InferResult<typeof cosmeticSelect>;
 
-export const cosmeticRepository = {
-  findOneByIdRef(foreignKey: Expression<number>) {
+export class CosmeticRepository {
+  static findOneByIdRef(foreignKey: Expression<number>) {
     return jsonObjectFrom(cosmeticSelect.whereRef('Cosmetic.id', '=', foreignKey).limit(1));
-  },
+  }
 
-  async findOne(id: number) {
+  static async findOne(id: number) {
     return await cosmeticSelect.where('id', '=', id).executeTakeFirst();
-  },
+  }
 
-  async findMany(ids: number[]) {
+  static async findMany(ids: number[]) {
     return await cosmeticSelect.where('id', 'in', ids).execute();
-  },
-};
+  }
+}

@@ -1,6 +1,6 @@
 import { InferResult } from 'kysely';
 import { kyselyDbRead } from '~/server/kysely-db';
-import { imageRepository } from '~/server/repository/image.repository';
+import { ImageRepository } from '~/server/repository/image.repository';
 
 const userProfileSelect = kyselyDbRead
   .selectFrom('UserProfile')
@@ -15,15 +15,15 @@ const userProfileSelect = kyselyDbRead
     'location',
     'nsfw',
     'userId',
-    imageRepository.findOneListImageByIdRef(eb.ref('UserProfile.coverImageId')).as('coverImage'),
+    ImageRepository.findOneListImageByIdRef(eb.ref('UserProfile.coverImageId')).as('coverImage'),
   ]);
 
 export type UserProfileModel = InferResult<typeof userProfileSelect>;
 
 // type FindOneArgs = { userId?: number; username?: never } | { userId?: never; username?: string };
 
-export const userProfileRepository = {
-  async findOne(userId: number) {
+export class UserProfileRepository {
+  static async findOne(userId: number) {
     return await userProfileSelect.where('UserProfile.userId', '=', userId);
-  },
-};
+  }
+}

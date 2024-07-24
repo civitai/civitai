@@ -7,8 +7,8 @@ const userRankSelect = kyselyDbRead
 
 export type UserRankModel = InferResult<typeof userRankSelect>;
 
-export const userRankRepository = {
-  findOneByUserIdRef(foreignKey: Expression<number>) {
+export class UserRankRepository {
+  static findOneByUserIdRef(foreignKey: Expression<number>) {
     return jsonObjectFrom(userRankSelect.where('UserRank.userId', '=', foreignKey));
-  },
-};
+  }
+}

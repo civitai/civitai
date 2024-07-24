@@ -5,12 +5,12 @@ const userLinkSelect = kyselyDbRead.selectFrom('UserLink').select(['id', 'userId
 
 export type UserLinkModel = InferResult<typeof userLinkSelect>;
 
-export const userLinkRepository = {
-  findManyByUserIdRef(foreignKey: Expression<number>) {
+export class UserLinkRepository {
+  static findManyByUserIdRef(foreignKey: Expression<number>) {
     return jsonArrayFrom(userLinkSelect.whereRef('UserLink.userId', '=', foreignKey));
-  },
+  }
 
-  async findMany(userIds: number[]) {
+  static async findMany(userIds: number[]) {
     return await userLinkSelect.where('userId', 'in', userIds).execute();
-  },
-};
+  }
+}

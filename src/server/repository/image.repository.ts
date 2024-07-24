@@ -22,26 +22,26 @@ const listImageSelect = baseImageSelect.select((eb) => [
   'createdAt',
   'needsReview',
   'generationProcess',
-  // eb.ref('meta')
+  // eb.ref('meta', '->')
 ]);
 
 export type ImageBaseModel = InferResult<typeof baseImageSelect>;
 export type ImageListModel = InferResult<typeof listImageSelect>;
 
-export const imageRepository = {
-  findOneBaseImageByIdRef(foreignKey: Expression<number | null>) {
+export class ImageRepository {
+  static findOneBaseImageByIdRef(foreignKey: Expression<number | null>) {
     return jsonObjectFrom(baseImageSelect.whereRef('Image.id', '=', foreignKey));
-  },
+  }
 
-  findOneListImageByIdRef(foreignKey: Expression<number | null>) {
+  static findOneListImageByIdRef(foreignKey: Expression<number | null>) {
     return jsonObjectFrom(listImageSelect.whereRef('Image.id', '=', foreignKey));
-  },
+  }
 
-  async findMany(args: { ids?: number[]; limit: number }) {
+  static async findMany(args: { ids?: number[]; limit: number }) {
     let query = listImageSelect.limit(args.limit);
 
     if (args.ids?.length) query = query.where('Image.id', 'in', args.ids);
 
     return await query.execute();
-  },
-};
+  }
+}
