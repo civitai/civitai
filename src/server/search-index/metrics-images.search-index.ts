@@ -17,7 +17,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     return;
   }
 
-  const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
+  const index = await getOrCreateIndex(indexName, { primaryKey: 'id' }, client);
   console.log('onIndexSetup :: Index has been gotten or created', index);
 
   if (!index) {
@@ -164,6 +164,7 @@ const transformData = async ({
   cosmetics: ImageCosmetics;
   modelVersions: ModelVersions[];
 }) => {
+  console.log(rawTags, tools, techniques, modelVersions);
   const records = images
     .map(({ userId, ...imageRecord }) => {
       const tags = rawTags
@@ -212,7 +213,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
-  pullSteps: 3,
+  pullSteps: 6,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
     SELECT (	
@@ -278,7 +279,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
             THEN TRUE
             ELSE FALSE
           END
-        ) as "madeOnSite",
+        ) as "madeOnSite"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
         WHERE ${Prisma.join(where, ' AND ')}
@@ -308,7 +309,6 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
           FROM "ImageMetric" im
           WHERE im."imageId" IN (${Prisma.join(images.map(({ id }) => id))})
             AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-          GROUP BY im."imageId"
     `;
 
       return {
