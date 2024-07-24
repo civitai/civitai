@@ -1,7 +1,20 @@
-import { RecaptchaEnterpriseServiceClient } from '@google-cloud/recaptcha-enterprise';
+import { RecaptchaEnterpriseServiceClient, v1 } from '@google-cloud/recaptcha-enterprise';
 import { env } from '~/env/server.mjs';
 import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
+
+// Taken from package as they don't export it :shrug:
+// enum ClassificationReason {
+//   CLASSIFICATION_REASON_UNSPECIFIED = 0,
+//   AUTOMATION = 1,
+//   UNEXPECTED_ENVIRONMENT = 2,
+//   TOO_MUCH_TRAFFIC = 3,
+//   UNEXPECTED_USAGE_PATTERNS = 4,
+//   LOW_CONFIDENCE_SCORE = 5,
+//   SUSPECTED_CARDING = 6,
+//   SUSPECTED_CHARGEBACK = 7,
+// }
 
 export async function createRecaptchaAssesment({
   token,
@@ -11,7 +24,11 @@ export async function createRecaptchaAssesment({
   recaptchaAction: string;
 }) {
   if (isDev) {
-    return 1; // Makes it so that you're always authorized on dev.
+    // Makes it so that you're always authorized on dev.
+    return {
+      score: 1,
+      reasons: [],
+    };
   }
 
   const client = new RecaptchaEnterpriseServiceClient({
@@ -44,7 +61,27 @@ export async function createRecaptchaAssesment({
   }
 
   if (response.tokenProperties.action === recaptchaAction) {
-    return response.riskAnalysis.score;
+    return {
+      score: response.riskAnalysis.score,
+      reasons: (response.riskAnalysis.reasons ?? [])
+        .map((reason) => {
+          switch (reason) {
+            case 1:
+              return 'The interaction matches the behavior of an automated agent';
+            case 2:
+              return 'We could not verify the integrity of the environment detected';
+            case 3:
+              return 'The amount of traffic detected seems suspiciously high';
+            case 4:
+              return 'The interaction with your site was significantly different from expected patterns';
+            case 5:
+              return 'Recaptcha could not validate the authenticity of the user';
+            default:
+              return undefined;
+          }
+        })
+        .filter(isDefined),
+    };
   } else {
     throw throwBadRequestError('Provided token does not match performed action');
   }
