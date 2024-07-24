@@ -40,5 +40,4 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   });
 
   return res.status(200).json(items);
-  // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
 });
