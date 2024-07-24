@@ -18,6 +18,7 @@ import {
   TransformTask,
 } from '~/server/search-index/utils/taskQueue';
 import { createLogger } from '~/utils/logging';
+import { MeiliSearch } from 'meilisearch';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const logger = createLogger(`search-index-processor`);
@@ -59,6 +60,7 @@ type SearchIndexProcessor = {
   updateInterval?: number;
   workerCount?: number;
   pullSteps?: number;
+  client?: MeiliSearch | null;
 };
 
 const processSearchIndexTask = async (
@@ -232,7 +234,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       await Promise.all(workers);
 
       if (queuedDeletes.content.length > 0) {
-        await onSearchIndexDocumentsCleanup({ indexName, ids: queuedDeletes.content });
+        await onSearchIndexDocumentsCleanup({
+          indexName,
+          ids: queuedDeletes.content,
+          client: processor.client,
+        });
       }
 
       // Commit queues:
@@ -253,7 +259,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     async reset(jobContext: JobContext) {
       // First, setup and init both indexes - Swap requires both indexes to be created:
       // In order to swap, the base index must exist. because of this, we need to create or get it.
-      await getOrCreateIndex(indexName, { primaryKey });
+      await getOrCreateIndex(indexName, { primaryKey }, processor.client);
       const swapIndexName = `${indexName}_NEW`;
       await setup({ indexName: swapIndexName });
 
@@ -289,7 +295,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       await Promise.all(workers);
       // Finally, perform the swap:
-      await swapIndex({ indexName, swapIndexName });
+      await swapIndex({ indexName, swapIndexName, client: processor.client });
       // Clear update queue since our index should be brand new:
       await SearchIndexUpdate.clearQueue(indexName);
     },
@@ -316,7 +322,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           .map(({ id }) => id);
 
         if (deleteIds.length > 0) {
-          await onSearchIndexDocumentsCleanup({ indexName, ids: deleteIds });
+          await onSearchIndexDocumentsCleanup({
+            indexName,
+            ids: deleteIds,
+            client: processor.client,
+          });
         }
 
         if (updateIds.length > 0) {

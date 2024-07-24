@@ -716,6 +716,9 @@ export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 
+// Metrics:
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
+
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
   [ModelVersionMonetizationType.PaidEarlyAccess]: 'Paid early access',
