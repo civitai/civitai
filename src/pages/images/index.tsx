@@ -3,7 +3,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { useImageFilters, useImageQueryParams } from '~/components/Image/image.utils';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -28,7 +28,7 @@ export default function ImagesPage() {
         {hidden && <Title>Your Hidden Images</Title>}
         <Stack spacing="xs">
           <Announcements
-            sx={(theme) => ({
+            sx={() => ({
               marginBottom: -35,
               [containerQuery.smallerThan('md')]: {
                 marginBottom: -5,
