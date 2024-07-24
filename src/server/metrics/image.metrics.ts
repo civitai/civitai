@@ -37,7 +37,7 @@ export const imageMetrics = createMetricProcessor({
 
     // Update the the metrics
     //---------------------------------------
-    const tasks = chunk(Object.values(ctx.updates), 10000).map((batch, i) => async () => {
+    const tasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', tasks.length);
 
@@ -68,9 +68,9 @@ export const imageMetrics = createMetricProcessor({
           NOW() as "updatedAt",
           ${metricValues}
         FROM data d
-        JOIN "Image" i ON i.id = d."imageId" -- ensure the image exists
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
         LEFT JOIN "ImageMetric" im ON im."imageId" = d."imageId" AND im."timeframe" = tf.timeframe
+        WHERE EXISTS (SELECT 1 FROM "Image" WHERE id = d."imageId") -- ensure the image exists
         ON CONFLICT ("imageId", "timeframe") DO UPDATE
           SET
             ${metricOverrides},
@@ -78,7 +78,7 @@ export const imageMetrics = createMetricProcessor({
       `;
       log('update metrics', i + 1, 'of', tasks.length, 'done');
     });
-    await limitConcurrency(tasks, 1);
+    await limitConcurrency(tasks, 10);
     if (hasViewTasks) await setLastViewUpdate();
 
     // Update the search index
@@ -95,21 +95,37 @@ export const imageMetrics = createMetricProcessor({
     // Update the age group of the metrics
     //---------------------------------------
     log('update age groups');
-    await executeRefresh(ctx)`
-      UPDATE "ImageMetric"
-      SET "ageGroup" = CASE
-          WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
-          ELSE 'AllTime'::"MetricTimeframe"
-      END
+    // Fetch things that need to change
+    const ageGroupUpdatesQuery = await ctx.pg.cancellableQuery<{ imageId: number }>(`
+      SELECT "imageId"
+      FROM "ImageMetric"
       WHERE
         ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
         ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
         ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
         ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
-    `;
+    `);
+    ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
+    const ageGroupUpdates = await ageGroupUpdatesQuery.result();
+    const affectedIds = ageGroupUpdates.map((x) => x.imageId);
+    if (affectedIds.length) {
+      const ageGroupTasks = chunk(affectedIds, 100).map((ids, i) => async () => {
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
+        await executeRefresh(ctx)`
+          UPDATE "ImageMetric"
+          SET "ageGroup" = CASE
+              WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+              ELSE 'AllTime'::"MetricTimeframe"
+          END
+          WHERE "imageId" IN (${ids});
+        `;
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
+      });
+      await limitConcurrency(ageGroupTasks, 5);
+    }
   },
   async clearDay(ctx) {
     // Clear day of things updated in the last day
