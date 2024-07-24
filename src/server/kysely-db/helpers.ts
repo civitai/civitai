@@ -5,5 +5,5 @@ export function jsonArrayFrom<O>(expr: Expression<O>) {
 }
 
 export function jsonObjectFrom<O>(expr: Expression<O>) {
-  return sql<Simplify<O>>`(select to_json(obj) from ${expr} as obj)`;
+  return sql<Simplify<O> | null>`(select to_json(obj) from ${expr} as obj)`;
 }

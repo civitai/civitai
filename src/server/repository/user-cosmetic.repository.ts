@@ -1,9 +1,10 @@
 import { Expression, InferResult } from 'kysely';
-import { jsonArrayFrom } from '~/server/kysely-db';
+import { jsonArrayFrom, kyselyDbRead } from '~/server/kysely-db';
 import { cosmeticRepository } from '~/server/repository/cosmetic.repository';
-import { Repository } from '~/server/repository/infrastructure/repository';
+import { Repository, derived } from '~/server/repository/infrastructure/repository';
 
-type Options = { select?: 'public' | 'private' };
+type Views = 'public' | 'private';
+type Options<T extends Views> = { select?: T };
 
 class UserCosmeticRepository extends Repository {
   private get publicUserCosmeticSelect() {
@@ -27,7 +28,7 @@ class UserCosmeticRepository extends Repository {
     ]);
   }
 
-  private buildSelect({ select = 'public' }: Options) {
+  private buildSelect<T extends Views>({ select }: Options<T>) {
     switch (select) {
       case 'public':
         return this.publicUserCosmeticSelect;
@@ -52,11 +53,26 @@ class UserCosmeticRepository extends Repository {
   }
 }
 
-export const userCosmeticRepository = new UserCosmeticRepository();
+// export const userCosmeticRepository = new UserCosmeticRepository();
 
-export type UserCosmeticPublicModel = InferResult<
-  UserCosmeticRepository['publicUserCosmeticSelect']
->[number];
-export type UserCosmeticPrivateModel = InferResult<
-  UserCosmeticRepository['privateUserCosmeticSelect']
->[number];
+export type UserCosmeticModel = InferResult<typeof userCosmeticSelect>;
+const userCosmeticSelect = kyselyDbRead
+  .selectFrom('UserCosmetic')
+  .select((eb) => [
+    'equippedAt',
+    'cosmeticId',
+    'obtainedAt',
+    'claimKey',
+    'UserCosmetic.data',
+    cosmeticRepository.findOneByIdRef(eb.ref('UserCosmetic.cosmeticId')).as('cosmetic'),
+  ]);
+
+export const userCosmeticRepository = {
+  /** returns json array of UserCosmeticModel */
+  findManyByUserIdRef(foreignKey: Expression<number>) {
+    return jsonArrayFrom(userCosmeticSelect.whereRef('UserCosmetic.userId', '=', foreignKey));
+  },
+  async findMany(userIds: number[]) {
+    return await userCosmeticSelect.select(['userId']).where('userId', 'in', userIds).execute();
+  },
+};

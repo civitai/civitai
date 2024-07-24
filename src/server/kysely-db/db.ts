@@ -42,6 +42,9 @@ function createKyselyDb(target: Target) {
 
 function logQuery(event: LogEvent, target: Target) {
   if (isProd && event.queryDurationMillis < 2000) return;
+  if (event.level === 'error') {
+    //TODO
+  }
   let query = event.query.sql;
   const parameters = event.query.parameters as string[];
   for (let i = 0; i < parameters.length; i++) {

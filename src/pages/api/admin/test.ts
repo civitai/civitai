@@ -51,15 +51,27 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //   .limit(10)
   //   .execute();
 
-  const users = await userRepository.findMany(
-    {
-      ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-      limit: 100,
-    },
-    { select: 'profileUser' }
-  );
+  // const users = await userRepository.findMany(
+  //   {
+  //     ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  //     limit: 100,
+  //   },
+  //   { select: 'profileUser' }
+  // );
+  // const users = await userRepository.findOne(1, { select: 'profileUser' });
+  // return res.status(200).send(users);
 
-  return res.status(200).json(users);
+  const userSelect = kyselyDbRead.selectFrom('User').select(['id']).where('id', '=', 5);
+  const userSelectWithName = userSelect.select(['name']);
+
+  const test = await userSelect.executeTakeFirst();
+  return res.status(200).send(test);
+
+  // const posts = await kyselyDbRead.transaction().execute(async (trx) => {
+  //   await kyselyDbRead.selectFrom('User').select(['id']).where('id', '=', 5).executeTakeFirst();
+  //   return await kyselyDbRead.selectFrom('Post').select(['id']).where('userId', '=', 5).execute();
+  // });
+  // return res.status(200).send(posts);
 
   // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
 });

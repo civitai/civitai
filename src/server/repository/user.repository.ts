@@ -1,4 +1,4 @@
-import { SqlBool, Expression } from 'kysely';
+import { SqlBool, Expression, InferResult } from 'kysely';
 import { jsonObjectFrom } from '~/server/kysely-db';
 import { Repository } from './infrastructure/repository';
 import { imageRepository } from '~/server/repository/image.repository';
@@ -6,8 +6,7 @@ import { userCosmeticRepository } from '~/server/repository/user-cosmetic.reposi
 import { userLinkRepository } from '~/server/repository/user-link.repository';
 import { userRankRepository } from '~/server/repository/user-rank.repository';
 import { userStatRepository } from '~/server/repository/user-stats.repository';
-
-type UserIncludes = 'profilePicture' | 'cosmetics' | 'settings';
+import { modelRepository } from '~/server/repository/model.repository';
 
 type Options = { select?: 'emailUser' | 'simpleUser' | 'cosmeticUser' | 'profileUser' };
 
@@ -23,7 +22,9 @@ class UserRepository extends Repository {
         'bannedAt',
         'createdAt',
         'image',
-        imageRepository.findByIdRef(eb.ref('User.profilePictureId')).as('profilePicture'),
+        imageRepository
+          .findByIdRef(eb.ref('User.profilePictureId'), { select: 'default' })
+          .as('profilePicture'),
       ]);
   }
 
@@ -36,12 +37,14 @@ class UserRepository extends Repository {
 
   private get profileUserSelect() {
     return this.simpleUserSelect.select((eb) => [
+      'publicSettings',
       userCosmeticRepository
         .findManyByIdRef(eb.ref('User.id'), { select: 'private' })
         .as('cosmetics'),
       userLinkRepository.findManyByIdRef(eb.ref('User.id')).as('links'),
       userRankRepository.findOneByIdRef(eb.ref('User.id')).as('rank'),
       userStatRepository.findOneByIdRef(eb.ref('User.id')).as('stats'),
+      modelRepository.getCountByUserIdRef(eb.ref('User.id')).as('modelCount'),
     ]);
   }
 
@@ -177,3 +180,5 @@ class UserRepository extends Repository {
 }
 
 export const userRepository = new UserRepository();
+
+export type ProfileUserModel = InferResult<UserRepository['profileUserSelect']>;
