@@ -37,7 +37,7 @@ export const imageMetrics = createMetricProcessor({
 
     // Update the the metrics
     //---------------------------------------
-    const tasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
+    const tasks = chunk(Object.values(ctx.updates), 1000).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
       log('update metrics', i + 1, 'of', tasks.length);
 
@@ -76,9 +76,10 @@ export const imageMetrics = createMetricProcessor({
             ${metricOverrides},
             "updatedAt" = NOW()
       `;
+      await sleep(1000);
       log('update metrics', i + 1, 'of', tasks.length, 'done');
     });
-    await limitConcurrency(tasks, 10);
+    await limitConcurrency(tasks, 3);
     if (hasViewTasks) await setLastViewUpdate();
 
     // Update the search index
@@ -109,7 +110,7 @@ export const imageMetrics = createMetricProcessor({
     const ageGroupUpdates = await ageGroupUpdatesQuery.result();
     const affectedIds = ageGroupUpdates.map((x) => x.imageId);
     if (affectedIds.length) {
-      const ageGroupTasks = chunk(affectedIds, 100).map((ids, i) => async () => {
+      const ageGroupTasks = chunk(affectedIds, 500).map((ids, i) => async () => {
         log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
         await executeRefresh(ctx)`
           UPDATE "ImageMetric"
@@ -122,9 +123,10 @@ export const imageMetrics = createMetricProcessor({
           END
           WHERE "imageId" IN (${ids});
         `;
+        await sleep(2000);
         log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
       });
-      await limitConcurrency(ageGroupTasks, 5);
+      await limitConcurrency(ageGroupTasks, 3);
     }
   },
   async clearDay(ctx) {
