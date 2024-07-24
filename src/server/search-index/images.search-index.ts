@@ -1,4 +1,4 @@
-import { client, updateDocs } from '~/server/meilisearch/client';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';

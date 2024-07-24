@@ -1,4 +1,4 @@
-import { client, updateDocs } from '~/server/meilisearch/client';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { Availability, MetricTimeframe, ModelHashType, ModelStatus, Prisma } from '@prisma/client';

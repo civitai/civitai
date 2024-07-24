@@ -1,13 +1,22 @@
-import { IndexOptions, MeiliSearchErrorInfo, MeiliSearchTimeOutError, Task } from 'meilisearch';
-import { client } from '~/server/meilisearch/client';
-import { PrismaClient } from '@prisma/client';
+import {
+  IndexOptions,
+  MeiliSearchErrorInfo,
+  MeiliSearchTimeOutError,
+  Task,
+  MeiliSearch,
+} from 'meilisearch';
+import { searchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { withRetries } from '~/server/utils/errorHandling';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 
 const WAIT_FOR_TASKS_MAX_RETRIES = 5;
 
-const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
+const getOrCreateIndex = async (
+  indexName: string,
+  options?: IndexOptions,
+  client: MeiliSearch | null = searchClient
+) => {
   return withRetries(
     async () => {
       if (!client) {
@@ -51,9 +60,11 @@ const getOrCreateIndex = async (indexName: string, options?: IndexOptions) => {
 const swapIndex = async ({
   indexName,
   swapIndexName,
+  client = searchClient,
 }: {
   indexName: string;
   swapIndexName: string;
+  client?: MeiliSearch | null;
 }) => {
   if (!client) {
     return;
@@ -72,9 +83,11 @@ const swapIndex = async ({
 const onSearchIndexDocumentsCleanup = async ({
   indexName,
   ids,
+  client = searchClient,
 }: {
   indexName: string;
   ids?: number[];
+  client?: MeiliSearch | null;
 }) => {
   if (!client) {
     return;
@@ -124,7 +137,8 @@ const onSearchIndexDocumentsCleanup = async ({
 
 const waitForTasksWithRetries = async (
   taskUids: number[],
-  remainingRetries: number = WAIT_FOR_TASKS_MAX_RETRIES
+  remainingRetries: number = WAIT_FOR_TASKS_MAX_RETRIES,
+  client: MeiliSearch | null = searchClient
 ): Promise<Task[]> => {
   if (!client) {
     return [];

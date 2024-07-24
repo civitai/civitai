@@ -7,7 +7,7 @@ import { JobContext } from '~/server/jobs/job';
 const log = createLogger('search', 'green');
 
 const shouldConnect = !!env.SEARCH_HOST && !!env.SEARCH_API_KEY;
-export const client = shouldConnect
+export const searchClient = shouldConnect
   ? new MeiliSearch({
       host: env.SEARCH_HOST as string,
       apiKey: env.SEARCH_API_KEY,
@@ -20,11 +20,13 @@ export async function updateDocs({
   documents,
   batchSize = 1000,
   jobContext,
+  client = searchClient,
 }: {
   indexName: string;
   documents: any[];
   batchSize?: number;
   jobContext?: JobContext;
+  client?: MeiliSearch | null;
 }): Promise<EnqueuedTask[]> {
   if (!client) return [];
 
