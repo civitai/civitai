@@ -106,23 +106,11 @@ export function UserVideosPage() {
 
   const viewingReactions = section === 'reactions';
 
-  const Wrapper = useMemo(
-    () =>
-      function Wrapper({ children }: { children: React.ReactNode }) {
-        return features.profileOverhaul ? (
-          <Box mt="md">{children}</Box>
-        ) : (
-          <Tabs.Panel value="/videos">{children}</Tabs.Panel>
-        );
-      },
-    [features.profileOverhaul]
-  );
-
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
   return (
-    <Wrapper>
+    <Box mt="md">
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={7}
@@ -196,7 +184,7 @@ export function UserVideosPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Wrapper>
+    </Box>
   );
 }
 

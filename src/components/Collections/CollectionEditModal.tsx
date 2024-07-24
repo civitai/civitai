@@ -1,4 +1,4 @@
-import { Button, Center, Group, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Button, Center, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
 
 import { useEffect } from 'react';
 import {
@@ -12,6 +12,7 @@ import {
   InputNumber,
   InputSelect,
   InputSimpleImageUpload,
+  InputTags,
   InputText,
   InputTextArea,
   useForm,
@@ -19,13 +20,14 @@ import {
 import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/collection.schema';
 import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { CollectionMode, CollectionType } from '@prisma/client';
+import { CollectionMode, CollectionType, TagTarget } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useRouter } from 'next/router';
 import { isDefined } from '~/utils/type-guards';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
@@ -188,6 +190,41 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.existingEntriesDisabled"
+                        label="Existing entries disabled"
+                        placeholder="Makes it so that the + button takes you directly to the create flow."
+                      />
+                    )}
+                    <InputDatePicker
+                      name="metadata.votingPeriodStart"
+                      label="When voting for this contest will start"
+                      description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
+                      placeholder="Select a voting period start date"
+                      icon={<IconCalendar size={16} />}
+                      clearable
+                    />
+                    {/* TODO: We probably want to make this compatible with other collection types. */}
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputTags
+                        name="tags"
+                        label={
+                          <Group spacing={4} noWrap>
+                            <Input.Label>Tags</Input.Label>
+                            <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                              <Text>
+                                When submitting items to this collection, users will be able to tag
+                                their submission with one of the provided tag. This will make
+                                filtering and searching these entries much easier. At the moment,
+                                only 1 tag per item is allowed.
+                              </Text>
+                            </InfoPopover>
+                          </Group>
+                        }
+                        target={[TagTarget.Collection]}
+                      />
+                    )}
                   </>
                 )}
               </>

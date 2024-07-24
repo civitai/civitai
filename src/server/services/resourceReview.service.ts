@@ -1,4 +1,30 @@
+import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
+import { logToAxiom } from '~/server/logging/client';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
+import {
+  resourceReviewSelect,
+  resourceReviewSimpleSelect,
+} from '~/server/selectors/resourceReview.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { getPagingData } from '~/server/utils/pagination-helpers';
+import { ResourceReviewCreate } from '~/types/router';
+import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
 import {
   CreateResourceReviewInput,
   GetRatingTotalsInput,
@@ -7,22 +33,13 @@ import {
   GetUserResourceReviewInput,
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { UpsertResourceReviewInput } from '../schema/resourceReview.schema';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { GetResourceReviewsInput } from '~/server/schema/resourceReview.schema';
-import { Prisma } from '@prisma/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { getPagedData, getPagingData } from '~/server/utils/pagination-helpers';
-import {
-  resourceReviewSelect,
-  resourceReviewSimpleSelect,
-} from '~/server/selectors/resourceReview.selector';
-import { ReviewSort } from '~/server/common/enums';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
-export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?: number }) => {
+export const getResourceReview = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   const result = await dbRead.resourceReview.findUnique({
     where: { id },
     select: {
@@ -32,6 +49,11 @@ export const getResourceReview = async ({ id, userId }: GetByIdInput & { userId?
   });
   if (!result || result.model.status !== 'Published') throw throwNotFoundError();
 
+  if (userId && !isModerator) {
+    const blocked = await amIBlockedByUser({ userId, targetUserId: result.user.id });
+    if (blocked) throw throwNotFoundError();
+  }
+
   return result;
 };
 
@@ -39,9 +61,11 @@ export const getUserResourceReview = async ({
   modelId,
   modelVersionId,
   userId,
-}: GetUserResourceReviewInput & { userId: number }) => {
+  tx,
+}: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  const results = await dbRead.resourceReview.findMany({
+  const dbClient = tx ?? (await getDbWithoutLag('resourceReview', userId));
+  const results = await dbClient.resourceReview.findMany({
     where: { modelId, modelVersionId, userId },
     select: resourceReviewSimpleSelect,
   });
@@ -205,29 +229,105 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   return transformed;
 };
 
-export const upsertResourceReview = ({
+const createResourceReviewNotification = async ({
+  id,
+  modelId,
+  modelVersionId,
+  recommended,
+  userId,
+}: ResourceReviewCreate & { userId: number }) => {
+  // don't send a notification for bad reviews
+  if (!recommended) return;
+
+  // TODO maybe add dedupe query
+
+  const modelVersion = await dbRead.modelVersion.findFirst({
+    where: { id: modelVersionId },
+    select: {
+      model: { select: { name: true, userId: true } },
+      name: true,
+    },
+  });
+
+  // don't send notification to self
+  if (userId === modelVersion?.model.userId || modelVersion?.model.userId === -1) return;
+
+  if (!modelVersion) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'Failed to create notification',
+        details: { key: 'new-review' },
+        message: 'Could not find modelVersion',
+      },
+      'notifications'
+    ).catch();
+    return;
+  }
+
+  const imageCount = await dbRead.imageResource.count({
+    where: { modelVersionId, image: { userId } },
+  });
+
+  // TODO if no content and no images, skip?
+  // if (!imageCount && !content) return;
+
+  const u = await dbRead.user.findFirst({
+    where: { id: userId },
+    select: { username: true },
+  });
+
+  const detailsObj = {
+    version: 2,
+    modelId: modelId,
+    reviewId: id,
+    modelName: modelVersion.model.name,
+    modelVersionName: modelVersion.name,
+    username: u?.username ?? '(unknown)',
+    rating: recommended ? 5 : 1,
+    recommended,
+    imageCount,
+  };
+
+  await createNotification({
+    type: 'new-review',
+    key: `new-review:${modelVersionId}:${userId}`,
+    category: NotificationCategory.Update,
+    userId: modelVersion.model.userId,
+    details: detailsObj,
+  }).catch();
+};
+
+export const upsertResourceReview = async ({
   userId,
   ...data
 }: UpsertResourceReviewInput & { userId: number }) => {
-  if (!data.id)
-    return dbWrite.resourceReview.create({
+  if (!data.id) {
+    const ret = await dbWrite.resourceReview.create({
       data: { ...data, userId, thread: { create: {} } },
       select: resourceReviewSelect,
     });
-  else
+    await createResourceReviewNotification({ ...ret, userId }).catch();
+    return ret;
+  } else {
     return dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
       select: { id: true },
     });
+  }
 };
 
 export const deleteResourceReview = ({ id }: GetByIdInput) => {
   return dbWrite.resourceReview.delete({ where: { id } });
 };
 
-export const createResourceReview = (data: CreateResourceReviewInput & { userId: number }) => {
-  return dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
+export const createResourceReview = async (
+  data: CreateResourceReviewInput & { userId: number }
+) => {
+  const ret = await dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
+  await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  return ret;
 };
 
 export const updateResourceReview = ({ id, ...data }: UpdateResourceReviewInput) => {
@@ -263,11 +363,27 @@ type ResourceReviewRow = {
   imageCount: number;
   commentCount: number;
 };
-export const getPagedResourceReviews = async (input: GetResourceReviewPagedInput) => {
+export const getPagedResourceReviews = async ({
+  input,
+  userId,
+}: {
+  input: GetResourceReviewPagedInput;
+  userId?: number;
+}) => {
   const { limit, page, modelVersionId, username } = input;
-  const skip = limit * (page - 1);
+  const skip = page && page > 0 ? limit * (page - 1) : 0;
   const AND = [Prisma.sql`rr."modelVersionId" = ${modelVersionId}`];
   if (username) AND.push(Prisma.sql`u.username = ${username}`);
+
+  const excludedUsers = await Promise.all([
+    HiddenUsers.getCached({ userId }),
+    BlockedByUsers.getCached({ userId }),
+    BlockedUsers.getCached({ userId }),
+  ]);
+  const excludedUserIds = [...new Set(excludedUsers.flat().map((user) => user.id))];
+  if (excludedUserIds.length) {
+    AND.push(Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`);
+  }
 
   const [{ count }] = await dbRead.$queryRaw<{ count: number }[]>`
     SELECT COUNT(rr.id)::int as count

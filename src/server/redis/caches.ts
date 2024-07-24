@@ -1,12 +1,17 @@
-import { CosmeticEntity, CosmeticSource, CosmeticType, Prisma } from '@prisma/client';
-import { CacheTTL } from '~/server/common/constants';
+import {
+  Availability,
+  CosmeticEntity,
+  CosmeticSource,
+  CosmeticType,
+  ModelStatus,
+  Prisma,
+} from '@prisma/client';
+import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  GenerationResourceSelect,
-  generationResourceSelect,
-} from '~/server/selectors/generation.selector';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import {
@@ -16,6 +21,7 @@ import {
 } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: number[] }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
@@ -167,6 +173,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
     createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
+      cacheNotFound: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
           SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
@@ -198,9 +205,13 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
       SELECT
         cs."userId",
-        COALESCE((p.metadata->>'rewardsMultiplier')::float, 1) as "rewardsMultiplier",
+        CASE
+          WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
+          ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
+        END as "rewardsMultiplier",
         COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
       FROM "CustomerSubscription" cs
+      JOIN "User" u ON u.id = cs."userId"
       JOIN "Product" p ON p.id = cs."productId"
       WHERE cs."userId" IN (${Prisma.join(ids)})
         AND cs."status" IN ('active', 'trialing');
@@ -218,20 +229,115 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   },
 });
 
-export const resourceDataCache = createCachedArray<GenerationResourceSelect>({
+export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
+export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   idKey: 'id',
   lookupFn: async (ids) => {
-    const dbResults = await dbRead.modelVersion.findMany({
-      where: { id: { in: ids as number[] } },
-      select: generationResourceSelect,
+    const dbResults = (
+      await dbRead.modelVersion.findMany({
+        where: { id: { in: ids as number[] } },
+        select: generationResourceSelect,
+      })
+    ).map(({ generationCoverage, settings = {}, ...result }) => {
+      const covered = generationCoverage?.covered ?? false;
+      return removeEmpty({
+        ...result,
+        settings: settings as RecommendedSettingsSchema,
+        covered,
+        available:
+          covered && (result.availability === 'Public' || result.availability === 'EarlyAccess'),
+      });
     });
 
-    const results = dbResults.reduce((acc, result) => {
+    const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
       acc[result.id] = result;
       return acc;
-    }, {} as Record<string, GenerationResourceSelect>);
+    }, {});
     return results;
   },
   ttl: CacheTTL.hour,
+});
+
+type ModelVersionDetails = {
+  id: number;
+  name: string;
+  earlyAccessTimeFrame: number;
+  baseModel: BaseModel;
+  baseModelType: BaseModelType;
+  createdAt: Date;
+  trainingStatus: string;
+  description: string;
+  trainedWords?: string[];
+  vaeId: number | null;
+  publishedAt: Date | null;
+  status: ModelStatus;
+  covered: boolean;
+  availability: Availability;
+};
+type ModelDataCache = {
+  modelId: number;
+  hashes: string[];
+  tags: { tagId: number; name: string }[];
+  versions: ModelVersionDetails[];
+};
+export const dataForModelsCache = createCachedObject<ModelDataCache>({
+  key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
+  idKey: 'modelId',
+  ttl: CacheTTL.day,
+  lookupFn: async (ids) => {
+    const versions = await dbRead.$queryRaw<(ModelVersionDetails & { modelId: number })[]>`
+      SELECT
+        mv."id",
+        mv.index,
+        mv."modelId",
+        mv."name",
+        mv."earlyAccessTimeFrame",
+        mv."baseModel",
+        mv."baseModelType",
+        mv."createdAt",
+        mv."trainingStatus",
+        mv."publishedAt",
+        mv."status",
+        mv.availability,
+        mv."nsfwLevel",
+        mv."description",
+        mv."trainedWords",
+        mv."vaeId",
+        COALESCE((
+          SELECT gc.covered
+          FROM "GenerationCoverage" gc
+          WHERE gc."modelVersionId" = mv.id
+        ), false) AS covered
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" IN (${Prisma.join(ids)})
+      ORDER BY mv."modelId", mv.index;
+    `;
+
+    const hashes = await dbRead.$queryRaw<{ modelId: number; hash: string }[]>`
+      SELECT "modelId", hash
+      FROM "ModelHash"
+      WHERE
+        "modelId" IN (${Prisma.join(ids)})
+        AND "hashType" = 'SHA256'
+        AND "fileType" IN ('Model', 'Pruned Model');
+    `;
+
+    const tags = await dbRead.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
+      SELECT "modelId", "tagId", t."name"
+      FROM "TagsOnModels"
+      JOIN "Tag" t ON "tagId" = t."id"
+      WHERE "modelId" IN (${Prisma.join(ids)})
+      AND "tagId" IS NOT NULL;
+    `;
+
+    const results = versions.reduce((acc, { modelId, ...version }) => {
+      acc[modelId] ??= { modelId, hashes: [], tags: [], versions: [] };
+      acc[modelId].versions.push(version);
+      return acc;
+    }, {} as Record<number, ModelDataCache>);
+    for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
+    for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
+    return results;
+  },
 });

@@ -1,19 +1,21 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import { commentDedupeKey, threadUrlMap } from '~/server/notifications/comment.notifications';
+
+// Moveable (possibly)
 
 export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
-    category: 'Comment',
-    priority: -1,
+    category: NotificationCategory.Comment,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
         const url = threadUrlMap(details);
         return {
-          message: `${details.username} mentioned you in a comment on a ${
-            details.threadType === 'comment' ? 'comment thread' : details.threadType
-          }`,
+          message: `${details.username} mentioned you in a comment on a${
+            ['a', 'e', 'i', 'o', 'u'].includes(details.threadType[0]) ? 'n' : ''
+          } ${details.threadType === 'comment' ? 'comment thread' : details.threadType}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -29,11 +31,12 @@ export const mentionNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
           JSONB_BUILD_OBJECT(
+            'version', 2,
             'mentionedIn', 'comment',
             'commentId', c.id,
             'threadId', c."threadId",
@@ -142,23 +145,14 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.description LIKE '%"mention:%'
           AND m.status = 'Published'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('${commentDedupeKey}', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
         "ownerId"    "userId",
         'new-mention' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
-        AND NOT EXISTS (
-          SELECT 1 FROM "Notification" n
-          WHERE "userId" = "ownerId" AND type = 'new-mention'
-          AND (
-            (n.details->>'mentionedIn' = 'model' AND r.details->>'modelId' = n.details->>'modelId') OR
-            (n.details->>'mentionedIn' = 'comment' AND r.details->>'commentId' = n.details->>'commentId')
-          )
-        );`,
+    `,
   },
 });

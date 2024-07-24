@@ -2,122 +2,122 @@ import {
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
+  Center,
   Container,
   createStyles,
   Divider,
   Group,
+  Loader,
   Menu,
+  Paper,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Paper,
-  Center,
-  Box,
-  Loader,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
+  IconArchive,
+  IconArrowsLeftRight,
   IconBan,
+  IconBolt,
+  IconBookmark,
+  IconBrush,
+  IconCircleMinus,
   IconClock,
   IconDotsVertical,
   IconDownload,
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconMessage,
-  IconPlus,
-  IconRecycle,
-  IconTagOff,
-  IconTrash,
+  IconInfoCircle,
   IconLock,
   IconLockOff,
+  IconMessage,
   IconMessageCircleOff,
-  IconArrowsLeftRight,
-  IconArchive,
-  IconCircleMinus,
-  IconReload,
-  IconBookmark,
-  IconInfoCircle,
-  IconBolt,
+  IconPlus,
   IconRadar2,
-  IconBrush,
+  IconRecycle,
+  IconReload,
   IconRepeat,
+  IconTagOff,
+  IconTrash,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
-
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { Collection } from '~/components/Collection/Collection';
-import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
-// import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
-import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Meta } from '~/components/Meta/Meta';
-import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
-import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
-import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
-import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { getDefaultModelVersion } from '~/server/services/model-version.service';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ModelById } from '~/types/router';
-import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, removeTags, splitUppercase, slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
-import { isNumber } from '~/utils/type-guards';
-import useIsClient from '~/hooks/useIsClient';
-import { ImageSort, ModelType } from '~/server/common/enums';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { CAROUSEL_LIMIT } from '~/server/common/constants';
-import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { ModelMeta } from '~/server/schema/model.schema';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { TrackView } from '~/components/TrackView/TrackView';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { env } from '~/env/client.mjs';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { Collection } from '~/components/Collection/Collection';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { ToggleSearchableMenuItem } from '../../../components/MenuItems/ToggleSearchableMenuItem';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import ImagesAsPostsInfinite from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+// import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
+import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
+import { Meta } from '~/components/Meta/Meta';
+import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
+import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
+import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
+import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
+import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { TrackView } from '~/components/TrackView/TrackView';
+import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import useIsClient from '~/hooks/useIsClient';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { CAROUSEL_LIMIT } from '~/server/common/constants';
+import { ImageSort, ModelType } from '~/server/common/enums';
+import { unpublishReasons } from '~/server/common/moderation-helpers';
+import { ModelMeta } from '~/server/schema/model.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { getDefaultModelVersion } from '~/server/services/model-version.service';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getIsSafeBrowsingLevel,
   hasPublicBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
-import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
-import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { ModelById } from '~/types/router';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -192,6 +192,8 @@ export default function ModelDetailsV2({
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
   const gallerySectionRef = useRef<HTMLDivElement | null>(null);
+
+  const { blockedUsers } = useHiddenPreferencesData();
 
   const { data: model, isLoading: loadingModel } = trpc.model.getById.useQuery(
     { id },
@@ -428,15 +430,16 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
+    if (loadingModel) return;
     const queryVersion = publishedVersions.find((v) => v.id === modelVersionId);
     const hasSelected = publishedVersions.some((v) => v.id === selectedVersion?.id);
-    if (!hasSelected) setSelectedVersion(publishedVersions[0] ?? null);
+    if (!hasSelected) setSelectedVersion(queryVersion ?? publishedVersions[0] ?? null);
     if (selectedVersion && queryVersion !== selectedVersion) {
       router.replace(`/models/${id}?modelVersionId=${selectedVersion.id}`, undefined, {
         shallow: true,
       });
     }
-  }, [id, publishedVersions, selectedVersion, modelVersionId]);
+  }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -449,6 +452,9 @@ export default function ModelDetailsV2({
     !isModerator &&
     // Check if published or has any model versions
     (model.status !== ModelStatus.Published || !model.modelVersions.length);
+
+  const isBlocked = blockedUsers.find((u) => u.id === model?.user.id);
+
   if (modelDeleted && !isOwner && !isModerator)
     return (
       <Center p="xl">
@@ -458,8 +464,9 @@ export default function ModelDetailsV2({
       </Center>
     );
 
-  if (modelDoesntExist || (modelDeleted && !isModerator) || (modelNotVisible && !isModerator))
+  if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
     return <NotFound />;
+  }
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
@@ -986,22 +993,25 @@ export default function ModelDetailsV2({
         ) : null}
       </Container>
       {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-        <AssociatedModels
-          fromId={model.id}
-          type="Suggested"
-          label={
-            <Group spacing={8} noWrap>
-              Suggested Resources{' '}
-              <InfoPopover>
-                <Text size="sm" weight={400}>
-                  These are resources suggested by the creator of this model. They may be related to
-                  this model or created by the same user.
-                </Text>
-              </InfoPopover>
-            </Group>
-          }
-          ownerId={model.user.id}
-        />
+        <Stack>
+          <AssociatedModels
+            fromId={model.id}
+            type="Suggested"
+            versionId={selectedVersion?.id}
+            label={
+              <Group spacing={8} noWrap>
+                Suggested Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources suggested by the creator of this model. They may be related
+                    to this model or created by the same user.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
+        </Stack>
       )}
       {canLoadBelowTheFold &&
         (!model.locked ? (

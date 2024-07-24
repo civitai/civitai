@@ -108,6 +108,7 @@ export const getUserWithProfile = async ({
           ? {
               ...profile.coverImage,
               meta: profile.coverImage.meta as ImageMetaProps | null,
+              metadata: profile.coverImage.metadata as MixedObject,
               tags: profile.coverImage.tags.map((t) => t.tag),
             }
           : null,

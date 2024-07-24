@@ -1,7 +1,7 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
-import { trainingSettings } from '~/components/Training/Form/TrainingSubmit';
+import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
@@ -100,14 +100,13 @@ type MoveAssetRow = {
 export const moveAsset = async ({
   url,
   modelVersionId,
-  modelId,
   userId,
 }: MoveAssetInput & { userId: number }) => {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
   const { jobId, assetName } = urlMatch.groups;
 
-  const { url: destinationUri } = await getPutUrl(`model/${modelId}/${assetName}`);
+  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
 
   const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
     jobId,
@@ -128,7 +127,13 @@ export const moveAsset = async ({
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
 
-  const result = response.data?.jobs?.[0]?.result;
+  const thisJob = response.data?.jobs?.[0];
+
+  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
+    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+  }
+
+  const result = thisJob.result;
   if (!result || !result.found) {
     throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
   }
@@ -171,9 +176,11 @@ export const createTrainingRequest = async ({
   userId,
   modelVersionId,
   isModerator,
+  skipModeration,
 }: CreateTrainingRequestInput & {
   userId?: number;
   isModerator?: boolean;
+  skipModeration?: boolean;
 }) => {
   const status = await getTrainingServiceStatus();
   if (!status.available && !isModerator)
@@ -190,6 +197,7 @@ export const createTrainingRequest = async ({
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
+      AND m."deletedAt" is null
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
@@ -209,6 +217,7 @@ export const createTrainingRequest = async ({
 
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
+  const isPriority = modelVersion.trainingDetails.highPriority ?? false;
 
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
@@ -218,8 +227,8 @@ export const createTrainingRequest = async ({
       const override = setting.overrides?.[baseModel];
       const overrideSetting = override ?? setting;
       if (
-        (overrideSetting.min && value < overrideSetting.min) ||
-        (overrideSetting.max && value > overrideSetting.max)
+        (overrideSetting.min && (value as number) < overrideSetting.min) ||
+        (overrideSetting.max && (value as number) > overrideSetting.max)
       ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`
@@ -236,7 +245,7 @@ export const createTrainingRequest = async ({
 
   // Determine if we still need to charge them for this training
   let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
-  if (!transactionId) {
+  if (!transactionId && !skipModeration) {
     // And if so, charge them
     if (eta === undefined) {
       throw throwBadRequestError(
@@ -249,6 +258,7 @@ export const createTrainingRequest = async ({
       cost: status.cost,
       eta,
       isCustom,
+      isPriority,
     });
 
     if (!price || price < status.cost.baseBuzz) {
@@ -293,9 +303,10 @@ export const createTrainingRequest = async ({
 
   const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
-    // priority: 10,
+    priority: isPriority ? 'high' : 'normal',
+    // interruptible: !isPriority,
     callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId, transactionId, modelFileId: modelVersion.fileId },
+    properties: { userId, transactionId, skipModeration, modelFileId: modelVersion.fileId },
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,
@@ -336,28 +347,41 @@ export const createTrainingRequest = async ({
   }
 
   const data = response.data;
+  const jobId = data?.jobs?.[0]?.jobId;
   const fileMetadata = modelVersion.fileMetadata || {};
 
-  await dbWrite.modelFile.update({
-    where: { id: modelVersion.fileId },
-    data: {
-      metadata: {
-        ...fileMetadata,
-        trainingResults: {
-          ...(fileMetadata.trainingResults || {}),
-          submittedAt: new Date().toISOString(),
-          jobId: data?.jobs?.[0]?.jobId,
-          transactionId,
-          history: (fileMetadata.trainingResults?.history || []).concat([
-            {
-              time: new Date().toISOString(),
-              status: TrainingStatus.Submitted,
-            },
-          ]),
+  await withRetries(() =>
+    dbWrite.modelVersion.update({
+      where: { id: modelVersionId },
+      data: {
+        trainingStatus: TrainingStatus.Submitted,
+      },
+    })
+  );
+
+  await withRetries(() =>
+    dbWrite.modelFile.update({
+      where: { id: modelVersion.fileId },
+      data: {
+        metadata: {
+          ...fileMetadata,
+          trainingResults: {
+            ...(fileMetadata.trainingResults || {}),
+            submittedAt: new Date().toISOString(),
+            jobId,
+            transactionId,
+            history: (fileMetadata.trainingResults?.history || []).concat([
+              {
+                time: new Date().toISOString(),
+                status: TrainingStatus.Submitted,
+                jobId,
+              },
+            ]),
+          },
         },
       },
-    },
-  });
+    })
+  );
 
   // const [formatted] = await formatGenerationRequests([data]);
   return data;
@@ -365,10 +389,13 @@ export const createTrainingRequest = async ({
 
 export const createTrainingRequestDryRun = async ({
   baseModel,
+  isPriority,
 }: CreateTrainingRequestDryRunInput) => {
   if (!baseModel) return null;
 
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
+    priority: isPriority ? 'high' : 'normal',
+    // interruptible: !isPriority,
     model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
     // cost: Math.round((cost ?? 0) * 100) / 100,
     cost: 0,
@@ -445,7 +472,7 @@ export const autoTagHandler = async ({
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
   try {
     const modelData = await dbWrite.$queryRaw<{ id: number; job_id: string | null }[]>`
-      SELECT m.id,
+      SELECT mv.id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id
       FROM "ModelVersion" mv
              JOIN "Model" m ON m.id = mv."modelId"
@@ -458,14 +485,14 @@ export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => 
 
     const returnData: { [key: number]: Date | undefined } = {};
     for (const md of modelData) {
-      const { id: mId, job_id: jobId } = md;
+      const { id: mvId, job_id: jobId } = md;
       if (!jobId) continue;
 
       const res = await getOrchestratorCaller(new Date()).getJobById({ id: jobId });
       if (!res.ok) continue;
       const { data } = res;
 
-      returnData[mId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
+      returnData[mvId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
     }
 
     return returnData;

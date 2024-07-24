@@ -8,6 +8,9 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function GenericImageCard({
   image: image,
@@ -16,13 +19,14 @@ export function GenericImageCard({
   disabled,
 }: {
   image: ImageProps;
+  entityId: number;
   entityType?: string;
-  entityId?: number;
   disabled?: boolean;
 }) {
   const { classes: sharedClasses } = useCardStyles({
     aspectRatio: image.width && image.height ? image.width / image.height : 1,
   });
+  const currentUser = useCurrentUser();
 
   const url = (() => {
     if (!entityType || !entityId) return undefined;
@@ -60,7 +64,13 @@ export function GenericImageCard({
     }
   })();
 
-  return (
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
+  const isImageEntity = entityType === 'Image';
+
+  const cardContent = (
     <FeedCard
       href={disabled ? undefined : url}
       style={disabled ? { cursor: 'initial' } : undefined}
@@ -79,8 +89,8 @@ export function GenericImageCard({
                 <>
                   {!disabled && (
                     <>
-                      <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                      <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                      <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                     </>
                   )}
                   {safe ? (
@@ -98,6 +108,8 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
+                      anim={shouldAnimate}
+                      skip={getSkipValue(image)}
                       placeholder="empty"
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
@@ -133,4 +145,16 @@ export function GenericImageCard({
       </div>
     </FeedCard>
   );
+
+  if (isImageEntity && !disabled)
+    return (
+      <RoutedDialogLink
+        name="imageDetail"
+        state={{ imageId: entityId, filters: { postId: image.postId } }}
+      >
+        {cardContent}
+      </RoutedDialogLink>
+    );
+
+  return cardContent;
 }

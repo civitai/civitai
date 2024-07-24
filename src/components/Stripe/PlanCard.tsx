@@ -123,7 +123,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             {image && (
               <Center>
                 <Box w={128}>
-                  <EdgeMedia src={image} width="original" className={classes.image} />
+                  <EdgeMedia src={image} className={classes.image} />
                 </Box>
               </Center>
             )}

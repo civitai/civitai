@@ -346,7 +346,7 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
         {image && (
           <Center>
             <Box w={120}>
-              <EdgeMedia src={image} width="original" />
+              <EdgeMedia src={image} />
             </Box>
           </Center>
         )}

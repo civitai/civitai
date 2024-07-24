@@ -1,6 +1,6 @@
 import { Button, Group, Stack, ThemeIcon } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { IconBolt, IconCheck, IconX } from '@tabler/icons-react';
+import { IconBolt, IconCheck, IconExclamationMark, IconX } from '@tabler/icons-react';
 
 export function showErrorNotification({
   error,
@@ -44,6 +44,24 @@ export function showSuccessNotification({
   showNotification({
     icon: <IconCheck size={18} />,
     color: 'teal',
+    message,
+    title,
+    autoClose,
+  });
+}
+
+export function showWarningNotification({
+  message,
+  title,
+  autoClose = 3000,
+}: {
+  message: string | React.ReactNode;
+  title?: string;
+  autoClose?: number | false;
+}) {
+  showNotification({
+    icon: <IconExclamationMark size={18} />,
+    color: 'orange',
     message,
     title,
     autoClose,

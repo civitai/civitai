@@ -6,6 +6,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { Group } from '@mantine/core';
+import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
@@ -57,7 +59,8 @@ export function PostEditForm() {
         styles={{ input: { fontWeight: 600, padding: 0 } }}
         autosize
       />
-      {post && <EditPostTags post={post} />}
+      <Group spacing="sm">{post && <EditPostTags post={post} />}</Group>
+      <CollectionSelectDropdown />
       <InputRTE
         name="detail"
         placeholder="Add a description..."

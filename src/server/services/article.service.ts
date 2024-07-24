@@ -11,7 +11,6 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { SessionUser } from 'next-auth';
 
 import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -46,6 +45,7 @@ import { createImage, deleteImageById } from '~/server/services/image.service';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
 
 type ArticleRaw = {
   id: number;
@@ -60,6 +60,7 @@ type ArticleRaw = {
   stats:
     | {
         favoriteCount: number;
+        collectedCount: number;
         commentCount: number;
         likeCount: number;
         dislikeCount: number;
@@ -293,7 +294,7 @@ export const getArticles = async ({
 
     let orderBy = `a."publishedAt" DESC NULLS LAST`;
     if (sort === ArticleSort.MostBookmarks)
-      orderBy = `rank."favoriteCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
+      orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostComments)
       orderBy = `rank."commentCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
     else if (sort === ArticleSort.MostReactions)
@@ -364,6 +365,7 @@ export const getArticles = async ({
         ${Prisma.raw(`
         jsonb_build_object(
           'favoriteCount', stats."favoriteCount${period}",
+          'collectedCount', stats."collectedCount${period}",
           'commentCount', stats."commentCount${period}",
           'likeCount', stats."likeCount${period}",
           'dislikeCount', stats."dislikeCount${period}",
@@ -584,18 +586,25 @@ export const getCivitaiEvents = async () => {
 };
 
 export type ArticleGetById = AsyncReturnType<typeof getArticleById>;
-export const getArticleById = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
+export const getArticleById = async ({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   try {
-    const isMod = user?.isModerator ?? false;
     const article = await dbRead.article.findFirst({
       where: {
         id,
-        OR: !isMod ? [{ publishedAt: { not: null } }, { userId: user?.id }] : undefined,
+        OR: !isModerator ? [{ publishedAt: { not: null } }, { userId }] : undefined,
       },
       select: articleDetailSelect,
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
+    if (userId && !isModerator) {
+      const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
+      if (blocked) throw throwNotFoundError(`No article with id ${id}`);
+    }
 
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({

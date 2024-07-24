@@ -16,6 +16,8 @@ import {
   AddSimpleImagePostInput,
   GetAllCollectionsInfiniteSchema,
   UpdateCollectionCoverImageInput,
+  GetCollectionPermissionDetails,
+  CollectionMetadataSchema,
 } from '~/server/schema/collection.schema';
 import {
   saveItemInCollections,
@@ -47,6 +49,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
 import { collectedContentReward } from '~/server/rewards';
+import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -144,15 +147,6 @@ export const getAllUserCollectionsHandler = async ({
       input: {
         ...input,
         userId: user.id,
-      },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        image: true,
-        read: true,
-        items: { select: { modelId: true, imageId: true, articleId: true, postId: true } },
-        userId: true,
       },
     });
 
@@ -458,8 +452,61 @@ export const addSimpleImagePostHandler = async ({
     );
     const imageIds = postImages.map((image) => image.id);
     await bulkSaveItems({ input: { collectionId, imageIds, userId }, permissions });
+
+    return {
+      post,
+      permissions,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const getPermissionDetailsHandler = async ({
+  input: { ids },
+  ctx,
+}: {
+  input: GetCollectionPermissionDetails;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (ids.length === 0) return [];
+
+  const collections = await dbRead.collection.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      name: true,
+      metadata: true,
+      mode: true,
+      tags: {
+        select: {
+          tag: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Get permissions for each of these
+  const permissions = await Promise.all(
+    collections.map((c) =>
+      getUserCollectionPermissionsById({
+        id: c.id,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    )
+  );
+
+  return collections.map((c) => ({
+    ...c,
+    tags: c.tags.map((t) => t.tag),
+    metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
+    permissions: permissions.find((p) => p.collectionId === c.id),
+  }));
 };

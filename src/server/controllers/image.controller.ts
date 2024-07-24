@@ -1,3 +1,30 @@
+import { ReportReason, ReportStatus } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { v4 as uuid } from 'uuid';
+import {
+  BlockedReason,
+  ImageSort,
+  NotificationCategory,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
+import { Context } from '~/server/createContext';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { reportAcceptedReward } from '~/server/rewards';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { imagesSearchIndex } from '~/server/search-index';
+import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
+import { getGallerySettingsByModelId } from '~/server/services/model.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { createNotification } from '~/server/services/notification.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -9,37 +36,13 @@ import {
   getAllImages,
   getEntityCoverImage,
   getImage,
-  getImageDetail,
+  getImageContestCollectionDetails,
   getImageModerationReviewQueue,
   getImageResources,
   getResourceIdsForImages,
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
-import { ReportReason, ReportStatus } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
-import { Context } from '~/server/createContext';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
-import { createNotification } from '~/server/services/notification.service';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import {
-  BlockedReason,
-  ImageSort,
-  NsfwLevel,
-  SearchIndexUpdateQueueAction,
-} from '~/server/common/enums';
-import { trackModActivity } from '~/server/services/moderator.service';
-import { hasEntityAccess } from '../services/common.service';
-import { getGallerySettingsByModelId } from '~/server/services/model.service';
-import { Flags } from '~/shared/utils';
-import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
-import { imagesSearchIndex } from '~/server/search-index';
 
 export const moderateImageHandler = async ({
   input,
@@ -145,18 +148,23 @@ export const setTosViolationHandler = async ({
     });
     if (!image) throw throwNotFoundError(`No image with id ${id}`);
 
-    // Update any TOS Violation reports
-    await updateImageReportStatusByReason({
+    // Update all reports with this comment id to actioned
+    const affectedReports = await updateImageReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
     });
+    // Reward users for accepted reports
+    for (const report of affectedReports) {
+      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
+    }
 
     // Create notifications in the background
-    createNotification({
+    await createNotification({
       userId: image.userId,
       type: 'tos-violation',
-      category: 'System',
+      category: NotificationCategory.System,
+      key: `tos-violation:image:${uuid()}`,
       details: {
         modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
@@ -438,6 +446,11 @@ export const getImageHandler = async ({ input, ctx }: { input: GetImageInput; ct
       isModerator: ctx.user?.isModerator,
     });
 
+    if (ctx.user && !ctx.user.isModerator) {
+      const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: result.user.id });
+      if (blocked) throw throwNotFoundError();
+    }
+
     return result;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -481,6 +494,21 @@ export const getModeratorReviewQueueHandler = async ({
 }) => {
   try {
     return await getImageModerationReviewQueue({
+      ...input,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const getImageContestCollectionDetailsHandler = async ({
+  input,
+}: {
+  input: GetByIdInput;
+}) => {
+  try {
+    return await getImageContestCollectionDetails({
       ...input,
     });
   } catch (error) {

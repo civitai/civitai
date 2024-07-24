@@ -15,7 +15,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   while (cursor !== 0) {
     const reply = await redis.scan(cursor ?? 0, {
       MATCH: pattern,
-      COUNT: 10000,
+      COUNT: 100000000,
     });
 
     cursor = reply.cursor;

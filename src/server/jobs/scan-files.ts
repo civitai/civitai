@@ -71,11 +71,7 @@ export async function requestScannerTasks({
 
   let fileUrl = s3Url;
   try {
-    if (s3Url.includes(env.S3_UPLOAD_BUCKET)) {
-      ({ url: fileUrl } = await getGetUrl(s3Url, { s3, expiresIn: 7 * 24 * 60 * 60 }));
-    } else {
-      ({ url: fileUrl } = await getDownloadUrl(s3Url));
-    }
+    ({ url: fileUrl } = await getDownloadUrl(s3Url));
   } catch (error) {
     console.error(`Failed to get download url for ${s3Url}`);
     return false;

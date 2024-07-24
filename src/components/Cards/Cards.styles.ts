@@ -138,6 +138,11 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         },
       },
 
+      forMod: {
+        backgroundColor: theme.fn.rgba('#E0BBE4', 0.8), // Light violet color
+        color: theme.white,
+      },
+
       reactions: {
         borderRadius: theme.radius.sm,
         backgroundColor: theme.fn.rgba('#000', 0.31),

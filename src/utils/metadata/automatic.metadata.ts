@@ -1,5 +1,6 @@
 import { unescape } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
 import { createMetadataProcessor, SDResource } from '~/utils/metadata/base.metadata';
 import { parseAIR } from '~/utils/string-helpers';
 
@@ -14,7 +15,7 @@ type CivitaiResource = {
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
-const civitaiResources = /, Civitai resources:\s*(\[[^\]]+\])/;
+const civitaiResources = /, Civitai resources:\s*(.+)/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -27,7 +28,7 @@ const automaticSDKeyMap = new Map<string, string>([
   ['Clip skip', 'clipSkip'],
 ]);
 const getSDKey = (key: string) => automaticSDKeyMap.get(key.trim()) ?? key.trim();
-const decoder = new TextDecoder('utf-16le');
+
 const automaticSDEncodeMap = new Map<keyof ImageMetaProps, string>(
   Array.from(automaticSDKeyMap, (a) => a.reverse()) as Iterable<readonly [string, string]>
 );
@@ -45,12 +46,16 @@ const excludedKeys = [
   'other',
   'external',
 ];
+function isPartialDate(date: string) {
+  return date.length === 14 && date[11] === 'T';
+}
 function parseDetailsLine(line: string | undefined): Record<string, any> {
   const result: Record<string, any> = {};
   if (!line) return result;
   let currentKey = '';
   let currentValue = '';
   let insideQuotes = false;
+  let insideDate = false;
 
   for (let i = 0; i < line.length; i++) {
     const char = line[i];
@@ -61,10 +66,14 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
         currentKey = '';
       }
       insideQuotes = !insideQuotes;
-    } else if (char === ':' && !insideQuotes) {
-      currentKey = getSDKey(currentValue.trim());
-      currentValue = '';
+    } else if (char === ':' && !insideQuotes && !insideDate) {
+      if (isPartialDate(currentValue)) insideDate = true;
+      else {
+        currentKey = getSDKey(currentValue.trim());
+        currentValue = '';
+      }
     } else if (char === ',' && !insideQuotes) {
+      if (insideDate) insideDate = false;
       if (currentKey) result[currentKey] = currentValue.trim();
       currentKey = '';
       currentValue = '';
@@ -76,33 +85,6 @@ function parseDetailsLine(line: string | undefined): Record<string, any> {
 
   return result;
 }
-
-/**
- * Swap the byte order of a Uint8Array from big-endian to little-endian.
- * @param buffer - The input Uint8Array with big-endian byte order.
- * @returns A new Uint8Array with little-endian byte order.
- */
-function swapByteOrder(buffer: Uint8Array): Uint8Array {
-  const swapped = new Uint8Array(buffer.length);
-  for (let i = 0; i < buffer.length; i += 2) {
-    swapped[i] = buffer[i + 1];
-    swapped[i + 1] = buffer[i];
-  }
-  return swapped;
-}
-
-/**
- * Decode a big-endian UTF-16 (Unicode) encoded buffer to a string.
- * @param buffer - The input Uint8Array with big-endian byte order.
- * @returns The decoded string.
- */
-function decodeBigEndianUTF16(buffer: Uint8Array): string {
-  // Swap the byte order from big-endian to little-endian
-  const littleEndianBuffer = swapByteOrder(buffer);
-  // Use TextDecoder to decode the little-endian buffer
-  return decoder.decode(littleEndianBuffer);
-}
-
 // #endregion
 
 export const automaticMetadataProcessor = createMetadataProcessor({
@@ -142,7 +124,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       }
     }
 
-    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '));
+    let detailsLine = metaLines.find((line) => line.startsWith('Steps: '))?.replace(/\,\s*$/, '');
     // Strip it from the meta lines
     if (detailsLine) metaLines.splice(metaLines.indexOf(detailsLine), 1);
     // Remove meta keys I wish I hadn't made... :(

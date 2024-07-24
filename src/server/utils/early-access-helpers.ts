@@ -1,5 +1,9 @@
+import { constants } from '~/server/common/constants';
+import { UserMeta } from '~/server/schema/user.schema';
 import { increaseDate, maxDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
 
+// DEPRECATED: Use the `earlyAccessEndsAt` field on the model version instead
 export function getEarlyAccessDeadline({
   versionCreatedAt,
   publishedAt,
@@ -19,6 +23,7 @@ export function getEarlyAccessDeadline({
   return deadline;
 }
 
+// DEPRECATED: Use the `earlyAccessEndsAt` field on the model version instead
 export function isEarlyAccess({
   versionCreatedAt,
   publishedAt,
@@ -31,4 +36,14 @@ export function isEarlyAccess({
   const deadline = getEarlyAccessDeadline({ versionCreatedAt, publishedAt, earlyAccessTimeframe });
   if (!deadline) return false;
   return new Date() < deadline;
+}
+
+export function getMaxEarlyAccessDays({ userMeta }: { userMeta?: UserMeta }) {
+  const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
+    .map(([score, days]) => ((userMeta?.scores?.total ?? 0) >= score ? days : null))
+    .filter(isDefined);
+
+  return earlyAccessUnlockedDays.length > 0
+    ? earlyAccessUnlockedDays[earlyAccessUnlockedDays.length - 1]
+    : 0;
 }

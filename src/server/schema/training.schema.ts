@@ -1,4 +1,4 @@
-import { defaultsDeep } from 'lodash';
+import { defaultsDeep } from 'lodash-es';
 import { z } from 'zod';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 
@@ -10,6 +10,7 @@ export const createTrainingRequestSchema = z.object({
 export type CreateTrainingRequestDryRunInput = z.infer<typeof createTrainingRequestDryRunSchema>;
 export const createTrainingRequestDryRunSchema = z.object({
   baseModel: z.string().nullable(),
+  isPriority: z.boolean().optional(),
   // cost: z.number().optional(),
 });
 
@@ -17,7 +18,6 @@ export type MoveAssetInput = z.infer<typeof moveAssetInput>;
 export const moveAssetInput = z.object({
   url: z.string().url(),
   modelVersionId: z.number().positive(),
-  modelId: z.number().positive(),
 });
 
 export type AutoTagInput = z.infer<typeof autoTagInput>;
@@ -41,6 +41,8 @@ const trainingCostSchema = z.object({
   hourlyCost: z.number().min(0),
   baseBuzz: z.number().min(0),
   customModelBuzz: z.number().min(0),
+  priorityBuzz: z.number().min(0),
+  priorityBuzzPct: z.number().min(0),
   minEta: z.number().min(1),
 });
 export type TrainingCost = z.infer<typeof trainingCostSchema>;
@@ -64,6 +66,8 @@ export const defaultTrainingCost: TrainingCost = {
   hourlyCost: 0.44,
   baseBuzz: 500,
   customModelBuzz: 500,
+  priorityBuzz: 100,
+  priorityBuzzPct: 0.1,
   minEta: 5,
 };
 

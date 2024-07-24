@@ -11,25 +11,28 @@ import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
-
 import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
 import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
+import { createNotification } from '~/server/services/notification.service';
 import {
   createUserReferral,
   getSessionUser,
   updateAccountScope,
 } from '~/server/services/user.service';
+import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
+import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 
 const setUserName = async (id: number, setTo: string) => {
@@ -244,15 +247,22 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   // customAuthOptions.events.session = async (message) => {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
+
+  customAuthOptions.events.signOut = async (context) => {
+    // console.log('signout event', context.user?.email, context.account?.userId);
+    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
+  };
+
   customAuthOptions.events.signIn = async (context) => {
     // console.log('signin event', context.user?.email, context.account?.userId);
+    deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
 
     const source = req.cookies['ref_source'] as string;
     const landingPage = req.cookies['ref_landing_page'] as string;
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
     if (context.isNewUser) {
-      newUserCounter.inc();
+      newUserCounter?.inc();
       const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
@@ -271,8 +281,17 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
           loginRedirectReason,
         });
       }
+
+      // does this work for email login? it should
+      await createNotification({
+        type: 'join-community',
+        userId: context.user.id,
+        category: NotificationCategory.System,
+        key: `join-community:${context.user.id}`,
+        details: {},
+      }).catch();
     } else {
-      loginCounter.inc();
+      loginCounter?.inc();
     }
   };
 

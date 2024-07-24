@@ -70,7 +70,7 @@ export function abbreviateNumber(
     value = Math.floor(value);
   }
 
-  const formattedValue = value.toFixed(value < 10 && index > 0 ? decimals : 0);
+  const formattedValue = value.toFixed(value < 99 && index > 0 ? decimals : 0);
 
   return `${formattedValue}${suffixes[index]}`;
 }

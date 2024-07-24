@@ -6,10 +6,18 @@ export const useQueryHiddenPreferences = () => {
     trpc: { context: { skipBatch: true } },
   });
   const _data = useMemo(
-    () => data ?? { hiddenModels: [], hiddenImages: [], hiddenTags: [], hiddenUsers: [] },
+    () =>
+      data ?? {
+        hiddenModels: [],
+        hiddenImages: [],
+        hiddenTags: [],
+        hiddenUsers: [],
+        blockedUsers: [],
+        blockedByUsers: [],
+      },
     [data]
   );
-  return { data: _data, isLoading: isLoading };
+  return { data: _data, isLoading };
 };
 
 export const useHiddenPreferencesData = () => {

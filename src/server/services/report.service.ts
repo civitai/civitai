@@ -260,16 +260,6 @@ export const updateReportById = ({
   return dbWrite.report.update({ where: { id }, data });
 };
 
-export const bulkUpdateReports = ({
-  ids,
-  data,
-}: {
-  ids: number[];
-  data: Prisma.ReportUpdateManyArgs['data'];
-}) => {
-  return dbWrite.report.updateMany({ where: { id: { in: ids } }, data });
-};
-
 export async function bulkSetReportStatus({
   ids,
   status,

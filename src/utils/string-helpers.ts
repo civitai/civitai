@@ -1,8 +1,9 @@
 import { ModelType } from '@prisma/client';
-import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { Air } from '@civitai/client';
+import he from 'he';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -52,8 +53,10 @@ const nameOverrides: Record<string, string> = {
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
-  ClubMembership: 'Club Memebership',
+  ClubMembership: 'Club Membership',
   Redeemable: 'Redeemed Code',
+  'PixArt E': 'PixArt Σ',
+  'PixArt a': 'PixArt α',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
@@ -184,24 +187,9 @@ export function normalizeText(input?: string): string {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-const regex =
-  /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/]+)(?:@(?<version>[a-zA-Z0-9_\-]+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i;
-
 export function parseAIR(identifier: string) {
-  const match = regex.exec(identifier);
-  if (!match) {
-    throw new Error(`Invalid identifier: ${identifier}`);
-  }
-
-  const { ecosystem, type, source, id, version, format } = match.groups!;
-  return {
-    ecosystem,
-    type,
-    source,
-    model: Number(id),
-    version: Number(version),
-    format,
-  };
+  const { id, version, ...value } = Air.parse(identifier);
+  return { ...value, model: Number(id), version: Number(version) };
 }
 
 const typeUrnMap: Partial<Record<ModelType, string>> = {
@@ -233,13 +221,18 @@ export function stringifyAIR({
 }) {
   const ecosystem = (
     Object.entries(baseModelSets).find(([, value]) =>
-      value.includes(baseModel as BaseModel)
+      (value as string[]).includes(baseModel)
     )?.[0] ?? 'multi'
   ).toLowerCase();
   const urnType = typeUrnMap[type] ?? 'unknown';
-  if (!urnType) return null;
 
-  return `urn:air:${ecosystem}:${urnType}:${source}:${modelId}${id ? `@${id}` : ''}`;
+  return Air.stringify({
+    ecosystem,
+    type: urnType,
+    source,
+    id: String(modelId),
+    version: String(id),
+  });
 }
 
 export function toBase64(str: string) {
@@ -256,4 +249,21 @@ export function safeDecodeURIComponent(str: string) {
 
 export function getRandomId() {
   return Math.random().toString(36).substring(2, 11);
+}
+
+export function toPascalCase(str: string) {
+  // Split the string by any sequence of non-alphanumeric characters
+  const words = str.split(/[^a-zA-Z0-9]+/);
+
+  // Capitalize the first letter of each word
+  const pascalCaseWords = words.map((word) => {
+    if (!isNaN(parseInt(word[0]))) {
+      // If the word starts with a digit, keep the entire word as is
+      return word.toUpperCase();
+    }
+    return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+  });
+
+  // Join the words back together with a space
+  return pascalCaseWords.join(' ');
 }

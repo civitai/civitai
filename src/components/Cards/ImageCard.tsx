@@ -21,6 +21,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -28,6 +30,7 @@ function UnroutedImageCard({ data }: Props) {
   });
   const router = useRouter();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
 
   const cardDecoration = data.user.cosmetics?.find(
     ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
@@ -41,6 +44,11 @@ function UnroutedImageCard({ data }: Props) {
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...data,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <HolidayFrame {...cardDecoration}>
@@ -61,7 +69,7 @@ function UnroutedImageCard({ data }: Props) {
                   {safe && (
                     <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                       <ImageContextMenu image={data} />
-                      {features.imageGeneration && data.meta && (
+                      {features.imageGeneration && data.meta && !data.hideMeta && (
                         <HoverActionButton
                           label="Remix"
                           size={30}
@@ -100,6 +108,8 @@ function UnroutedImageCard({ data }: Props) {
                       width={imageWidth}
                       className={sharedClasses.image}
                       wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                      anim={shouldAnimate}
+                      skip={getSkipValue(data)}
                       loading="lazy"
                       contain
                     />
@@ -149,12 +159,12 @@ function UnroutedImageCard({ data }: Props) {
                 }}
                 targetUserId={data.user.id}
               />
-              {data.hasMeta && (
-                <ImageMetaPopover2 imageId={data.id}>
+              {data.hasMeta && data.meta && (
+                <ImageMetaPopover meta={data.meta}>
                   <ActionIcon className={sharedClasses.infoChip} variant="light">
                     <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                   </ActionIcon>
-                </ImageMetaPopover2>
+                </ImageMetaPopover>
               )}
             </Group>
           </Stack>

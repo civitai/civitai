@@ -33,7 +33,7 @@ ENV NEXT_TELEMETRY_DISABLED 1
 
 RUN \
   if [ -f yarn.lock ]; then SKIP_ENV_VALIDATION=1 yarn build; \
-  elif [ -f package-lock.json ]; then SKIP_ENV_VALIDATION=1 npm run build; \
+  elif [ -f package-lock.json ]; then SKIP_ENV_VALIDATION=1 NODE_OPTIONS="--max-old-space-size=4096" npm run build; \
   elif [ -f pnpm-lock.yaml ]; then yarn global add pnpm && SKIP_ENV_VALIDATION=1 pnpm run build; \
   else echo "Lockfile not found." && exit 1; \
   fi
@@ -42,9 +42,6 @@ RUN \
 
 FROM node:20-alpine3.16 AS runner
 WORKDIR /app
-
-# Install PM2 to manage node processes
-RUN npm install pm2 --location=global
 
 ENV NODE_ENV production
 
@@ -68,4 +65,4 @@ EXPOSE 3000
 ENV PORT 3000
 ENV NEXT_TELEMETRY_DISABLED 1
 
-CMD ["pm2-runtime", "node", "--", "server.js", "--", "--expose-gc"]
+CMD ["node", "--", "server.js", "--", "--expose-gc"]

@@ -2,17 +2,18 @@ import {
   ActionIcon,
   Box,
   Button,
+  createStyles,
   Group,
   Loader,
   Menu,
   ScrollArea,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconBan,
+  IconBolt,
   IconBrush,
   IconChevronLeft,
   IconChevronRight,
@@ -27,13 +28,14 @@ import {
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-
 import { ModelById } from '~/types/router';
-import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { Currency } from '@prisma/client';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -168,10 +170,13 @@ export function ModelVersionList({
       <Group spacing={4} noWrap>
         {versions.map((version) => {
           const active = selected === version.id;
+          const isTraining = !!version.trainingStatus;
           const missingFiles = !version.files.length;
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
+          const isEarlyAccess =
+            version.earlyAccessEndsAt && new Date(version.earlyAccessEndsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
 
           const versionButton = (
@@ -183,6 +188,12 @@ export function ModelVersionList({
               color={active ? 'blue' : 'gray'}
               onClick={() => {
                 if (showExtraIcons) {
+                  if (!published && isTraining) {
+                    return router.push(
+                      `/models/${version.modelId}/model-versions/${version.id}/wizard?step=1`
+                    );
+                  }
+
                   if (missingFiles)
                     return router.push(
                       `/models/${version.modelId}/model-versions/${version.id}/wizard?step=2`
@@ -205,6 +216,16 @@ export function ModelVersionList({
                     sx={{ backgroundColor: 'transparent' }}
                   >
                     {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
+                  </ThemeIcon>
+                ) : isEarlyAccess ? (
+                  <ThemeIcon
+                    color="yellow"
+                    variant="light"
+                    radius="xl"
+                    size="sm"
+                    sx={{ backgroundColor: 'transparent' }}
+                  >
+                    <CurrencyIcon currency={Currency.BUZZ} size={14} />
                   </ThemeIcon>
                 ) : undefined
               }

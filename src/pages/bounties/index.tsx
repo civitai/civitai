@@ -70,39 +70,34 @@ export default function BountiesPage() {
         description="Post bounties and collaborate with generative AI creators, or make your mark in Civitai and earn Buzz by successfully completing them"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/bounties`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.bounty}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer>
-          <Stack spacing="xs">
-            <Announcements
-              sx={() => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
-            {query.engagement && (
-              <Stack spacing="xl" align="flex-start">
-                <Title>My Bounties</Title>
-                <SegmentedControl
-                  classNames={classes}
-                  transitionDuration={0}
-                  radius="xl"
-                  mb="xl"
-                  data={[...constants.bounties.engagementTypes]}
-                  value={query.engagement as string}
-                  onChange={handleEngagementChange}
-                />
-              </Stack>
-            )}
-            <BountiesInfinite filters={{ engagement }} />
-          </Stack>
-        </MasonryContainer>
-      </MasonryProvider>
+
+      <MasonryContainer>
+        <Stack spacing="xs">
+          <Announcements
+            sx={() => ({
+              marginBottom: -35,
+              [containerQuery.smallerThan('md')]: {
+                marginBottom: -5,
+              },
+            })}
+          />
+          {query.engagement && (
+            <Stack spacing="xl" align="flex-start">
+              <Title>My Bounties</Title>
+              <SegmentedControl
+                classNames={classes}
+                transitionDuration={0}
+                radius="xl"
+                mb="xl"
+                data={[...constants.bounties.engagementTypes]}
+                value={query.engagement as string}
+                onChange={handleEngagementChange}
+              />
+            </Stack>
+          )}
+          <BountiesInfinite filters={{ engagement }} />
+        </Stack>
+      </MasonryContainer>
     </>
   );
 }

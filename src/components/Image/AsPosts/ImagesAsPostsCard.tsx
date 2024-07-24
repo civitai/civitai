@@ -21,7 +21,7 @@ import {
   IconMessage,
   IconPinned,
   IconPinnedOff,
-  TablerIconsProps,
+  IconProps,
   IconPinFilled,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -48,6 +48,8 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesAsPostsCard({
   data,
@@ -61,6 +63,7 @@ export function ImagesAsPostsCard({
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
   const { modelVersions, showModerationOptions, model, filters } =
@@ -208,6 +211,11 @@ export function ImagesAsPostsCard({
   const isOP = data.user.id === model?.user.id;
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
 
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
+
   return (
     <div className={cx(pinned && classes.pinned)}>
       {pinned && (
@@ -297,14 +305,14 @@ export function ImagesAsPostsCard({
                         {image.meta && 'civitaiResources' in (image.meta as object) && (
                           <OnsiteIndicator />
                         )}
-                        <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (
-                          <Stack spacing="xs" className="absolute top-2 right-2 z-10">
+                          <Stack spacing="xs" className="absolute right-2 top-2 z-10">
                             <ImageContextMenu
                               image={image}
                               additionalMenuItems={moderationOptions(image)}
                             />
-                            {features.imageGeneration && image.meta && (
+                            {features.imageGeneration && image.meta && !image.hideMeta && (
                               <HoverActionButton
                                 label="Remix"
                                 size={30}
@@ -347,6 +355,8 @@ export function ImagesAsPostsCard({
                                 placeholder="empty"
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
+                                anim={shouldAnimate}
+                                skip={getSkipValue(image)}
                                 fadeIn
                               />
                             )}
@@ -418,117 +428,128 @@ export function ImagesAsPostsCard({
                       },
                     }}
                   >
-                    {data.images.map((image, index) => (
-                      <Carousel.Slide key={image.id}>
-                        {slidesInView.includes(index) && (
-                          <ImageGuard2 image={image} connectType="post" connectId={postId}>
-                            {(safe) => (
-                              <div className={classes.imageContainer}>
-                                {image.meta && 'civitaiResources' in (image.meta as object) && (
-                                  <OnsiteIndicator />
-                                )}
-                                <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                                {safe && (
-                                  <Stack spacing="xs" className="absolute top-2 right-2 z-10">
-                                    <ImageContextMenu
-                                      image={image}
-                                      additionalMenuItems={moderationOptions(image)}
-                                    />
-                                    {features.imageGeneration && image.meta && (
-                                      <HoverActionButton
-                                        label="Remix"
-                                        size={30}
-                                        color="white"
-                                        variant="filled"
-                                        data-activity="remix:model-gallery"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          generationPanel.open({
-                                            type: 'image',
-                                            id: image.id,
-                                          });
-                                        }}
-                                      >
-                                        <IconBrush stroke={2.5} size={16} />
-                                      </HoverActionButton>
-                                    )}
-                                  </Stack>
-                                )}
-                                <RoutedDialogLink
-                                  name="imageDetail"
-                                  state={{ imageId: image.id, images: data.images }}
-                                  className={classes.link}
-                                >
-                                  <>
-                                    <div className={classes.blurHash}>
-                                      <MediaHash {...image} />
-                                    </div>
-                                    {safe && (
-                                      <EdgeMedia
-                                        src={image.url}
-                                        name={image.name ?? image.id.toString()}
-                                        alt={
-                                          image.meta
-                                            ? truncate(image.meta.prompt, {
-                                                length: constants.altTruncateLength,
-                                              })
-                                            : image.name ?? undefined
-                                        }
-                                        type={image.type}
-                                        width={450}
-                                        placeholder="empty"
-                                        className={classes.image}
-                                        wrapperProps={{ style: { zIndex: 1 } }}
-                                        fadeIn
+                    {data.images.map((image, index) => {
+                      const shouldAnimate = shouldAnimateByDefault({
+                        ...image,
+                        forceDisabled: currentUser?.autoplayGifs,
+                      });
+
+                      return (
+                        <Carousel.Slide key={image.id}>
+                          {slidesInView.includes(index) && (
+                            <ImageGuard2 image={image} connectType="post" connectId={postId}>
+                              {(safe) => (
+                                <div className={classes.imageContainer}>
+                                  {image.meta && 'civitaiResources' in (image.meta as object) && (
+                                    <OnsiteIndicator />
+                                  )}
+                                  <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                                  {safe && (
+                                    <Stack spacing="xs" className="absolute right-2 top-2 z-10">
+                                      <ImageContextMenu
+                                        image={image}
+                                        additionalMenuItems={moderationOptions(image)}
                                       />
-                                    )}
-                                  </>
-                                </RoutedDialogLink>
-                                <Reactions
-                                  entityId={image.id}
-                                  entityType="image"
-                                  reactions={image.reactions}
-                                  metrics={{
-                                    likeCount: image.stats?.likeCountAllTime,
-                                    dislikeCount: image.stats?.dislikeCountAllTime,
-                                    heartCount: image.stats?.heartCountAllTime,
-                                    laughCount: image.stats?.laughCountAllTime,
-                                    cryCount: image.stats?.cryCountAllTime,
-                                    tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                  }}
-                                  readonly={!safe}
-                                  className={classes.reactions}
-                                  targetUserId={image.user.id}
-                                />
-                                {!image.hideMeta && image.meta && (
-                                  <ImageMetaPopover
-                                    meta={image.meta}
-                                    generationProcess={image.generationProcess ?? undefined}
-                                    imageId={image.id}
-                                    mainResourceId={image.modelVersionId ?? undefined}
+                                      {features.imageGeneration &&
+                                        image.meta &&
+                                        !image.hideMeta && (
+                                          <HoverActionButton
+                                            label="Remix"
+                                            size={30}
+                                            color="white"
+                                            variant="filled"
+                                            data-activity="remix:model-gallery"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              generationPanel.open({
+                                                type: 'image',
+                                                id: image.id,
+                                              });
+                                            }}
+                                          >
+                                            <IconBrush stroke={2.5} size={16} />
+                                          </HoverActionButton>
+                                        )}
+                                    </Stack>
+                                  )}
+                                  <RoutedDialogLink
+                                    name="imageDetail"
+                                    state={{ imageId: image.id, images: data.images }}
+                                    className={classes.link}
                                   >
-                                    <ActionIcon
-                                      className={classes.info}
-                                      variant="transparent"
-                                      size="lg"
+                                    <>
+                                      <div className={classes.blurHash}>
+                                        <MediaHash {...image} />
+                                      </div>
+                                      {safe && (
+                                        <EdgeMedia
+                                          src={image.url}
+                                          name={image.name ?? image.id.toString()}
+                                          alt={
+                                            image.meta
+                                              ? truncate(image.meta.prompt, {
+                                                  length: constants.altTruncateLength,
+                                                })
+                                              : image.name ?? undefined
+                                          }
+                                          type={image.type}
+                                          width={450}
+                                          placeholder="empty"
+                                          className={classes.image}
+                                          wrapperProps={{ style: { zIndex: 1 } }}
+                                          anim={shouldAnimate}
+                                          skip={getSkipValue(image)}
+                                          fadeIn
+                                        />
+                                      )}
+                                    </>
+                                  </RoutedDialogLink>
+                                  <Reactions
+                                    entityId={image.id}
+                                    entityType="image"
+                                    reactions={image.reactions}
+                                    metrics={{
+                                      likeCount: image.stats?.likeCountAllTime,
+                                      dislikeCount: image.stats?.dislikeCountAllTime,
+                                      heartCount: image.stats?.heartCountAllTime,
+                                      laughCount: image.stats?.laughCountAllTime,
+                                      cryCount: image.stats?.cryCountAllTime,
+                                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                                    }}
+                                    readonly={!safe}
+                                    className={classes.reactions}
+                                    targetUserId={image.user.id}
+                                  />
+                                  {!image.hideMeta && image.meta && (
+                                    <ImageMetaPopover
+                                      meta={image.meta}
+                                      generationProcess={image.generationProcess ?? undefined}
+                                      imageId={image.id}
+                                      mainResourceId={image.modelVersionId ?? undefined}
                                     >
-                                      <IconInfoCircle
-                                        color="white"
-                                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                        opacity={0.8}
-                                        strokeWidth={2.5}
-                                        size={26}
-                                      />
-                                    </ActionIcon>
-                                  </ImageMetaPopover>
-                                )}
-                              </div>
-                            )}
-                          </ImageGuard2>
-                        )}
-                      </Carousel.Slide>
-                    ))}
+                                      <ActionIcon
+                                        className={classes.info}
+                                        variant="transparent"
+                                        size="lg"
+                                      >
+                                        <IconInfoCircle
+                                          color="white"
+                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                          opacity={0.8}
+                                          strokeWidth={2.5}
+                                          size={26}
+                                        />
+                                      </ActionIcon>
+                                    </ImageMetaPopover>
+                                  )}
+                                </div>
+                              )}
+                            </ImageGuard2>
+                          )}
+                        </Carousel.Slide>
+                      );
+                    })}
                   </Carousel>
                 )}
               </>
@@ -544,7 +565,7 @@ function PinnedIndicator({
   iconProps,
   className,
   ...themeIconProps
-}: Omit<ThemeIconProps, 'children'> & { iconProps?: TablerIconsProps }) {
+}: Omit<ThemeIconProps, 'children'> & { iconProps?: IconProps }) {
   const { classes, cx } = useStyles();
 
   return (
@@ -621,10 +642,10 @@ const useStyles = createStyles((theme) => ({
     bottom: 6,
     left: 6,
     borderRadius: theme.radius.sm,
-    background: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[0],
-      0.8
-    ),
+    background:
+      theme.colorScheme === 'dark'
+        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
+        : theme.colors.gray[0],
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,

@@ -33,6 +33,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
       cryCountAllTime: true,
       favoriteCountAllTime: true,
       tippedAmountCountAllTime: true,
+      collectedCountAllTime: true,
     },
   },
   availability: true,

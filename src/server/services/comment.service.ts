@@ -15,7 +15,11 @@ import {
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
 import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { HiddenUsers } from '~/server/services/user-preferences.service';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -41,7 +45,10 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   const isMod = user?.isModerator ?? false;
   // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
-  const excludedUserIds = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
@@ -52,7 +59,7 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
     cursor: cursor ? { id: cursor } : undefined,
     where: {
       modelId,
-      userId: userId ? userId : excludedUserIds ? { notIn: excludedUserIds } : undefined,
+      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
       parentId: { equals: null },
       tosViolation: !isMod ? false : undefined,
       hidden,
@@ -211,10 +218,14 @@ export const updateCommentReportStatusByReason = ({
   reason: ReportReason;
   status: ReportStatus;
 }) => {
-  return dbWrite.report.updateMany({
-    where: { reason, comment: { commentId: id } },
-    data: { status },
-  });
+  return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    FROM "CommentReport" c
+    WHERE c."reportId" = r.id
+      AND c."commentId" = ${id}
+      AND r.reason = ${reason}::"ReportReason"
+    RETURNING id, "userId"
+  `;
 };
 
 export const getCommentCountByModel = ({

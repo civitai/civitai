@@ -174,10 +174,10 @@ export const CreatorCardV2 = ({
   withActions = true,
   cosmeticOverwrites,
   useEquippedCosmetics = true,
-  startDisplayOverwrite,
+  statDisplayOverwrite,
   subText,
   ...cardProps
-}: PropsV2) => {
+}: CreatorCardPropsV2) => {
   const { classes, theme } = useStyles();
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
@@ -195,6 +195,8 @@ export const CreatorCardV2 = ({
       thumbsUpCountAllTime: 0,
       followerCountAllTime: 0,
       reactionCountAllTime: 0,
+      generationCountAllTime: 0,
+      uploadCountAllTime: 0,
     },
     publicSettings: {
       creatorCardStatsPreferences: [],
@@ -228,9 +230,8 @@ export const CreatorCardV2 = ({
 
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
-  const { models: uploads } = creator?._count ?? { models: 0 };
   const displayStats = data
-    ? startDisplayOverwrite ??
+    ? statDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
       creatorCardStatsDefaults
     : // Avoid displaying stats until we load the data
@@ -241,7 +242,6 @@ export const CreatorCardV2 = ({
         {backgroundImage && backgroundImage.data.url ? (
           <EdgeMedia
             src={backgroundImage.data.url}
-            width="original"
             type={backgroundImage.data.type ?? 'image'}
             transcode={isVideo}
             anim={true}
@@ -291,7 +291,7 @@ export const CreatorCardV2 = ({
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
                   <UserStatBadgesV2
-                    uploads={displayStats.includes('uploads') ? uploads : null}
+                    uploads={displayStats.includes('uploads') ? stats.uploadCountAllTime : null}
                     followers={
                       displayStats.includes('followers') ? stats.followerCountAllTime : null
                     }
@@ -301,6 +301,9 @@ export const CreatorCardV2 = ({
                     }
                     reactions={
                       displayStats.includes('reactions') ? stats.reactionCountAllTime : null
+                    }
+                    generations={
+                      displayStats.includes('generations') ? stats.generationCountAllTime : null
                     }
                     colorOverrides={backgroundImage?.data}
                   />
@@ -433,17 +436,17 @@ type Props = {
   subText?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 
-type PropsV2 = Props & {
+export type CreatorCardPropsV2 = Props & {
   user: { id: number } & Partial<UserWithCosmetics>;
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
   cosmeticOverwrites?: SimpleCosmetic[];
   useEquippedCosmetics?: boolean;
-  startDisplayOverwrite?: string[];
+  statDisplayOverwrite?: string[];
 } & Omit<CardProps, 'children'>;
 
-export const SmartCreatorCard = (props: PropsV2) => {
+export const SmartCreatorCard = (props: CreatorCardPropsV2) => {
   const featureFlags = useFeatureFlags();
 
   if (featureFlags.cosmeticShop) {

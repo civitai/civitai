@@ -70,6 +70,7 @@ const imageFilterSchema = z.object({
   followed: z.boolean().optional(),
   tools: z.number().array().optional(),
   techniques: z.number().array().optional(),
+  baseModels: z.enum(constants.baseModels).array().optional(),
 });
 
 const modelImageFilterSchema = imageFilterSchema.extend({

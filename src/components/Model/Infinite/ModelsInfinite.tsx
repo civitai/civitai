@@ -1,21 +1,18 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
+import Link from 'next/link';
 import { useEffect } from 'react';
-
 import { ModelCard } from '~/components/Cards/ModelCard';
+import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { AmbientModelCard } from '~/components/Model/Infinite/AmbientModelCard';
+import { InViewLoader } from '~/components/InView/InViewLoader';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { ModelQueryParams, useModelFilters, useQueryModels } from '~/components/Model/model.utils';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NoContent } from '~/components/NoContent/NoContent';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import Link from 'next/link';
 
 type InfiniteModelsProps = {
   filters?: Partial<Omit<ModelQueryParams, 'view'> & Omit<ModelFilterSchema, 'view'>>;
@@ -32,12 +29,15 @@ export function ModelsInfinite({
   showAds,
   showEmptyCta,
 }: InfiniteModelsProps) {
-  const features = useFeatureFlags();
   const modelFilters = useModelFilters();
+  const currentUser = useCurrentUser();
 
-  const filters = removeEmpty(
-    disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }
-  );
+  const pending = currentUser !== null && filterOverrides.username === currentUser.username;
+
+  const filters = removeEmpty({
+    ...(disableStoreFilters ? filterOverrides : { ...modelFilters, ...filterOverrides }),
+    pending,
+  });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
@@ -60,29 +60,13 @@ export function ModelsInfinite({
       ) : !!models.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          {features.modelCardV2 ? (
-            <MasonryGrid
-              data={models}
-              render={ModelCard}
-              itemId={(x) => x.id}
-              empty={<NoContent />}
-              withAds={showAds}
-            />
-          ) : (
-            <MasonryColumns
-              data={models}
-              imageDimensions={(data) => {
-                const width = data.images[0]?.width ?? 450;
-                const height = data.images[0]?.height ?? 450;
-                return { width, height };
-              }}
-              adjustHeight={({ imageRatio, height }) => height + (imageRatio >= 1 ? 60 : 0)}
-              maxItemHeight={600}
-              render={AmbientModelCard}
-              itemId={(data) => data.id}
-              withAds={showAds}
-            />
-          )}
+          <MasonryGrid
+            data={models}
+            render={ModelCard}
+            itemId={(x) => x.id}
+            empty={<NoContent />}
+            withAds={showAds}
+          />
 
           {hasNextPage && (
             <InViewLoader

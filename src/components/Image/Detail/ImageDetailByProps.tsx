@@ -236,6 +236,7 @@ export function ImageDetailByProps({
                     <VotableTags
                       entityType="image"
                       entityId={image.id}
+                      nsfwLevel={image.nsfwLevel}
                       canAdd
                       collapsible
                       px="sm"
@@ -446,8 +447,8 @@ export function ImageDetailCarousel({
                     width: width,
                   }}
                 >
-                  <ImageGuard2.BlurToggle radius="sm" className="absolute top-2 left-2 z-10" />
-                  <ImageContextMenu image={image} className="absolute top-2 right-2 z-10" />
+                  <ImageGuard2.BlurToggle radius="sm" className="absolute left-2 top-2 z-10" />
+                  <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
                   {!safe ? (
                     <MediaHash {...image} />
                   ) : (
@@ -461,7 +462,6 @@ export function ImageDetailCarousel({
                       }
                       type={image.type}
                       style={{ maxHeight: '100%', maxWidth: '100%' }}
-                      width={image.width ?? 1200}
                       anim
                     />
                   )}

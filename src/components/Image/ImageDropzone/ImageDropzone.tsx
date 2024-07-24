@@ -125,7 +125,11 @@ export function ImageDropzone({
             </Text>
             {allowsVideo && (
               <Text size="sm" color="dimmed" inline>
-                {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
+                {`Videos cannot exceed ${formatBytes(
+                  constants.mediaUpload.maxVideoFileSize
+                )}, 4k resolution, or ${
+                  constants.mediaUpload.maxVideoDurationSeconds
+                } seconds in duration`}
               </Text>
             )}
           </Stack>

@@ -6,6 +6,7 @@ import {
   Button,
   Card,
   Center,
+  createStyles,
   Group,
   Loader,
   MantineTheme,
@@ -15,42 +16,50 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  createStyles,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
-  IconClock,
-  IconDownload,
   IconBrush,
-  IconExclamationMark,
-  IconLicense,
-  IconMessageCircle2,
-  IconShare3,
+  IconClock,
   IconCloudCheck,
   IconCloudLock,
+  IconDownload,
+  IconExclamationMark,
   IconHeart,
-  IconPhotoPlus,
+  IconLicense,
   IconLock,
+  IconMessageCircle2,
+  IconPhotoPlus,
+  IconShare3,
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useRef, useState } from 'react';
-
+import { useCallback, useRef, useState } from 'react';
+import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CreatorCard, SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -58,15 +67,31 @@ import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import {
+  useQueryModelVersionsEngagement,
+  useModelVersionPermission,
+} from '~/components/Model/ModelVersions/model-version.utils';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import {
+  EditUserResourceReviewLight,
+  UserResourceReviewComposite,
+} from '~/components/ResourceReview/EditUserResourceReview';
+import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
+import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { IconCivitai } from '~/components/SVG/IconCivitai';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
+import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -79,34 +104,13 @@ import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
-import Link from 'next/link';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { IconCivitai } from '~/components/SVG/IconCivitai';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { useLocalStorage } from '@mantine/hooks';
-import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
-import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
-import { useQueryModelVersionsEngagement } from '~/components/Model/ModelVersions/model-version.utils';
-import {
-  EditUserResourceReviewLight,
-  UserResourceReviewComposite,
-} from '~/components/ResourceReview/EditUserResourceReview';
-import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
-import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
+import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -126,7 +130,6 @@ export function ModelVersionDetails({
   user,
   onBrowseClick,
   onFavoriteClick,
-  hasAccess = true,
 }: Props) {
   const { classes } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -140,6 +143,15 @@ export function ModelVersionDetails({
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
+
+  const {
+    isLoadingAccess,
+    canDownload: hasDownloadPermissions,
+    canGenerate: hasGeneratePermissions,
+  } = useModelVersionPermission({
+    modelVersionId: version.id,
+  });
+
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
 
@@ -159,11 +171,56 @@ export function ModelVersionDetails({
   const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const canGenerate = features.imageGeneration && hasAccess && version.canGenerate;
+  const canGenerate = features.imageGeneration && version.canGenerate && hasGeneratePermissions;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+
+  const getDownloadProps = useCallback(
+    (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
+      if (isLoadingAccess) {
+        return {};
+      }
+
+      if (hasDownloadPermissions) {
+        if (!file) {
+          return;
+        }
+
+        const url = createModelFileDownloadUrl({
+          versionId: version.id,
+          type: file.type,
+          meta: file.metadata,
+        });
+
+        return {
+          // This will allow users to right-click save
+          href: url,
+        };
+      } else {
+        return {
+          onClick: () => {
+            if (!features.earlyAccessModel) {
+              showErrorNotification({
+                error: new Error('Unauthorized'),
+                title: 'Unauthorized',
+                reason:
+                  'This model will be available for download once early access is enabled to the public. Please check back later.',
+              });
+              return;
+            }
+
+            dialogStore.trigger({
+              component: ModelVersionEarlyAccessPurchase,
+              props: { modelVersionId: version.id },
+            });
+          },
+        };
+      }
+    },
+    [isLoadingAccess, hasDownloadPermissions, version.id, router]
+  );
 
   const { currentUserReview } = useQueryUserResourceReview({
     modelId: model.id,
@@ -195,10 +252,14 @@ export function ModelVersionDetails({
       }
     } catch (e) {
       const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      const reason = error?.message?.includes('Insufficient funds')
+        ? 'You do not have enough funds to publish this model. You can remove early access or purchase more buzz in order to publish.'
+        : 'Something went wrong while publishing your model. Please try again later.';
+
       showErrorNotification({
         error: new Error(error.message),
         title: 'Error publishing model',
-        reason: 'Something went wrong while publishing your model. Please try again later.',
+        reason,
       });
     }
 
@@ -421,17 +482,13 @@ export function ModelVersionDetails({
   const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
-    !archived && hasAccess ? (
+    !archived ? (
       <Menu.Item
         key={file.id}
         component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        href={createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        })}
+        {...getDownloadProps(file)}
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
@@ -471,22 +528,16 @@ export function ModelVersionDetails({
               </Badge>
             ) : null}
           </Group>
-          {hasAccess && (
-            <Button
-              component="a"
-              variant="subtle"
-              size="xs"
-              href={createModelFileDownloadUrl({
-                versionId: version.id,
-                type: file.type,
-                meta: file.metadata,
-              })}
-              disabled={archived}
-              compact
-            >
-              Download
-            </Button>
-          )}
+          <Button
+            component="a"
+            variant="subtle"
+            size="xs"
+            {...getDownloadProps(file)}
+            disabled={archived}
+            compact
+          >
+            Download
+          </Button>
         </Group>
         {getFileDetails(file)}
       </Stack>
@@ -574,15 +625,18 @@ export function ModelVersionDetails({
                   </Button>
                 </Tooltip>
               </Button.Group>
+
               {scheduledPublishDate && isOwnerOrMod && (
-                <Group spacing={4}>
-                  <ThemeIcon color="gray" variant="filled" radius="xl">
-                    <IconClock size={20} />
-                  </ThemeIcon>
-                  <Text size="xs" color="dimmed">
-                    Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
-                  </Text>
-                </Group>
+                <Stack>
+                  <Group spacing={4}>
+                    <ThemeIcon color="gray" variant="filled" radius="xl">
+                      <IconClock size={20} />
+                    </ThemeIcon>
+                    <Text size="xs" color="dimmed">
+                      Scheduled for {dayjs(scheduledPublishDate).format('MMMM D, h:mma')}
+                    </Text>
+                  </Group>
+                </Stack>
               )}
             </Stack>
           ) : (
@@ -642,13 +696,11 @@ export function ModelVersionDetails({
                     filesCount === 1 ? (
                       <DownloadButton
                         canDownload={version.canDownload}
+                        downloadRequiresPurchase={!hasDownloadPermissions}
                         component="a"
-                        href={createModelFileDownloadUrl({
-                          versionId: version.id,
-                          primary: true,
-                        })}
+                        {...getDownloadProps(primaryFile)}
                         tooltip="Download"
-                        disabled={!primaryFile || archived}
+                        disabled={!primaryFile || archived || isLoadingAccess}
                         sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                         iconOnly
                       />
@@ -657,7 +709,8 @@ export function ModelVersionDetails({
                         <Menu.Target>
                           <DownloadButton
                             canDownload={version.canDownload}
-                            disabled={!primaryFile || archived}
+                            downloadRequiresPurchase={!hasDownloadPermissions}
+                            disabled={!primaryFile || archived || isLoadingAccess}
                             sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
                           />
@@ -668,12 +721,10 @@ export function ModelVersionDetails({
                   ) : (
                     <DownloadButton
                       component="a"
-                      href={createModelFileDownloadUrl({
-                        versionId: version.id,
-                        primary: true,
-                      })}
+                      {...getDownloadProps(primaryFile)}
                       canDownload={version.canDownload}
-                      disabled={!primaryFile || archived}
+                      downloadRequiresPurchase={!hasDownloadPermissions}
+                      disabled={!primaryFile || archived || isLoadingAccess}
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
                       <Text align="center">
@@ -778,11 +829,12 @@ export function ModelVersionDetails({
               community once it has been approved.
             </AlertWithIcon>
           )}
+          <ModelVersionDonationGoals modelVersionId={version.id} />
           <EarlyAccessAlert
             modelId={model.id}
             versionId={version.id}
             modelType={model.type}
-            deadline={version.earlyAccessDeadline}
+            deadline={version.earlyAccessEndsAt ?? undefined}
           />
           <ModelFileAlert
             versionId={version.id}
@@ -1071,8 +1123,6 @@ export function ModelVersionDetails({
                   color="dimmed"
                   sx={{
                     whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
                     lineHeight: 1.1,
                   }}
                 >
@@ -1126,9 +1176,14 @@ export function ModelVersionDetails({
             )}
             <PermissionIndicator spacing={5} size={28} permissions={model} ml="auto" />
           </Group>
-          {model.type === 'Checkpoint' && license?.notice && (
+          {license?.notice && (
             <Text size="xs" color="dimmed">
               {license.notice}
+            </Text>
+          )}
+          {license?.poweredBy && (
+            <Text size="xs" weight={500}>
+              {license.poweredBy}
             </Text>
           )}
           {hasPendingClaimReport && (
@@ -1185,7 +1240,6 @@ type Props = {
   user?: SessionUser | null;
   onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
-  hasAccess?: boolean;
 };
 
 function VersionDescriptionModal({ description }: { description: string }) {

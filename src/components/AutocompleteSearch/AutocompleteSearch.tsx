@@ -291,7 +291,15 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 
   const handleSubmit = () => {
     if (search) {
-      const queryString = QS.stringify({ query: query.trim(), ...QS.parse(searchPageQuery) });
+      const { query: cleanedSearch, searchPageQuery: currSearchPageQuery } = parseQuery(
+        indexName,
+        search
+      );
+      const queryString = QS.stringify({
+        query: cleanedSearch.trim(), // Search should be more accurate than query as it was the latest written.
+        ...QS.parse(currSearchPageQuery),
+      });
+
       router.push(`/search/${indexName}?${queryString}`, undefined, { shallow: false });
 
       blurInput();
@@ -420,8 +428,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           value={search}
           data={items}
           onChange={setSearch}
-          onClear={handleClear}
           onBlur={handleClear}
+          onClear={handleClear}
           onKeyDown={getHotkeyHandler([
             ['Escape', blurInput],
             ['Enter', handleSubmit],
@@ -471,7 +479,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           className={classes.searchButton}
           variant="filled"
           size={36}
-          onClick={handleSubmit}
+          onMouseDown={handleSubmit}
         >
           <IconSearch size={18} />
         </ActionIcon>

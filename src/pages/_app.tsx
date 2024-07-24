@@ -21,7 +21,7 @@ import React, { ReactElement, ReactNode } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { InnerLayoutOptions } from '~/components/AppLayout/createPage';
+import { CustomNextPage, InnerLayoutOptions } from '~/components/AppLayout/createPage';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
@@ -40,7 +40,6 @@ import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
-import { CivitaiPosthogProvider } from '~/hooks/usePostHog';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
@@ -58,6 +57,9 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -67,12 +69,13 @@ dayjs.extend(utc);
 
 registerCustomProtocol('civitai', true);
 // registerCustomProtocol('urn', true);
+// TODO fix this from initializing again in dev
 linkifyInit();
 
-type CustomNextPage = NextPage & {
-  getLayout?: (page: ReactElement) => ReactNode;
-  options?: InnerLayoutOptions;
-};
+// type CustomNextPage = NextPage & {
+//   getLayout?: (page: ReactElement) => ReactNode;
+//   options?: InnerLayoutOptions;
+// };
 
 type CustomAppProps = {
   Component: CustomNextPage;
@@ -100,18 +103,20 @@ function MyApp(props: CustomAppProps) {
       const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
       const withScrollArea = Component.options?.withScrollArea ?? true;
       return (
-        <AppLayout>
-          {/* <InnerLayout>
+        <FeatureLayout conditional={Component.options?.features}>
+          <AppLayout withFooter={Component.options?.withFooter}>
+            {/* <InnerLayout>
             {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
           </InnerLayout> */}
-          {InnerLayout ? (
-            <InnerLayout>{page}</InnerLayout>
-          ) : withScrollArea ? (
-            <ScrollAreaMain>{page}</ScrollAreaMain>
-          ) : (
-            page
-          )}
-        </AppLayout>
+            {InnerLayout ? (
+              <InnerLayout>{page}</InnerLayout>
+            ) : withScrollArea ? (
+              <ScrollAreaMain>{page}</ScrollAreaMain>
+            ) : (
+              page
+            )}
+          </AppLayout>
+        </FeatureLayout>
       );
     });
 
@@ -146,19 +151,19 @@ function MyApp(props: CustomAppProps) {
                       <CivitaiSessionProvider>
                         <SignalProvider>
                           <ActivityReportingProvider>
-                            <CivitaiPosthogProvider>
-                              <ReferralsProvider>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaypalProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider
-                                            className="notifications-container"
-                                            zIndex={9999}
-                                          >
-                                            <BrowserRouterProvider>
-                                              <RecaptchaWidgetProvider>
+                            <ReferralsProvider>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaypalProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider
+                                          className="notifications-container"
+                                          zIndex={9999}
+                                        >
+                                          <BrowserRouterProvider>
+                                            <RecaptchaWidgetProvider>
+                                              <GenerationProvider>
                                                 <BaseLayout>
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
@@ -169,16 +174,16 @@ function MyApp(props: CustomAppProps) {
                                                     </CustomModalsProvider>
                                                   </ChatContextProvider>
                                                 </BaseLayout>
-                                              </RecaptchaWidgetProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaypalProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </CivitaiPosthogProvider>
+                                              </GenerationProvider>
+                                            </RecaptchaWidgetProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaypalProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
                           </ActivityReportingProvider>
                         </SignalProvider>
                       </CivitaiSessionProvider>

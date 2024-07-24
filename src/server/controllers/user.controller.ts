@@ -1,20 +1,24 @@
-import {
-  CosmeticType,
-  ModelEngagementType,
-  ModelVersionEngagementType,
-  NotificationCategory,
-} from '@prisma/client';
+import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
+import { isProd } from '~/env/other';
 import { clickhouse } from '~/server/clickhouse/client';
-import { RECAPTCHA_ACTIONS, constants } from '~/server/common/constants';
+import { constants, RECAPTCHA_ACTIONS } from '~/server/common/constants';
+import {
+  NotificationCategory,
+  OnboardingComplete,
+  OnboardingSteps,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { redis } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
+import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
 import {
-  BatchBlockTagsSchema,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -22,8 +26,8 @@ import {
   GetUserCosmeticsSchema,
   GetUserTagsSchema,
   ReportProhibitedRequestInput,
+  SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
-  ToggleBlockedTagSchema,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -35,48 +39,61 @@ import {
   UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
+import { usersSearchIndex } from '~/server/search-index';
 import {
   BadgeCosmetic,
+  ContentDecorationCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
-  ContentDecorationCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getUserNotificationCount } from '~/server/services/notification.service';
+import {
+  getResourceReviewsByUserId,
+  getUserResourceReview,
+} from '~/server/services/resourceReview.service';
+import {
+  createCustomer,
+  deleteCustomerPaymentMethod,
+  getCustomerPaymentMethods,
+} from '~/server/services/stripe.service';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import {
   claimCosmetic,
   createUserReferral,
   deleteUser,
+  deleteUserProfilePictureCache,
+  equipCosmetic,
   getCreators,
+  getUserBookmarkCollections,
   getUserById,
   getUserByUsername,
   getUserCosmetics,
   getUserCreator,
-  getUserEngagedModelVersions,
+  getUserDownloads,
   getUserEngagedModels,
+  getUserEngagedModelVersions,
+  getUserPurchasedRewards,
   getUsers,
+  getUserSettings,
   isUsernamePermitted,
+  setLeaderboardEligibility,
+  setUserSetting,
   toggleBan,
+  toggleBookmarked,
   toggleFollowUser,
   toggleHideUser,
-  toggleModelNotify,
+  toggleModelEngagement,
   toggleModelHide,
+  toggleModelNotify,
+  toggleReview,
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
+  unequipCosmeticByType,
   updateLeaderboardRank,
   updateUserById,
   userByReferralCode,
-  equipCosmetic,
-  deleteUserProfilePictureCache,
-  getUserSettings,
-  setUserSetting,
-  unequipCosmeticByType,
-  getUserBookmarkCollections,
-  getUserPurchasedRewards,
-  toggleModelEngagement,
-  toggleBookmarked,
-  toggleReview,
-  getUserDownloads,
 } from '~/server/services/user.service';
 import {
   handleLogError,
@@ -88,35 +105,15 @@ import {
 } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
+import { Flags } from '~/shared/utils';
 import { isUUID } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
+import { createRecaptchaAssesment } from '../recaptcha/client';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
-import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
-import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
-import {
-  createCustomer,
-  deleteCustomerPaymentMethod,
-  getCustomerPaymentMethods,
-} from '~/server/services/stripe.service';
-import { PaymentMethodDeleteInput } from '~/server/schema/stripe.schema';
-import { isProd } from '~/env/other';
-import { getUserNotificationCount } from '~/server/services/notification.service';
-import { createRecaptchaAssesment } from '../recaptcha/client';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
-import { isDefined } from '~/utils/type-guards';
-import {
-  OnboardingComplete,
-  OnboardingSteps,
-  SearchIndexUpdateQueueAction,
-} from '~/server/common/enums';
-import { Flags } from '~/shared/utils';
-import {
-  getResourceReviewsByUserId,
-  getUserResourceReview,
-} from '~/server/services/resourceReview.service';
-import { usersSearchIndex } from '~/server/search-index';
-import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
 
 export const getAllUsersHandler = async ({
   input,
@@ -126,6 +123,14 @@ export const getAllUsersHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const blockedUsersLists = await Promise.all([
+      BlockedUsers.getCached({ userId: ctx.user?.id }),
+      BlockedByUsers.getCached({ userId: ctx.user?.id }),
+    ]);
+    const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
+    if (blockedUsers.length)
+      input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
+
     const users = await getUsers({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
@@ -139,15 +144,19 @@ export const getAllUsersHandler = async ({
 
 export const getUserCreatorHandler = async ({
   input: { username, id, leaderboardId },
+  ctx,
 }: {
   input: GetUserByUsernameSchema;
+  ctx: Context;
 }) => {
+  username = username?.toLowerCase();
   if (!username && !id) throw throwBadRequestError('Must provide username or id');
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
 
   try {
     const user = await getUserCreator({ username, id, leaderboardId });
     if (!user) throw throwNotFoundError('Could not find user');
+    if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
 
     return user;
   } catch (error) {
@@ -260,15 +269,20 @@ export const completeOnboardingHandler = async ({
         const { recaptchaToken } = input;
         if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-        const riskScore = await createRecaptchaAssesment({
+        const { score, reasons } = await createRecaptchaAssesment({
           token: recaptchaToken,
           recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
         });
 
-        if (!riskScore || riskScore < 0.5)
-          throw throwAuthorizationError(
-            'We are unable to complete onboarding right now. Please try again later'
-          );
+        if ((score || 0) < 0.5) {
+          if (reasons.length) {
+            throw throwAuthorizationError(
+              `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
+            );
+          } else {
+            throw throwAuthorizationError('We could not verify the authenticity of your request.');
+          }
+        }
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
@@ -308,10 +322,10 @@ export const completeOnboardingHandler = async ({
         break;
     }
     const isComplete = onboarding === OnboardingComplete;
-    if (isComplete && changed) onboardingCompletedCounter.inc();
+    if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
-    if (!err.message.includes('constraint failed')) onboardingErrorCounter.inc();
+    if (!err.message.includes('constraint failed')) onboardingErrorCounter?.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
@@ -589,10 +603,10 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
   try {
     const { username } = input;
 
-    const user = await getUserByUsername({ username, select: { createdAt: true } });
+    const user = await getUserByUsername({ username, select: { id: true, createdAt: true } });
     if (!user) throw throwNotFoundError(`No user with username ${username}`);
 
-    const [userFollowing, userFollowers, userHidden] = await Promise.all([
+    const [userFollowing, userFollowers, userHidden, userBlocked] = await Promise.all([
       getUserByUsername({
         username,
         select: {
@@ -623,6 +637,7 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
           },
         },
       }),
+      BlockedUsers.getCached({ userId: user.id }),
     ]);
 
     return {
@@ -632,6 +647,8 @@ export const getUserListsHandler = async ({ input }: { input: GetByUsernameSchem
       followersCount: userFollowers?._count.engagedUsers ?? 0,
       hidden: userHidden?.engagingUsers.map(({ targetUser }) => targetUser) ?? [],
       hiddenCount: userHidden?._count.engagingUsers ?? 0,
+      blocked: userBlocked ?? [],
+      blockedCount: userBlocked?.length ?? 0,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -782,7 +799,8 @@ export async function toggleFavoriteHandler({
       setTo,
     });
   } else {
-    const userModelReviews = await getUserResourceReview({ userId, modelId });
+    // Need dbWrite to avoid propagation lag
+    const userModelReviews = await getUserResourceReview({ userId, modelId, tx: dbWrite });
 
     // Remove it from bookmark collection if no reviews
     if (!userModelReviews?.length)
@@ -1092,6 +1110,7 @@ export const reportProhibitedRequestHandler = async ({
 }) => {
   await ctx.track.prohibitedRequest({
     prompt: input.prompt ?? '{error capturing prompt}',
+    negativePrompt: input.negativePrompt ?? '{error capturing negativePrompt}',
     source: input.source,
   });
   if (ctx.user.isModerator) return false;
@@ -1334,3 +1353,17 @@ export const getUserPurchasedRewardsHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export async function setLeaderboardEligibilityHandler({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: SetLeaderboardEligibilitySchema;
+}) {
+  await setLeaderboardEligibility(input);
+  await ctx.track.userActivity({
+    type: input.setTo ? 'ExcludedFromLeaderboard' : 'UnexcludedFromLeaderboard',
+    targetUserId: input.id,
+  });
+}

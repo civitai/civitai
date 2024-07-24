@@ -140,6 +140,9 @@ export enum SignalMessages {
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
   OrchestratorUpdate = 'orchestrator-job:status-update',
+  TextToImageUpdate = 'orchestrator:text-to-image-update',
+  SchedulerDownload = 'scheduler:download',
+  NotificationNew = 'notification:new',
 }
 
 export enum BountySort {
@@ -248,4 +251,21 @@ export enum GenerationRequestStatus {
   Cancelled = 'Cancelled',
   Error = 'Error',
   Succeeded = 'Succeeded',
+}
+
+export enum EntityAccessPermission {
+  None = 0, // Generally won't be used, but can be used to indicate no access
+  EarlyAccessGeneration = 1,
+  EarlyAccessDownload = 2,
+  All = 1 + 2, // Sum of all prev. permissions.
+}
+
+export enum NotificationCategory {
+  Comment = 'Comment',
+  Update = 'Update',
+  Milestone = 'Milestone',
+  Bounty = 'Bounty',
+  Buzz = 'Buzz',
+  System = 'System',
+  Other = 'Other',
 }

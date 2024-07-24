@@ -3,7 +3,6 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import { mergeQueue } from '~/server/redis/queues';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import * as caches from '~/server/redis/caches';
 
 export const cacheCleanup = createJob('cache-cleanup', '0 */1 * * *', async () => {
   // Clean rate limit keys

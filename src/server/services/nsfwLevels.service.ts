@@ -130,7 +130,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.articleIds) articleIds = uniq(articleIds.concat(data.articleIds));
     if (data.bountyIds) bountyIds = uniq(bountyIds.concat(data.bountyIds));
     if (data.bountyEntryIds) bountyEntryIds = uniq(bountyEntryIds.concat(data.bountyEntryIds));
-    if (data.collectionIds) collectionIds = uniq(collectionIds.concat(data.collectionIds));
+    // if (data.collectionIds) collectionIds = uniq(collectionIds.concat(data.collectionIds));
     if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
   }
@@ -217,13 +217,13 @@ export async function updateNsfwLevels({
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
   const updateModelVersions = batcher(modelVersionIds, updateModelVersionNsfwLevels);
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
-  const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
+  // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
     [updatePosts, updateArticles, updateBounties, updateBountyEntries],
     [updateModelVersions],
     [updateModels],
-    [updateCollections],
+    // [updateCollections],
   ];
 
   for (const batch of nsfwLevelChangeBatches) {
@@ -370,7 +370,7 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
       END
     )
     FROM level
-    WHERE level.id = m.id AND level."nsfwLevel" != m."nsfwLevel"
+    WHERE level.id = m.id AND (level."nsfwLevel" != m."nsfwLevel" OR m.nsfw = TRUE)
     RETURNING m.id;
   `);
   await modelsSearchIndex.queueUpdate(

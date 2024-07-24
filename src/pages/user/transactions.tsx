@@ -30,6 +30,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import Link from 'next/link';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const transactionTypes = [
   TransactionType[TransactionType.Tip],
@@ -127,11 +128,16 @@ export default function UserTransactions() {
         ) : transactions.length ? (
           <Stack spacing="md">
             {transactions.map((transaction) => {
-              const { amount, date, fromUser, toUser, description, details } = transaction;
+              const { amount, date, fromUser, toUser, details } = transaction;
+              let { description } = transaction;
               const isDebit = amount < 0;
+              const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details
                 ? parseBuzzTransactionDetails(details as BuzzTransactionDetails)
                 : {};
+              if (label) {
+                description = description?.replace('Content', `A ${label.toLowerCase()}`);
+              }
 
               return (
                 <Card key={date.toISOString()} withBorder>
@@ -171,15 +177,20 @@ export default function UserTransactions() {
                       </Text>
                     )}
                     {description && <Text color="dimmed">{description}</Text>}
-                    {url && (
+                    {isImage && details?.entityId ? (
+                      <RoutedDialogLink
+                        name="imageDetail"
+                        variant="link"
+                        state={{ imageId: details.entityId }}
+                        style={{ fontSize: 12 }}
+                      >
+                        View {label}
+                      </RoutedDialogLink>
+                    ) : url ? (
                       <Link href={url} passHref>
-                        <Anchor size="xs">
-                          <Group spacing={4}>
-                            <Text inherit>View {label}</Text>
-                          </Group>
-                        </Anchor>
+                        <Anchor size="xs">View {label}</Anchor>
                       </Link>
-                    )}
+                    ) : null}
                   </Stack>
                 </Card>
               );

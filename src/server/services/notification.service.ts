@@ -1,29 +1,85 @@
-import { NotificationCategory, Prisma } from '@prisma/client';
-
-import { dbWrite, dbRead } from '~/server/db/client';
+import { Prisma } from '@prisma/client';
+import { NotificationCategory } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
+import { NotificationSingleRowFull } from '~/server/jobs/send-notifications';
+import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
-  NotificationAddedRow,
   notificationCache,
-  NotificationCategoryArray,
+  NotificationCategoryCount,
 } from '~/server/notifications/notification-cache';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { v4 as uuid } from 'uuid';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 type NotificationsRaw = {
-  id: string;
+  id: number;
   type: string;
+  category: NotificationCategory;
   details: MixedObject;
   createdAt: Date;
   read: boolean;
-  category: NotificationCategory;
 };
+
+export const createNotification = async (
+  data: Omit<NotificationSingleRowFull, 'userId'> & {
+    userId?: number;
+    userIds?: number[];
+  }
+) => {
+  try {
+    if (!data.userIds) data.userIds = [];
+    if (data.userId) data.userIds.push(data.userId);
+    if (data.userIds.length === 0) return;
+
+    const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
+      where: { userId: { in: data.userIds }, type: data.type },
+    });
+    // TODO fix below for multiple userIds
+    //   also, does this block notifications from users youve blocked? we'd have to know the "origin" user
+    const blockedUsers = await Promise.all([
+      BlockedUsers.getCached({ userId: data.userId }),
+      BlockedByUsers.getCached({ userId: data.userId }),
+    ]);
+    const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
+    const targets = data.userIds.filter(
+      (x) =>
+        !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x) && x !== -1
+    );
+    // If the user has this notification type disabled, don't create a notification.
+    if (targets.length === 0) return;
+
+    await notifDbWrite.cancellableQuery(Prisma.sql`
+      INSERT INTO "PendingNotification" (key, type, category, users, details)
+      VALUES
+        (${data.key},
+         ${data.type},
+         ${data.category}::"NotificationCategory",
+         ${'{' + targets.join(',') + '}'},
+         ${JSON.stringify(data.details)}::jsonb)
+      ON CONFLICT DO NOTHING
+    `);
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'Failed to create notification',
+        details: { key: data.key },
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'notifications'
+    ).catch();
+  }
+};
+
 export async function getUserNotifications({
   limit = DEFAULT_PAGE_SIZE,
   cursor,
@@ -35,21 +91,30 @@ export async function getUserNotifications({
   userId: number;
   count?: boolean;
 }) {
-  const AND = [Prisma.sql`n."userId" = ${userId}`];
-  if (unread) AND.push(Prisma.sql`nv.id IS NULL`);
-  if (cursor) AND.push(Prisma.sql`n."createdAt" < ${cursor}`);
-  else AND.push(Prisma.sql`n."createdAt" > NOW() - interval '1 month'`);
-
+  const AND = [Prisma.sql`un."userId" = ${userId}`];
+  if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const items = await dbRead.$queryRaw<NotificationsRaw[]>`
-    SELECT n."id", "type", "category", "details", "createdAt", nv."id" IS NOT NULL as read
-    FROM "Notification" n
-    LEFT JOIN "NotificationViewed" nv ON n."id" = nv."id" AND nv."userId" = ${userId}
-    WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY "createdAt" DESC
+  if (cursor) AND.push(Prisma.sql`un."createdAt" < ${cursor}`);
+  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
+
+  const query = await notifDbRead.cancellableQuery<NotificationsRaw>(Prisma.sql`
+    SELECT
+      un.id,
+      n.type,
+      n.category,
+      n.details,
+      un."createdAt",
+      un.viewed AS read
+    FROM
+      "UserNotification" un
+        JOIN "Notification" n ON n."id" = un."notificationId"
+    WHERE
+      ${Prisma.join(AND, ' AND ')}
+    ORDER BY un."createdAt" DESC
     LIMIT ${limit}
-  `;
+  `);
+  const items = await query.result();
 
   await populateNotificationDetails(items);
 
@@ -70,38 +135,29 @@ export async function getUserNotificationCount({
   const cachedCount = await notificationCache.getUser(userId);
   if (cachedCount) return cachedCount;
 
-  const AND = [Prisma.sql`"userId" = ${userId}`];
-  if (unread)
-    AND.push(
-      Prisma.sql`"id" NOT IN (SELECT id FROM "NotificationViewed" WHERE "userId" = ${userId})`
-    );
-  else AND.push(Prisma.sql`"createdAt" > NOW() - interval '1 month'`);
+  const AND = [Prisma.sql`un."userId" = ${userId}`];
+  if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
+  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
-  if (category) AND.push(Prisma.sql`category = ${category}::"NotificationCategory"`);
+  // this seems unused
+  if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const result = await dbRead.$queryRaw<NotificationCategoryArray>`
+  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
-      category,
-      COUNT(*) as count
-    FROM "Notification"
-    WHERE ${Prisma.join(AND, ' AND ')}
+      n.category,
+      COUNT(*) AS count
+    FROM
+      "UserNotification" un
+        JOIN "Notification" n ON n."id" = un."notificationId"
+    WHERE
+      ${Prisma.join(AND, ' AND ')}
     GROUP BY category
-  `;
+  `);
+
+  const result = await query.result();
   await notificationCache.setUser(userId, result);
   return result;
 }
-
-export const createUserNotificationSetting = async ({
-  type,
-  userId,
-}: ToggleNotificationSettingInput & { userId: number }) => {
-  const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
-  return dbWrite.$executeRaw`
-    INSERT INTO "UserNotificationSettings" ("type", "userId") VALUES
-    ${Prisma.join(values)}
-    ON CONFLICT DO NOTHING
-  `;
-};
 
 export const markNotificationsRead = async ({
   id,
@@ -111,38 +167,67 @@ export const markNotificationsRead = async ({
 }: MarkReadNotificationInput & { userId: number }) => {
   if (all) {
     const AND = [
-      Prisma.sql`"userId" = ${userId}`,
-      Prisma.sql`"id" NOT IN (SELECT "id" FROM "NotificationViewed" WHERE "userId" = ${userId})`,
+      Prisma.sql`un."notificationId" = n.id`,
+      Prisma.sql`un."userId" = ${userId}`,
+      Prisma.sql`un.viewed IS FALSE`,
     ];
-    if (category) AND.push(Prisma.sql`"category" = ${category}::"NotificationCategory"`);
-    await dbWrite.$executeRaw`
-      INSERT INTO "NotificationViewed" ("id", "userId")
-      SELECT "id", ${userId}
-      FROM "Notification"
-      WHERE ${Prisma.join(AND, ' AND ')}
-    `;
+    if (category) AND.push(Prisma.sql`n."category" = ${category}::"NotificationCategory"`);
+
+    await notifDbWrite.query(Prisma.sql`
+      UPDATE "UserNotification" un
+      SET
+        viewed = TRUE
+      FROM
+        "Notification" n
+      WHERE
+        ${Prisma.join(AND, ' AND ')}
+    `);
 
     // Update cache
     if (category) await notificationCache.clearCategory(userId, category);
     else await notificationCache.bustUser(userId);
   } else {
-    const [change] = await dbWrite.$queryRaw<{ id: string }[]>`
-      INSERT INTO "NotificationViewed" ("id", "userId")
-      VALUES (${id}, ${userId})
-      ON CONFLICT ("id") DO NOTHING
-      RETURNING "id"
-    `;
+    const resp = await notifDbWrite.query(Prisma.sql`
+      UPDATE "UserNotification" un
+      SET
+        viewed = TRUE
+      WHERE
+          id = ${id}
+      AND viewed IS FALSE
+    `);
 
     // Update cache if the notification was marked read
-    if (change) {
-      const notification = await dbRead.notification.findFirst({
-        where: { id },
-        select: { category: true },
-      });
-      if (notification?.category)
-        await notificationCache.decrementUser(userId, notification.category);
+    if (resp.rowCount) {
+      const catQuery = await notifDbRead.cancellableQuery<{
+        category: NotificationCategory;
+      }>(Prisma.sql`
+        SELECT
+          n.category
+        FROM
+          "UserNotification" un
+            JOIN "Notification" n ON un."notificationId" = n.id
+        WHERE
+          un.id = ${id}
+      `);
+      const catData = await catQuery.result();
+      if (catData && catData.length)
+        await notificationCache.decrementUser(userId, catData[0].category);
     }
   }
+};
+
+export const createUserNotificationSetting = async ({
+  type,
+  userId,
+}: ToggleNotificationSettingInput & { userId: number }) => {
+  const values = type.map((t) => Prisma.sql`(${t}, ${userId})`);
+  return dbWrite.$executeRaw`
+    INSERT INTO "UserNotificationSettings" ("type", "userId")
+    VALUES
+    ${Prisma.join(values)}
+    ON CONFLICT
+    DO NOTHING
+  `;
 };
 
 export const deleteUserNotificationSetting = async ({
@@ -150,33 +235,4 @@ export const deleteUserNotificationSetting = async ({
   userId,
 }: ToggleNotificationSettingInput & { userId: number }) => {
   return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
-};
-
-export const createNotification = async (data: Prisma.NotificationCreateArgs['data']) => {
-  const userNotificationSettings = await dbWrite.userNotificationSettings.findFirst({
-    where: { userId: data.userId, type: data.type },
-  });
-  // If the user has this notification type disabled, don't create a notification.
-  if (!!userNotificationSettings?.disabledAt) return;
-
-  const notificationTable =
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'notificationTable')) ?? 'Notification';
-
-  if (!data.id) data.id = uuid();
-  const [change] = await dbWrite.$queryRaw<NotificationAddedRow[]>`
-    INSERT INTO ${Prisma.raw(
-      `"${notificationTable}"`
-    )} ("id", "userId", "type", "details", "category")
-    VALUES (
-      ${data.id},
-      ${data.userId},
-      ${data.type},
-      ${JSON.stringify(data.details)}::jsonb,
-      ${data.category}::"NotificationCategory"
-    )
-    ON CONFLICT ("id") DO NOTHING
-    RETURNING "userId", category
-  `;
-
-  if (change) await notificationCache.incrementUser(change.userId, change.category);
 };

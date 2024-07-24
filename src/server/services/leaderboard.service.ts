@@ -19,7 +19,7 @@ export async function isLeaderboardPopulated() {
         FROM "LeaderboardResult" lr
         JOIN "Leaderboard" l ON l.id = lr."leaderboardId"
         WHERE l.query != '' AND date = current_date::date
-      ) = (SELECT COUNT(*) FROM "Leaderboard" WHERE query != '') as "populated"
+      ) = (SELECT COUNT(*) FROM "Leaderboard" WHERE query != '' AND active) as "populated"
     `;
 
   return populated;

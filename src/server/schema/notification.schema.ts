@@ -1,5 +1,5 @@
-import { NotificationCategory } from '@prisma/client';
 import { z } from 'zod';
+import { NotificationCategory } from '~/server/common/enums';
 
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
@@ -17,7 +17,7 @@ export const toggleNotificationSettingInput = z.object({
 export type ToggleNotificationSettingInput = z.input<typeof toggleNotificationSettingInput>;
 
 export const markReadNotificationInput = z.object({
-  id: z.string().optional(),
+  id: z.number().optional(),
   all: z.boolean().optional(),
   category: z.nativeEnum(NotificationCategory).nullish(),
 });

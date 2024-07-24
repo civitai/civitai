@@ -19,8 +19,10 @@ export type SystemModerationTag = {
   parentId?: number;
 };
 export async function getModeratedTags(): Promise<SystemModerationTag[]> {
-  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.MODERATED_TAGS);
-  if (cachedTags) return JSON.parse(cachedTags);
+  const cachedTags = await redis.packed.get<SystemModerationTag[]>(
+    REDIS_KEYS.SYSTEM.MODERATED_TAGS
+  );
+  if (cachedTags) return cachedTags;
 
   log('getting moderation tags');
   const tags = await dbRead.tag.findMany({
@@ -43,7 +45,7 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
 
   const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
-  await redis.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, JSON.stringify(combined), {
+  await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {
     EX: SYSTEM_CACHE_EXPIRY,
   });
 
@@ -185,6 +187,24 @@ export async function getTagsNeedingReview() {
   });
 
   log('got tags needing review');
+  return tags;
+}
+
+export async function getBlockedTags() {
+  const cachedTags = await redis.get(REDIS_KEYS.SYSTEM.TAGS_BLOCKED);
+  if (cachedTags) return JSON.parse(cachedTags) as { id: number; name: string }[];
+
+  log('getting blocked tags');
+  const tags = await dbWrite.tag.findMany({
+    where: { nsfwLevel: NsfwLevel.Blocked },
+    select: { id: true, name: true },
+  });
+
+  await redis.set(REDIS_KEYS.SYSTEM.TAGS_BLOCKED, JSON.stringify(tags), {
+    EX: SYSTEM_CACHE_EXPIRY,
+  });
+
+  log('got blocked tags');
   return tags;
 }
 

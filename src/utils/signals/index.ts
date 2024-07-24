@@ -5,22 +5,21 @@ import { createStore } from 'zustand/vanilla';
 
 // Debugging
 const logs: Record<string, boolean> = {};
-const logFn = (args: unknown) => console.log(args);
 
 type State = { available: boolean };
 type Store = State & { update: (fn: (args: State) => State) => void };
 
-export type SignalWorker = AsyncReturnType<typeof createSignalWorker>;
-export const createSignalWorker = async ({
-  token,
+export type SignalWorker = ReturnType<typeof createSignalWorker>;
+export const createSignalWorker = ({
   onConnected,
   onClosed,
   onError,
   onReconnected,
+  onReconnecting,
 }: {
-  token: string;
   onConnected?: () => void;
   onReconnected?: () => void;
+  onReconnecting?: () => void;
   /** A closed connection will not recover on its own. */
   onClosed?: (message?: string) => void;
   onError?: (message?: string) => void;
@@ -37,7 +36,7 @@ export const createSignalWorker = async ({
   }));
 
   const worker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
-    name: 'civitai-signals:1.1',
+    name: 'civitai-signals:1.3',
     type: 'module',
   });
 
@@ -47,6 +46,7 @@ export const createSignalWorker = async ({
     else if (data.type === 'connection:closed') onClosed?.(data.message);
     else if (data.type === 'connection:error') onError?.(data.message);
     else if (data.type === 'connection:reconnected') onReconnected?.();
+    else if (data.type === 'connection:reconnecting') onReconnecting?.();
     else if (data.type === 'event:received') emitter.emit(data.target, data.payload);
     else if (data.type === 'pong') pingDeferred?.resolve();
   };
@@ -88,16 +88,22 @@ export const createSignalWorker = async ({
     }
   };
 
-  await deferred.promise;
-
   if (typeof window !== 'undefined') {
-    window.logSignal = (target) => {
+    window.logSignal = (target, selector) => {
+      function logFn(args: unknown) {
+        if (selector) {
+          const result = [args].find(selector);
+          if (result) console.log(result);
+        } else console.log(args);
+      }
       if (!logs[target]) {
         logs[target] = true;
         on(target, logFn);
+        console.log(`begin logging: ${target}`);
       } else {
         delete logs[target];
         off(target, logFn);
+        console.log(`end logging: ${target}`);
       }
     };
   }
@@ -113,12 +119,16 @@ export const createSignalWorker = async ({
   // ping-pong with worker to check for worker availability
   document.addEventListener('visibilitychange', ping);
 
-  postMessage({ type: 'connection:init', token });
+  async function init(token: string) {
+    await deferred.promise;
+    postMessage({ type: 'connection:init', token });
+  }
 
   return {
     on,
     off,
     close,
     subscribe,
+    init,
   };
 };

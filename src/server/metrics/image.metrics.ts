@@ -3,15 +3,25 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
+import { ImageMetric, MetricTimeframe } from '@prisma/client';
+import { templateHandler } from '~/server/db/db-helpers';
+import { getJobDate } from '~/server/jobs/job';
 
 const log = createLogger('metrics:image');
 
 export const imageMetrics = createMetricProcessor({
   name: 'Image',
-  async update(ctx) {
+  async update(baseCtx) {
+    const ctx = baseCtx as ImageMetricContext;
+    const [lastViewUpdateDate, setLastViewUpdate] = await getJobDate('metric:image:views');
+    const lastViewUpdate = dayjs(lastViewUpdateDate);
+    ctx.updates = {};
+    ctx.lastViewUpdate = lastViewUpdate;
+    ctx.setLastViewUpdate = setLastViewUpdate;
+
     // Get the metric tasks
     //---------------------------------------
     const taskBatches = await Promise.all([
@@ -21,8 +31,56 @@ export const imageMetrics = createMetricProcessor({
       getBuzzTasks(ctx),
       getViewTasks(ctx),
     ]);
+    const hasViewTasks = taskBatches[4].length > 0;
     log('imageMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
+
+    // Update the the metrics
+    //---------------------------------------
+    const tasks = chunk(Object.values(ctx.updates), 1000).map((batch, i) => async () => {
+      ctx.jobContext.checkIfCanceled();
+      log('update metrics', i + 1, 'of', tasks.length);
+
+      const batchJson = JSON.stringify(batch);
+      const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
+      const metricValues = metrics
+        .map(
+          (key) => `
+        CASE
+          WHEN tf.timeframe = 'Day' THEN COALESCE(d."${key}"[1], im."${key}", 0)
+          WHEN tf.timeframe = 'Month' THEN COALESCE(d."${key}"[2], im."${key}", 0)
+          WHEN tf.timeframe = 'Week' THEN COALESCE(d."${key}"[3], im."${key}", 0)
+          WHEN tf.timeframe = 'Year' THEN COALESCE(d."${key}"[4], im."${key}", 0)
+          WHEN tf.timeframe = 'AllTime' THEN COALESCE(d."${key}"[5], im."${key}", 0)
+        END as "${key}"
+      `
+        )
+        .join(',\n');
+      const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+
+      await executeRefresh(ctx)`
+        -- update image metrics
+        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("imageId" INT, "heartCount" INT[], "likeCount" INT[], "dislikeCount" INT[], "laughCount" INT[], "cryCount" INT[], "commentCount" INT[], "collectedCount" INT[], "tippedCount" INT[], "tippedAmountCount" INT[], "viewCount" INT[]))
+        INSERT INTO "ImageMetric" ("imageId", "timeframe", "updatedAt", ${metricInsertKeys})
+        SELECT
+          d."imageId",
+          tf.timeframe,
+          NOW() as "updatedAt",
+          ${metricValues}
+        FROM data d
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
+        LEFT JOIN "ImageMetric" im ON im."imageId" = d."imageId" AND im."timeframe" = tf.timeframe
+        WHERE EXISTS (SELECT 1 FROM "Image" WHERE id = d."imageId") -- ensure the image exists
+        ON CONFLICT ("imageId", "timeframe") DO UPDATE
+          SET
+            ${metricOverrides},
+            "updatedAt" = NOW()
+      `;
+      await sleep(1000);
+      log('update metrics', i + 1, 'of', tasks.length, 'done');
+    });
+    await limitConcurrency(tasks, 3);
+    if (hasViewTasks) await setLastViewUpdate();
 
     // Update the search index
     //---------------------------------------
@@ -38,21 +96,38 @@ export const imageMetrics = createMetricProcessor({
     // Update the age group of the metrics
     //---------------------------------------
     log('update age groups');
-    await executeRefresh(ctx)`
-      UPDATE "ImageMetric"
-      SET "ageGroup" = CASE
-          WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
-          WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
-          ELSE 'AllTime'::"MetricTimeframe"
-      END
+    // Fetch things that need to change
+    const ageGroupUpdatesQuery = await ctx.pg.cancellableQuery<{ imageId: number }>(`
+      SELECT "imageId"
+      FROM "ImageMetric"
       WHERE
         ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
         ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
         ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
         ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
-    `;
+    `);
+    ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
+    const ageGroupUpdates = await ageGroupUpdatesQuery.result();
+    const affectedIds = ageGroupUpdates.map((x) => x.imageId);
+    if (affectedIds.length) {
+      const ageGroupTasks = chunk(affectedIds, 500).map((ids, i) => async () => {
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
+        await executeRefresh(ctx)`
+          UPDATE "ImageMetric"
+          SET "ageGroup" = CASE
+              WHEN "createdAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+              WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+              ELSE 'AllTime'::"MetricTimeframe"
+          END
+          WHERE "imageId" IN (${ids});
+        `;
+        await sleep(2000);
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
+      });
+      await limitConcurrency(ageGroupTasks, 3);
+    }
   },
   async clearDay(ctx) {
     // Clear day of things updated in the last day
@@ -63,9 +138,32 @@ export const imageMetrics = createMetricProcessor({
         AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
+  lockTime: 5 * 60,
+  updateInterval: 30 * 60,
 });
 
-async function getReactionTasks(ctx: MetricProcessorRunContext) {
+type ImageMetricKey = keyof ImageMetric;
+type TimeframeData = [number, number, number, number, number];
+type ImageMetricContext = MetricProcessorRunContext & {
+  updates: Record<number, Record<ImageMetricKey, TimeframeData | number>>;
+  lastViewUpdate: dayjs.Dayjs;
+  setLastViewUpdate: () => void;
+};
+const metrics = [
+  'heartCount',
+  'likeCount',
+  'dislikeCount',
+  'laughCount',
+  'cryCount',
+  'commentCount',
+  'collectedCount',
+  'tippedCount',
+  'tippedAmountCount',
+  'viewCount',
+] as const;
+const timeframeOrder = ['Day', 'Week', 'Month', 'Year', 'AllTime'] as const;
+
+async function getReactionTasks(ctx: ImageMetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const affected = await getAffected(ctx)`
     -- get recent image reactions
@@ -79,20 +177,16 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
-    await executeRefresh(ctx)`
+    await getMetrics(ctx)`
       -- update image reaction metrics
-      INSERT INTO "ImageMetric" ("imageId", timeframe, ${snippets.reactionMetricNames})
       SELECT
         r."imageId",
         tf.timeframe,
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
-      JOIN "Image" i ON i.id = r."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE r."imageId" IN (${ids})
       GROUP BY r."imageId", tf.timeframe
-      ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -100,7 +194,33 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
   return tasks;
 }
 
-async function getCommentTasks(ctx: MetricProcessorRunContext) {
+function getMetrics(ctx: ImageMetricContext) {
+  return templateHandler(async (sql) => {
+    const query = await ctx.pg.cancellableQuery<ImageMetric>(sql);
+    ctx.jobContext.on('cancel', query.cancel);
+    const data = await query.result();
+    if (!data.length) return;
+
+    for (const row of data) {
+      const imageId = row.imageId;
+      const { timeframe } = row;
+      if (!timeframe) continue;
+      const timeframeIndex = timeframeOrder.indexOf(timeframe);
+      if (timeframeIndex === -1) continue;
+
+      ctx.updates[imageId] ??= { imageId } as Record<ImageMetricKey, TimeframeData | number>;
+      for (const key of Object.keys(row) as ImageMetricKey[]) {
+        if (key === 'imageId' || key === 'timeframe') continue;
+        const value = row[key];
+        if (value == null) continue;
+        ctx.updates[imageId][key] ??= [0, 0, 0, 0, 0];
+        (ctx.updates[imageId][key] as TimeframeData)[timeframeIndex] = Number(value);
+      }
+    }
+  });
+}
+
+async function getCommentTasks(ctx: ImageMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent image comments
     SELECT t."imageId" as id
@@ -112,21 +232,17 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
+    await getMetrics(ctx)`
       -- update image comment metrics
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "commentCount")
       SELECT
         t."imageId",
         tf.timeframe,
         ${snippets.timeframeSum('c."createdAt"')}
       FROM "Thread" t
-      JOIN "Image" i ON i.id = t."imageId" -- ensure the image exists
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."imageId" IN (${ids})
       GROUP BY t."imageId", tf.timeframe
-      ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -134,7 +250,7 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   return tasks;
 }
 
-async function getCollectionTasks(ctx: MetricProcessorRunContext) {
+async function getCollectionTasks(ctx: ImageMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent image collections
     SELECT "imageId" as id
@@ -145,20 +261,16 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
+    await getMetrics(ctx)`
       -- update image collection metrics
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "collectedCount")
       SELECT
         "imageId",
         tf.timeframe,
         ${snippets.timeframeSum('ci."createdAt"')}
       FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."imageId" IN (${ids})
       GROUP BY ci."imageId", tf.timeframe
-      ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -166,7 +278,7 @@ async function getCollectionTasks(ctx: MetricProcessorRunContext) {
   return tasks;
 }
 
-async function getBuzzTasks(ctx: MetricProcessorRunContext) {
+async function getBuzzTasks(ctx: ImageMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent image tips
     SELECT "entityId" as id
@@ -179,19 +291,15 @@ async function getBuzzTasks(ctx: MetricProcessorRunContext) {
     log('getBuzzTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- update image tip metrics
-      INSERT INTO "ImageMetric" ("imageId", timeframe, "tippedCount", "tippedAmountCount")
       SELECT
         "entityId",
         tf.timeframe,
         ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
         ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
       FROM "BuzzTip" bt
-      JOIN "Image" i ON i.id = bt."entityId" -- ensure the image exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "entityId" IN (${ids}) AND "entityType" = 'Image'
       GROUP BY "entityId", tf.timeframe
-      ON CONFLICT ("imageId", timeframe) DO UPDATE
-        SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = NOW()
     `;
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -207,7 +315,9 @@ type ImageMetricView = {
   year: number;
   all_time: number;
 };
-async function getViewTasks(ctx: MetricProcessorRunContext) {
+async function getViewTasks(ctx: ImageMetricContext) {
+  if (ctx.lastViewUpdate.isAfter(ctx.lastViewUpdate.subtract(1, 'day'))) return [];
+
   const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
   const viewed = await ctx.ch.$query<ImageMetricView>`
     WITH targets AS (
@@ -234,42 +344,19 @@ async function getViewTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(viewed, 1000).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getViewTasks', i + 1, 'of', tasks.length);
-    try {
-      const batchJson = JSON.stringify(batch);
-      await executeRefresh(ctx)`
-        -- update image view metrics
-        INSERT INTO "ImageMetric" ("imageId", timeframe, "viewCount")
-        SELECT
-          "imageId",
-          timeframe,
-          views
-        FROM (
-            SELECT
-                CAST(mvs::json->>'imageId' AS INT) AS "imageId",
-                tf.timeframe,
-                CAST(
-                  CASE
-                    WHEN tf.timeframe = 'Day' THEN mvs::json->>'day'
-                    WHEN tf.timeframe = 'Week' THEN mvs::json->>'week'
-                    WHEN tf.timeframe = 'Month' THEN mvs::json->>'month'
-                    WHEN tf.timeframe = 'Year' THEN mvs::json->>'year'
-                    WHEN tf.timeframe = 'AllTime' THEN mvs::json->>'all_time'
-                  END
-                AS int) as views
-            FROM json_array_elements('${batchJson}'::json) mvs
-            CROSS JOIN (
-                SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
-            ) tf
-        ) im
-        JOIN "Image" i ON i.id = im."imageId" -- ensure the image exists
-        WHERE im.views IS NOT NULL
-        AND im."imageId" IN (SELECT id FROM "Image")
-        ON CONFLICT ("imageId", timeframe) DO UPDATE
-          SET "viewCount" = EXCLUDED."viewCount",
-              "updatedAt" = NOW();
-      `;
-    } catch (err) {
-      throw err;
+    for (const row of batch) {
+      const { imageId, ...views } = row;
+      if (!imageId) continue;
+      const viewCount = Object.values(views).reduce((a, b) => a + b, 0);
+      if (viewCount === 0) continue;
+      ctx.updates[imageId] ??= { imageId } as Record<ImageMetricKey, TimeframeData | number>;
+      ctx.updates[imageId].viewCount = [
+        views.day,
+        views.week,
+        views.month,
+        views.year,
+        views.all_time,
+      ];
     }
     log('getViewTasks', i + 1, 'of', tasks.length, 'done');
   });

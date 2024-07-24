@@ -56,14 +56,13 @@ function RenderFilters() {
         ]}
       />
       <DateRangeRefinement title="Filter by Creation Date" attribute="createdAtUnix" />
-      {/* TODO.search: Uncomment this refinement when the index gets update to include "type" as filterable attribute */}
-      {/* <ChipRefinementList
+      <ChipRefinementList
         title="Filter by Media Type"
         sortBy={['name']}
         operator="or"
         attribute="type"
         transformItems={filterMediaTypesOptions}
-      /> */}
+      />
       <ChipRefinementList
         title="Filter by Aspect Ratio"
         sortBy={['name']}

@@ -1,32 +1,41 @@
+import { ClubAdminPermission, EntityType } from '@prisma/client';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { v4 as uuid } from 'uuid';
+import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
+import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
+  ClubTransactionSchema,
   CompleteStripeBuzzPurchaseTransactionInput,
-  CreateBuzzTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
-  ClubTransactionSchema,
 } from '~/server/schema/buzz.schema';
 import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
+  createBuzzTransactionMany,
   getMultipliersForUser,
   getUserBuzzAccount,
   getUserBuzzTransactions,
+  upsertBuzzTip,
 } from '~/server/services/buzz.service';
+import { getEntityCollaborators } from '~/server/services/entity-collaborator.service';
+import { getImageById } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import { isDefined } from '~/utils/type-guards';
+import { userContributingClubs } from '../services/club.service';
 import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
+  throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
-import { dbRead } from '~/server/db/client';
-import { userContributingClubs } from '../services/club.service';
-import { ClubAdminPermission } from '@prisma/client';
-import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -107,7 +116,7 @@ export function completeStripeBuzzPurchaseHandler({
   }
 }
 
-export function createBuzzTipTransactionHandler({
+export async function createBuzzTipTransactionHandler({
   input,
   ctx,
 }: {
@@ -119,11 +128,117 @@ export function createBuzzTipTransactionHandler({
     if (fromAccountId === input.toAccountId)
       throw throwBadRequestError('You cannot send buzz to the same account');
 
-    return createBuzzTransaction({
+    if (input.toAccountId === -1) {
+      throw throwBadRequestError('You cannot send buzz to the system account');
+    }
+
+    const blocked = await amIBlockedByUser({
+      userId: fromAccountId,
+      targetUserId: input.toAccountId,
+    });
+    if (blocked) {
+      throw throwBadRequestError('You cannot send buzz to a user that has blocked you');
+    }
+
+    const { entityType, entityId } = input;
+    let targetUserIds: number[] = input.toAccountId ? [input.toAccountId] : [];
+
+    if ((entityType === 'Post' || entityType === 'Image') && entityId) {
+      // May have contributros, check this...
+      const collaboratorEntityType = EntityType.Post; // For the time being, only this is supported.
+      const collaboratorEntityId =
+        entityType === 'Post' ? entityId : (await getImageById({ id: entityId }))?.postId;
+
+      if (collaboratorEntityId && collaboratorEntityType) {
+        const collaborators = await getEntityCollaborators({
+          entityId: collaboratorEntityId,
+          entityType: collaboratorEntityType,
+        });
+
+        const collaboratorIds = collaborators.map((c) => c.user.id);
+
+        targetUserIds = [...new Set([...targetUserIds, ...collaboratorIds])].filter(isDefined);
+      }
+    }
+
+    if (targetUserIds.length === 0) {
+      throw throwBadRequestError('No valid target users found');
+    }
+
+    if (targetUserIds.includes(fromAccountId)) {
+      throw throwBadRequestError('You cannot send buzz to the same account');
+    }
+
+    const amount = Math.floor(input.amount / targetUserIds.length);
+    const finalAmount = amount * targetUserIds.length;
+
+    if (input.amount <= 0) {
+      throw throwBadRequestError('Amount must be greater than 0');
+    }
+
+    if (amount <= 0) {
+      throw throwBadRequestError('Could not split the amount between users');
+    }
+    // Confirm user funds:
+    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId });
+    if ((userAccount.balance ?? 0) < finalAmount) {
+      throw throwInsufficientFundsError();
+    }
+
+    const sharedId = `tip-${uuid()}-${entityType}-${entityId}-by-${ctx.user.id}`;
+    const transactions = targetUserIds.map((toAccountId) => ({
       ...input,
       fromAccountId: ctx.user.id,
       type: TransactionType.Tip,
-    });
+      amount,
+      details: {
+        ...(input.details ?? {}),
+        targetUserIds,
+        originalAmount: input.amount,
+        // sharedId is a way to group transactions that are related to each other like contributor ones.
+        // This is not global by any means, but should let us know that these transactions are related.
+        sharedId,
+      },
+      toAccountId,
+      externalTransactionId: `${sharedId}-${toAccountId}`,
+    }));
+
+    // Now, create all transactions
+    const data = await createBuzzTransactionMany(transactions); // Now store these in the DB:
+
+    if (entityType && entityId) {
+      // TODO: We might wanna notify contributors, but hardly a priority right now imho.
+      await upsertBuzzTip({
+        ...transactions[0],
+        amount: finalAmount, // This is a total amount that was sent to all users.
+        entityType: entityType as string,
+        entityId: entityId as number,
+      });
+    } else {
+      const toAccountId = transactions[0].toAccountId;
+      const description = transactions[0].description;
+      if (toAccountId !== 0) {
+        const fromUser = await dbRead.user.findUnique({
+          where: { id: fromAccountId },
+          select: { username: true },
+        });
+
+        await createNotification({
+          type: 'tip-received',
+          userId: toAccountId,
+          category: NotificationCategory.Buzz,
+          key: `tip-received:${uuid()}`,
+          details: {
+            amount: amount,
+            user: fromUser?.username,
+            fromUserId: fromAccountId,
+            message: description,
+          },
+        });
+      }
+    }
+
+    return data;
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

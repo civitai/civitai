@@ -8,6 +8,7 @@ import {
   MantineSize,
   Text,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
@@ -19,7 +20,7 @@ import { useBuzzTransaction } from './buzz.utils';
 type Props = ButtonProps & {
   buzzAmount: number;
   message?: string | ((requiredBalance: number) => string);
-  label: string;
+  label: React.ReactNode;
   onPerformTransaction?: () => void;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   size?: MantineSize;
@@ -50,6 +51,7 @@ export function BuzzTransactionButton({
 }: Props) {
   const features = useFeatureFlags();
   const { classes, cx } = useButtonStyle();
+  const theme = useMantineTheme();
   const { conditionalPerformTransaction, hasRequiredAmount } = useBuzzTransaction({
     message,
     purchaseSuccessMessage,
@@ -91,6 +93,7 @@ export function BuzzTransactionButton({
           width: '100%',
         },
       }}
+      size={size}
       disabled={buttonProps.disabled || !!error}
     >
       <Group spacing="md" position="apart" noWrap w="100%">
@@ -107,7 +110,7 @@ export function BuzzTransactionButton({
             pl={4}
             pr={8}
             loading={loading}
-            color="dark.8"
+            color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
           >
             {!hasRequiredAmount(buzzAmount) && (
               <Tooltip

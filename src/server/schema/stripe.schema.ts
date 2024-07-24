@@ -51,6 +51,7 @@ export const paymentIntentCreationSchema = z.object({
   metadata: paymentIntentMetadataSchema,
   paymentMethodTypes: z.array(z.string()).nullish(),
   recaptchaToken: z.string(),
+  setupFuturePayment: z.boolean().default(true),
 });
 
 export type GetPaymentIntentsForBuzzSchema = z.infer<typeof getPaymentIntentsForBuzzSchema>;

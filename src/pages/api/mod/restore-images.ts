@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
@@ -14,7 +15,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds } = schema.parse(req.body);
+    const { imageIds, userId } = schema.parse(req.body);
 
     const images = await dbRead.image.findMany({
       where: { id: { in: imageIds } },
@@ -33,6 +34,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         },
       },
     });
+    const imageTags = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
+      SELECT "imageId", t."name" as "tag"
+      FROM "TagsOnImage" toi
+      JOIN "Tags" t ON toi."tagId" = t."id"
+      WHERE toi."imageId" IN (${Prisma.join(imageIds)})
+    `;
 
     await moderateImages({
       ids: imageIds,
@@ -43,12 +50,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const tracker = new Tracker(req, res);
     for (const image of images) {
-      const tags = image.tags.map((x) => x.tag.name);
+      const tags = imageTags.filter((x) => x.imageId === image.id).map((x) => x.tag);
       tracker.image({
         type: 'Restore',
         imageId: image.id,
         ownerId: image.userId,
         nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
+        userId,
         tags,
       });
     }

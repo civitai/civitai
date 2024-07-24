@@ -99,6 +99,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -113,7 +114,10 @@ export const getServerSideProps = createServerSideProps({
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
-    if (ssg) await ssg.bounty.getById.prefetch({ id: result.data.id });
+    if (ssg) {
+      await ssg.bounty.getById.prefetch({ id: result.data.id });
+      await ssg.hiddenPreferences.getHidden.prefetch();
+    }
 
     return { props: removeEmpty(result.data) };
   },
@@ -140,6 +144,9 @@ export default function BountyDetailsPage({
 
   const isFavorite = !bounty ? false : !!engagements?.Favorite?.find((id) => id === bounty.id);
   const isTracked = !bounty ? false : !!engagements?.Track?.find((id) => id === bounty.id);
+
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === bounty?.user?.id);
 
   const handleEngagementClick = async (type: BountyEngagementType) => {
     if (toggling || !bounty) return;
@@ -180,7 +187,7 @@ export default function BountyDetailsPage({
   }, [bounty?.id, bounty?.images, setImages]);
 
   if (loading) return <PageLoader />;
-  if (!bounty) return <NotFound />;
+  if (!bounty || isBlocked) return <NotFound />;
 
   if (!currentUser && !hasPublicBrowsingLevel(bounty.nsfwLevel)) {
     return (

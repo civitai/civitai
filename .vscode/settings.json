@@ -5,12 +5,6 @@
     "source.fixAll.eslint": "explicit"
   },
   "files.eol": "\n",
-  "[typescriptreact]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode"
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "dbaeumer.vscode-eslint"
-  },
   "[sql]": {
     "editor.formatOnSave": false
   },

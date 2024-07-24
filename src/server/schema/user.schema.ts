@@ -6,11 +6,13 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import { creatorCardStats, constants } from '~/server/common/constants';
+import models from '~/pages/api/v1/models';
+import { constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -55,6 +57,7 @@ export const getAllUsersInput = getAllQuerySchema
     email: z.string(),
     ids: commaDelimitedNumberArray(),
     include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
+    excludedUserIds: z.array(z.number()).optional(),
   })
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
@@ -84,7 +87,7 @@ export const userUpdateSchema = z.object({
   username: usernameInputSchema.optional(),
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
@@ -111,7 +114,7 @@ export type UserUpdateInput = z.input<typeof userUpdateSchema>;
 export const updateBrowsingModeSchema = z.object({
   showNsfw: z.boolean().optional(),
   blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().optional(),
+  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
 });
 
 export const toggleFavoriteInput = z.object({
@@ -182,6 +185,7 @@ export type ProhibitedSources = z.infer<typeof prohibitedSources>;
 export type ReportProhibitedRequestInput = z.infer<typeof reportProhibitedRequestSchema>;
 export const reportProhibitedRequestSchema = z.object({
   prompt: z.string().optional(),
+  negativePrompt: z.string().optional(),
   source: prohibitedSources.optional(),
 });
 
@@ -219,7 +223,11 @@ export const dismissAlertSchema = z.object({ alertId: z.string() });
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({ step: z.literal(OnboardingSteps.TOS), recaptchaToken: z.string() }),
-  z.object({ step: z.literal(OnboardingSteps.Profile), username: z.string(), email: z.string() }),
+  z.object({
+    step: z.literal(OnboardingSteps.Profile),
+    username: usernameInputSchema,
+    email: z.string(),
+  }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
     step: z.literal(OnboardingSteps.Buzz),
@@ -227,3 +235,25 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     source: z.string().optional(),
   }),
 ]);
+
+export const setLeaderboardEligbilitySchema = z.object({
+  id: z.number(),
+  setTo: z.boolean(),
+});
+export type SetLeaderboardEligibilitySchema = z.infer<typeof setLeaderboardEligbilitySchema>;
+
+export type UserScoreMeta = z.infer<typeof userScoreMetaSchema>;
+export const userScoreMetaSchema = z.object({
+  total: z.number(),
+  models: z.number().optional(),
+  articles: z.number().optional(),
+  images: z.number().optional(),
+  users: z.number().optional(),
+  reportsActioned: z.number().optional(),
+  reportsAgainst: z.number().optional(),
+});
+export const userMeta = z.object({
+  firstImage: z.date().optional(),
+  scores: userScoreMetaSchema.optional(),
+});
+export type UserMeta = z.infer<typeof userMeta>;

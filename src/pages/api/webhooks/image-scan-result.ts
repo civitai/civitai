@@ -1,40 +1,40 @@
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import * as z from 'zod';
-import { dbWrite } from '~/server/db/client';
 import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
+import { z } from 'zod';
+import { topLevelModerationCategories } from '~/libs/moderation';
+import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
+import { constants } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { scanJobsSchema } from '~/server/schema/image.schema';
+import { imagesSearchIndex } from '~/server/search-index';
+import { updateImageTagIdsForImages } from '~/server/services/image.service';
+import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { getTagRules } from '~/server/services/system-cache';
+import { deleteUserProfilePictureCache } from '~/server/services/user.service';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { getComputedTags } from '~/server/utils/tag-rules';
+import { logToDb } from '~/utils/logging';
 import {
   auditMetaData,
   getTagsFromPrompt,
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
-import { topLevelModerationCategories } from '~/libs/moderation';
-import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
-import { logToDb } from '~/utils/logging';
-import { constants } from '~/server/common/constants';
-import { getComputedTags } from '~/server/utils/tag-rules';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
-import { imagesSearchIndex } from '~/server/search-index';
-import { deleteUserProfilePictureCache } from '~/server/services/user.service';
-import { updateImageTagIdsForImages } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
-import { SignalMessages, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { scanJobsSchema } from '~/server/schema/image.schema';
-import { getTagRules } from '~/server/services/system-cache';
-import { uniqBy } from 'lodash-es';
-import { NsfwLevel } from '~/server/common/enums';
-import { logToAxiom } from '~/server/logging/client';
-import { normalizeText } from '~/utils/string-helpers';
+import { normalizeText } from '~/utils/normalize-text';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
-const tagCache: Record<string, number> = {};
+const tagCache: Record<string, { id: number; blocked?: true }> = {};
 
 enum Status {
   Success = 0,
   NotFound = 1, // image not found at url
   Unscannable = 2,
 }
+
 const pendingStates: ImageIngestionStatus[] = [
   ImageIngestionStatus.Pending,
   ImageIngestionStatus.Error,
@@ -123,6 +123,7 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 });
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
+
 async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
   if (!incomingTags) return;
 
@@ -189,21 +190,33 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
 
   // Get Ids for tags
   const tagsToFind: string[] = [];
+  let hasBlockedTag = false;
   for (const tag of tags) {
-    tag.id = tagCache[tag.tag];
-    if (!tag.id) tagsToFind.push(tag.tag);
+    const cachedTag = tagCache[tag.tag];
+    if (!cachedTag) tagsToFind.push(tag.tag);
+    else {
+      tag.id = cachedTag.id;
+      if (cachedTag.blocked) hasBlockedTag = true;
+    }
   }
 
   // Get tags that we don't have cached
   if (tagsToFind.length > 0) {
     const foundTags = await dbWrite.tag.findMany({
       where: { name: { in: tagsToFind } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, nsfwLevel: true },
     });
 
     // Cache found tags and add ids to tags
-    for (const tag of foundTags) tagCache[tag.name] = tag.id;
-    for (const tag of tags) tag.id = tagCache[tag.tag];
+    for (const tag of foundTags) {
+      tagCache[tag.name] = { id: tag.id };
+      if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
+    }
+    for (const tag of tags) {
+      const cachedTag = tagCache[tag.tag];
+      tag.id = cachedTag.id;
+      if (cachedTag.blocked) hasBlockedTag = true;
+    }
   }
 
   // Add missing tags
@@ -221,10 +234,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     });
     const newFoundTags = await dbWrite.tag.findMany({
       where: { name: { in: newTags.map((x) => x.tag) } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, nsfwLevel: true },
     });
     for (const tag of newFoundTags) {
-      tagCache[tag.name] = tag.id;
+      tagCache[tag.name] = { id: tag.id };
       const match = tags.find((x) => x.tag === tag.name);
       if (match) match.id = tag.id;
     }
@@ -274,24 +287,30 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     const prompt = normalizeText(
       (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
     );
+    const negativePrompt = normalizeText(
+      (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
+    );
 
     let reviewKey: string | null = null;
-    const inappropriate = includesInappropriate(prompt, nsfw);
+    const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
+    if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
     if (!reviewKey && nsfw) {
-      const [{ poi }] = await dbWrite.$queryRaw<{ poi: boolean }[]>`
+      const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
-            COUNT(*) > 0 "poi"
+            SUM(IIF(m.poi, 1, 0)) > 0 "poi",
+            SUM(IIF(m.minor, 1, 0)) > 0 "minor"
           FROM "ImageResource" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
-          WHERE ir."imageId" = ${image.id} AND m.poi
+          WHERE ir."imageId" = ${image.id}
           UNION
           -- Check based on associated bounties
           SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
+            false "minor"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
@@ -299,15 +318,17 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           UNION
           -- Check based on associated bounty entries
           SELECT
-            SUM(IIF(b.poi, 1, 0)) > 0 "poi"
+            SUM(IIF(b.poi, 1, 0)) > 0 "poi",
+            false "minor"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
           JOIN "Bounty" b ON b.id = be."bountyId"
           WHERE ic."imageId" = ${image.id}
         )
-        SELECT bool_or(poi) "poi" FROM to_check;
+        SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
       `;
+      if (minor) reviewKey = 'minor';
       if (poi) reviewKey = 'poi';
     }
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {

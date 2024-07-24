@@ -58,6 +58,7 @@ type CommentProps = Omit<GroupProps, 'children'> & {
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
+  borderless?: boolean;
 };
 
 export function Comment({ comment, resourceOwnerId, ...groupProps }: CommentProps) {
@@ -72,6 +73,7 @@ export function CommentContent({
   comment,
   viewOnly,
   highlight: highlightProp,
+  borderless,
   ...groupProps
 }: CommentProps) {
   const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
@@ -103,7 +105,8 @@ export function CommentContent({
       `${entityType}MaxDepth` in constants.comments
         ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
         : constants.comments.maxDepth;
-    if ((level ?? 0) > maxDepth && !isExpanded) {
+
+    if ((level ?? 0) >= maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);
     } else {
       toggleExpanded(comment.id);
@@ -261,8 +264,22 @@ export function CommentContent({
               onCancel={() => setReplying(false)}
               replyToCommentId={comment.id}
               className={classes.replyInset}
+              borderless={borderless}
             />
           </Box>
+        )}
+        {replyCount > 0 && !viewOnly && !isExpanded && (
+          <Divider
+            label={
+              <Group spacing="xs" align="center">
+                <Text variant="link" sx={{ cursor: 'pointer' }} onClick={onToggleReplies}>
+                  Show {replyCount} More
+                </Text>
+              </Group>
+            }
+            labelPosition="center"
+            variant="dashed"
+          />
         )}
       </Stack>
       {replyCount > 0 && !viewOnly && (

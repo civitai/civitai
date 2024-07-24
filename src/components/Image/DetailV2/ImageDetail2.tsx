@@ -8,58 +8,69 @@ import {
   Card,
   CloseButton,
   Group,
+  RingProgress,
   ScrollArea,
   Text,
+  UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType } from '@prisma/client';
+import { useLocalStorage } from '@mantine/hooks';
+import { Availability, CollectionType, EntityType } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconBolt,
   IconBookmark,
   IconBrandWechat,
+  IconBrush,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
+  IconDownload,
   IconEye,
   IconFlag,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
+  IconProps,
   IconShare3,
-  TablerIconsProps,
 } from '@tabler/icons-react';
+import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
+import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
+import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { DownloadImage } from '~/components/Image/DownloadImage';
+import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
-import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { useLocalStorage } from '@mantine/hooks';
-
-import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
-import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
-import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -82,22 +93,42 @@ const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
   className: 'h-9 w-9 rounded-full',
 };
 
-const sharedIconProps: TablerIconsProps = {
+const sharedIconProps: IconProps = {
   size: 18,
   stroke: 2,
   color: 'white',
 };
 
+const maxIndicators = 20;
+
 export function ImageDetail2() {
   const theme = useMantineTheme();
-  const { image: image, isLoading, active, close, toggleInfo, shareUrl } = useImageDetailContext();
+  const currentUser = useCurrentUser();
+  const {
+    images,
+    image: image,
+    isLoading,
+    active,
+    close,
+    toggleInfo,
+    shareUrl,
+    navigate,
+  } = useImageDetailContext();
+  const { collectionItems = [] } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
 
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+  const videoRef = useRef<EdgeVideoRef | null>(null);
+
   if (isLoading) return <PageLoader />;
-  if (!image) return <NotFound />;
+  if (!image || isBlocked) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -146,6 +177,9 @@ export function ImageDetail2() {
           name="postDetail"
           state={{ postId: image.postId }}
           className="hidden @md:block"
+          onClick={() => {
+            if (videoRef.current) videoRef.current.stop();
+          }}
         >
           <Button {...sharedButtonProps}>
             <IconPhoto {...sharedIconProps} />
@@ -171,7 +205,7 @@ export function ImageDetail2() {
   return (
     <>
       <Meta
-        title={`Image posted by ${image.user.username}`}
+        title={`${image?.type === 'video' ? 'Video' : 'Image'} posted by ${image.user.username}`}
         images={image}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
@@ -180,7 +214,7 @@ export function ImageDetail2() {
       <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
         <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
           <ImageGuard2 image={image} explain={false}>
-            {(safe) => (
+            {() => (
               <>
                 {/* HEADER */}
                 <div className="flex justify-between gap-8 p-3">
@@ -189,7 +223,7 @@ export function ImageDetail2() {
                     {/* Placeholder */}
                     <div className="@md:hidden" />
                     <div className="flex gap-1 @max-md:hidden">
-                      <ImageGuard2.BlurToggle {...sharedBadgeProps} alwaysVisible />
+                      <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                       {LeftImageControls}
                     </div>
 
@@ -197,7 +231,6 @@ export function ImageDetail2() {
                       <ImageGuard2.BlurToggle
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
-                        alwaysVisible
                       />
                       <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
@@ -205,6 +238,24 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge>
+                      <DownloadImage src={image.url} type={image.type} name={image.name}>
+                        {({ onClick, isLoading, progress }) => (
+                          <ActionIcon
+                            {...sharedActionIconProps}
+                            onClick={onClick}
+                            loading={isLoading && progress === 0}
+                          >
+                            {isLoading && progress > 0 && (
+                              <RingProgress
+                                size={36}
+                                sections={[{ value: progress, color: 'blue' }]}
+                                thickness={4}
+                              />
+                            )}
+                            {!isLoading && <IconDownload {...sharedIconProps} />}
+                          </ActionIcon>
+                        )}
+                      </DownloadImage>
                       <ShareButton
                         url={shareUrl}
                         title={`Image by ${image.user.username}`}
@@ -233,44 +284,64 @@ export function ImageDetail2() {
                   </div>
                 </div>
                 {/* IMAGE CAROUSEL */}
-                <ImageDetailCarousel />
+                <ImageDetailCarousel videoRef={videoRef} />
                 {/* FOOTER */}
-                <div className="flex justify-center p-3">
-                  <ReactionSettingsProvider
-                    settings={{
-                      hideReactionCount: false,
-                      buttonStyling: (reaction, hasReacted) => ({
-                        radius: 'xl',
-                        variant: 'light',
-                        px: undefined,
-                        pl: 4,
-                        pr: 8,
-                        h: 30,
-                        style: {
-                          color: 'white',
-                          background: hasReacted
-                            ? theme.fn.rgba(theme.colors.blue[4], 0.4)
-                            : theme.fn.rgba(theme.colors.gray[8], 0.4),
-                          // backdropFilter: 'blur(7px)',
-                        },
-                      }),
-                    }}
-                  >
-                    <Reactions
-                      entityId={image.id}
-                      entityType="image"
-                      reactions={image.reactions}
-                      metrics={{
-                        likeCount: image.stats?.likeCountAllTime,
-                        dislikeCount: image.stats?.dislikeCountAllTime,
-                        heartCount: image.stats?.heartCountAllTime,
-                        laughCount: image.stats?.laughCountAllTime,
-                        cryCount: image.stats?.cryCountAllTime,
-                        tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                <div className="flex flex-col gap-3 p-3">
+                  <div className="flex justify-center">
+                    <ReactionSettingsProvider
+                      settings={{
+                        hideReactionCount: false,
+                        hideReactions: collectionItems.some((ci) =>
+                          contestCollectionReactionsHidden(ci.collection)
+                        ),
+                        buttonStyling: (reaction, hasReacted) => ({
+                          radius: 'xl',
+                          variant: 'light',
+                          px: undefined,
+                          pl: 4,
+                          pr: 8,
+                          h: 30,
+                          style: {
+                            color: 'white',
+                            background: hasReacted
+                              ? theme.fn.rgba(theme.colors.blue[4], 0.4)
+                              : theme.fn.rgba(theme.colors.gray[8], 0.4),
+                            // backdropFilter: 'blur(7px)',
+                          },
+                        }),
                       }}
-                      targetUserId={image.user.id}
-                    />
-                  </ReactionSettingsProvider>
+                    >
+                      <Reactions
+                        entityId={image.id}
+                        entityType="image"
+                        reactions={image.reactions}
+                        metrics={{
+                          likeCount: image.stats?.likeCountAllTime,
+                          dislikeCount: image.stats?.dislikeCountAllTime,
+                          heartCount: image.stats?.heartCountAllTime,
+                          laughCount: image.stats?.laughCountAllTime,
+                          cryCount: image.stats?.cryCountAllTime,
+                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+                        }}
+                        targetUserId={image.user.id}
+                      />
+                    </ReactionSettingsProvider>
+                  </div>
+                  {images.length <= maxIndicators && images.length > 1 && (
+                    <div className="flex justify-center gap-1">
+                      {images.map(({ id }) => (
+                        <UnstyledButton
+                          key={id}
+                          data-active={image.id === id || undefined}
+                          aria-hidden
+                          tabIndex={-1}
+                          onClick={() => navigate(id)}
+                          className={`h-1 max-w-6 flex-1 rounded border border-solid border-gray-4 bg-white shadow-2xl
+                        ${image.id !== id ? 'dark:opacity-50' : 'bg-blue-6 dark:bg-white'}`}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </>
             )}
@@ -282,6 +353,7 @@ export function ImageDetail2() {
           } @md:w-[450px] @md:min-w-[450px] ${
             !sidebarOpen ? '@md:hidden' : ''
           } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
+          style={{ wordBreak: 'break-word' }}
         >
           <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
             <div className="flex gap-1">{LeftImageControls}</div>
@@ -308,6 +380,15 @@ export function ImageDetail2() {
                 tipBuzzEntityType="Image"
                 className="rounded-xl"
               />
+              {image.postId && (
+                <EntityCollaboratorList
+                  entityId={image.postId}
+                  entityType={EntityType.Post}
+                  creatorCardProps={{
+                    className: 'rounded-xl',
+                  }}
+                />
+              )}
               {image.needsReview && (
                 <AlertWithIcon
                   icon={<IconAlertTriangle />}
@@ -327,6 +408,8 @@ export function ImageDetail2() {
                 collapsible
                 nsfwLevel={image.nsfwLevel}
               />
+              <ImageProcess imageId={image.id} />
+              <ImageGenerationData imageId={image.id} />
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />
@@ -334,8 +417,11 @@ export function ImageDetail2() {
                 </Text>
                 <ImageDetailComments imageId={image.id} userId={image.user.id} />
               </Card>
-              <ImageGenerationData imageId={image.id} />
-              <ImageProcess imageId={image.id} />
+              <ImageContestCollectionDetails
+                imageId={image.id}
+                isOwner={image.user.id === currentUser?.id}
+                isModerator={currentUser?.isModerator}
+              />
               <ImageExternalMeta imageId={image.id} />
             </div>
           </ScrollArea>

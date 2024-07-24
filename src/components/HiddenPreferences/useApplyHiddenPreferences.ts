@@ -153,6 +153,7 @@ function filterPreferences<
           const userId = model.user.id;
           const isOwner = userId === currentUser?.id;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
+          if (showHidden && !hiddenModels.get(model.id)) return false;
           if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
             hidden.browsingLevel++;
             return false;
@@ -173,6 +174,7 @@ function filterPreferences<
           return true;
         })
         .map(({ images, ...x }) => {
+          const isModelOwner = x.user.id === currentUser?.id;
           const filteredImages =
             images?.filter((i) => {
               const userId = i.userId;
@@ -198,7 +200,7 @@ function filterPreferences<
             hidden.noImages++;
           }
 
-          return sortedImages.length || showImageless
+          return sortedImages.length || (showImageless && (isModelOwner || isModerator))
             ? {
                 ...x,
                 images: filteredImages,

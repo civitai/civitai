@@ -36,7 +36,8 @@ import {
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { isEqual } from 'lodash-es';
-import React, { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
+import React, { useEffect, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -57,11 +58,17 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { AutoTagModal } from './TrainingAutoTagModal';
+import { createImageElement, resizeImage } from '~/utils/image-utils'
+
+const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
 
 const MAX_FILES_ALLOWED = 1000;
 
@@ -69,9 +76,8 @@ export const blankTagStr = '@@none@@';
 
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
-    borderBottom: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-    }`,
+    borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+      }`,
     position: 'relative',
     '&:hover .trashIcon': {
       display: 'flex',
@@ -95,16 +101,10 @@ const imageExts: { [key: string]: string } = {
   webp: 'image/webp',
 };
 
-const maxWidth = 1024;
-const maxHeight = 1024;
-
-const createImage = (url: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const image = new Image();
-    image.addEventListener('load', () => resolve(image));
-    image.addEventListener('error', (error) => reject(error));
-    image.src = url;
-  });
+const minWidth = 256;
+const minHeight = 256;
+const maxWidth = 2048;
+const maxHeight = 2048;
 
 export const getCaptionAsList = (capt: string) => {
   return capt
@@ -140,6 +140,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const showImgResizeDown = useRef<number>(0);
+  const showImgResizeUp = useRef<number>(0);
 
   const theme = useMantineTheme();
   const { classes, cx } = useStyles();
@@ -213,19 +215,39 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const imgUrl = URL.createObjectURL(data);
-    const img = await createImage(imgUrl);
+    const img = await createImageElement(imgUrl);
     let { width, height } = img;
-    if (width <= maxWidth && height <= maxHeight) return imgUrl;
 
-    if (width > height) {
-      if (width > maxWidth) {
-        height = height * (maxWidth / width);
-        width = maxWidth;
+    // both w and h must be less than the max
+    const goodMax = width <= maxWidth && height <= maxHeight;
+    // one of h and w must be more than the min
+    const goodMin = width >= minWidth || height >= minHeight;
+
+    if (goodMax && goodMin) return imgUrl;
+
+    if (!goodMax) {
+      if (width > height) {
+        if (width > maxWidth) {
+          height = height * (maxWidth / width);
+          width = maxWidth;
+          showImgResizeDown.current += 1;
+        }
+      } else {
+        if (height > maxHeight) {
+          width = width * (maxHeight / height);
+          height = maxHeight;
+          showImgResizeDown.current += 1;
+        }
       }
-    } else {
-      if (height > maxHeight) {
-        width = width * (maxHeight / height);
-        height = maxHeight;
+    } else if (!goodMin) {
+      if (width > height) {
+        height = height * (minWidth / width);
+        width = minWidth;
+        showImgResizeUp.current += 1;
+      } else {
+        width = width * (minHeight / height);
+        height = minHeight;
+        showImgResizeUp.current += 1;
       }
     }
 
@@ -243,6 +265,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         else resolve(URL.createObjectURL(file));
       }, type);
     });
+  };
+
+  const showResizeWarnings = () => {
+    if (showImgResizeDown.current) {
+      showWarningNotification({
+        title: `${showImgResizeDown.current} image${showImgResizeDown.current === 1 ? '' : 's'
+          } resized down`,
+        message: `Max image dimensions are ${maxWidth}w and ${maxHeight}h.`,
+        autoClose: false,
+      });
+      showImgResizeDown.current = 0;
+    }
+    if (showImgResizeUp.current) {
+      showWarningNotification({
+        title: `${showImgResizeUp.current} image${showImgResizeUp.current === 1 ? '' : 's'
+          } resized up`,
+        message: `Min image dimensions are ${minWidth}w or ${minHeight}h.`,
+        autoClose: false,
+      });
+      showImgResizeUp.current = 0;
+    }
   };
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
@@ -280,6 +323,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       })
     );
 
+    showResizeWarnings();
+
     if (showNotif) {
       if (parsedFiles.length > 0) {
         showSuccessNotification({
@@ -316,6 +361,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       })
     );
 
+    showResizeWarnings();
+
     const filteredFiles = newFiles.flat().filter(isDefined);
     if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
       showErrorNotification({
@@ -349,8 +396,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have right filters
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files[0].metadata = request.metadata!;
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
     },
   });
 
@@ -376,6 +438,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         versionToUpdate.files = [
           {
             id: response.id,
+            name: request.name!,
             url: request.url!,
             type: request.type!,
             metadata: request.metadata!,
@@ -392,11 +455,34 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           ],
         };
       });
-      // TODO [bw] don't invalidate, just update
+
       await queryUtils.model.getMyTrainingModels.invalidate();
 
-      setZipping(false);
-      goNext(model.id, thisStep);
+      // queryUtils.model.getMyTrainingModels.setInfiniteData(
+      //   {}, // fix this to have limit and page?
+      //   produce((old) => {
+      //     if (!old?.pages?.length) return;
+      //
+      //     for (const page of old.pages) {
+      //       for (const item of page.items) {
+      //         if (item.id === thisModelVersion.id) {
+      //           item.files = [
+      //             {
+      //               id: response.id,
+      //               url: request.url!,
+      //               type: request.type!,
+      //               metadata: request.metadata!,
+      //               sizeKB: request.sizeKB!,
+      //             },
+      //           ];
+      //           return;
+      //         }
+      //       }
+      //     }
+      //   })
+      // );
+
+      goNext(model.id, thisStep, () => setZipping(false));
     },
     onError(error) {
       setZipping(false);
@@ -487,7 +573,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
 
       try {
-        await upload(
+        const uploadResp = await upload(
           {
             file: blobFile,
             type: UploadType.TrainingImages,
@@ -515,8 +601,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     ownRights && shareDataset
                       ? ModelFileVisibility.Public
                       : ownRights
-                      ? ModelFileVisibility.Sensitive
-                      : ModelFileVisibility.Private,
+                        ? ModelFileVisibility.Sensitive
+                        : ModelFileVisibility.Private,
                   metadata,
                 });
               } catch (e: unknown) {
@@ -526,7 +612,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   icon: <IconX size={18} />,
                   color: 'red',
                   title: 'Failed to upload archive.',
-                  message: '',
+                  message: 'Please try again (or contact us if it continues)',
                 });
               }
             } else {
@@ -534,6 +620,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             }
           }
         );
+        if (!uploadResp) {
+          setZipping(false);
+          updateNotification({
+            id: notificationId,
+            icon: <IconX size={18} />,
+            color: 'red',
+            title: 'Failed to upload archive.',
+            message: 'Please try again (or contact us if it continues)',
+          });
+        }
       } catch (e) {
         setZipping(false);
         updateNotification({
@@ -558,8 +654,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ownRights && shareDataset
               ? ModelFileVisibility.Public
               : ownRights
-              ? ModelFileVisibility.Sensitive
-              : ModelFileVisibility.Private,
+                ? ModelFileVisibility.Sensitive
+                : ModelFileVisibility.Private,
         });
         setZipping(false);
       }
@@ -658,8 +754,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   totalCaptioned === 0
                     ? theme.colors.red[5]
                     : totalCaptioned < imageList.length
-                    ? theme.colors.orange[5]
-                    : theme.colors.green[5]
+                      ? theme.colors.orange[5]
+                      : theme.colors.green[5]
                 }
               >
                 {`${totalCaptioned} / ${imageList.length} captioned`}
@@ -753,9 +849,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       autoCaptioning.total) *
                     100
                   }
-                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${
-                    autoCaptioning.total
-                  }`}
+                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${autoCaptioning.total
+                    }`}
                   size="xl"
                   radius="xl"
                   striped

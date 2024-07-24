@@ -1,38 +1,29 @@
+import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
 import {
-  Tooltip,
-  ActionIcon,
-  CloseButton,
-  SegmentedControl,
-  Text,
-  useMantineTheme,
-} from '@mantine/core';
-import { IconArrowsDiagonal, IconBrush, IconGridDots, TablerIconsProps } from '@tabler/icons-react';
+  Icon,
+  IconArrowsDiagonal,
+  IconBrush,
+  IconGridDots,
+  IconProps,
+  IconClockHour9,
+  IconWifiOff,
+} from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { useEffect } from 'react';
-import { GenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationForm';
+import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
 import { useRouter } from 'next/router';
-import { IconClockHour9 } from '@tabler/icons-react';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { useMediaQuery } from '@mantine/hooks';
+import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
+import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 
-export default function GenerationTabs({
-  tabs: tabsToInclude,
-  alwaysShowMaximize = true,
-  isDrawer,
-}: {
-  tabs?: ('generate' | 'queue' | 'feed')[];
-  alwaysShowMaximize?: boolean;
-  isDrawer?: boolean;
-}) {
+export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
-  const isImageFeedSeparate = isGeneratePage && !isDrawer;
+  const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
@@ -49,9 +40,23 @@ export default function GenerationTabs({
   }, [isImageFeedSeparate, view]);
 
   return (
-    <GenerationProvider>
-      <div className="flex flex-col gap-2 p-3 w-full">
-        <div className="flex justify-between items-center gap-2 w-full">
+    <>
+      <SignalStatusNotification
+        icon={<IconWifiOff size={20} stroke={2} />}
+        // title={(status) => `Connection status: ${status}`}
+        radius={0}
+      >
+        {(status) => (
+          <p className="leading-4">
+            <span className="font-medium">
+              {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
+            </span>
+            : image generation results paused
+          </p>
+        )}
+      </SignalStatusNotification>
+      <div className="flex w-full flex-col gap-2 p-3">
+        <div className="flex w-full items-center justify-between gap-2">
           <div className="flex-1">
             {/* <Text className="w-full" lineClamp={1}>
               Folder
@@ -61,7 +66,7 @@ export default function GenerationTabs({
             <SegmentedControl
               // TODO.briant: this fixes the issue with rendering the SegmentedControl
               key={tabEntries.map(([, item]) => item.label).join('-')}
-              className="flex-shrink-0"
+              className="shrink-0"
               sx={{ overflow: 'visible' }}
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
@@ -76,7 +81,7 @@ export default function GenerationTabs({
             />
           )}
           <div className="flex flex-1 justify-end">
-            {alwaysShowMaximize && !isGeneratePage && (
+            {!fullScreen && !isGeneratePage && (
               <Tooltip label="Maximize">
                 <ActionIcon
                   size="lg"
@@ -94,17 +99,17 @@ export default function GenerationTabs({
             />
           </div>
         </div>
-        {view !== 'generate' && <GeneratedImageActions />}
+        {view !== 'generate' && !isGeneratePage && <GeneratedImageActions />}
       </div>
       <View />
-    </GenerationProvider>
+    </>
   );
 }
 
 type Tabs = Record<
   GenerationPanelView,
   {
-    Icon: (props: TablerIconsProps) => JSX.Element;
+    Icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     label: string;
     Component: React.FC;
   }
@@ -114,7 +119,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: GenerationForm,
+    Component: GenerationForm2,
   },
   queue: {
     Icon: IconClockHour9,

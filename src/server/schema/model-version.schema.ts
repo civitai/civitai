@@ -1,6 +1,7 @@
 import {
   ModelStatus,
   ModelType,
+  ModelUploadType,
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
@@ -8,11 +9,18 @@ import {
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+
+export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
+export const queryModelVersionsSchema = infiniteQuerySchema.extend({
+  trainingStatus: z.nativeEnum(TrainingStatus).optional(),
+  // uploadType: z.nativeEnum(ModelUploadType).optional(),
+});
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -31,8 +39,8 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
-const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
-const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
+export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
@@ -48,18 +56,28 @@ export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
   | TrainingDetailsBaseModelCustom;
 
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
+export const lrSchedulerTypes = [
+  'constant',
+  'cosine',
+  'cosine_with_restarts',
+  'constant_with_warmup',
+  'linear',
+] as const;
+
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
   unetLR: z.number(),
   textEncoderLR: z.number(),
-  optimizerType: z.string(), // TODO actually an enum
+  optimizerType: z.enum(optimizerTypes),
   networkDim: z.number(),
   networkAlpha: z.number(),
-  lrScheduler: z.string(), // TODO actually an enum
+  lrScheduler: z.enum(lrSchedulerTypes),
   maxTrainEpochs: z.number(),
   numRepeats: z.number(),
   resolution: z.number(),
-  loraType: z.string(), // TODO actually an enum
+  loraType: z.enum(loraTypes),
   enableBucket: z.boolean(),
   keepTokens: z.number(),
 
@@ -90,6 +108,7 @@ export const trainingDetailsObj = z.object({
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),
   staging: z.boolean().optional(),
+  highPriority: z.boolean().optional(),
 });
 
 export const modelVersionUpsertSchema = z.object({
@@ -111,7 +130,6 @@ export const modelVersionUpsertSchema = z.object({
   trainingStatus: z.nativeEnum(TrainingStatus).optional(),
   trainingDetails: trainingDetailsObj.optional(),
   files: z.array(modelFileSchema),
-  earlyAccessTimeFrame: z.number().min(0).max(14).optional(),
   // recipe: z.array(recipeSchema).optional(),
 });
 
@@ -130,6 +148,26 @@ const recommendedResourceSchema = z.object({
 });
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
+
+export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
+export const modelVersionEarlyAccessConfigSchema = z.object({
+  timeframe: z.number(),
+  downloadPrice: z.number(),
+  // buzzTransactionId: z.string().optional(),
+  chargeForGeneration: z.boolean().default(false),
+  generationPrice: z.number().optional(),
+  generationTrialLimit: z.number().default(10),
+  donationGoalEnabled: z.boolean().default(false),
+  donationGoal: z.number().optional(),
+  donationGoalId: z.number().optional(),
+  originalPublishedAt: z.date().optional(),
+});
+
+export const earlyAccessConfigInput = modelVersionEarlyAccessConfigSchema;
+// modelVersionEarlyAccessConfigSchema.omit({
+//   buzzTransactionId: true,
+// });
+
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
@@ -147,10 +185,6 @@ export const modelVersionUpsertSchema2 = z.object({
   trainedWords: z.array(z.string()).default([]),
   trainingStatus: z.nativeEnum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
-  earlyAccessTimeFrame: z.preprocess(
-    (value) => (value ? Number(value) : 0),
-    z.number().min(0).max(14).optional()
-  ),
   status: z.nativeEnum(ModelStatus).optional(),
   requireAuth: z.boolean().optional(),
   monetization: z
@@ -170,6 +204,12 @@ export const modelVersionUpsertSchema2 = z.object({
   recommendedResources: z.array(recommendedResourceSchema).optional(),
   templateId: z.number().optional(),
   bountyId: z.number().optional(),
+  earlyAccessConfig: earlyAccessConfigInput.nullish(),
+  earlyAccessGoalConfig: z
+    .object({
+      unitAmount: z.number(),
+    })
+    .nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
@@ -200,6 +240,7 @@ export type ModelVersionMeta = ModelMeta & {
   picFinderModelId?: number;
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
+  allowAIRecommendations?: boolean;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
@@ -246,4 +287,10 @@ export type ModelVersionsGeneratedImagesOnTimeframeSchema = z.infer<
 >;
 export const modelVersionsGeneratedImagesOnTimeframeSchema = z.object({
   timeframe: z.number().optional(),
+});
+
+export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAccessPurchase>;
+export const modelVersionEarlyAccessPurchase = z.object({
+  modelVersionId: z.number(),
+  type: z.enum(['download', 'generation']),
 });

@@ -7,6 +7,7 @@ import { useMemo } from 'react';
 
 import { needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   htmlRenderer: {
@@ -89,13 +90,39 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   html = useMemo(
     () =>
       sanitizeHtml(html, {
-        parseStyleAttributes: false,
+        parseStyleAttributes: true,
+        allowedAttributes: {
+          div: ['data-youtube-video', 'data-type', 'style'],
+        },
+        allowedStyles: {
+          div: {
+            height: [/^\d+px$/],
+          },
+        },
         transformTags: {
+          div: function (tagName, attribs) {
+            if (attribs['data-type'] !== 'strawPoll') delete attribs.style;
+            return {
+              tagName,
+              attribs,
+            };
+          },
           span: function (tagName, attribs) {
             const dataType = attribs['data-type'];
             const isMention = dataType === 'mention';
             const style = attribs['style'];
-            const hexColor = style?.match(/color:#([0-9a-f]{6})/)?.[1];
+            let hexColor = style?.match(/color:#([0-9a-f]{6})/)?.[1];
+            const [, r, g, b] = style?.match(/color:rgba?\((\d+), (\d+), (\d+),? ?(\d+)?\)/) ?? [];
+            const rgbColors = [r, g, b]
+              .map((color) => {
+                const value = parseInt(color, 10);
+                if (isNaN(value)) return '';
+                return value.toString(16).padStart(2, '0');
+              })
+              .filter(Boolean);
+
+            if (rgbColors.length === 3) hexColor = rgbColors.join('');
+
             const needsSwap = hexColor
               ? needsColorSwap({ hexColor, colorScheme: theme.colorScheme, threshold: 0.2 })
               : false;

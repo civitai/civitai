@@ -2,7 +2,7 @@ import { client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { Availability, MetricTimeframe, ModelHashType, ModelStatus, Prisma } from '@prisma/client';
-import { isEqual } from 'lodash';
+import { isEqual } from 'lodash-es';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { TypoTolerance } from 'meilisearch';
@@ -143,6 +143,7 @@ const modelSelect = {
   name: true,
   type: true,
   nsfwLevel: true,
+  minor: true,
   status: true,
   createdAt: true,
   lastVersionAt: true,
@@ -158,7 +159,7 @@ const modelSelect = {
   },
   modelVersions: {
     select: getModelVersionsForSearchIndex,
-    // orderBy: { index: 'asc' },
+    orderBy: { index: 'asc' as const },
     where: {
       status: ModelStatus.Published,
       availability: {
@@ -240,7 +241,6 @@ const transformData = async ({
   const indexReadyRecords = models
     .map((modelRecord) => {
       const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
-
       const metrics = modelRecord.metrics[0] ?? {};
 
       const weightedRating =

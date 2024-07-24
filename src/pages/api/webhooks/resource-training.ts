@@ -1,13 +1,15 @@
 import { TrainingStatus } from '@prisma/client';
-import * as z from 'zod';
+import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
+import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
+import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -26,6 +28,7 @@ const epochSchema = z.object({
 type ContextProps = z.infer<typeof context>;
 const context = z.object({
   status: z.string().optional(),
+  needsReview: z.boolean().optional(),
   message: z.string().optional(),
   model: z.string().optional(),
   start_time: z.number().optional(),
@@ -61,17 +64,19 @@ const schema = z.object({
   jobHasCompleted: z.boolean(),
 });
 
-// Initialized, Claimed, Rejected, LateRejected, ClaimExpired, Updated, Failed, Succeeded, Expired, Deleted, Canceled
-const mapTrainingStatus = {
+const mapTrainingStatus: { [key: string]: TrainingStatus } = {
+  Initialized: TrainingStatus.Submitted,
+  Claimed: TrainingStatus.Submitted,
+  ClaimExpired: TrainingStatus.Submitted,
   Updated: TrainingStatus.Processing,
-  Succeeded: TrainingStatus.InReview,
-  Failed: TrainingStatus.Failed,
   Rejected: TrainingStatus.Processing,
   LateRejected: TrainingStatus.Processing,
+  Failed: TrainingStatus.Failed,
   Deleted: TrainingStatus.Failed,
   Canceled: TrainingStatus.Failed,
   Expired: TrainingStatus.Failed,
-} as const;
+  Succeeded: TrainingStatus.InReview,
+};
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -93,16 +98,18 @@ export default WebhookEndpoint(async (req, res) => {
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success) {
     logWebhook({ message: 'Could not parse body', data: { error: bodyResults.error } });
-    return res.status(400).json({ ok: false, errors: bodyResults.error });
+    return res.status(400).json({ ok: false, error: bodyResults.error });
   }
 
   const data = bodyResults.data;
+  const needsReview = !!data.context?.needsReview;
+  const jobStatus = data.type;
 
-  if (['Deleted', 'Canceled', 'Expired', 'Failed'].includes(data.type)) {
+  if (['Deleted', 'Canceled', 'Expired', 'Failed'].includes(jobStatus) && !needsReview) {
     logWebhook({
       type: 'info',
       message: `Attempting to refund user`,
-      data: { type: data.type, jobId: data.jobId, transactionId: data.jobProperties.transactionId },
+      data: { type: jobStatus, jobId: data.jobId, transactionId: data.jobProperties.transactionId },
     });
     try {
       await withRetries(async () =>
@@ -121,7 +128,15 @@ export default WebhookEndpoint(async (req, res) => {
     }
   }
 
-  switch (data.type) {
+  if (needsReview) {
+    logWebhook({
+      type: 'info',
+      message: `Training job flagged for review`,
+      data: { type: jobStatus, jobId: data.jobId, transactionId: data.jobProperties.transactionId },
+    });
+  }
+
+  switch (jobStatus) {
     case 'Updated':
     case 'Succeeded':
     case 'Failed':
@@ -130,7 +145,8 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Deleted':
     case 'Canceled':
     case 'Expired':
-      const status = mapTrainingStatus[data.type];
+      let status = mapTrainingStatus[jobStatus];
+      if (jobStatus === 'Failed' && needsReview) status = TrainingStatus.Paused;
 
       try {
         await updateRecords(
@@ -163,8 +179,15 @@ export default WebhookEndpoint(async (req, res) => {
   return res.status(200).json({ ok: true });
 });
 
-async function updateRecords(
-  { modelFileId, message, epochs, start_time, end_time }: ContextProps & { modelFileId: number },
+export async function updateRecords(
+  {
+    modelFileId,
+    message,
+    epochs,
+    start_time,
+    end_time,
+    needsReview: maybeNeedsReview,
+  }: ContextProps & { modelFileId: number },
   status: TrainingStatus,
   orchStatus: string, // JobStatus
   jobId: string
@@ -177,6 +200,7 @@ async function updateRecords(
     throw new Error(`ModelFile not found: "${modelFileId}"`);
   }
 
+  const needsReview = !!maybeNeedsReview;
   const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
   const trainingResults = thisMetadata.trainingResults || {};
   const history = trainingResults.history || [];
@@ -206,7 +230,7 @@ async function updateRecords(
       start_time:
         trainingResults.start_time ||
         (start_time ? new Date(start_time * 1000).toISOString() : null),
-      end_time: end_time && new Date(end_time * 1000).toISOString(),
+      end_time: end_time ? new Date(end_time * 1000).toISOString() : null,
     },
   };
 
@@ -223,6 +247,13 @@ async function updateRecords(
       trainingStatus: status,
     },
   });
+
+  // trigger webhook alert
+  if (status === TrainingStatus.Paused) {
+    try {
+      await queueNewTrainingModerationWebhook(modelFile.modelVersionId);
+    } catch {}
+  }
 
   const model = await dbWrite.model.findFirst({
     where: { id: modelVersion.modelId },
@@ -241,12 +272,18 @@ async function updateRecords(
   if (!model || !model.user) return;
 
   try {
+    const bodyData: TrainingUpdateSignalSchema = {
+      modelId: model.id,
+      modelVersionId: modelVersion.id,
+      status,
+      fileMetadata: metadata,
+    };
     await fetch(
       `${env.SIGNALS_ENDPOINT}/users/${model.user.id}/signals/${SignalMessages.TrainingUpdate}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: model.id, status, fileMetadata: metadata }),
+        body: JSON.stringify(bodyData),
       }
     );
   } catch (e: unknown) {
@@ -256,14 +293,19 @@ async function updateRecords(
     });
   }
 
-  if (status === 'InReview') {
+  if (status === TrainingStatus.InReview) {
     await trainingCompleteEmail.send({
       model,
+      mName: modelVersion.name,
       user: model.user,
     });
-  } else if (status === 'Failed') {
+  } else if (
+    (status === TrainingStatus.Failed || status === TrainingStatus.Denied) &&
+    !needsReview
+  ) {
     await trainingFailEmail.send({
       model,
+      mName: modelVersion.name,
       user: model.user,
     });
   }

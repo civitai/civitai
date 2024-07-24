@@ -1,11 +1,13 @@
-import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
+import { NotificationCategory } from '~/server/common/enums';
+import { type UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { slugit } from '~/utils/string-helpers';
 
 export const unpublishNotifications = createNotificationProcessor({
+  // Moveable (maybe)
   'model-version-unpublished': {
     displayName: 'Model version unpublished',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -20,7 +22,7 @@ export const unpublishNotifications = createNotificationProcessor({
         details.modelVersionId
       }`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH unpublished AS (
         SELECT DISTINCT
           m."userId",
@@ -37,19 +39,17 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(mv.meta->'unpublishedReason') = 'string'
           AND (mv.meta->>'unpublishedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('model-version-unpublished:', details->>'modelVersionId', ':', '${lastSent}') "key",
         "userId",
         'model-version-unpublished' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM unpublished;
     `,
   },
   'model-unpublished': {
     displayName: 'Model unpublished',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message:
@@ -60,7 +60,7 @@ export const unpublishNotifications = createNotificationProcessor({
           : `Your ${details.modelName} model has been unpublished: ${details.customMessage ?? ''}`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH unpublished AS (
         SELECT DISTINCT
           m."userId",
@@ -74,19 +74,17 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(m.meta->'unpublishedReason') = 'string'
           AND (m.meta->>'unpublishedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('model-unpublished:', details->>'modelId', ':', '${lastSent}') "key",
         "userId",
         'model-unpublished' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM unpublished;
     `,
   },
   'model-republish-declined': {
     displayName: 'Model republish declined',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => {
       let message = `Your republish request for ${details.modelName} has been declined`;
@@ -96,7 +94,7 @@ export const unpublishNotifications = createNotificationProcessor({
         url: `/models/${details.modelId}/${slugit(details.modelName)}`,
       };
     },
-    prepareQuery: ({ lastSent, category }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH declined AS (
         SELECT DISTINCT
           m."userId",
@@ -109,13 +107,11 @@ export const unpublishNotifications = createNotificationProcessor({
         WHERE jsonb_typeof(m.meta->'declinedReason') = 'string'
           AND (m.meta->>'declinedAt')::timestamp > '${lastSent}'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('model-republish-declined:', details->>'modelId', ':', '${lastSent}') "key",
         "userId",
         'model-republish-declined' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM declined;
     `,
   },

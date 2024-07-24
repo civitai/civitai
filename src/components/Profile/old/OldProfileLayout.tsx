@@ -28,12 +28,13 @@ import {
   IconFlag,
   IconFolder,
   IconInfoCircle,
+  IconGraphOff,
+  IconGraph,
   IconLayoutList,
   IconMicrophone,
   IconMicrophoneOff,
   IconPhoto,
   IconTrash,
-  IconUserMinus,
   IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -46,13 +47,13 @@ import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import ProfileLayout from '~/components/Profile/ProfileLayout';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
@@ -145,6 +146,25 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
+  const toggleLeaderboardMutation = trpc.user.setLeaderboardEligibility.useMutation({
+    async onMutate({ setTo }) {
+      await queryUtils.user.getCreator.cancel({ username });
+
+      const prevUser = queryUtils.user.getCreator.getData({ username });
+      queryUtils.user.getCreator.setData({ username }, () =>
+        prevUser ? { ...prevUser, excludeFromLeaderboards: setTo } : undefined
+      );
+
+      return { prevUser };
+    },
+    onError(_error, _vars, context) {
+      queryUtils.user.getCreator.setData({ username }, context?.prevUser);
+      showErrorNotification({
+        error: new Error('Unable to remove user from leaderboards, please try again.'),
+      });
+    },
+  });
+
   const theme = useMantineTheme();
 
   const handleToggleMute = () => {
@@ -162,6 +182,20 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           onConfirm: () => toggleBanMutation.mutate({ id: user.id }),
         });
     }
+  };
+  const handleToggleLeaderboardEligibility = () => {
+    if (!user) return;
+    if (user.excludeFromLeaderboards)
+      toggleLeaderboardMutation.mutate({ id: user.id, setTo: !user.excludeFromLeaderboards });
+    else
+      openConfirmModal({
+        title: 'Remove from Leaderboards',
+        children: `Are you sure you want to remove this user from leaderboards? This will take effect at the next refresh.`,
+        labels: { confirm: 'Yes, remove from leaderboards', cancel: 'Cancel' },
+        confirmProps: { color: 'red' },
+        onConfirm: () =>
+          toggleLeaderboardMutation.mutate({ id: user.id, setTo: !user.excludeFromLeaderboards }),
+      });
   };
   const handleRemoveContent = () => {
     if (!user) return;
@@ -219,7 +253,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   }
 
   return (
-    <Menu position="left" withinPortal>
+    <Menu position="left-start" withinPortal>
       <Menu.Target>
         <ActionIcon
           loading={removeContentMutation.isLoading}
@@ -269,19 +303,34 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 {user.bannedAt ? 'Restore user' : 'Ban user'}
               </Menu.Item>
               <Menu.Item
+                color={user.excludeFromLeaderboards ? 'green' : 'red'}
+                icon={
+                  !user.excludeFromLeaderboards ? (
+                    <IconGraphOff size={14} stroke={1.5} />
+                  ) : (
+                    <IconGraph size={14} stroke={1.5} />
+                  )
+                }
+                onClick={handleToggleLeaderboardEligibility}
+              >
+                {user.excludeFromLeaderboards
+                  ? 'Include in leaderboards'
+                  : 'Exclude from leaderboards'}
+              </Menu.Item>
+              {/* <Menu.Item
                 color="red"
                 icon={<IconTrash size={14} stroke={1.5} />}
                 onClick={handleRemoveContent}
               >
                 Remove all content
-              </Menu.Item>
-              <Menu.Item
+              </Menu.Item> */}
+              {/* <Menu.Item
                 color="red"
                 icon={<IconUserMinus size={14} stroke={1.5} />}
                 onClick={handleDeleteAccount}
               >
                 Delete Account
-              </Menu.Item>
+              </Menu.Item> */}
               <Menu.Item
                 icon={
                   user.muted ? (
@@ -296,6 +345,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               </Menu.Item>
             </>
           )}
+          {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={NextLink} href={`/user/${user.username}/manage-categories`}>
               Manage model categories
@@ -562,21 +612,12 @@ const useStyles = createStyles((theme) => ({
 function LayoutSelector({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { username } = router.query as { username: string };
-  const features = useFeatureFlags();
-
-  if (features.profileOverhaul) {
-    return (
-      <ProfileLayout username={username}>
-        <ProfileHeader username={username} />
-        {children}
-      </ProfileLayout>
-    );
-  }
 
   return (
-    <ScrollArea>
-      <NestedLayout>{children}</NestedLayout>
-    </ScrollArea>
+    <ProfileLayout username={username}>
+      <ProfileHeader username={username} />
+      {children}
+    </ProfileLayout>
   );
 }
 

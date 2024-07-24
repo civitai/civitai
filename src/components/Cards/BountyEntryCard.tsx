@@ -17,6 +17,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -45,11 +47,17 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes: awardedStyles } = useStyles();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
+  const currentUser = useCurrentUser();
   const { user, images, awardedUnitAmountTotal } = data;
   const image = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
   const isAwarded = awardedUnitAmountTotal > 0;
+
+  const shouldAnimate = shouldAnimateByDefault({
+    ...image,
+    forceDisabled: !currentUser?.autoplayGifs,
+  });
 
   return (
     <FeedCard
@@ -113,8 +121,8 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             <ImageGuard2 image={image} connectId={data.id} connectType="bounty">
               {(safe) => (
                 <>
-                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
-                  <Stack className="absolute top-2 right-2 z-10">
+                  <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                  <Stack className="absolute right-2 top-2 z-10">
                     <HoverActionButton
                       label="Files"
                       size={30}
@@ -147,6 +155,8 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       width={IMAGE_CARD_WIDTH}
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
+                      anim={shouldAnimate}
+                      skip={getSkipValue(image)}
                     />
                   ) : (
                     <MediaHash {...image} />

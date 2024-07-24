@@ -15,6 +15,8 @@ export const getServerSideProps = createServerSideProps({
     if (!isNumber(id)) return { notFound: true };
 
     await ssg?.image.get.prefetch({ id });
+    await ssg?.image.getContestCollectionDetails.prefetch({ id });
+    await ssg?.hiddenPreferences.getHidden.prefetch();
   },
 });
 
@@ -32,5 +34,5 @@ export default createPage(
       </ImageDetailProvider>
     );
   },
-  { layout: ({ children }) => <main className="h-full w-full">{children}</main> }
+  { layout: ({ children }) => <main className="size-full">{children}</main> }
 );

@@ -73,7 +73,7 @@ export function PostImageTool({
 
   return (
     <div className="flex flex-col py-1">
-      <div className="flex justify-between items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1">
           <span>{tool.name}</span>
           {!tool.notes && (

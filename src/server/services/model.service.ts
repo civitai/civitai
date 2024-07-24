@@ -15,11 +15,12 @@ import { SessionUser } from 'next-auth';
 
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { ModelSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -36,6 +37,7 @@ import {
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -43,14 +45,14 @@ import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
-  getUnavailableResources,
-  prepareModelInOrchestrator,
-} from '~/server/services/generation/generation.service';
-import {
-  getImagesForModelVersionCache,
   getImagesForModelVersion,
+  getImagesForModelVersionCache,
+  ImagesForModelVersions,
 } from '~/server/services/image.service';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -66,7 +68,8 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { decreaseDate } from '~/utils/date-helpers';
+import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -77,14 +80,8 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -111,6 +108,7 @@ type ModelRaw = {
   description?: string | null;
   type: ModelType;
   poi?: boolean;
+  minor?: boolean;
   nsfw: boolean;
   nsfwLevel: number;
   allowNoCredit?: boolean;
@@ -208,6 +206,7 @@ export const getModelsRaw = async ({
     clubId,
     modelVersionIds,
     browsingLevel,
+    excludedUserIds,
   } = input;
 
   let pending = input.pending;
@@ -360,7 +359,7 @@ export const getModelsRaw = async ({
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
     AND.push(
-      Prisma.sql`(COALESCE(m."lastVersionAt", lmv."createdAt") >= ${decreaseDate(
+      Prisma.sql`(m."lastVersionAt" >= ${decreaseDate(
         new Date(),
         1,
         period.toLowerCase() as ManipulateType
@@ -402,7 +401,8 @@ export const getModelsRaw = async ({
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
-      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')}) AND mv."modelId" = m."id"
+      WHERE mv."id" IN (${Prisma.join(modelVersionIds, ',')})
+        AND mv."modelId" = m."id"
     )`);
   }
 
@@ -458,6 +458,11 @@ export const getModelsRaw = async ({
     isPrivate = !permissions.publicCollection;
   }
 
+  // Exclude user content
+  if (excludedUserIds?.length) {
+    AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
+  }
+
   let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
 
   if (sort === ModelSort.HighestRated)
@@ -479,8 +484,6 @@ export const getModelsRaw = async ({
   // eslint-disable-next-line prefer-const
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
   if (cursorClause) AND.push(cursorClause);
-  if (orderBy === `m."lastVersionAt" DESC NULLS LAST`)
-    orderBy = 'COALESCE(m."lastVersionAt", \'infinity\') DESC';
 
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -495,38 +498,18 @@ export const getModelsRaw = async ({
     )`);
   }
 
-  const modelVersionWhere: Prisma.Sql[] = [];
-
-  if (!sessionUser?.isModerator || !status?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."status" = ${ModelStatus.Published}::"ModelStatus"`);
-  }
-
-  if (baseModels) {
-    modelVersionWhere.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModels, ',')})`);
-  }
-
-  if (!!modelVersionIds?.length) {
-    modelVersionWhere.push(Prisma.sql`mv."id" IN (${Prisma.join(modelVersionIds, ',')})`);
-  }
-
-  if (hidePrivateModels) {
-    modelVersionWhere.push(Prisma.sql`mv."availability" = 'Public'::"Availability"`);
-  }
-
-  // if (!includeDetails) {
-  const browsingLevelQuery = Prisma.sql`(lmv."nsfwLevel" & ${browsingLevel}) != 0`;
+  const browsingLevelQuery = Prisma.sql`(m."nsfwLevel" & ${browsingLevel}) != 0`;
   if (pending && (isModerator || userId)) {
     if (isModerator) {
-      AND.push(Prisma.sql`(${browsingLevelQuery} OR lmv."nsfwLevel" = 0)`);
+      AND.push(Prisma.sql`(${browsingLevelQuery} OR m."nsfwLevel" = 0)`);
     } else if (userId) {
       AND.push(
-        Prisma.sql`(${browsingLevelQuery} OR (lmv."nsfwLevel" = 0 AND m."userId" = ${userId}))`
+        Prisma.sql`(${browsingLevelQuery} OR (m."nsfwLevel" = 0 AND m."userId" = ${userId}))`
       );
     }
   } else {
     AND.push(browsingLevelQuery);
   }
-  // }
 
   const WITH: Prisma.Sql[] = [];
   if (clubId) {
@@ -550,42 +533,7 @@ export const getModelsRaw = async ({
         GROUP BY mv."modelId"
       )
     `);
-
-    modelVersionWhere.push(Prisma.sql`cm."modelVersionId" = mv."id"`);
   }
-  WITH.push(Prisma.sql`"CTE_ModelVersionDetails" AS NOT MATERIALIZED (
-    SELECT
-      mv."id",
-      mv.index,
-      mv."modelId",
-      mv."name",
-      mv."earlyAccessTimeFrame",
-      mv."baseModel",
-      mv."baseModelType",
-      mv."createdAt",
-      mv."trainingStatus",
-      mv."publishedAt",
-      mv."status",
-      mv.availability,
-      mv."nsfwLevel",
-      ${ifDetails`
-        mv."description",
-        mv."trainedWords",
-        mv."vaeId",
-      `}
-      COALESCE((
-        SELECT gc.covered
-        FROM "GenerationCoverage" gc
-        WHERE gc."modelVersionId" = mv.id
-      ), false) AS covered
-    FROM "ModelVersion" mv
-    WHERE
-      ${
-        modelVersionWhere.length > 0
-          ? Prisma.sql`${Prisma.join(modelVersionWhere, ' AND ')}`
-          : Prisma.sql`1 = 1`
-      }
-  )`);
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
@@ -596,13 +544,14 @@ export const getModelsRaw = async ({
       m."name",
       ${ifDetails`
         m."description",
-        m."poi",
         m."allowNoCredit",
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
       `}
       m."type",
+      m."minor",
+      m."poi",
       m."nsfw",
       m."nsfwLevel",
       m."status",
@@ -622,40 +571,6 @@ export const getModelsRaw = async ({
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
       ) as "rank",
-      (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object(
-          'tagId', "tagId",
-          'name', t."name"
-          )
-        ), '[]'::jsonb) FROM "TagsOnModels"
-            JOIN "Tag" t ON "tagId" = t."id"
-            WHERE "modelId" = m."id"
-            AND "tagId" IS NOT NULL
-      ) as "tagsOnModels",
-      (
-        SELECT COALESCE(jsonb_agg(jsonb_build_object('hash', "hash")), '[]'::jsonb) FROM "ModelHash"
-            WHERE "modelId" = m."id"
-            AND "modelId" IS NOT NULL
-            AND "hashType" = 'SHA256'
-            AND "fileType" IN ('Model', 'Pruned Model')
-        AND "hash" IS NOT NULL
-      ) as "hashes",
-      ${
-        includeDetails
-          ? Prisma.sql`(
-            SELECT jsonb_agg(data)
-              FROM (
-                SELECT row_to_json(mvd) as data
-                FROM "CTE_ModelVersionDetails" mvd
-                WHERE mvd."modelId" = m.id
-                ORDER BY index
-              ) as t
-            ) as "modelVersions",`
-          : Prisma.sql`(
-            SELECT jsonb_agg(data)
-            FROM (SELECT row_to_json(lmv) AS data) as t
-            ) as "modelVersions",`
-      }
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
@@ -667,17 +582,15 @@ export const getModelsRaw = async ({
     JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
     JOIN "User" u ON m."userId" = u.id
     ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
-    CROSS JOIN LATERAL (
-        SELECT *
-        FROM "CTE_ModelVersionDetails" mv
-        WHERE mv."modelId" = m.id
-        ORDER BY mv.index ASC
-        LIMIT 1
-    ) lmv -- LatestModelVersion
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
+
+  // TODO - break into multiple queries
+  // model query
+  // model version query
+  // additional subqueries?
 
   const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
     modelQuery
@@ -686,6 +599,11 @@ export const getModelsRaw = async ({
   const userIds = models.map((m) => m.user.id);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const userCosmetics = await getCosmeticsForUsers(userIds);
+
+  // Get versions, hash, and tags from cache
+  const modelIds = models.map((m) => m.id);
+  const modelData = await dataForModelsCache.fetch(modelIds);
+
   const cosmetics = includeCosmetics
     ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })
     : {};
@@ -697,26 +615,60 @@ export const getModelsRaw = async ({
   }
 
   return {
-    items: models.map(({ rank, modelVersions, cursorId, ...model }) => ({
-      ...model,
-      rank: {
-        [`downloadCount${input.period}`]: rank.downloadCount,
-        [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
-        [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
-        [`commentCount${input.period}`]: rank.commentCount,
-        [`ratingCount${input.period}`]: rank.ratingCount,
-        [`rating${input.period}`]: rank.rating,
-        [`collectedCount${input.period}`]: rank.collectedCount,
-        [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
-      },
-      modelVersions: (modelVersions ?? []).filter(isDefined),
-      user: {
-        ...model.user,
-        profilePicture: profilePictures?.[model.user.id] ?? null,
-        cosmetics: userCosmetics[model.user.id] ?? [],
-      },
-      cosmetic: cosmetics[model.id] ?? null,
-    })),
+    items: models
+      .map(({ rank, cursorId, ...model }) => {
+        const data = modelData[model.id.toString()];
+        if (!data) return null;
+
+        let modelVersions = data.versions;
+
+        // Apply version filters
+        if (!sessionUser?.isModerator || !status?.length) {
+          modelVersions = modelVersions.filter((mv) => mv.status === ModelStatus.Published);
+        }
+
+        if (baseModels) {
+          modelVersions = modelVersions.filter((mv) => baseModels.includes(mv.baseModel));
+        }
+
+        if (!!modelVersionIds?.length) {
+          modelVersions = modelVersions.filter((mv) => modelVersionIds.includes(mv.id));
+        }
+
+        if (hidePrivateModels) {
+          modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+        }
+
+        // eject if no versions
+        if (modelVersions.length === 0) return null;
+
+        // If not getting full details, only return the latest version
+        if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
+
+        return {
+          ...model,
+          rank: {
+            [`downloadCount${input.period}`]: rank.downloadCount,
+            [`thumbsUpCount${input.period}`]: rank.thumbsUpCount,
+            [`thumbsDownCount${input.period}`]: rank.thumbsDownCount,
+            [`commentCount${input.period}`]: rank.commentCount,
+            [`ratingCount${input.period}`]: rank.ratingCount,
+            [`rating${input.period}`]: rank.rating,
+            [`collectedCount${input.period}`]: rank.collectedCount,
+            [`tippedAmountCount${input.period}`]: rank.tippedAmountCount,
+          },
+          modelVersions,
+          hashes: data.hashes,
+          tagsOnModels: data.tags,
+          user: {
+            ...model.user,
+            profilePicture: profilePictures?.[model.user.id] ?? null,
+            cosmetics: userCosmetics[model.user.id] ?? [],
+          },
+          cosmetic: cosmetics[model.id] ?? null,
+        };
+      })
+      .filter(isDefined),
     nextCursor,
     isPrivate,
   };
@@ -1032,9 +984,31 @@ export const getModelsWithImagesAndModelVersions = async ({
     .flatMap((m) => m.modelVersions)
     .map((m) => m.id);
 
-  const modelVersionImages = !!modelVersionIds.length
-    ? await getImagesForModelVersionCache(modelVersionIds)
-    : {};
+  let modelVersionImages: Record<
+    number,
+    { modelVersionId: number; images: ImagesForModelVersions[] }
+  > = {};
+  if (!!modelVersionIds.length) {
+    if (input.pending) {
+      const images = await getImagesForModelVersion({
+        modelVersionIds,
+        imagesPerVersion: 20,
+        pending: input.pending,
+        browsingLevel: input.browsingLevel,
+        user,
+      });
+      for (const image of images) {
+        if (!modelVersionImages[image.modelVersionId])
+          modelVersionImages[image.modelVersionId] = {
+            modelVersionId: image.modelVersionId,
+            images: [],
+          };
+        modelVersionImages[image.modelVersionId].images.push(image);
+      }
+    } else {
+      modelVersionImages = await getImagesForModelVersionCache(modelVersionIds);
+    }
+  }
 
   const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);
@@ -1064,7 +1038,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         return {
           ...model,
           tags: tagsOnModels.map((x) => x.tagId), // not sure why we even use scoring here...
-          hashes: hashes.map((hash) => hash.hash.toLowerCase()),
+          hashes: hashes.map((hash) => hash.toLowerCase()),
           rank: {
             downloadCount: rank?.[`downloadCount${input.period}`] ?? 0,
             thumbsUpCount: rank?.[`thumbsUpCount${input.period}`] ?? 0,
@@ -1104,19 +1078,15 @@ export const getModelVersionsMicro = async ({
       id: true,
       name: true,
       index: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
       createdAt: true,
       publishedAt: true,
     },
   });
 
-  return versions.map(({ earlyAccessTimeFrame, createdAt, publishedAt, ...v }) => ({
+  return versions.map(({ earlyAccessEndsAt, ...v }) => ({
     ...v,
-    isEarlyAccess: isEarlyAccess({
-      earlyAccessTimeframe: earlyAccessTimeFrame,
-      publishedAt,
-      versionCreatedAt: createdAt,
-    }),
+    isEarlyAccess: earlyAccessEndsAt && isFutureDate(earlyAccessEndsAt),
   }));
 };
 
@@ -1262,7 +1232,8 @@ export const upsertModel = async (
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, ...data } = input;
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1277,6 +1248,7 @@ export const upsertModel = async (
       select: { id: true, nsfwLevel: true },
       data: {
         ...data,
+        status,
         meta:
           bountyId || meta
             ? {
@@ -1307,7 +1279,7 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true },
+      select: { poi: true, userId: true, minor: true },
     });
     if (!beforeUpdate) return null;
 
@@ -1315,7 +1287,7 @@ export const upsertModel = async (
     if (!isOwner) return null;
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true },
+      select: { id: true, nsfwLevel: true, poi: true, minor: true },
       where: { id },
       data: {
         ...data,
@@ -1352,8 +1324,11 @@ export const upsertModel = async (
     const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
     // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
 
+    // Handle Minor change
+    const minorChanged = beforeUpdate && result.minor !== beforeUpdate.minor;
+
     // Update search index if listing changes
-    if (tagsOnModels || poiChanged) {
+    if (tagsOnModels || poiChanged || minorChanged) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -1384,14 +1359,7 @@ export const publishModelById = async ({
           status,
           publishedAt: !republishing ? publishedAt : undefined,
           meta: isEmpty(meta) ? Prisma.JsonNull : meta,
-          modelVersions: includeVersions
-            ? {
-                updateMany: {
-                  where: { id: { in: versionIds } },
-                  data: { status, publishedAt: !republishing ? publishedAt : undefined },
-                },
-              }
-            : undefined,
+          deletedAt: null,
         },
         select: {
           id: true,
@@ -1403,11 +1371,25 @@ export const publishModelById = async ({
       });
 
       if (includeVersions) {
+        if (status === ModelStatus.Published) {
+          // Publish model versions with early access check:
+          await publishModelVersionsWithEarlyAccess({
+            modelVersionIds: versionIds,
+            publishedAt: !republishing ? publishedAt : undefined,
+          });
+        } else if (status === ModelStatus.Scheduled) {
+          // Schedule model versions:
+          await tx.modelVersion.updateMany({
+            where: { id: { in: versionIds } },
+            data: { status, publishedAt: !republishing ? publishedAt : undefined },
+          });
+        }
+
         await tx.$executeRaw`
           UPDATE "Post"
           SET
-            "publishedAt" = CASE 
-              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL 
+            "publishedAt" = CASE
+              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
               THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
               ELSE ${publishedAt}
             END,
@@ -1424,10 +1406,7 @@ export const publishModelById = async ({
   );
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    // Send to orchestrator
-    Promise.all(
-      model.modelVersions.map((version) => prepareModelInOrchestrator({ id: version.id }))
-    );
+    await bustOrchestratorModelCache(model.modelVersions.map((x) => x.id));
   }
 
   // Fetch affected posts to update their images in search index
@@ -1496,7 +1475,7 @@ export const unpublishModelById = async ({
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
             'unpublishedBy', ${user.id},
-            "prevPublishedAt", "publishedAt"
+            'prevPublishedAt', "publishedAt"
           ),
           "publishedAt" = NULL
         WHERE "publishedAt" IS NOT NULL
@@ -1574,7 +1553,7 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   return getPagingData({ items, count }, take, page);
 };
 
-export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSelect>({
+export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVersionSelect>({
   userId,
   select,
   page,
@@ -1584,20 +1563,23 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelSele
   select: TSelect;
 }) => {
   const { take, skip } = getPagination(limit, page);
-  const where: Prisma.ModelFindManyArgs['where'] = {
-    userId,
-    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
-    uploadType: { equals: ModelUploadType.Trained },
+  const where: Prisma.ModelVersionFindManyArgs['where'] = {
+    status: { in: [ModelStatus.Draft, ModelStatus.Training] },
+    model: {
+      userId,
+      status: { notIn: [ModelStatus.Deleted] },
+      uploadType: { equals: ModelUploadType.Trained },
+    },
   };
 
-  const items = await dbRead.model.findMany({
+  const items = await dbRead.modelVersion.findMany({
     select,
     skip,
     take,
     where,
     orderBy: { updatedAt: 'desc' },
   });
-  const count = await dbRead.model.count({ where });
+  const count = await dbRead.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
 };
@@ -1636,32 +1618,20 @@ export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
       publishedAt: true,
       modelVersions: {
         where: { status: ModelStatus.Published },
-        select: { id: true, earlyAccessTimeFrame: true, createdAt: true },
+        select: { id: true, earlyAccessEndsAt: true, createdAt: true },
       },
     },
   });
   if (!model) throw throwNotFoundError();
 
   const { modelVersions } = model;
-  const nextEarlyAccess = modelVersions.find(
-    (v) =>
-      v.earlyAccessTimeFrame > 0 &&
-      isEarlyAccess({
-        earlyAccessTimeframe: v.earlyAccessTimeFrame,
-        versionCreatedAt: v.createdAt,
-        publishedAt: model.publishedAt,
-      })
-  );
+  const nextEarlyAccess = modelVersions.find((v) => !!v.earlyAccessEndsAt);
 
   if (nextEarlyAccess) {
     await updateModelById({
       id,
       data: {
-        earlyAccessDeadline: getEarlyAccessDeadline({
-          earlyAccessTimeframe: nextEarlyAccess.earlyAccessTimeFrame,
-          versionCreatedAt: nextEarlyAccess.createdAt,
-          publishedAt: model.publishedAt,
-        }),
+        earlyAccessDeadline: nextEarlyAccess.earlyAccessEndsAt,
       },
     });
   } else {

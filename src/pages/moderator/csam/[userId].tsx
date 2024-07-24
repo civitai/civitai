@@ -4,7 +4,6 @@ import { CsamImageSelection } from '~/components/Csam/CsamImageSelection';
 import React, { useRef } from 'react';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
 import { CsamProvider } from '~/components/Csam/CsamProvider';
-import { Stepper } from '~/components/Stepper/Stepper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { z } from 'zod';
@@ -28,17 +27,14 @@ export default function ReportCsamUserPage() {
   const handleStepperComplete = () => {
     if (userIds.length > 1) {
       router.replace(`/moderator/csam/${userIds.filter((id) => id !== userId).join(',')}`);
-      stepper.reset();
+      stepperActions.reset();
     } else {
       router.replace('/moderator/csam');
     }
   };
 
   const { data: user } = trpc.user.getById.useQuery({ id: userId });
-  const stepper = useStepper({
-    onComplete: handleStepperComplete,
-    steps: [{ render: CsamImageSelection }, { render: CsamDetailsForm }],
-  });
+  const [currentStep, stepperActions] = useStepper(2);
 
   if (!csamReports) return <NotFound />;
   if (!user) return <PageLoader />;
@@ -46,7 +42,7 @@ export default function ReportCsamUserPage() {
   const progress = userCountRef.current - userIds.length;
 
   return (
-    <CsamProvider user={user}>
+    <CsamProvider user={user} type="Image">
       {userCountRef.current > 1 && (
         <Card py={4}>
           <Group position="center">
@@ -62,7 +58,15 @@ export default function ReportCsamUserPage() {
           </Group>
         </Card>
       )}
-      <Stepper stepper={stepper} />
+      {currentStep === 1 && <CsamImageSelection onNext={stepperActions.goToNextStep} />}
+      {currentStep === 2 && (
+        <CsamDetailsForm
+          onPrevious={stepperActions.goToPrevStep}
+          onSuccess={handleStepperComplete}
+          userId={user.id}
+          type="Image"
+        />
+      )}
     </CsamProvider>
   );
 }

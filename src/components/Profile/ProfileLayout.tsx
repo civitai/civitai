@@ -12,6 +12,8 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 export function ProfileLayout({
   username,
@@ -20,18 +22,19 @@ export function ProfileLayout({
   username: string;
   children: React.ReactNode;
 }) {
-  const { isLoading, data: user } = trpc.userProfile.get.useQuery({
-    username,
-  });
+  const enabled = username.toLowerCase() !== 'civitai';
+  const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username }, { enabled });
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.some((x) => x.id === user?.id);
 
   const stats = user?.stats;
   const { classes } = useStyles();
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return <PageLoader />;
   }
 
-  if (!user || !user.username) {
+  if (!user || !user.username || !enabled) {
     return <NotFound />;
   }
 
@@ -63,7 +66,13 @@ export function ProfileLayout({
             <ProfileSidebar username={username} />
           </ScrollArea>
         </div>
-        <ScrollArea p="md">{children}</ScrollArea>
+        {isBlocked ? (
+          <div className="mx-auto flex h-full items-center">
+            <NoContent message="Unable to display content because you have blocked this user" />
+          </div>
+        ) : (
+          <ScrollArea p="md">{children}</ScrollArea>
+        )}
       </div>
     </>
   );

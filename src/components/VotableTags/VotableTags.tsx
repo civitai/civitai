@@ -2,6 +2,8 @@ import { ActionIcon, Center, Group, GroupProps, Loader, createStyles } from '@ma
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
+import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
 import { VotableTagAdd } from '~/components/VotableTags/VotableTagAdd';
 import { VotableTagMature } from '~/components/VotableTags/VotableTagMature';
@@ -10,6 +12,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
+import { NsfwLevel } from '~/server/common/enums';
 
 export function VotableTags({
   entityId: id,
@@ -61,12 +64,38 @@ export function VotableTags({
   const showAddibles = !collapsible || showAll;
   return (
     <Group spacing={4} {...props}>
+      {(nsfwLevel || currentUser?.isModerator) && type === 'image' && (
+        <BrowsingLevelBadge
+          radius="xs"
+          browsingLevel={nsfwLevel}
+          className="cursor-pointer"
+          onClick={() =>
+            currentUser
+              ? openSetBrowsingLevelModal({ imageId: id, nsfwLevel: nsfwLevel ?? NsfwLevel.XXX })
+              : undefined
+          }
+          sfwClassName={classes.nsfwBadge}
+        />
+      )}
       {canAdd && (
         <VotableTagAdd
           addTag={(tag) => {
             handleVote({ tags: [tag], vote: 1 });
           }}
         />
+      )}
+      {showAddibles && (
+        <>
+          {canAddModerated && (
+            <VotableTagMature
+              tags={tags}
+              addTag={(tag) => {
+                const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
+                handleVote({ tags: [tag], vote, tagType: 'Moderation' });
+              }}
+            />
+          )}
+        </>
       )}
       {displayedTags.map((tag) => (
         <VotableTag
@@ -87,19 +116,6 @@ export function VotableTags({
           }}
         />
       ))}
-      {showAddibles && (
-        <>
-          {canAddModerated && (
-            <VotableTagMature
-              tags={tags}
-              addTag={(tag) => {
-                const vote = tags.find((x) => x.name === tag && x.id === 0) ? 0 : 1;
-                handleVote({ tags: [tag], vote, tagType: 'Moderation' });
-              }}
-            />
-          )}
-        </>
-      )}
       {collapsible && tags.length > limit && (
         <ActionIcon variant="transparent" size="sm" onClick={() => setShowAll((prev) => !prev)}>
           {showAll ? <IconChevronUp strokeWidth={3} /> : <IconChevronDown strokeWidth={3} />}

@@ -3,7 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import dayjs from 'dayjs';
 import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { AugmentedPool, pgDbWrite } from '~/server/db/pgDb';
+import { AugmentedPool } from '~/server/db/db-helpers';
+import { pgDbWrite } from '~/server/db/pgDb';
 import { getJobDate, JobContext } from '~/server/jobs/job';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
@@ -17,12 +18,14 @@ export function createMetricProcessor({
   updateInterval = DEFAULT_UPDATE_INTERVAL,
   clearDay,
   rank,
+  lockTime,
 }: {
   name: string;
   update: MetricContextProcessor;
   updateInterval?: number;
   clearDay?: MetricContextProcessor;
   rank?: MetricRankOptions;
+  lockTime?: number;
 }) {
   return {
     name,
@@ -93,31 +96,37 @@ export function createMetricProcessor({
       if (!Array.isArray(ids)) ids = [ids];
       await addToQueue('metric-update:' + name.toLowerCase(), ids);
     },
+    lockTime,
   };
 }
 
 async function recreateRankTable(rankTable: string, primaryKey: string, indexes: string[] = []) {
   await dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}_New";`);
   await dbWrite.$executeRawUnsafe(
-    `CREATE TABLE "${rankTable}_New" AS SELECT * FROM "${rankTable}_Live";`
+    `CREATE TABLE "${rankTable}_New" AS
+    SELECT *
+    FROM "${rankTable}_Live";`
   );
   await dbWrite.$executeRawUnsafe(
-    `ALTER TABLE "${rankTable}_New" ADD CONSTRAINT "pk_${rankTable}_New" PRIMARY KEY ("${primaryKey}")`
+    `ALTER TABLE "${rankTable}_New"
+      ADD CONSTRAINT "pk_${rankTable}_New" PRIMARY KEY ("${primaryKey}")`
   );
   await dbWrite.$executeRawUnsafe(
-    `CREATE INDEX "${rankTable}_New_idx" ON "${rankTable}_New"("${primaryKey}")`
+    `CREATE INDEX "${rankTable}_New_idx" ON "${rankTable}_New" ("${primaryKey}")`
   );
   for (const index of indexes) {
     await dbWrite.$executeRawUnsafe(
-      `CREATE INDEX "${rankTable}_New_${index}_idx" ON "${rankTable}_New"("${index}")`
+      `CREATE INDEX "${rankTable}_New_${index}_idx" ON "${rankTable}_New" ("${index}")`
     );
   }
 
   await dbWrite.$transaction([
     dbWrite.$executeRawUnsafe(`DROP TABLE IF EXISTS "${rankTable}";`),
-    dbWrite.$executeRawUnsafe(`ALTER TABLE "${rankTable}_New" RENAME TO "${rankTable}";`),
+    dbWrite.$executeRawUnsafe(`ALTER TABLE "${rankTable}_New"
+      RENAME TO "${rankTable}";`),
     dbWrite.$executeRawUnsafe(
-      `ALTER TABLE "${rankTable}" RENAME CONSTRAINT "pk_${rankTable}_New" TO "pk_${rankTable}";`
+      `ALTER TABLE "${rankTable}"
+        RENAME CONSTRAINT "pk_${rankTable}_New" TO "pk_${rankTable}";`
     ),
     dbWrite.$executeRawUnsafe(`ALTER INDEX "${rankTable}_New_idx" RENAME TO "${rankTable}_idx";`),
     ...indexes.map((index) =>

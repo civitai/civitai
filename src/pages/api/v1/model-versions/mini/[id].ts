@@ -10,6 +10,8 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -21,6 +23,9 @@ type VersionRow = {
   baseModel: BaseModel;
   status: string;
   type: ModelType;
+  earlyAccessEndsAt?: Date;
+  checkPermission: boolean;
+  covered?: boolean;
 };
 type FileRow = {
   id: number;
@@ -55,7 +60,20 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
-      m.type
+      m.type,
+      mv."earlyAccessEndsAt",
+      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
+      (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
+      (
+        CASE
+          mv."earlyAccessConfig"->>'chargeForGeneration'
+        WHEN 'true'
+        THEN
+          COALESCE(CAST(mv."earlyAccessConfig"->>'generationTrialLimit' AS int), 10)
+        ELSE
+          NULL
+        END
+      ) AS "freeTrialLimit"
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     WHERE ${Prisma.join(where, ' AND ')}
@@ -71,8 +89,24 @@ export default MixedAuthEndpoint(async function handler(
   const primaryFile = getPrimaryFile(files);
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
-  const baseUrl = new URL(isProd ? `https://${req.headers.host}` : 'http://localhost:3000');
+  const baseUrl = getBaseUrl();
   const air = stringifyAIR(modelVersion)?.replace('pony', 'sdxl');
+  let downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
+    versionId: modelVersion.id,
+    primary: true,
+  })}`;
+  // if req url domain contains `api.`, strip /api/ from the download url
+  if (req.headers.host?.includes('api.')) {
+    downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
+  }
+
+  // Check unavailable resources:
+  let canGenerate = modelVersion.covered ?? false;
+  if (canGenerate) {
+    const unavailableResources = await getUnavailableResources();
+    const isUnavailable = unavailableResources.some((r) => r === modelVersion.id);
+    if (isUnavailable) canGenerate = false;
+  }
 
   const data = {
     air,
@@ -84,12 +118,10 @@ export default MixedAuthEndpoint(async function handler(
     hashes: {
       AutoV2: primaryFile.hash,
     },
-    downloadUrls: [
-      `${baseUrl.origin}${createModelFileDownloadUrl({
-        versionId: modelVersion.id,
-        primary: true,
-      })}`,
-    ],
+    downloadUrls: [downloadUrl],
+    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
+    checkPermission: modelVersion.checkPermission,
+    canGenerate,
   };
   res.status(200).json(data);
 });

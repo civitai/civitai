@@ -169,7 +169,6 @@ export function UserAvatar({
                     : '100%',
                   zIndex: 1,
                 }}
-                width="original"
               />
             )}
             {avatarUser.profilePicture &&

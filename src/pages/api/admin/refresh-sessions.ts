@@ -1,5 +1,5 @@
+import { z } from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import z from 'zod';
 import { invalidateAllSessions } from '~/server/utils/session-helpers';
 
 const refreshSessionsSchema = z.object({

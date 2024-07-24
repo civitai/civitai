@@ -1,12 +1,11 @@
-import { Badge, Tabs, TabsProps, Text, createStyles } from '@mantine/core';
-import { NotificationCategory } from '@prisma/client';
+import { Badge, createStyles, Tabs, TabsProps, Text } from '@mantine/core';
 import {
   getCategoryDisplayName,
   useNotificationSettings,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
+import { NotificationCategory } from '~/server/common/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
 
 const tabs = ['all', ...Object.values(NotificationCategory)];
 
@@ -48,7 +47,7 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
                 key={tab}
                 value={tab}
                 rightSection={
-                  tab !== 'all' && countValue ? (
+                  !!countValue ? (
                     <Badge color="red" variant="filled" size="xs" radius="xl" px={4}>
                       <Text size="xs">{abbreviateNumber(countValue)}</Text>
                     </Badge>

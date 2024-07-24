@@ -4,7 +4,6 @@ import {
   Group,
   Stack,
   Text,
-  ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
@@ -25,11 +24,10 @@ import {
   IconCalendarDue,
   IconExclamationMark,
   IconInfoCircle,
-  IconQuestionMark,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
@@ -48,7 +46,7 @@ import {
   InputTags,
   InputText,
   useForm,
-  InputFlag,
+  InputMultiSelect,
 } from '~/libs/form';
 import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -69,13 +67,15 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { stripTime } from '~/utils/date-helpers';
+import { endOfDay, startOfDay } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -177,7 +177,10 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
+const lockableProperties = ['nsfw', 'poi'];
+
 export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const { classes } = useStyles();
 
@@ -209,9 +212,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
-        ? dayjs(stripTime(bounty.expiresAt)).utc().toDate()
+        ? dayjs(endOfDay(bounty.expiresAt)).toDate()
         : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? dayjs(stripTime(bounty.startsAt)).toDate() : new Date(),
+      startsAt: bounty ? dayjs(startOfDay(bounty.startsAt)).toDate() : startOfDay(new Date()),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -319,6 +322,31 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       performTransaction();
     }
   };
+
+  useEffect(() => {
+    const subscription = form.watch((value, { name, type }) => {
+      if (
+        currentUser?.isModerator &&
+        name &&
+        lockableProperties.includes(name) &&
+        !value.lockedProperties?.includes(name)
+      ) {
+        const locked = (value.lockedProperties ?? []).filter(isDefined);
+        form.setValue('lockedProperties', [...locked, name]);
+      }
+    });
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []); // eslint-disable-line
+
+  function isLocked(key: string) {
+    return !currentUser?.isModerator ? bounty?.lockedProperties?.includes(key) : false;
+  }
+
+  function isLockedDescription(key: string, defaultDescription?: string) {
+    return bounty?.lockedProperties?.includes(key) ? 'Locked by moderator' : defaultDescription;
+  }
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
@@ -550,9 +578,10 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label="Start Date"
                         placeholder="Select a start date"
                         icon={<IconCalendar size={16} />}
-                        withAsterisk
                         minDate={minStartDate}
                         maxDate={maxStartDate}
+                        clearable={false}
+                        withAsterisk
                       />
                       <InputDatePicker
                         className={classes.fluid}
@@ -560,22 +589,26 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label="Deadline"
                         placeholder="Select an end date"
                         icon={<IconCalendarDue size={16} />}
-                        withAsterisk
                         minDate={minExpiresDate}
                         maxDate={maxExpiresDate}
+                        dateParser={(dateString) => new Date(Date.parse(dateString))}
+                        clearable={false}
+                        withAsterisk
                       />
                     </Group>
-                    <Text weight={590}>
-                      With the selected dates, your bounty will expire{' '}
-                      <Text weight="bold" color="red.5" span>
-                        <DaysFromNow date={stripTime(expiresAt)} inUtc />
+                    {expiresAt && (
+                      <Text weight={590}>
+                        With the selected dates, your bounty will expire{' '}
+                        <Text weight="bold" color="red.5" span>
+                          <DaysFromNow date={endOfDay(expiresAt)} inUtc />
+                        </Text>
+                        . All times are in{' '}
+                        <Text weight="bold" color="red.5" span>
+                          UTC
+                        </Text>
+                        .
                       </Text>
-                      . All times are in{' '}
-                      <Text weight="bold" color="red.5" span>
-                        UTC
-                      </Text>
-                      .
-                    </Text>
+                    )}
                   </Stack>
                 )}
 
@@ -796,6 +829,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               />
               <InputSwitch
                 name="poi"
+                disabled={isLocked('poi')}
+                description={isLockedDescription('poi')}
                 label={
                   <Stack spacing={4}>
                     <Group spacing={4}>
@@ -807,8 +842,22 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   </Stack>
                 }
               />
-              <InputSwitch name="nsfw" label="Is intended to produce sexual themes" />
+              <InputSwitch
+                disabled={isLocked('nsfw')}
+                description={isLockedDescription('nsfw')}
+                name="nsfw"
+                label="Is intended to produce sexual themes"
+              />
 
+              {currentUser?.isModerator && (
+                <Paper radius="md" p="xl" withBorder>
+                  <InputMultiSelect
+                    name="lockedProperties"
+                    label="Locked properties"
+                    data={lockableProperties}
+                  />
+                </Paper>
+              )}
               {hasPoiInNsfw && (
                 <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
                   <Text>

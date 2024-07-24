@@ -1,16 +1,18 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const reportNotifications = createNotificationProcessor({
+  // Moveable
   'report-actioned': {
     displayName: 'Report actioned',
-    category: 'System',
+    category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
       message: `The ${
         details.reportType ?? 'item'
       } you reported has been actioned. Thanks for helping keep the community safe!`,
     }),
-    prepareQuery: async ({ lastSent, category }) => `
+    prepareQuery: async ({ lastSent }) => `
       WITH actioned AS (
         SELECT DISTINCT
           u."id" "ownerId",
@@ -30,7 +32,7 @@ export const reportNotifications = createNotificationProcessor({
               END,
             'reportReason', r.reason,
             'createdAt', r."createdAt"
-          ) "details"
+          ) as "details"
         FROM "Report" r
         JOIN "User" u ON u.id = r."userId" OR u.id = ANY(r."alsoReportedBy")
         WHERE
@@ -39,21 +41,12 @@ export const reportNotifications = createNotificationProcessor({
           r."statusSetAt" > '${lastSent}' AND
           r.status = 'Actioned'
       )
-      INSERT INTO "Notification"("id", "userId", "type", "details", "category")
       SELECT
-        REPLACE(gen_random_uuid()::text, '-', ''),
+        concat('report-actioned:', details->>'reportId') "key",
         "ownerId"    "userId",
         'report-actioned' "type",
-        details,
-        '${category}'::"NotificationCategory" "category"
+        details
       FROM actioned r
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM "Notification" n
-        WHERE n."userId" = r."ownerId"
-            AND n.type IN ('report-actioned')
-            AND n.details->>'reportId' = r.details->>'reportId'
-      );
     `,
   },
 });

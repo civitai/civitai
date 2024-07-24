@@ -5,6 +5,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
+import { numericStringArray } from '~/utils/zod-helpers';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -48,6 +49,7 @@ export const generationResourceSchema = z.object({
   minStrength: z.number().optional(),
   maxStrength: z.number().optional(),
   image: imageSchema.pick({ url: true }).optional(),
+  minor: z.boolean().optional(),
 
   // navigation props
   covered: z.boolean().optional(),
@@ -98,30 +100,35 @@ export const blockedRequest = (() => {
   };
 })();
 
+function promptAuditRefiner(
+  data: { prompt: string; negativePrompt?: string },
+  ctx: z.RefinementCtx
+) {
+  const { blockedFor, success } = auditPrompt(data.prompt); // TODO: re-enable negativePrompt here
+  if (!success) {
+    let message = `Blocked for: ${blockedFor.join(', ')}`;
+    const count = blockedRequest.increment();
+    const status = blockedRequest.status();
+    if (status === 'warned') {
+      message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+    } else if (status === 'notified') {
+      message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+    }
+
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['prompt'],
+      message,
+      params: { count },
+    });
+  }
+}
+
 const sharedGenerationParamsSchema = z.object({
   prompt: z
     .string()
     .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters')
-    .superRefine((val, ctx) => {
-      const { blockedFor, success } = auditPrompt(val);
-      if (!success) {
-        let message = `Blocked for: ${blockedFor.join(', ')}`;
-        const count = blockedRequest.increment();
-        const status = blockedRequest.status();
-        if (status === 'warned') {
-          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-        } else if (status === 'notified') {
-          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-        }
-
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message,
-          params: { count },
-        });
-      }
-    }),
+    .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
   sampler: z
@@ -147,7 +154,7 @@ const generationLimitsSchema = z.object({
   resources: z.number(),
 });
 export type GenerationLimits = z.infer<typeof generationLimitsSchema>;
-const defaultsByTier: Record<string, GenerationLimits> = {
+export const defaultsByTier: Record<string, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,
@@ -181,8 +188,8 @@ export const generationStatusSchema = z.object({
       }
       return mergedLimits;
     }),
-  // TODO: This is for testing purposes.Turn back to false
   charge: z.boolean().default(true),
+  checkResourceAvailability: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 
@@ -198,9 +205,21 @@ export const generateFormSchema = generationFormShapeSchema
   .merge(sharedGenerationParamsSchema)
   .extend({
     model: generationResourceSchema,
-    resources: generationResourceSchema.array().max(9).default([]),
+    resources: generationResourceSchema.array().default([]),
     vae: generationResourceSchema.optional(),
-  });
+    tier: userTierSchema.optional().default('free'),
+  })
+  .superRefine(promptAuditRefiner)
+  .refine(
+    (data) => {
+      // Check if resources are at limit based on tier
+      const { resources, tier } = data;
+      const limit = defaultsByTier[tier].resources;
+
+      return resources.length <= limit;
+    },
+    { message: `You have exceed the number of allowed resources`, path: ['resources'] }
+  );
 
 export type CreateGenerationRequestInput = z.infer<typeof createGenerationRequestSchema>;
 export const createGenerationRequestSchema = z.object({
@@ -212,13 +231,13 @@ export const createGenerationRequestSchema = z.object({
       triggerWord: z.string().optional(),
     })
     .array()
-    .min(1, 'You must select at least one resource')
-    .max(10),
-  params: sharedGenerationParamsSchema,
+    .min(1, 'You must select at least one resource'),
+  params: sharedGenerationParamsSchema.superRefine(promptAuditRefiner),
 });
 
 export type GenerationRequestTestRunSchema = z.infer<typeof generationRequestTestRunSchema>;
 export const generationRequestTestRunSchema = z.object({
+  model: z.number().nullish(),
   baseModel: z.string().optional(),
   aspectRatio: z.string(),
   steps: z.coerce.number().min(1).max(100),
@@ -228,6 +247,7 @@ export const generationRequestTestRunSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
+  resources: z.number().array().nullish(),
   draft: z.boolean().optional(),
 });
 export type CheckResourcesCoverageSchema = z.infer<typeof checkResourcesCoverageSchema>;
@@ -243,9 +263,9 @@ export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
-  z.object({ type: z.literal('model'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
-  z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
+  // z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
+  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;
@@ -257,16 +277,4 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
-});
-
-export enum GENERATION_QUALITY {
-  GOOD = 'GOOD_QUALITY',
-  BAD = 'BAD_QUALITY',
-}
-
-export type SendFeedbackInput = z.infer<typeof sendFeedbackSchema>;
-export const sendFeedbackSchema = z.object({
-  jobId: z.string(),
-  reason: z.nativeEnum(GENERATION_QUALITY),
-  message: z.string().optional(),
 });

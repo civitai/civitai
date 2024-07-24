@@ -13,16 +13,17 @@ import {
   Title,
 } from '@mantine/core';
 import { TrainingStatus } from '@prisma/client';
-import { IconFileDownload, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
-import { NoContent } from '~/components/NoContent/NoContent';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { EpochSchema } from '~/pages/api/webhooks/resource-training';
+import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import { ModelVersionById } from '~/types/router';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -142,9 +143,11 @@ const EpochRow = ({
 
 export default function TrainingSelectFile({
   model,
+  modelVersion,
   onNextClick,
 }: {
-  model?: ModelWithTags;
+  model: ModelWithTags | ModelVersionById['model'];
+  modelVersion: ModelWithTags['modelVersions'][number] | ModelVersionById;
   onNextClick: () => void;
 }) {
   const queryUtils = trpc.useUtils();
@@ -152,9 +155,8 @@ export default function TrainingSelectFile({
 
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
-  const modelVersion = model?.modelVersions?.[0];
-  const modelFile = modelVersion?.files.find((f) => f.type === 'Training Data');
-  const existingModelFile = modelVersion?.files.find((f) => f.type === 'Model');
+  const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
+  const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
   const mfEpochs = modelFile?.metadata?.trainingResults?.epochs || [];
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
@@ -164,18 +166,13 @@ export default function TrainingSelectFile({
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
-      if (!model || !modelVersion) {
-        // showErrorNotification({
-        //   error: new Error('Missing model data. Please try again.'),
-        // });
-        return;
-      }
-
-      const versionMutateData = {
+      const versionMutateData: ModelVersionUpsertInput = {
         id: modelVersion.id,
         modelId: model.id,
-        name: model.name,
-        baseModel: 'SD 1.5' as const,
+        name: modelVersion.name,
+        baseModel: modelVersion.baseModel,
+        trainedWords: [],
+        // ---
         trainingStatus: TrainingStatus.Approved,
       };
 
@@ -214,14 +211,6 @@ export default function TrainingSelectFile({
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
 
   const handleSubmit = async (overrideFile?: string) => {
-    if (!model || !modelVersion) {
-      showErrorNotification({
-        error: new Error('Missing model data. Please try again.'),
-        autoClose: false,
-      });
-      return;
-    }
-
     const fileUrl = overrideFile || selectedFile;
     if (!fileUrl || !fileUrl.length) {
       showErrorNotification({
@@ -253,7 +242,6 @@ export default function TrainingSelectFile({
       {
         url: fileUrl,
         modelVersionId: modelVersion.id,
-        modelId: model.id,
       },
       {
         onSuccess: (data) => {
@@ -289,7 +277,14 @@ export default function TrainingSelectFile({
 
   const epochs = [...mfEpochs].sort((a, b) => b.epoch_number - a.epoch_number);
 
-  const inError = modelVersion.trainingStatus === TrainingStatus.Failed;
+  const errorMessage =
+    modelVersion.trainingStatus === TrainingStatus.Paused
+      ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
+      : modelVersion.trainingStatus === TrainingStatus.Failed
+      ? 'The training job failed. Please recreate this model and try again, or contact us for help.'
+      : modelVersion.trainingStatus === TrainingStatus.Denied
+      ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
+      : undefined;
   const noEpochs = !epochs || !epochs.length;
   const resultsLoading =
     (modelVersion.trainingStatus !== TrainingStatus.InReview &&
@@ -313,10 +308,11 @@ export default function TrainingSelectFile({
 
   return (
     <Stack>
-      {inError ? (
-        <Center py="md">
-          <NoContent message="The training job failed. Please recreate this model and try again, or contact us for help." />
-        </Center>
+      {!!errorMessage ? (
+        <Stack p="xl" align="center">
+          <IconAlertCircle size={52} />
+          <Text>{errorMessage}</Text>
+        </Stack>
       ) : noEpochs ? (
         <Stack p="xl" align="center">
           <Loader />

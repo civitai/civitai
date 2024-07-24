@@ -76,7 +76,6 @@ import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Logo } from '~/components/Logo/Logo';
 import { ImpersonateButton } from '~/components/Moderation/ImpersonateButton';
@@ -97,6 +96,13 @@ import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
 import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
+import dynamic from 'next/dynamic';
+
+const FeatureIntroductionModal = dynamic(() =>
+  import('~/components/FeatureIntroduction/FeatureIntroduction').then(
+    (m) => m.FeatureIntroductionModal
+  )
+);
 
 const HEADER_HEIGHT = 70;
 

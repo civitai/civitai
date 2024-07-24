@@ -7,6 +7,7 @@ import { ResourceSelectOptions } from './resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
+import { ModelType } from '@prisma/client';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
@@ -98,7 +99,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     return (
       <Input.Wrapper {...inputWrapperProps} ref={ref}>
-        <Stack spacing="md">
+        <Stack spacing="md" mb={inputWrapperProps.error ? 5 : undefined}>
           {sortedGroups.map((group, index) => {
             return (
               <React.Fragment key={group.type}>

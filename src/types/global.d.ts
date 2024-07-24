@@ -16,9 +16,12 @@ declare global {
     ? R
     : any;
 
-  type DeepPartial<T> = T extends object
+  type BrowserNativeObject = Date | FileList | File;
+  type DeepPartial<T> = T extends BrowserNativeObject
+    ? T
+    : T extends object
     ? {
-        [P in keyof T]?: DeepPartial<T[P]>;
+        [K in keyof T]?: DeepPartial<T[K]>;
       }
     : T;
 
@@ -109,7 +112,7 @@ declare global {
   };
 
   interface Window {
-    logSignal: (target: string) => void;
+    logSignal: (target: string, selector?: (args: unknown) => unknown) => void;
     Twitch: any;
     isAuthed?: boolean;
     authChecked?: boolean;

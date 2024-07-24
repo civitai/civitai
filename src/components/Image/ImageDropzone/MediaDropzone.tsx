@@ -5,6 +5,7 @@ import { DragEvent } from 'react';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
+import { formatBytes } from '~/utils/number-helpers';
 
 const MAX_IMAGE_SIZE = constants.mediaUpload.maxImageFileSize;
 
@@ -91,7 +92,11 @@ export function MediaDropzone({
             </Text> */}
             {allowsVideo && (
               <Text size="sm" color="dimmed" inline>
-                {`Videos cannot exceed 4k resolution or ${constants.mediaUpload.maxVideoDurationSeconds} seconds in duration`}
+                {`Videos cannot exceed ${formatBytes(
+                  constants.mediaUpload.maxVideoFileSize
+                )}, 4k resolution, or ${
+                  constants.mediaUpload.maxVideoDurationSeconds
+                } seconds in duration`}
               </Text>
             )}
             {fileExtensions.length > 0 && (

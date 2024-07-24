@@ -265,7 +265,9 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   pullSteps: 3,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT MIN(i.id) as "startId", MAX(i.id) as "endId" FROM "Image" i
+    SELECT (	
+      SELECT
+      i.id FROM "Image" i 
       ${
         lastUpdatedAt
           ? Prisma.sql`
@@ -273,6 +275,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       `
           : Prisma.sql``
       }
+      ORDER BY "createdAt" LIMIT 1
+    ) as "startId", (	
+      SELECT MAX (id) FROM "Image"
+    ) as "endId";      
     `;
 
     const { startId, endId } = data[0];
@@ -308,7 +314,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."height",
         i."hash",
         jsonb_build_object(
-          'prompt', i."meta"->'prompt'
+          'prompt', i."meta"->'prompt',
+          'comfy', i."meta"->'comfy'
         ) "meta",
         i."hideMeta",
         i."generationProcess",
@@ -319,6 +326,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."metadata",
         i."userId",
         p."modelVersionId",
+        p."publishedAt",
         (
           SELECT mv."baseModel" FROM "ModelVersion" mv
           RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id

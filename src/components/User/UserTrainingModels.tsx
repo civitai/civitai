@@ -96,7 +96,9 @@ type ModalData = {
   eta?: string;
 };
 
-const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; description: string }> = {
+const trainingStatusFields: {
+  [key in TrainingStatus]: { color: MantineColor; description: string };
+} = {
   [TrainingStatus.Pending]: {
     color: 'yellow',
     description:
@@ -107,19 +109,29 @@ const trainingStatusFields: Record<TrainingStatus, { color: MantineColor; descri
     description:
       'A request to train has been submitted, and will soon be actively processing. You will be emailed when it is complete.',
   },
+  [TrainingStatus.Paused]: {
+    color: 'orange',
+    description:
+      'Your training will resume or terminate within 1 business day. No action is required on your part.',
+  },
+  [TrainingStatus.Denied]: {
+    color: 'red',
+    description:
+      'We have found an issue with the training dataset that may violate the TOS. This request has been rejected - please contact us with any questions.',
+  },
   [TrainingStatus.Processing]: {
     color: 'teal',
     description:
-      'The training is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
+      'The training job is actively processing. In other words: the model is baking. You will be emailed when it is complete.',
   },
   [TrainingStatus.InReview]: {
     color: 'green',
     description:
-      'Training is completed, and your resulting model files are ready to be reviewed and published.',
+      'Training is complete, and your resulting model files are ready to be reviewed and published.',
   },
   [TrainingStatus.Approved]: {
     color: 'green',
-    description: 'The training is complete AND the results were published to Civitai.',
+    description: 'Training is complete, and the results were published to Civitai.',
   },
   [TrainingStatus.Failed]: {
     color: 'red',
@@ -152,7 +164,13 @@ export default function UserTrainingModels() {
 
   const { data: estData, isLoading: isEstLoading } = trpc.training.getJobEstStarts.useQuery();
 
-  const deleteMutation = trpc.model.delete.useMutation({
+  const deleteMutation = trpc.modelVersion.delete.useMutation({
+    onSuccess: async () => {
+      // TODO update instead of invalidate
+      await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+  });
+  const deleteModelMutation = trpc.model.delete.useMutation({
     onSuccess: async () => {
       // TODO update instead of invalidate
       await queryUtils.model.getMyTrainingModels.invalidate();
@@ -166,17 +184,40 @@ export default function UserTrainingModels() {
       e.preventDefault();
       window.open(href, '_blank');
     } else if (e.button === 0) {
-      router.push(href);
+      router.push(href).then();
     }
   };
 
-  const handleDeleteModel = (
+  const handleDelete = (
     e: React.MouseEvent<HTMLButtonElement>,
-    model: MyTrainingModelGetAll['items'][number]
+    modelVersion: MyTrainingModelGetAll['items'][number]
   ) => {
     e.preventDefault();
     e.stopPropagation();
     if (e.button !== 0) return;
+
+    if (modelVersion.model._count.modelVersions > 1) {
+      handleDeleteVersion(modelVersion);
+    } else {
+      handleDeleteModel(modelVersion);
+    }
+  };
+
+  const handleDeleteVersion = (modelVersion: MyTrainingModelGetAll['items'][number]) => {
+    openConfirmModal({
+      title: 'Delete version',
+      children:
+        'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
+      centered: true,
+      labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        deleteMutation.mutate({ id: modelVersion.id });
+      },
+    });
+  };
+
+  const handleDeleteModel = (modelVersion: MyTrainingModelGetAll['items'][number]) => {
     openConfirmModal({
       title: 'Delete model',
       children:
@@ -185,7 +226,7 @@ export default function UserTrainingModels() {
       labels: { confirm: 'Delete Model', cancel: "No, don't delete it" },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        deleteMutation.mutate({ id: model.id });
+        deleteModelMutation.mutate({ id: modelVersion.model.id });
       },
     });
   };
@@ -249,17 +290,15 @@ export default function UserTrainingModels() {
               </tr>
             )}
             {hasTraining ? (
-              items.map((model) => {
-                if (!model.modelVersions.length) return null;
-                const thisModelVersion = model.modelVersions[0];
-                const isSubmitted = thisModelVersion.trainingStatus === TrainingStatus.Submitted;
-                const isProcessing = thisModelVersion.trainingStatus === TrainingStatus.Processing;
+              items.map((mv) => {
+                const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
+                const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
+                const isPaused = mv.trainingStatus === TrainingStatus.Paused;
                 const isRunning = isSubmitted || isProcessing;
+                const isNotDeletable = isRunning || isPaused;
 
-                const thisTrainingDetails = thisModelVersion.trainingDetails as
-                  | TrainingDetailsObj
-                  | undefined;
-                const thisFile = thisModelVersion.files[0];
+                const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
+                const thisFile = mv.files[0];
                 const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
 
                 const hasFiles = !!thisFile;
@@ -274,7 +313,7 @@ export default function UserTrainingModels() {
                 const { targetSteps } = thisTrainingDetails?.params || {};
 
                 const startDate = isSubmitted
-                  ? (estData ?? {})[model.id]
+                  ? (estData ?? {})[mv.id]
                   : thisFileMetadata?.trainingResults?.submittedAt;
                 const startStr = !!startDate
                   ? formatDate(startDate, 'MMM D, YYYY hh:mm:ss A')
@@ -292,7 +331,7 @@ export default function UserTrainingModels() {
                   ) : (
                     <Text>Unknown</Text>
                   )
-                ) : thisModelVersion.trainingStatus === TrainingStatus.Pending ? (
+                ) : mv.trainingStatus === TrainingStatus.Pending ? (
                   <Text>-</Text>
                 ) : (
                   <Text>{startStr ?? 'Unknown'}</Text>
@@ -324,30 +363,29 @@ export default function UserTrainingModels() {
                   // onMouseUp is not perfect, but it's the closest thing we've got
                   // which means all click events inside that need to also be mouseUp, so they can be properly de-propagated
                   <tr
-                    key={model.id}
+                    key={mv.id}
                     style={{ cursor: 'pointer' }}
-                    onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(model))}
+                    onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(mv))}
                   >
-                    <td>{model.name}</td>
+                    <td>
+                      {mv.model.name} - {mv.name}
+                    </td>
                     <td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
                     </td>
                     <td>
-                      {thisModelVersion.trainingStatus ? (
+                      {mv.trainingStatus ? (
                         <Group spacing="sm">
                           <HoverCard shadow="md" width={300} zIndex={100} withArrow>
                             <HoverCard.Target>
                               <Badge
-                                color={
-                                  trainingStatusFields[thisModelVersion.trainingStatus]?.color ??
-                                  'gray'
-                                }
+                                color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}
                               >
                                 <Group spacing={6} noWrap>
                                   {splitUppercase(
-                                    thisModelVersion.trainingStatus === TrainingStatus.InReview
+                                    mv.trainingStatus === TrainingStatus.InReview
                                       ? 'Ready'
-                                      : thisModelVersion.trainingStatus
+                                      : mv.trainingStatus
                                   )}
                                   {isRunning && <Loader size={12} />}
                                 </Group>
@@ -355,8 +393,7 @@ export default function UserTrainingModels() {
                             </HoverCard.Target>
                             <HoverCard.Dropdown>
                               <Text>
-                                {trainingStatusFields[thisModelVersion.trainingStatus]
-                                  ?.description ?? 'N/A'}
+                                {trainingStatusFields[mv.trainingStatus]?.description ?? 'N/A'}
                               </Text>
                             </HoverCard.Dropdown>
                           </HoverCard>
@@ -379,7 +416,8 @@ export default function UserTrainingModels() {
                               </HoverCard>
                             </>
                           )}
-                          {thisModelVersion.trainingStatus === TrainingStatus.Failed && (
+                          {(mv.trainingStatus === TrainingStatus.Failed ||
+                            mv.trainingStatus === TrainingStatus.Denied) && (
                             <Button
                               size="xs"
                               color="gray"
@@ -406,12 +444,11 @@ export default function UserTrainingModels() {
                     <td>
                       <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
                         <HoverCard.Target>
-                          <Text>{formatDate(model.createdAt)}</Text>
+                          <Text>{formatDate(mv.createdAt)}</Text>
                         </HoverCard.Target>
-                        {new Date(model.createdAt).getTime() !==
-                          new Date(model.updatedAt).getTime() && (
+                        {new Date(mv.createdAt).getTime() !== new Date(mv.updatedAt).getTime() && (
                           <HoverCard.Dropdown>
-                            <Text>Updated: {formatDate(model.updatedAt)}</Text>
+                            <Text>Updated: {formatDate(mv.updatedAt)}</Text>
                           </HoverCard.Dropdown>
                         )}
                       </HoverCard>
@@ -441,8 +478,8 @@ export default function UserTrainingModels() {
                     </td>
                     <td>
                       <Group position="right" spacing={8} pr="xs" noWrap>
-                        {thisModelVersion.trainingStatus === TrainingStatus.InReview && (
-                          <Link href={getModelTrainingWizardUrl(model)} passHref>
+                        {mv.trainingStatus === TrainingStatus.InReview && (
+                          <Link href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"
@@ -464,7 +501,7 @@ export default function UserTrainingModels() {
                             e.stopPropagation();
                             if (e.button !== 0) return;
                             setModalData({
-                              id: thisModelVersion.id,
+                              id: mv.id,
                               file: thisFile as TrainingFileData,
                               baseModel: thisTrainingDetails?.baseModel,
                               params: thisTrainingDetails?.params,
@@ -480,8 +517,8 @@ export default function UserTrainingModels() {
                           variant="light"
                           size="md"
                           radius="xl"
-                          onMouseUp={(e) => !isRunning && handleDeleteModel(e, model)}
-                          disabled={isRunning}
+                          onMouseUp={(e) => !isNotDeletable && handleDelete(e, mv)}
+                          disabled={isNotDeletable}
                         >
                           <IconTrash size={16} />
                         </ActionIcon>

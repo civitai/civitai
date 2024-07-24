@@ -30,6 +30,7 @@ import {
   getUserBookmarkCollectionsHandler,
   getUserPurchasedRewardsHandler,
   toggleFavoriteHandler,
+  setLeaderboardEligibilityHandler,
 } from '~/server/controllers/user.controller';
 import {
   deleteUserHandler,
@@ -61,6 +62,7 @@ import {
   userOnboardingSchema,
   toggleFavoriteInput,
   updateBrowsingModeSchema,
+  setLeaderboardEligbilitySchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -177,4 +179,7 @@ export const userRouter = router({
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
+  setLeaderboardEligibility: moderatorProcedure
+    .input(setLeaderboardEligbilitySchema)
+    .mutation(setLeaderboardEligibilityHandler),
 });

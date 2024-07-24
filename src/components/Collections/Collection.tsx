@@ -13,6 +13,8 @@ import {
   createStyles,
   Menu,
   Popover,
+  Select,
+  Divider,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -43,7 +45,7 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { constants } from '~/server/common/constants';
+import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
 import { CollectionByIdModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
@@ -58,15 +60,25 @@ import { getRandom } from '~/utils/array-helpers';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { isCollectionSubsmissionPeriod } from '~/components/Collections/collection.utils';
+import {
+  contestCollectionReactionsHidden,
+  isCollectionSubsmissionPeriod,
+  useCollection,
+} from '~/components/Collections/collection.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { truncate } from 'lodash-es';
+import { capitalize, truncate } from 'lodash-es';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { removeTags, toPascalCase } from '~/utils/string-helpers';
+import { useRouter } from 'next/router';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -158,6 +170,7 @@ const ImageCollection = ({
         period: MetricTimeframe.AllTime,
         sort,
         collectionId: collection.id,
+        collectionTagId: query.collectionTagId,
       }
     : {
         ...query,
@@ -213,16 +226,65 @@ const ImageCollection = ({
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
+
                 <PeriodFilter
                   type="images"
                   value={period}
                   onChange={(x) => replace({ period: x })}
                 />
               </Group>
-              <ImageCategories />
+              {/* TODO.imageTags: Bring back once we support tags again.  */}
+              {/* <ImageCategories /> */}
             </>
           )}
-          <ReactionSettingsProvider settings={{ hideReactionCount: isContestCollection }}>
+
+          {isContestCollection && collection.tags.length > 0 && (
+            <Select
+              label="Collection Categories"
+              value={query.collectionTagId?.toString() ?? 'all'}
+              onChange={(x) =>
+                replace({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
+              }
+              placeholder="All"
+              data={[
+                {
+                  value: 'all',
+                  label: 'All',
+                },
+                ...collection.tags.map((tag) => ({
+                  value: tag.id.toString(),
+                  label: toPascalCase(tag.name),
+                })),
+              ]}
+              clearable
+            />
+          )}
+          {isContestCollection && (
+            <Group position="right">
+              <AdaptiveFiltersDropdown>
+                <Stack>
+                  <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+                  <ToolSelect
+                    value={(query.tools ?? [])[0]}
+                    onChange={(toolId) => {
+                      if (!toolId) {
+                        replace({ tools: undefined });
+                      } else {
+                        replace({ tools: [toolId as number] });
+                      }
+                    }}
+                    placeholder="Created with..."
+                  />
+                </Stack>
+              </AdaptiveFiltersDropdown>
+            </Group>
+          )}
+          <ReactionSettingsProvider
+            settings={{
+              hideReactionCount: isContestCollection,
+              hideReactions: contestCollectionReactionsHidden(collection),
+            }}
+          >
             <ImagesInfinite
               filters={{
                 ...filters,
@@ -359,12 +421,14 @@ export function Collection({
   const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
-  const { data: { collection, permissions } = {}, isLoading } = trpc.collection.getById.useQuery({
-    id: collectionId,
-  });
+  const { collection, permissions, isLoading } = useCollection(collectionId);
 
-  if (!isLoading && !collection) {
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
+
+  if (!isLoading && (!collection || isBlocked)) {
     return (
       <Stack w="100%" align="center">
         <Stack spacing="md" align="center" maw={800}>
@@ -434,7 +498,11 @@ export function Collection({
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
-          description={collection.description ?? undefined}
+          description={
+            collection.description
+              ? truncate(removeTags(collection.description), { length: 150 })
+              : ''
+          }
           images={collection.image}
           deIndex={
             collection.read !== 'Public' || collection.availability === Availability.Unsearchable
@@ -535,7 +603,13 @@ export function Collection({
                           color="blue"
                           variant="subtle"
                           radius="xl"
-                          onClick={() => setOpened(true)}
+                          onClick={() => {
+                            if (!!metadata.existingEntriesDisabled) {
+                              router.push(`/posts/create?collectionId=${collection.id}`);
+                            } else {
+                              setOpened(true);
+                            }
+                          }}
                         >
                           <IconCirclePlus />
                         </ActionIcon>

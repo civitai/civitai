@@ -143,30 +143,41 @@ model BuzzWithdrawalRequest {
   history                     BuzzWithdrawalRequestHistory[]
 }
 
+enum RewardsEligibility {
+  Eligible
+  Ineligible
+  Protected
+}
+
 model User {
-  id                  Int                   @id @default(autoincrement())
-  name                String?
-  username            String?               @unique @db.Citext
-  email               String?               @unique @db.Citext
-  emailVerified       DateTime?
-  image               String?
-  showNsfw            Boolean               @default(false)
-  blurNsfw            Boolean               @default(true)
-  browsingLevel       Int                   @default(1)
-  onboarding          Int                   @default(0)
-  isModerator         Boolean?              @default(false)
-  createdAt           DateTime              @default(now())
-  deletedAt           DateTime?
-  customerId          String?               @unique
-  subscriptionId      String?
-  subscription        CustomerSubscription?
-  mutedAt             DateTime? /// Updated via trigger
-  muted               Boolean               @default(false)
-  bannedAt            DateTime?
-  autoplayGifs        Boolean?              @default(true)
-  filePreferences     Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
-  leaderboardShowcase String?
-  referral            UserReferral?
+  id                      Int                   @id @default(autoincrement())
+  name                    String?
+  username                String?               @unique @db.Citext
+  email                   String?               @unique @db.Citext
+  emailVerified           DateTime?
+  image                   String?
+  showNsfw                Boolean               @default(false)
+  blurNsfw                Boolean               @default(true)
+  browsingLevel           Int                   @default(1)
+  onboarding              Int                   @default(0)
+  isModerator             Boolean?              @default(false)
+  createdAt               DateTime              @default(now())
+  deletedAt               DateTime?
+  customerId              String?               @unique
+  subscriptionId          String?
+  subscription            CustomerSubscription?
+  mutedAt                 DateTime? /// Updated via trigger
+  muted                   Boolean               @default(false)
+  muteConfirmedAt         DateTime?
+  bannedAt                DateTime?
+  autoplayGifs            Boolean?              @default(true)
+  filePreferences         Json                  @default("{\"size\": \"pruned\", \"fp\": \"fp16\", \"format\": \"SafeTensor\"}")
+  meta                    Json?                 @default("{}")
+  leaderboardShowcase     String?
+  referral                UserReferral?
+  excludeFromLeaderboards Boolean               @default(false)
+  rewardsEligibility      RewardsEligibility    @default(Eligible)
+  eligibilityChangedAt    DateTime?
 
   profile          UserProfile?
   profilePictureId Int?               @unique
@@ -186,7 +197,6 @@ model User {
   links                UserLink[]
   comments             Comment[]
   commentReactions     CommentReaction[]
-  notifications        Notification[]
   notificationSettings UserNotificationSettings[]
   webhooks             Webhook[]
   interests            ModelInterest[]
@@ -256,6 +266,10 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  donationGoals              DonationGoal[]
+  donations                  Donation[]
+  collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
+  collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
 }
 
 model CustomerSubscription {
@@ -322,6 +336,7 @@ model Purchase {
 enum UserEngagementType {
   Follow
   Hide
+  Block
 }
 
 model UserEngagement {
@@ -419,23 +434,41 @@ model Import {
 }
 
 enum ModelStatus {
-  Draft // saved but incomplete
-  Training // actively training
-  Published // complete
-  Scheduled // scheduled for publish
-  Unpublished // taken from published -> hidden intentionally?
-  UnpublishedViolation // taken from published -> hidden unintentionally?
-  GatherInterest // unused?
-  Deleted // deleted by user/system
+  /// saved but incomplete
+  Draft
+  /// actively training
+  Training
+  /// complete
+  Published
+  /// scheduled for publish
+  Scheduled
+  /// taken from published -> hidden intentionally?
+  Unpublished
+  /// taken from published -> hidden unintentionally?
+  UnpublishedViolation
+  /// unused?
+  GatherInterest
+  /// deleted by user/system
+  Deleted
 }
 
 enum TrainingStatus {
-  Pending // not submitted yet (in draft mode)
-  Submitted // submitted for processing (in civitai queue/delay, OR not picked up by external system)
-  Processing // actively generating
-  InReview // done, waiting for publish
-  Failed // something went wrong either externally or internally
-  Approved // published
+  /// not submitted yet (in draft mode)
+  Pending
+  /// submitted for processing (in civitai queue/delay, OR not picked up by external system)
+  Submitted
+  /// awaiting approval or confirmation
+  Paused
+  /// rejected for violation
+  Denied
+  /// actively generating
+  Processing
+  /// done, waiting for publish
+  InReview
+  /// something went wrong either externally or internally
+  Failed
+  /// published
+  Approved
 }
 
 enum CommercialUse {
@@ -479,6 +512,7 @@ model Model {
   nsfw                Boolean         @default(false)
   tosViolation        Boolean         @default(false)
   poi                 Boolean         @default(false)
+  minor               Boolean         @default(false)
   userId              Int
   user                User            @relation("creator", fields: [userId], references: [id])
   status              ModelStatus     @default(Draft)
@@ -602,35 +636,36 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                   Int             @id @default(autoincrement())
-  index                Int?
-  name                 String
-  description          String?
-  modelId              Int
-  model                Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords         String[]
-  steps                Int?
-  epochs               Int?
-  clipSkip             Int?
-  vaeId                Int?
-  vae                  ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
-  publishedAt          DateTime?
-  status               ModelStatus     @default(Draft)
-  trainingStatus       TrainingStatus?
-  trainingDetails      Json?
-  fromImport           Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId         Int?
-  inaccurate           Boolean         @default(false)
-  baseModel            String
-  baseModelType        String?
-  meta                 Json            @default("{}")
-  earlyAccessTimeFrame Int             @default(0)
-  requireAuth          Boolean         @default(false)
-  settings             Json?
-  availability         Availability    @default(Public)
-  nsfwLevel            Int             @default(0)
+  id                Int             @id @default(autoincrement())
+  index             Int?
+  name              String
+  description       String?
+  modelId           Int
+  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords      String[]
+  steps             Int?
+  epochs            Int?
+  clipSkip          Int?
+  vaeId             Int?
+  vae               ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  publishedAt       DateTime?
+  status            ModelStatus     @default(Draft)
+  trainingStatus    TrainingStatus?
+  trainingDetails   Json?
+  fromImport        Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId      Int?
+  inaccurate        Boolean         @default(false)
+  baseModel         String
+  baseModelType     String?
+  meta              Json            @default("{}")
+  requireAuth       Boolean         @default(false)
+  settings          Json?
+  availability      Availability    @default(Public)
+  nsfwLevel         Int             @default(0)
+  earlyAccessEndsAt DateTime?
+  earlyAccessConfig Json?
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -648,6 +683,7 @@ model ModelVersion {
   generationCoverage      GenerationCoverage?
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
+  DonationGoal            DonationGoal[]
 
   @@index([modelId], type: Hash)
 }
@@ -1280,6 +1316,7 @@ model ImageMetric {
   tippedCount       Int             @default(0)
   tippedAmountCount Int             @default(0)
   viewCount         Int             @default(0)
+  reactionCount     Int
   updatedAt         DateTime        @default(now())
 
   @@id([imageId, timeframe])
@@ -1320,6 +1357,7 @@ enum TagTarget {
   Tag
   Article
   Bounty
+  Collection
 }
 
 enum TagType {
@@ -1363,6 +1401,7 @@ model Tag {
   tagsOnPostComposite  PostTag[]
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
+  CollectionItem       CollectionItem[]
 
   @@unique([name])
 }
@@ -1586,6 +1625,11 @@ model KeyValue {
   value Json
 }
 
+enum ApiKeyType {
+  System
+  User
+}
+
 model ApiKey {
   id        Int        @id @default(autoincrement())
   key       String     @unique
@@ -1594,11 +1638,14 @@ model ApiKey {
   userId    Int
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
+  type      ApiKeyType @default(User)
+  expiresAt DateTime?
 }
 
 enum KeyScope {
   Read
   Write
+  Generate
 }
 
 model Comment {
@@ -1643,33 +1690,6 @@ model Log {
   event     String
   details   Json?
   createdAt DateTime @default(now())
-}
-
-enum NotificationCategory {
-  Comment
-  Update
-  Milestone
-  Bounty
-  Buzz
-  System
-  Other
-}
-
-model Notification {
-  id        String               @id @default(cuid())
-  userId    Int
-  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  category  NotificationCategory @default(Other)
-  details   Json?
-  createdAt DateTime             @default(now())
-
-  @@index([userId, createdAt])
-}
-
-model NotificationViewed {
-  id     String @id
-  userId Int
 }
 
 model UserNotificationSettings {
@@ -1960,6 +1980,7 @@ model Cosmetic {
   id                  Int                         @id @default(autoincrement())
   name                String
   description         String?
+  videoUrl            String?
   type                CosmeticType
   source              CosmeticSource
   permanentUnlock     Boolean
@@ -2301,6 +2322,8 @@ model CollectionItem {
   note         String?
   status       CollectionItemStatus @default(ACCEPTED)
   randomId     Int?
+  tagId        Int?
+  tag          Tag?                 @relation(fields: [tagId], references: [id], onDelete: SetNull)
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
   @@index([addedById], type: Hash)
@@ -2553,17 +2576,23 @@ model BountyEntryMetric {
   @@id([bountyEntryId, timeframe])
 }
 
+enum CsamReportType {
+  Image
+  TrainingData
+}
+
 model CsamReport {
-  id               Int       @id @default(autoincrement())
+  id               Int            @id @default(autoincrement())
   userId           Int?
-  createdAt        DateTime  @default(now())
+  createdAt        DateTime       @default(now())
   reportedById     Int
   reportSentAt     DateTime?
   archivedAt       DateTime?
   contentRemovedAt DateTime?
   reportId         Int?
-  details          Json      @default("{}")
-  images           Json      @default("[]")
+  details          Json           @default("{}")
+  images           Json           @default("[]")
+  type             CsamReportType @default(Image)
   // modelVersionIds  Int[]     @default([])
 }
 
@@ -2579,6 +2608,7 @@ enum Availability {
   Public
   Unsearchable // Ignored from search results.
   Private
+  EarlyAccess
 }
 
 model EntityAccess {
@@ -2589,8 +2619,31 @@ model EntityAccess {
   addedById    Int
   addedBy      User     @relation(fields: [addedById], references: [id])
   addedAt      DateTime @default(now())
+  permissions  Int      @default(1024)
+  meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
+}
+
+enum EntityCollaboratorStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model EntityCollaborator {
+  entityType        EntityType
+  entityId          Int
+  userId            Int
+  user              User                     @relation("entityCollaboratorParticipant", fields: [userId], references: [id])
+  status            EntityCollaboratorStatus @default(Pending)
+  createdAt         DateTime                 @default(now())
+  createdBy         Int
+  creator           User                     @relation("entityCollaboratorCreator", fields: [createdBy], references: [id])
+  lastMessageSentAt DateTime?
+
+  @@id([entityType, entityId, userId])
+  @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
 model Club {
@@ -2993,14 +3046,17 @@ enum ToolType {
 }
 
 model Tool {
-  id         Int         @id @default(autoincrement())
-  name       String
-  icon       String?
-  createdAt  DateTime    @default(now())
-  enabled    Boolean     @default(true)
-  type       ToolType
-  domain     String?
-  imageTools ImageTool[]
+  id          Int         @id @default(autoincrement())
+  name        String
+  icon        String?
+  createdAt   DateTime    @default(now())
+  enabled     Boolean     @default(true)
+  type        ToolType
+  domain      String?
+  imageTools  ImageTool[]
+  priority    Int?
+  description String?
+  metadata    Json        @default("{}")
 }
 
 model ImageTool {
@@ -3039,6 +3095,35 @@ model ImageTechnique {
 
   @@id([imageId, techniqueId])
   @@index([techniqueId])
+}
+
+model DonationGoal {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  goalAmount     Int
+  paidAmount     Int           @default(0)
+  modelVersionId Int?
+  modelVersion   ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  createdAt      DateTime      @default(now())
+  isEarlyAccess  Boolean       @default(false)
+  active         Boolean       @default(true)
+
+  donations Donation[]
+}
+
+model Donation {
+  id                Int          @id @default(autoincrement())
+  userId            Int
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  donationGoalId    Int
+  donationGoal      DonationGoal @relation(fields: [donationGoalId], references: [id], onDelete: Cascade)
+  amount            Int
+  buzzTransactionId String
+  notes             String?
+  createdAt         DateTime     @default(now())
 }
 
 /// @view
@@ -3194,6 +3279,11 @@ model ArticleStat {
   favoriteCountMonth       Int     @default(0)
   favoriteCountYear        Int     @default(0)
   favoriteCountAllTime     Int     @default(0)
+  collectedCountDay        Int     @default(0)
+  collectedCountWeek       Int     @default(0)
+  collectedCountMonth      Int     @default(0)
+  collectedCountYear       Int     @default(0)
+  collectedCountAllTime    Int     @default(0)
   hideCountDay             Int     @default(0)
   hideCountWeek            Int     @default(0)
   hideCountMonth           Int     @default(0)
@@ -3301,6 +3391,11 @@ model UserStat {
   downloadCountMonth       Int
   downloadCountYear        Int
   downloadCountAllTime     Int
+  generationCountDay       Int
+  generationCountWeek      Int
+  generationCountMonth     Int
+  generationCountYear      Int
+  generationCountAllTime   Int
   ratingCountDay           Int
   ratingCountWeek          Int
   ratingCountMonth         Int

@@ -60,23 +60,12 @@ export default function UserModelsPage() {
   const viewingPublished = section === 'published';
   const viewingDraft = section === 'draft';
   const viewingTraining = section === 'training' && features.imageTrainingResults;
-  const Wrapper = useMemo(
-    () =>
-      function Wrapper({ children }: { children: React.ReactNode }) {
-        return features.profileOverhaul ? (
-          <Box mt="md">{children}</Box>
-        ) : (
-          <Tabs.Panel value="/models">{children}</Tabs.Panel>
-        );
-      },
-    [features.profileOverhaul]
-  );
 
   // currently not showing any content if the username is undefined
   if (!username) return <NotFound />;
 
   return (
-    <Wrapper>
+    <Box mt="md">
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
@@ -134,7 +123,7 @@ export default function UserModelsPage() {
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
-    </Wrapper>
+    </Box>
   );
 }
 

@@ -10,19 +10,20 @@ import {
   Title,
 } from '@mantine/core';
 import { IconEyeExclamation } from '@tabler/icons-react';
-import { ContentControls } from '~/components/Account/ContentControls';
-import { MatureContentSettings } from '~/components/Account/MatureContentSettings';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
 
+// TODO.manuel - On merge of NSFW stuff, feel free to throw away everything I've done here...
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
   const { next, isReturningUser } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
+  const { source } = useReferralsContext();
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.BrowsingLevels }, { onSuccess: () => next() });
@@ -80,12 +81,10 @@ export function OnboardingContentExperience() {
         )}
 
         <Stack>
-          <ContentControls />
-
-          <Stack spacing="xs" mt="sm">
-            <Title order={3}>Content Moderation</Title>
-            <MatureContentSettings />
-          </Stack>
+          <Text>
+            If you&apos;d like to modify your Civitai Content Experience, you can do so from your
+            account settings after completing onboarding.
+          </Text>
         </Stack>
 
         <Group position="apart">

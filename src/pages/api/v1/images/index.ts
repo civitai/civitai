@@ -20,7 +20,13 @@ import { getAllImages } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { QS } from '~/utils/qs';
-import { booleanString, commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
+import {
+  booleanString,
+  commaDelimitedEnumArray,
+  commaDelimitedNumberArray,
+  numericString,
+} from '~/utils/zod-helpers';
+import dayjs from 'dayjs';
 
 export const config = {
   api: {
@@ -49,8 +55,16 @@ const imagesEndpointSchema = z.object({
     }),
   browsingLevel: z.coerce.number().optional(),
   tags: commaDelimitedNumberArray({ message: 'tags should be a number array' }).optional(),
-  cursor: numericString().optional(),
+  cursor: z
+    .union([z.bigint(), z.number(), z.string(), z.date()])
+    .transform((val) =>
+      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
+        ? new Date(val)
+        : val
+    )
+    .optional(),
   type: z.nativeEnum(MediaType).optional(),
+  baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -119,6 +133,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           },
           meta: image.meta,
           username: image.user.username,
+          baseModel: image.baseModel,
         };
       }),
       metadata,

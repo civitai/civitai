@@ -8,8 +8,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { createLimiter, RateLimitedEndpoint } from '~/server/utils/rate-limiting';
+import { createLimiter } from '~/server/utils/rate-limiting';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
 import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -44,7 +45,7 @@ const downloadLimiter = createLimiter({
   },
 });
 
-export default RateLimitedEndpoint(
+export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
@@ -108,12 +109,9 @@ export default RateLimitedEndpoint(
         return res.status(403).json({
           error: 'Early Access',
           deadline: fileResult.details.deadline,
-          message: 'This asset is in Early Access and you need to be a member to download it',
+          message: 'This asset is in Early Access. You can use Buzz access it now!',
         });
-      else
-        return res.redirect(
-          getJoinLink({ reason: 'early-access', returnUrl: `/model-versions/${modelVersionId}` })
-        );
+      else return res.redirect(`/model-versions/${modelVersionId}`);
     }
     if (fileResult.status === 'unauthorized') {
       if (!isBrowser)
@@ -179,6 +177,5 @@ export default RateLimitedEndpoint(
     // Redirect to download url
     res.redirect(fileResult.url);
   },
-  ['GET'],
-  'download'
+  ['GET']
 );

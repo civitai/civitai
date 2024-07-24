@@ -1,8 +1,10 @@
 import { createStyles, Text } from '@mantine/core';
+import { MediaType } from '@prisma/client';
 import React, { useEffect, useRef } from 'react';
-import { EdgeUrlProps, getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
+import { VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -11,10 +13,15 @@ export type EdgeMediaProps = EdgeUrlProps &
     contain?: boolean;
     fadeIn?: boolean;
     mediaRef?: [HTMLImageElement | null, (ref: HTMLImageElement | null) => void];
+    muted?: boolean;
+    html5Controls?: boolean;
+    onMutedChange?: (muted: boolean) => void;
+    videoRef?: React.ForwardedRef<EdgeVideoRef>;
   };
 
 export function EdgeMedia({
   src,
+  height,
   width,
   fit,
   anim,
@@ -29,13 +36,19 @@ export function EdgeMedia({
   controls,
   wrapperProps,
   contain,
-  fadeIn = false,
+  fadeIn,
   mediaRef,
-  transcode: initialTranscode = false,
+  transcode,
+  original,
+  skip,
+  muted,
+  html5Controls,
+  onMutedChange,
+  videoRef,
   ...imgProps
 }: EdgeMediaProps) {
-  const { classes, cx } = useStyles({ maxWidth: width === 'original' ? undefined : width });
-  const currentUser = useCurrentUser();
+  const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
+  // const currentUser = useCurrentUser();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
@@ -44,53 +57,31 @@ export function EdgeMedia({
   }, [mediaRef]);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  let transcode = initialTranscode;
-  const _name = name ?? imgProps.alt;
-  const _inferredType =
-    _name?.endsWith('.gif') || _name?.endsWith('.mp4') || _name?.endsWith('.webm')
-      ? 'video'
-      : 'image';
-
-  let _type = type ?? _inferredType;
-
-  // videos are always transcoded
-  // if (!anim) console.log(_name, _inferredType);
-  if (_inferredType === 'video' && _type === 'image') {
-    transcode = true;
-    anim = false;
-  } else if (_type === 'video') {
-    transcode = true;
-    anim = anim ?? currentUser?.autoplayGifs ?? true;
-  }
-
-  // anim false makes a video url return the first frame as an image
-  if (!anim) _type = 'image';
-
-  const optimized = currentUser?.filePreferences?.imageFormat === 'optimized';
-
-  const _src = getEdgeUrl(src, {
+  const { url, type: inferredType } = useEdgeUrl(src, {
     width,
+    height,
     fit,
     anim,
     transcode,
     blur,
     quality,
     gravity,
-    optimized: optimized ? true : undefined,
     name,
-    type: _type,
+    type,
+    original,
+    skip,
   });
 
-  switch (_type) {
+  switch (inferredType) {
     case 'image':
       return (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
         <img
           ref={imgRef}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
-          onLoad={(e) => (e.currentTarget.style.opacity = '1')}
+          onLoad={(e) => (fadeIn ? (e.currentTarget.style.opacity = '1') : undefined)}
           onError={(e) => e.currentTarget.classList.add('load-error')}
-          src={_src}
+          src={url}
           style={style}
           {...imgProps}
         />
@@ -98,13 +89,17 @@ export function EdgeMedia({
     case 'video':
       return (
         <EdgeVideo
-          src={_src}
+          src={url}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           style={style}
           controls={controls}
           wrapperProps={wrapperProps}
           contain={contain}
           fadeIn={fadeIn}
+          muted={muted}
+          html5Controls={html5Controls}
+          onMutedChange={onMutedChange}
+          ref={videoRef}
         />
       );
     case 'audio':

@@ -21,7 +21,6 @@ import {
 } from '~/server/metrics';
 import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userCosmeticCache } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -29,6 +28,7 @@ import {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
+  UserMeta,
 } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
@@ -44,7 +44,7 @@ import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
-import { HiddenModels } from '~/server/services/user-preferences.service';
+import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
 import {
   handleLogError,
   throwBadRequestError,
@@ -56,13 +56,15 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
-import { ProfileImage, profileImageSelect } from '../selectors/image.selector';
+import { profileImageSelect } from '../selectors/image.selector';
 import {
   ToggleUserArticleEngagementsInput,
   UserByReferralCodeSchema,
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { preventReplicationLag } from '~/server/db/db-helpers';
+import { Flags } from '~/shared/utils';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -91,6 +93,7 @@ export const getUserCreator = async ({
       deletedAt: true,
       createdAt: true,
       publicSettings: true,
+      excludeFromLeaderboards: true,
       links: {
         select: {
           url: true,
@@ -106,6 +109,8 @@ export const getUserCreator = async ({
           thumbsUpCountAllTime: true,
           followerCountAllTime: true,
           reactionCountAllTime: true,
+          uploadCountAllTime: true,
+          generationCountAllTime: true,
         },
       },
       rank: {
@@ -156,7 +161,14 @@ type GetUsersRow = {
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
-export const getUsers = async ({ limit, query, email, ids, include }: GetAllUsersInput) => {
+export const getUsers = async ({
+  limit,
+  query,
+  email,
+  ids,
+  include,
+  excludedUserIds,
+}: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
     select.push(`
@@ -181,6 +193,11 @@ export const getUsers = async ({ limit, query, email, ids, include }: GetAllUser
     WHERE ${ids && ids.length > 0 ? Prisma.sql`u.id IN (${Prisma.join(ids)})` : Prisma.sql`TRUE`}
       AND ${query ? Prisma.sql`u.username LIKE ${query + '%'}` : Prisma.sql`TRUE`}
       AND ${email ? Prisma.sql`u.email ILIKE ${email + '%'}` : Prisma.sql`TRUE`}
+      AND ${
+        excludedUserIds && excludedUserIds.length > 0
+          ? Prisma.sql`u.id NOT IN (${Prisma.join(excludedUserIds)})`
+          : Prisma.sql`TRUE`
+      }
       AND u."deletedAt" IS NULL
       AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')} ${Prisma.raw(
     limit ? 'LIMIT ' + limit : ''
@@ -234,6 +251,13 @@ export const updateUserById = async ({
     if (existingData?.email) delete data.email;
   }
 
+  if (
+    typeof data.browsingLevel === 'number' &&
+    Flags.hasFlag(data.browsingLevel, NsfwLevel.Blocked)
+  ) {
+    data.browsingLevel = Flags.removeFlag(data.browsingLevel, NsfwLevel.Blocked);
+  }
+
   const user = await dbWrite.user.update({ where: { id }, data });
 
   return user;
@@ -255,7 +279,7 @@ export async function setUserSetting(userId: number, settings: UserSettingsSchem
   if (toRemove.length) {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}'
+      SET settings = settings - ${toRemove.join(' - ')}}
       WHERE id = ${userId}
     `);
   }
@@ -485,6 +509,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
     dbWrite.account.deleteMany({ where: { userId: user.id } }),
     dbWrite.session.deleteMany({ where: { userId: user.id } }),
+    dbWrite.userEngagement.deleteMany({
+      where: { OR: [{ userId: user.id, targetUserId: user.id }] },
+    }),
     dbWrite.user.update({
       where: { id: user.id },
       data: { deletedAt: new Date(), email: null, username: null },
@@ -493,16 +520,25 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-  await invalidateSession(id);
-
   // Cancel their subscription
   await cancelSubscription({ userId: user.id });
+  await invalidateSession(id);
 
   return result;
 };
 
+export async function setLeaderboardEligibility({ id, setTo }: { id: number; setTo: boolean }) {
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "User"
+    SET "excludeFromLeaderboards" = ${setTo}
+    WHERE id = ${id}
+  `);
+}
+
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {
+  const user = await dbWrite.user.findFirst({ where: { id }, select: { isModerator: true } });
+  if (user?.isModerator) return;
   await dbWrite.model.updateMany({
     where: { userId: id },
     data: { status: 'UnpublishedViolation' },
@@ -548,7 +584,12 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   if (!userId && !token) return undefined;
   const where: Prisma.UserWhereInput = { deletedAt: null };
   if (userId) where.id = userId;
-  else if (token) where.keys = { some: { key: token } };
+  else if (token) {
+    const now = new Date();
+    where.keys = {
+      some: { key: token, OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+    };
+  }
 
   const response = await dbWrite.user.findFirst({
     where,
@@ -587,6 +628,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     autoplayGifs: response.autoplayGifs ?? undefined,
     leaderboardShowcase: response.leaderboardShowcase ?? undefined,
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
+    meta: (response.meta ?? {}) as UserMeta,
   };
 
   const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
@@ -1033,6 +1075,8 @@ export async function toggleReview({
     }
   }
 
+  await preventReplicationLag('resourceReview', userId);
+
   return setTo;
 }
 
@@ -1261,9 +1305,41 @@ export async function unequipCosmeticByType({
 }
 
 export const getUserBookmarkCollections = async ({ userId }: { userId: number }) => {
-  return dbRead.collection.findMany({
+  const collections = await dbRead.collection.findMany({
     where: { userId, mode: CollectionMode.Bookmark },
   });
+
+  if (!collections.find((x) => x.type === CollectionType.Article)) {
+    // Create the collection if it doesn't exist
+    const articles = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Article,
+        mode: CollectionMode.Bookmark,
+        name: 'Bookmarked Articles',
+        description: 'Your bookmarked articles will appear in this collection.',
+      },
+    });
+
+    collections.push(articles);
+  }
+
+  if (!collections.find((x) => x.type === CollectionType.Model)) {
+    // Create the collection if it doesn't exist
+    const models = await dbWrite.collection.create({
+      data: {
+        userId,
+        type: CollectionType.Model,
+        mode: CollectionMode.Bookmark,
+        name: 'Liked Models',
+        description: 'Your liked models will appear in this collection.',
+      },
+    });
+
+    collections.push(models);
+  }
+
+  return collections;
 };
 
 export const getUserPurchasedRewards = async ({ userId }: { userId: number }) => {
@@ -1278,3 +1354,34 @@ export const getUserPurchasedRewards = async ({ userId }: { userId: number }) =>
     },
   });
 };
+
+export async function amIBlockedByUser({
+  userId,
+  targetUserId,
+  targetUsername,
+}: {
+  userId: number;
+  targetUserId?: number;
+  targetUsername?: string;
+}) {
+  if (!(targetUserId || targetUsername)) return false;
+
+  const cachedBlockedBy = await BlockedByUsers.getCached({ userId });
+  if (cachedBlockedBy.some((user) => user.id === targetUserId || user.username === targetUsername))
+    return true;
+
+  if (!targetUserId && targetUsername)
+    targetUserId = (await dbRead.user.findFirst({ where: { username: targetUsername } }))?.id;
+  if (!targetUserId) return false;
+  if (targetUserId === userId) return false;
+
+  const engagement = await dbRead.userEngagement.findFirst({
+    where: {
+      userId: targetUserId,
+      targetUserId: userId,
+      type: 'Block',
+    },
+  });
+
+  return !!engagement;
+}

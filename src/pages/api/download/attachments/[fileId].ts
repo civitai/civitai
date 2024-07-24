@@ -5,12 +5,12 @@ import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import { RateLimitedEndpoint } from '~/server/utils/rate-limiting';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getFileWithPermission } from '~/server/services/file.service';
 import { Tracker } from '~/server/clickhouse/client';
 import { handleLogError } from '~/server/utils/errorHandling';
+import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
   fileId: z.preprocess((val) => Number(val), z.number()),
@@ -28,7 +28,7 @@ const notFound = (req: NextApiRequest, res: NextApiResponse, message = 'Not Foun
   else return res.send(message);
 };
 
-export default RateLimitedEndpoint(
+export default PublicEndpoint(
   async function downloadAttachment(req: NextApiRequest, res: NextApiResponse) {
     // Get ip so that we can block exploits we catch
     const ip = requestIp.getClientIp(req);
@@ -126,6 +126,5 @@ export default RateLimitedEndpoint(
       return res.status(500).json({ error: 'Error downloading file' });
     }
   },
-  ['GET'],
-  'download-attachment'
+  ['GET']
 );

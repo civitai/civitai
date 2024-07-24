@@ -35,7 +35,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
-    jobContext.checkIfCanceled();
+    // jobContext.checkIfCanceled();
     if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
 
     const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
@@ -75,7 +75,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     }).catch();
   });
   try {
-    await limitConcurrency(tasks, 3);
+    await limitConcurrency(tasks, 1);
     log('Leaderboards - Done');
     await updateLegendsBoardResults();
     await setLastRun();
@@ -112,6 +112,10 @@ async function updateLegendsBoardResults() {
         JOIN "User" u ON u.id = lr."userId"
         WHERE date <= now()
           AND position < 100
+          AND (
+            NOT u."excludeFromLeaderboards"
+            OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
+          )
           AND u."deletedAt" IS NULL
         GROUP BY "userId", "leaderboardId"
       )
@@ -157,13 +161,18 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     SELECT
       '${ctx.id}' as "leaderboardId",
       current_date + interval '${ctx.addDays} days' as date,
-      *,
+      s.*,
       row_number() OVER (ORDER BY score DESC) as position
-    FROM scores
+    FROM scores s
+    JOIN "User" u ON u.id = s."userId"
+    WHERE (
+      NOT u."excludeFromLeaderboards"
+      OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = '${ctx.id}' AND NOT l.public)
+    )
     ORDER BY score DESC
     LIMIT 1000
   `);
-  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
 }
 
@@ -228,7 +237,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     const endIndex = Math.min(startIndex + IMAGE_SCORE_BATCH_SIZE - 1, max);
 
     tasks.push(async () => {
-      ctx.jobContext.checkIfCanceled();
+      // ctx.jobContext.checkIfCanceled();
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
       // console.time(key);
@@ -285,10 +294,11 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
     JOIN "User" u ON u.id = (s->>'userId')::int
     WHERE u."deletedAt" IS NULL AND u.id > 0
+      AND NOT u."excludeFromLeaderboards"
     ORDER BY (s->>'score')::int DESC
     LIMIT 1000
   `);
-  ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
+  // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
   // console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
 }

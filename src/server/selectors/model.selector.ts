@@ -41,6 +41,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
   name: true,
   description: true,
   poi: true,
+  minor: true,
   nsfwLevel: true,
   nsfw: true,
   type: true,
@@ -114,7 +115,8 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       inaccurate: true,
       baseModel: true,
       baseModelType: true,
-      earlyAccessTimeFrame: true,
+      earlyAccessEndsAt: true,
+      earlyAccessConfig: true,
       status: true,
       publishedAt: true,
       meta: true,
@@ -135,6 +137,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
       files: {
         select: modelFileSelect,
+        where: { dataPurged: false },
       },
       generationCoverage: { select: { covered: true } },
       recommendedResources: {

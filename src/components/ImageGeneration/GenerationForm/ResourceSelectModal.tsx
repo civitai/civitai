@@ -45,7 +45,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { getBaseModelSet } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -67,6 +66,11 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
+import {
+  GenerationResource,
+  getBaseModelSet,
+  getIsSdxl,
+} from '~/shared/constants/generation.constants';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -95,7 +99,7 @@ const ResourceSelectContext = React.createContext<{
   isTraining?: boolean;
   resources: { type: ModelType; baseModels: BaseModel[] }[];
   onSelect: (
-    value: Generation.Resource & { image: SearchIndexDataMap['models'][number]['images'][number] }
+    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
   ) => void;
 } | null>(null);
 
@@ -116,7 +120,7 @@ export default function ResourceSelectModal({
   const { resources = [], canGenerate } = options;
   const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
     let aggregate: BaseModel[] = [];
-    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet) ?? [];
+    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet);
     if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
     return { type, baseModels: aggregate };
   });
@@ -146,7 +150,7 @@ export default function ResourceSelectModal({
     }
   }
 
-  const handleSelect = (value: Generation.Resource) => {
+  const handleSelect = (value: GenerationResource) => {
     onSelect(value);
     context.closeModal(id);
   };
@@ -287,7 +291,8 @@ function ResourceSelectCard({
 
   const resourceFilter = resources.find((x) => x.type === data.type);
   const versions = data.versions.filter((version) => {
-    if (isTraining && version.baseModel === 'SDXL Lightning') return false;
+    if (isTraining && !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'].includes(version.baseModel))
+      return false;
     if (canGenerate === undefined) return true;
     return (
       version.canGenerate === canGenerate &&
@@ -311,8 +316,11 @@ function ResourceSelectCard({
       modelId: data.id,
       modelName: data.name,
       modelType: data.type,
+      minor: data.minor,
       image: image,
       covered: data.canGenerate,
+      available:
+        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
@@ -320,9 +328,7 @@ function ResourceSelectCard({
   };
 
   const selectedVersion = data.versions.find((x) => x.id === selected);
-  const isSDXL = [...baseModelSets.SDXL, ...baseModelSets.Pony].includes(
-    selectedVersion?.baseModel as BaseModel
-  );
+  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
   const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =

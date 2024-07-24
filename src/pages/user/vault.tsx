@@ -40,7 +40,6 @@ import {
   IconHelpCircle,
 } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
-import JSZip from 'jszip';
 import {
   getVaultItemDownloadUrls,
   useMutateVault,
@@ -250,6 +249,15 @@ const VaultItemsRemove = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) =
   );
 };
 
+function downloadFile(url: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = ''; // use the filename from the url
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -275,10 +283,8 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
         .flat();
 
       for (const file of files) {
-        window.open(file, '_blank');
-        // Some delay between window open to avoid popup blockers
-        // And also to avoid the myriad of tabs being opened at once.
-        await sleep(1500);
+        downloadFile(file);
+        await sleep(1500); // Keep sleep high to avoid missing downloads for some reason...
       }
 
       setDownloading(false);
@@ -297,10 +303,8 @@ const VaultItemsDownload = ({ vaultItems }: { vaultItems: VaultItemGetPaged[] })
   ];
 
   return (
-    <Modal {...dialog} size="md" withCloseButton title={`Deleting ${vaultItems.length} models`}>
+    <Modal {...dialog} size="md" withCloseButton title={`Downloading ${vaultItems.length} models`}>
       <Stack>
-        <Text size="sm">Models deleted from your Vault cannot be retrieved.</Text>
-
         <ScrollArea.Autosize maxHeight={500}>
           <Stack>
             {vaultItems.map((item) => (

@@ -3,6 +3,7 @@ import { bountyWebhooks } from '~/server/webhooks/bounty.webhooks';
 import { modelWebhooks } from '~/server/webhooks/model.webooks';
 import { moderatorWebhooks } from '~/server/webhooks/moderator.webhooks';
 import { researchWebhooks } from '~/server/webhooks/research.webhooks';
+import { trainingModerationWebhooks } from '~/server/webhooks/training-moderation.webhooks';
 
 export const webhookProcessors = {
   ...modelWebhooks,
@@ -10,6 +11,7 @@ export const webhookProcessors = {
   ...articleWebhooks,
   ...bountyWebhooks,
   ...researchWebhooks,
+  ...trainingModerationWebhooks,
 };
 
 export function getWebhookTypes() {

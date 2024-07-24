@@ -7,6 +7,7 @@ import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -42,6 +43,8 @@ const CollectionsHome = () => {
 
   return (
     <CollectionsLayout>
+      <Meta title="Collections" description="Browse all collections" />
+
       {isLoading || ownedCollection ? (
         <Center mt="lg">
           <Loader />

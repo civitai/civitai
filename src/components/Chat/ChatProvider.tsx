@@ -1,4 +1,5 @@
 import { Card, Portal, createStyles } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import {
   createContext,
   type Dispatch,
@@ -7,10 +8,10 @@ import {
   useContext,
   useState,
 } from 'react';
-import { ChatWindow } from '~/components/Chat/ChatWindow';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
 type ChatState = {
   open: boolean;
