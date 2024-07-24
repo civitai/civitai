@@ -3,6 +3,7 @@ import { Currency } from '@prisma/client';
 import { IconBolt, IconCategory, IconPercentage } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { DailyBuzzPayout } from '~/components/Buzz/Rewards/DailyBuzzPayout';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import {
   DescriptionTable,
@@ -159,6 +160,7 @@ export default function EarnPotential() {
   return (
     <Container size="md">
       <Stack>
+        <DailyBuzzPayout />
         <Stack spacing={0}>
           <Title mb={0}>Your Monthly Generation Earning Potential</Title>
           <Text color="dimmed">

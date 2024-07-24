@@ -71,13 +71,13 @@ export function endOfDay(value: dayjs.ConfigType) {
   return dayjs(value).endOf('day').toDate();
 }
 
-export function getDatesAsList(startDate: Date, endDate: Date) {
+export function getDatesAsList(startDate: Date, endDate: Date, unit: dayjs.ManipulateType = 'day') {
   const dates = [];
   let currentDate = startDate;
 
   while (currentDate <= endDate) {
     dates.push(currentDate);
-    currentDate = increaseDate(currentDate, 1, 'day');
+    currentDate = increaseDate(currentDate, 1, unit);
   }
 
   return dates;

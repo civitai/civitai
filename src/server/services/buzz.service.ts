@@ -27,9 +27,11 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { stripTime } from '~/utils/date-helpers';
+import { maxDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
+import dayjs from 'dayjs';
 
 type AccountType = 'User';
 
@@ -744,56 +746,107 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
     FROM data;
   `;
 
-  const dailyGenerationBuzz = await clickhouse.$query<{ total: number }>`
-    WITH user_resources AS (
-      SELECT
-        mv.id as id,
-        m.type = 'Checkpoint' as is_base_model
-      FROM civitai_pg.Model m
-      JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
-      WHERE m.userId = ${userId}
-    ), resource_jobs AS (
-      SELECT
-      arrayJoin(resourcesUsed) AS modelVersionId, createdAt, jobCost, jobId, userId
-      FROM orchestration.textToImageJobs
-      WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
-      AND createdAt > subtractDays(now(), 30)
-      AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
-    ), resource_ownership AS (
-      SELECT
-        rj.*,
-        rj.modelVersionId IN (SELECT id FROM user_resources WHERE is_base_model) as isBaseModel,
-        rj.modelVersionId IN (SELECT id FROM user_resources) as isOwner
-      FROM resource_jobs rj
-    ), data AS (
-      SELECT
-        jobId,
-        userId,
-        CEIL(MAX(jobCost)) as job_cost,
-        job_cost * ${CREATOR_COMP_PERCENT} as creator_comp,
-        CEIL(job_cost * ${TIP_PERCENT}) as full_tip,
-        count(modelVersionId) as resource_count,
-        countIf(isOwner) as owned_resource_count,
-        owned_resource_count/resource_count as owned_ratio,
-        full_tip * owned_ratio as tip,
-        creator_comp * if(MAX(isBaseModel) = 1, 0.25, 0) as base_model_comp,
-        creator_comp * 0.75 * owned_ratio as resource_comp,
-        if(MAX(isBaseModel) = 1, 0.25, 0) + 0.75 * owned_ratio as full_ratio,
-        base_model_comp + resource_comp as total_comp,
-        total_comp + tip as total
-      FROM resource_ownership
-      GROUP BY jobId, userId
-    )
-    SELECT
-      uniq(userId) as users,
-      count(jobId) as jobs,
-      if(isNaN(avg(job_cost)), 0, avg(job_cost)) as avg_job_cost,
-      if(isNaN(avg(full_ratio)), 0, avg(full_ratio)) as avg_ownership,
-      floor(SUM(total_comp)) as total_comp,
-      floor(SUM(tip)) as total_tips,
-      floor(SUM(total)) as total
-    FROM data;
-  `;
-
   return potential;
 }
+
+export const getDailyBuzzPayoutByUser = async ({
+  userId,
+  // Timeframe is on days
+  timeframe = 31,
+}: {
+  userId: number;
+  timeframe: number;
+}) => {
+  const db = await getDbWithoutLag('modelVersion');
+  const versions = await db.modelVersion.findMany({
+    where: { status: 'Published', model: { userId } },
+    select: { id: true, name: true, model: { select: { name: true } } },
+  });
+
+  if (!clickhouse || versions.length === 0) return [];
+
+  const date = maxDate(
+    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
+    dayjs().startOf('month').subtract(1, 'day').toDate()
+  ).toISOString();
+
+  const generationData = await clickhouse
+    .query({
+      query: `
+        WITH user_resources AS (
+          SELECT
+            mv.id as id,
+            m.type = 'Checkpoint' as is_base_model
+          FROM civitai_pg.Model m
+          JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
+          WHERE m.userId = ${userId}
+        ), resource_jobs AS (
+          SELECT
+            arrayJoin(resourcesUsed) AS modelVersionId,
+            createdAt,
+            jobCost,
+            creatorsTip,
+            jobId,
+            userId
+          FROM orchestration.textToImageJobs
+          WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
+          AND createdAt >= parseDateTimeBestEffortOrNull('${date}')
+          AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
+        ), resource_ownership AS (
+          SELECT
+            rj.*,
+            rj.modelVersionId IN (SELECT id FROM user_resources WHERE is_base_model) as isBaseModel,
+            rj.modelVersionId IN (SELECT id FROM user_resources) as isOwner
+          FROM resource_jobs rj
+        ), data AS (
+          SELECT
+            jobId,
+            userId,
+            CEIL(MAX(jobCost)) as job_cost,
+            job_cost * ${CREATOR_COMP_PERCENT} as creator_comp,
+            CEIL(job_cost * ${TIP_PERCENT}) as full_tip,
+            count(modelVersionId) as resource_count,
+            countIf(isOwner) as owned_resource_count,
+            owned_resource_count/resource_count as owned_ratio,
+            full_tip * owned_ratio as tip,
+            creator_comp * if(MAX(isBaseModel) = 1, 0.25, 0) as base_model_comp,
+            creator_comp * 0.75 * owned_ratio as resource_comp,
+            if(MAX(isBaseModel) = 1, 0.25, 0) + 0.75 * owned_ratio as full_ratio,
+            base_model_comp + resource_comp as total_comp,
+            total_comp + tip as total
+          FROM resource_ownership
+          GROUP BY jobId, userId
+        )
+        SELECT
+          uniq(userId) as users,
+          count(jobId) as jobs,
+          if(isNaN(avg(job_cost)), 0, avg(job_cost)) as avg_job_cost,
+          if(isNaN(avg(full_ratio)), 0, avg(full_ratio)) as avg_ownership,
+          floor(SUM(total_comp)) as total_comp,
+          floor(SUM(tip)) as total_tips,
+          floor(SUM(total)) as total
+        FROM data;
+      `,
+      format: 'JSONEachRow',
+    })
+    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+
+  return (
+    versions
+      .map((version) => {
+        const versionData = generationData
+          .filter((x) => x.modelVersionId === version.id)
+          .map((x) => ({
+            createdAt: dayjs(x.createdAt).format('YYYY-MM-DD'),
+            generations: x.generations,
+          }));
+
+        const generations = versionData.reduce((acc, curr) => acc + curr.generations, 0);
+
+        return { ...version, data: versionData, generations };
+      })
+      .filter((v) => v.data.length > 0)
+      // Pre-sort by most generations.
+      .sort((a, b) => b.generations - a.generations)
+  );
+};
