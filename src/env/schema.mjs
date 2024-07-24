@@ -164,6 +164,8 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
+  METRICS_SEARCH_HOST: z.string().url().optional(),
+  METRICS_SEARCH_API_KEY: z.string().optional(),
 });
 
 /**
@@ -200,7 +202,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
-  NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
+  NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(), 
 });
 
 /**
