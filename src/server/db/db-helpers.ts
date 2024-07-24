@@ -32,7 +32,7 @@ export function getClient(
       ? env.NOTIFICATION_DB_REPLICA_URL
       : env.NOTIFICATION_DB_URL
     : readonly
-    ? env.DATABASE_REPLICA_URL
+    ? env.DATABASE_PG_URL ?? env.DATABASE_REPLICA_URL ?? env.DATABASE_URL
     : env.DATABASE_URL;
 
   const connectionStringUrl = new URL(envUrl);
@@ -174,7 +174,8 @@ export async function dataProcessor({
   const context = { ...params, cancelFns };
 
   if (stop) return;
-  const range = !start || !end ? await rangeFetcher(context) : { start, end };
+  const range =
+    start === undefined || end === undefined ? await rangeFetcher(context) : { start, end };
 
   let cursor = range.start ?? params.start;
   const maxCursor = range.end;

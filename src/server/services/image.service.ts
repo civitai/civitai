@@ -682,14 +682,13 @@ export const getAllImages = async ({
   }
 
   // Filter to specific tags
-  // TODO.fix bring back tag on image filtering
-  // if (tags?.length) {
-  //   AND.push(Prisma.sql`i.id IN (
-  //     SELECT "imageId"
-  //     FROM "TagsOnImage"
-  //     WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
-  //   )`);
-  // }
+  if (tags?.length) {
+    AND.push(Prisma.sql`i.id IN (
+      SELECT "imageId"
+      FROM "TagsOnImage"
+      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
+    )`);
+  }
 
   // Filter to specific generation process
   if (generation?.length) {
@@ -2109,8 +2108,9 @@ export const getEntityCoverImage = async ({
                   JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
                   JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
                   WHERE m."id" = e."entityId"
-                      AND i."ingestion" = 'Scanned'
-                      AND i."needsReview" IS NULL
+                    AND m.status = 'Published'
+                    AND i."ingestion" = 'Scanned'
+                    AND i."needsReview" IS NULL
                   ) mi
                   WHERE mi.rn = 1
                 )
@@ -2124,8 +2124,9 @@ export const getEntityCoverImage = async ({
                   JOIN "Post" p ON p.id = i."postId"
                   JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
                   WHERE mv."id" = e."entityId"
-                      AND i."ingestion" = 'Scanned'
-                      AND i."needsReview" IS NULL
+                    AND mv.status = 'Published'
+                    AND i."ingestion" = 'Scanned'
+                    AND i."needsReview" IS NULL
                   ORDER BY mv.index, i."postId", i.index
                   ) mi
                   LIMIT 1
@@ -2146,8 +2147,9 @@ export const getEntityCoverImage = async ({
               FROM "Image" i
               JOIN "Article" a ON a."coverId" = i.id
               WHERE a."id" = e."entityId"
-                  AND i."ingestion" = 'Scanned'
-                  AND i."needsReview" IS NULL
+                AND a."publishedAt" IS NOT NULL
+                AND i."ingestion" = 'Scanned'
+                AND i."needsReview" IS NULL
             ) ai
             LIMIT 1
           )
@@ -2160,8 +2162,9 @@ export const getEntityCoverImage = async ({
               FROM "Image" i
               JOIN "Post" p ON p.id = i."postId"
               WHERE p."id" = e."entityId"
-                  AND i."ingestion" = 'Scanned'
-                  AND i."needsReview" IS NULL
+                AND p."publishedAt" IS NOT NULL
+                AND i."ingestion" = 'Scanned'
+                AND i."needsReview" IS NULL
               ORDER BY i."postId", i.index
             ) pi
             LIMIT 1

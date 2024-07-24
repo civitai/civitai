@@ -177,10 +177,10 @@ export function ModelVersionDetails({
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
 
-  const handleDownload = useCallback(
+  const getDownloadProps = useCallback(
     (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
       if (isLoadingAccess) {
-        return;
+        return {};
       }
 
       if (hasDownloadPermissions) {
@@ -194,23 +194,29 @@ export function ModelVersionDetails({
           meta: file.metadata,
         });
 
-        router.push(url);
-        return;
+        return {
+          // This will allow users to right-click save
+          href: url,
+        };
       } else {
-        if (!features.earlyAccessModel) {
-          showErrorNotification({
-            error: new Error('Unauthorized'),
-            title: 'Unauthorized',
-            reason:
-              'This model will be available for download once early access is enabled to the public. Please check back later.',
-          });
-          return;
-        }
+        return {
+          onClick: () => {
+            if (!features.earlyAccessModel) {
+              showErrorNotification({
+                error: new Error('Unauthorized'),
+                title: 'Unauthorized',
+                reason:
+                  'This model will be available for download once early access is enabled to the public. Please check back later.',
+              });
+              return;
+            }
 
-        dialogStore.trigger({
-          component: ModelVersionEarlyAccessPurchase,
-          props: { modelVersionId: version.id },
-        });
+            dialogStore.trigger({
+              component: ModelVersionEarlyAccessPurchase,
+              props: { modelVersionId: version.id },
+            });
+          },
+        };
       }
     },
     [isLoadingAccess, hasDownloadPermissions, version.id, router]
@@ -482,7 +488,7 @@ export function ModelVersionDetails({
         component="a"
         py={4}
         icon={<VerifiedText file={file} iconOnly />}
-        onClick={() => handleDownload(file)}
+        {...getDownloadProps(file)}
       >
         {getFileDisplayName({ file, modelType: model.type })} ({formatKBytes(file.sizeKB)}){' '}
         {file.visibility !== 'Public' && (
@@ -526,9 +532,7 @@ export function ModelVersionDetails({
             component="a"
             variant="subtle"
             size="xs"
-            onClick={() => {
-              handleDownload(file);
-            }}
+            {...getDownloadProps(file)}
             disabled={archived}
             compact
           >
@@ -694,9 +698,7 @@ export function ModelVersionDetails({
                         canDownload={version.canDownload}
                         downloadRequiresPurchase={!hasDownloadPermissions}
                         component="a"
-                        onClick={() => {
-                          handleDownload(primaryFile);
-                        }}
+                        {...getDownloadProps(primaryFile)}
                         tooltip="Download"
                         disabled={!primaryFile || archived || isLoadingAccess}
                         sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
@@ -719,9 +721,7 @@ export function ModelVersionDetails({
                   ) : (
                     <DownloadButton
                       component="a"
-                      onClick={() => {
-                        handleDownload(primaryFile);
-                      }}
+                      {...getDownloadProps(primaryFile)}
                       canDownload={version.canDownload}
                       downloadRequiresPurchase={!hasDownloadPermissions}
                       disabled={!primaryFile || archived || isLoadingAccess}

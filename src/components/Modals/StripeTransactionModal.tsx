@@ -264,7 +264,7 @@ const { openModal, Modal } = createContextModal<Props>({
       enabled: !!clientSecret,
     });
 
-    if (isLoading || isLoadingPaymentMethods) {
+    if (isLoading || (isLoadingPaymentMethods && !error)) {
       return (
         <Center>
           <Loader variant="bars" />

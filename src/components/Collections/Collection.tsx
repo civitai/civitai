@@ -233,7 +233,8 @@ const ImageCollection = ({
                   onChange={(x) => replace({ period: x })}
                 />
               </Group>
-              <ImageCategories />
+              {/* TODO.imageTags: Bring back once we support tags again.  */}
+              {/* <ImageCategories /> */}
             </>
           )}
 

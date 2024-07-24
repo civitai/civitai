@@ -13,6 +13,7 @@ import {
  */
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
+  DATABASE_PG_URL: z.string().url().optional(),
   DATABASE_REPLICA_URL: z.string().url(),
   NOTIFICATION_DB_URL: z.string().url(),
   NOTIFICATION_DB_REPLICA_URL: z.string().url(),

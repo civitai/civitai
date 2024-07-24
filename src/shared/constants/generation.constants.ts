@@ -104,7 +104,7 @@ export const whatIfQueryOverrides = {
   prompt: '',
   negativePrompt: undefined,
   seed: undefined,
-  image: undefined,
+  // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
 };
