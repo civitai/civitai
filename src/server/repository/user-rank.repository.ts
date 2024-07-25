@@ -1,14 +1,24 @@
 import { Expression, InferResult } from 'kysely';
 import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 
-const userRankSelect = kyselyDbRead
-  .selectFrom('UserRank')
-  .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic']);
-
-export type UserRankModel = InferResult<typeof userRankSelect>;
+export type UserRankModel = InferResult<(typeof UserRankRepository)['userRankSelect']>;
 
 export class UserRankRepository {
-  static findOneByUserIdRef(foreignKey: Expression<number>) {
-    return jsonObjectFrom(userRankSelect.where('UserRank.userId', '=', foreignKey));
+  // #region [select]
+  private static get userRankSelect() {
+    return kyselyDbRead
+      .selectFrom('UserRank')
+      .select(['leaderboardRank', 'leaderboardId', 'leaderboardTitle', 'leaderboardCosmetic']);
   }
+  // #endregion
+
+  // #region [helpers]
+  static findOneByUserIdRef(foreignKey: Expression<number>) {
+    return jsonObjectFrom(this.userRankSelect.where('UserRank.userId', '=', foreignKey));
+  }
+  // #endregion
+
+  // #region [main]
+
+  // #endregion
 }

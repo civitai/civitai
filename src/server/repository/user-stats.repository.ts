@@ -15,7 +15,7 @@ const userStatsSelect = kyselyDbRead
     'generationCountAllTime',
   ]);
 
-export type UserRankModel = InferResult<typeof userStatsSelect>;
+export type UserStatModel = InferResult<typeof userStatsSelect>;
 
 export class UserStatRepository {
   static findOneByUserIdRef(foreignKey: Expression<number>) {

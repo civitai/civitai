@@ -17,8 +17,10 @@ export type UserCosmeticModel = InferResult<typeof userCosmeticSelect>;
 
 export class UserCosmeticRepository {
   /** returns json array of UserCosmeticModel */
-  static findManyByUserIdRef(ref: Expression<number>) {
-    return jsonArrayFrom(userCosmeticSelect.whereRef('UserCosmetic.userId', '=', ref));
+  static findManyByUserIdRef(args: { ref: Expression<number>; equipped?: boolean }) {
+    let query = userCosmeticSelect.whereRef('UserCosmetic.userId', '=', args.ref);
+    if (args.equipped) query = query.where('equippedAt', 'is not', null);
+    return jsonArrayFrom(query);
   }
 
   static findManyByEntityIdRef(args: { ref: Expression<number>; entity: CosmeticEntity }) {

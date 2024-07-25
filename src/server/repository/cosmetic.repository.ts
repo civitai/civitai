@@ -1,22 +1,24 @@
 import { Expression, InferResult } from 'kysely';
 import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 
-const cosmeticSelect = kyselyDbRead
-  .selectFrom('Cosmetic')
-  .select(['id', 'name', 'description', 'type', 'source', 'data', 'videoUrl']);
-
-export type CosmeticModel = InferResult<typeof cosmeticSelect>;
+export type CosmeticModel = InferResult<(typeof CosmeticRepository)['cosmeticSelect']>;
 
 export class CosmeticRepository {
+  private static get cosmeticSelect() {
+    return kyselyDbRead
+      .selectFrom('Cosmetic')
+      .select(['id', 'name', 'description', 'type', 'source', 'data', 'videoUrl']);
+  }
+
   static findOneByIdRef(foreignKey: Expression<number>) {
-    return jsonObjectFrom(cosmeticSelect.whereRef('Cosmetic.id', '=', foreignKey).limit(1));
+    return jsonObjectFrom(this.cosmeticSelect.whereRef('Cosmetic.id', '=', foreignKey).limit(1));
   }
 
   static async findOne(id: number) {
-    return await cosmeticSelect.where('id', '=', id).executeTakeFirst();
+    return await this.cosmeticSelect.where('id', '=', id).executeTakeFirst();
   }
 
   static async findMany(ids: number[]) {
-    return await cosmeticSelect.where('id', 'in', ids).execute();
+    return await this.cosmeticSelect.where('id', 'in', ids).execute();
   }
 }
