@@ -51,7 +51,6 @@ export const getModelVersionRunStrategies = async ({
   dbRead.runStrategy.findMany({
     where: { modelVersionId },
     select: {
-      id: true,
       partnerId: true,
     },
   });
