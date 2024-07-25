@@ -940,9 +940,8 @@ export const getAllImages = async ({
       i."hideMeta",
       (
         CASE
-          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-          THEN TRUE
-          ELSE FALSE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
         END
       ) AS "hasMeta",
       (
@@ -1245,9 +1244,8 @@ export const getImage = async ({
       i."nsfwLevel",
       (
         CASE
-          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-          THEN TRUE
-          ELSE FALSE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
         END
       ) AS "hasMeta",
       (
@@ -1506,9 +1504,8 @@ export const getImagesForModelVersion = async ({
       p."availability",
       (
         CASE
-          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-          THEN TRUE
-          ELSE FALSE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
         END
       ) AS "hasMeta",
       (
@@ -1691,9 +1688,8 @@ export const getImagesForPosts = async ({
       i."postId",
       (
         CASE
-          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-          THEN TRUE
-          ELSE FALSE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
         END
       ) AS "hasMeta",
       (
@@ -1956,6 +1952,12 @@ export const getImagesByEntity = async ({
       i."needsReview",
       i."userId",
       i."index",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
       t."entityId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;
