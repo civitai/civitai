@@ -45,6 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'techniques',
     'tags',
     'userId',
+    'nsfwevel',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
