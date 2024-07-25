@@ -95,6 +95,7 @@ import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { redis } from '~/server/redis/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -568,6 +569,12 @@ export const getAllImages = async ({
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
+
+  // TODO.fix remove test
+  if (modelVersionId) {
+    const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
+    if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
+  }
 
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);

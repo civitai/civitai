@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "4.0.48",
+  "version": "4.0.51",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -29,10 +29,14 @@
     "db:program": "node scripts/prisma-prepare-programmability.mjs",
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
-    "share": "ngrok http 3000"
+    "share": "ngrok http 3000",
+    "prepare": "husky"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx}": "tsc-files --noEmit"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.490.0",
@@ -236,11 +240,14 @@
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-prettier": "^4.2.1",
     "eslint-plugin-tailwindcss": "^3.15.1",
+    "husky": "^9.1.1",
+    "lint-staged": "^15.2.7",
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
     "prisma": "^5.17.0",
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",
+    "tsc-files": "^1.1.4",
     "typescript": "^5.5.3"
   },
   "ct3aMetadata": {

@@ -5,6 +5,7 @@ import {
   TextToImageStep,
   WorkflowStatus,
   WorkflowStep,
+  WorkflowStepJob,
   createCivitaiClient,
 } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
