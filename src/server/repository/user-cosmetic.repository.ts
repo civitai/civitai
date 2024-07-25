@@ -29,23 +29,6 @@ export class UserCosmeticRepository {
     );
   }
 
-  // static test(args: { ref: Expression<number>; entity: CosmeticEntity }) {
-  //   return jsonArrayFrom(
-  //     kyselyDbRead
-  //       .selectFrom('UserCosmetic')
-  //       .select((eb) => ['equippedAt', 'cosmeticId', 'obtainedAt', 'claimKey', 'UserCosmetic.data'])
-  //       .innerJoin(
-  //         (eb) =>
-  //           eb
-  //             .selectFrom('Cosmetic')
-  //             .select(['id', 'name', 'description', 'type', 'source', 'data', 'videoUrl'])
-  //             .where('Cosmetic.type', '=', 'ContentDecoration')
-  //             .as('Cosmetic'),
-  //         (join) => join.onRef('Cosmetic.id', '=', 'UserCosmetic.cosmeticId')
-  //       )
-  //   );
-  // }
-
   static async findMany(userIds: number[]) {
     return await userCosmeticSelect.select(['userId']).where('userId', 'in', userIds).execute();
   }

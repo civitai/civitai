@@ -31,8 +31,8 @@ export type UserCosmeticModel = InferResult<typeof cosmeticUserSelect>;
 export type UserCreatorModel = InferResult<typeof creatorUserSelect>;
 
 export class UserRepository {
-  static findManyByIdRef(foreignKey: Expression<number>) {
-    return jsonObjectFrom(baseUserSelect.whereRef('User.id', '=', foreignKey));
+  static findOneByIdRef(foreignKey: Expression<number>) {
+    return jsonObjectFrom(cosmeticUserSelect.whereRef('User.id', '=', foreignKey));
   }
 
   static async findOneUserCreator(

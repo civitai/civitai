@@ -1094,7 +1094,7 @@ export const getAllImages = async ({
       meta?: ImageMetaProps | null; // deprecated. Only used in v1 api endpoint
       hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
       hasMeta: boolean;
-      tags?: VotableTagModel[] | undefined;
+      tags?: VotableTagModel[] | undefined; // only used for moderation purposes
       tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;

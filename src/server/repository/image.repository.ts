@@ -1,6 +1,7 @@
 import { Expression, InferResult, sql } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 import { UserCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
+import { UserRepository } from '~/server/repository/user.repository';
 
 const baseImageSelect = kyselyDbRead.selectFrom('Image').select((eb) => [
   'id',
@@ -36,6 +37,7 @@ const listImageSelect = baseImageSelect.select((eb) => [
   UserCosmeticRepository.findManyByEntityIdRef({ ref: eb.ref('Image.id'), entity: 'Image' }).as(
     'cosmetics'
   ),
+  UserRepository.findOneByIdRef(eb.ref('Image.userId')).as('user'),
 ]);
 
 // or([eb('meta', 'is', null), eb('meta', 'is', null)])
