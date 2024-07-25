@@ -269,15 +269,20 @@ export const completeOnboardingHandler = async ({
         const { recaptchaToken } = input;
         if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-        const riskScore = await createRecaptchaAssesment({
+        const { score, reasons } = await createRecaptchaAssesment({
           token: recaptchaToken,
           recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
         });
 
-        if (!riskScore || riskScore < 0.5)
-          throw throwAuthorizationError(
-            'We are unable to complete onboarding right now. Please try again later'
-          );
+        if ((score || 0) < 0.5) {
+          if (reasons.length) {
+            throw throwAuthorizationError(
+              `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
+            );
+          } else {
+            throw throwAuthorizationError('We could not verify the authenticity of your request.');
+          }
+        }
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;

@@ -1592,13 +1592,14 @@ model SavedModel {
 }
 
 model RunStrategy {
-  id             Int          @id @default(autoincrement())
   modelVersionId Int
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   partnerId      Int
   partner        Partner      @relation(fields: [partnerId], references: [id], onDelete: Cascade)
   url            String
   createdAt      DateTime     @default(now())
+
+  @@id([modelVersionId, partnerId])
 }
 
 enum PartnerPricingModel {

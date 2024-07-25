@@ -295,6 +295,7 @@ export default function ImagesAsPostsInfinite({
                   .
                 </Text>
               ) : null}
+              {/* TODO.imageTags: Bring back once we support tags again.  */}
               {/* <ImageCategories /> */}
               {enabled && isLoading ? (
                 <Paper style={{ minHeight: 200, position: 'relative' }}>

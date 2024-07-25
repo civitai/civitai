@@ -30,6 +30,7 @@ import {
   IconVideo,
   IconProps,
   IconRainbow,
+  IconMushroom,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -92,8 +93,9 @@ const homeOptions: Record<string, HomeOption> = {
   // },
   shop: {
     url: '/shop',
-    icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    highlight: true,
+    // icon: (props: IconProps) => <IconShoppingBag {...props} />,
+    icon: (props: IconProps) => <IconMushroom {...props} />,
+    classes: ['tabHighlight'],
   },
 };
 type HomeOptions = keyof typeof homeOptions;
@@ -253,12 +255,18 @@ const useTabsStyles = createStyles((theme) => ({
     },
   },
   tabHighlight: {
-    backgroundColor: theme.fn.rgba(theme.colors.green[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
-    backgroundImage: `linear-gradient(to left, violet, indigo, blue, green, yellow, orange, red);`,
+    backgroundColor: theme.fn.rgba(theme.colors.grape[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
+    backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
+      theme.colors.grape[4],
+      0
+    )}, ${theme.fn.rgba(
+      theme.colors.grape[4],
+      theme.colorScheme === 'dark' ? 0.1 : 0.2
+    )}, ${theme.fn.rgba(theme.colors.grape[4], 0)})`,
     backgroundSize: '50px',
     backgroundPosition: '-300% 50%',
     backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.green[3] : theme.colors.green[8],
+    color: theme.colorScheme === 'dark' ? theme.colors.grape[3] : theme.colors.grape[8],
     animation: 'button-highlight 5s linear infinite',
     willChange: 'background-position',
   },

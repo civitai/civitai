@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
@@ -33,6 +34,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         },
       },
     });
+    const imageTags = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
+      SELECT "imageId", t."name" as "tag"
+      FROM "TagsOnImage" toi
+      JOIN "Tag" t ON toi."tagId" = t."id"
+      WHERE toi."imageId" IN (${Prisma.join(imageIds)})
+    `;
 
     await moderateImages({
       ids: imageIds,
@@ -43,7 +50,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     const tracker = new Tracker(req, res);
     for (const image of images) {
-      const tags = image.tags.map((x) => x.tag.name);
+      const tags = imageTags.filter((x) => x.imageId === image.id).map((x) => x.tag);
       tracker.image({
         type: 'Restore',
         imageId: image.id,
