@@ -48,6 +48,11 @@ export function maxDate(...dates: Date[]) {
   return dayjs.max(parsedDates).toDate();
 }
 
+export function minDate(...dates: Date[]) {
+  const parsedDates = dates.map(dayjs);
+  return dayjs.min(parsedDates).toDate();
+}
+
 export function isBetweenToday(value: Date) {
   const today = dayjs();
   return dayjs(value).isBetween(today.startOf('day'), today.clone().endOf('day'), null, '[]');

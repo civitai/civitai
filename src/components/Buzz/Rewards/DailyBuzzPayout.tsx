@@ -29,7 +29,7 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
-import { getDatesAsList, maxDate } from '~/utils/date-helpers';
+import { getDatesAsList, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -43,7 +43,6 @@ ChartJS.register(
   Legend
 );
 
-const DEFAULT_TIMEFRAME = 30;
 const now = dayjs();
 const monthsUntilNow = getDatesAsList(now.clone().startOf('year').toDate(), now.toDate(), 'month');
 
@@ -121,15 +120,11 @@ export const DailyBuzzPayout = () => {
   );
 
   const labels = useMemo(() => {
-    const data = [];
-    const today = dayjs().startOf('day');
-    let day = dayjs(
-      maxDate(today.subtract(DEFAULT_TIMEFRAME, 'day').toDate(), today.startOf('month').toDate())
-    );
-    while (day.isBefore(today)) {
-      data.push(day.format('YYYY-MM-DD'));
-      day = day.add(1, 'day');
-    }
+    const leading = dayjs(selectedDate).startOf('month').toDate();
+    const trailing = minDate(dayjs(selectedDate).endOf('month').toDate(), new Date());
+    const dates = getDatesAsList(leading, trailing, 'day');
+
+    const data = dates.map((day) => dayjs(day).format('YYYY-MM-DD'));
 
     return data;
   }, [selectedDate]);

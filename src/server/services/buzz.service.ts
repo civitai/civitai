@@ -766,8 +766,8 @@ export const getDailyBuzzPayoutByUser = async ({
 
   if (!clickhouse || !modelVersions.length) return [];
 
-  const minDate = dayjs(date).startOf('day').startOf('month').toDate();
-  const maxDate = dayjs(date).endOf('day').endOf('month').toDate();
+  const minDate = dayjs(date).startOf('day').startOf('month').toISOString();
+  const maxDate = dayjs(date).endOf('day').endOf('month').toISOString();
 
   const generationData = await clickhouse
     .query({
@@ -787,20 +787,22 @@ export const getDailyBuzzPayoutByUser = async ({
           total
         FROM buzz_resource_compensation
         WHERE modelVersionId IN (SELECT id FROM user_resources)
-        AND date > subtractDays(now(), 31)
+        AND date BETWEEN parseDateTimeBestEffort('${minDate}') AND parseDateTimeBestEffort('${maxDate}')
         ORDER BY date DESC, total DESC;
       `,
       format: 'JSONEachRow',
     })
     .then((x) =>
-      x.json<{ resourceId: number; date: Date; comp: number; tip: number; total: number }[]>()
+      x.json<{ modelVersionId: number; date: Date; comp: number; tip: number; total: number }[]>()
     );
+
+  if (!generationData.length) return [];
 
   return (
     modelVersions
       .map(({ model, ...version }) => {
         const resourceData = generationData
-          .filter((x) => x.resourceId === version.id)
+          .filter((x) => x.modelVersionId === version.id)
           .map((resource) => ({
             createdAt: dayjs(resource.date).format('YYYY-MM-DD'),
             total: resource.total,
@@ -809,6 +811,7 @@ export const getDailyBuzzPayoutByUser = async ({
         const totalSum = resourceData.reduce((acc, x) => acc + x.total, 0);
         return { ...version, modelName: model.name, data: resourceData, totalSum };
       })
+      .filter((v) => v.data.length > 0)
       // Pre-sort by most buzz
       .sort((a, b) => b.totalSum - a.totalSum)
   );

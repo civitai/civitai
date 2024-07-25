@@ -5,6 +5,7 @@ import {
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
+  getDailyBuzzPayoutHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
@@ -77,9 +78,5 @@ export const buzzRouter = router({
   }),
   getDailyBuzzCompensation: protectedProcedure
     .input(getDailyBuzzCompensationInput)
-    .query(({ input, ctx }) => {
-      if (!ctx.user.isModerator) input.userId = ctx.user.id;
-      if (!input.userId) input.userId = ctx.user.id;
-      return getDailyBuzzPayoutByUser(input);
-    }),
+    .query(getDailyBuzzPayoutHandler),
 });
