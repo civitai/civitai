@@ -122,7 +122,7 @@ export const DailyBuzzPayout = () => {
 
   const labels = useMemo(() => {
     const data = [];
-    const today = dayjs(selectedDate).startOf('day');
+    const today = dayjs().startOf('day');
     let day = dayjs(
       maxDate(today.subtract(DEFAULT_TIMEFRAME, 'day').toDate(), today.startOf('month').toDate())
     );
@@ -164,7 +164,7 @@ export const DailyBuzzPayout = () => {
     return null;
   }
 
-  const totalBuzz = resources.reduce((acc, resource) => acc + resource.dailyTotal, 0);
+  const totalBuzz = resources.reduce((acc, resource) => acc + resource.totalSum, 0);
 
   return (
     <Grid gutter="xs">
@@ -259,7 +259,7 @@ export const DailyBuzzPayout = () => {
                         weight="bold"
                         style={{ fontVariant: 'tabular-nums' }}
                       >
-                        {formatCurrencyForDisplay(version.dailyTotal, Currency.BUZZ)}
+                        {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
                       </Text>
                     </Group>
                   </Group>

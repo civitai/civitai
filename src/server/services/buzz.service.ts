@@ -774,62 +774,26 @@ export const getDailyBuzzPayoutByUser = async ({
       query: `
         WITH user_resources AS (
           SELECT
-            mv.id as id,
-            m.type = 'Checkpoint' as is_base_model
+            mv.id as id
           FROM civitai_pg.Model m
           JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
           WHERE m.userId = ${userId}
-        ), resource_jobs AS (
-          SELECT
-            arrayJoin(resourcesUsed) AS modelVersionId,
-            createdAt,
-            jobCost,
-            jobId,
-            userId,
-            creatorsTip
-          FROM orchestration.textToImageJobs 
-          WHERE arrayExists(x -> x IN (SELECT id FROM user_resources), resourcesUsed)
-          AND createdAt >= toStartOfMonth(now())
-          AND modelVersionId NOT IN (250708, 250712, 106916) -- Exclude models that are not eligible for compensation
-        ), resource_ownership AS (
-          SELECT
-            rj.*,
-            rj.modelVersionId IN (SELECT id FROM user_resources WHERE is_base_model) as isBaseModel,
-            rj.modelVersionId IN (SELECT id FROM user_resources) as isOwner
-          FROM resource_jobs rj
-        ), data AS (
-          SELECT
-            jobId,
-            createdAt,
-            jobCost as job_cost,
-            job_cost * ${CREATOR_COMP_PERCENT} as creator_comp,
-            creatorsTip as full_tip,
-            count(modelVersionId) as resource_count,
-            countIf(isOwner) as owned_resource_count,
-            owned_resource_count/resource_count as owned_ratio,
-            full_tip * owned_ratio as tip,
-            creator_comp * if(MAX(isBaseModel) = 1, 0.25, 0) as base_model_comp,
-            creator_comp * 0.75 * owned_ratio as resource_comp,
-            if(MAX(isBaseModel) = 1, 0.25, 0) + 0.75 * owned_ratio as full_ratio,
-            base_model_comp + resource_comp as total_comp,
-            total_comp + tip as total,
-            groupArrayIf(modelVersionId, isOwner) as owned_resources_used
-          FROM resource_ownership
-          GROUP BY jobId, createdAt, jobCost, creatorsTip
         )
-        SELECT 
-          arrayJoin(owned_resources_used) as resourceId,
-          createdAt::date as createdAt,
-          CEIL(SUM(total_comp)) as totalComp,
-          CEIL(SUM(tip)) as totalTip
-        FROM data
-        GROUP BY resourceId, createdAt
-        ORDER BY createdAt DESC, totalComp DESC;
+        SELECT
+          date,
+          modelVersionId,
+          comp,
+          tip,
+          total
+        FROM buzz_resource_compensation
+        WHERE modelVersionId IN (SELECT id FROM user_resources)
+        AND date > subtractDays(now(), 31)
+        ORDER BY date DESC, total DESC;
       `,
       format: 'JSONEachRow',
     })
     .then((x) =>
-      x.json<{ resourceId: number; createdAt: Date; totalComp: number; totalTip: number }[]>()
+      x.json<{ resourceId: number; date: Date; comp: number; tip: number; total: number }[]>()
     );
 
   return (
@@ -838,14 +802,14 @@ export const getDailyBuzzPayoutByUser = async ({
         const resourceData = generationData
           .filter((x) => x.resourceId === version.id)
           .map((resource) => ({
-            createdAt: dayjs(resource.createdAt).format('YYYY-MM-DD'),
-            total: resource.totalComp + resource.totalTip,
+            createdAt: dayjs(resource.date).format('YYYY-MM-DD'),
+            total: resource.total,
           }));
 
-        const dailyTotal = resourceData.reduce((acc, x) => acc + x.total, 0);
-        return { ...version, modelName: model.name, data: resourceData, dailyTotal };
+        const totalSum = resourceData.reduce((acc, x) => acc + x.total, 0);
+        return { ...version, modelName: model.name, data: resourceData, totalSum };
       })
       // Pre-sort by most buzz
-      .sort((a, b) => b.dailyTotal - a.dailyTotal)
+      .sort((a, b) => b.totalSum - a.totalSum)
   );
 };
