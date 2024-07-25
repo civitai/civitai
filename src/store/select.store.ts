@@ -1,5 +1,6 @@
 import { Key, useCallback } from 'react';
 import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
 type SelectStoreState<T extends Key> = {
@@ -7,27 +8,30 @@ type SelectStoreState<T extends Key> = {
   setSelected: (keys: T[]) => void;
   toggle: (key: T, value?: boolean) => void;
 };
-export const createSelectStore = <T extends Key = Key>() => {
+export const createSelectStore = <T extends Key = Key>(name?: string) => {
   const useStore = create<SelectStoreState<T>>()(
-    immer((set) => ({
-      selected: {},
-      setSelected: (keys) =>
-        set((state) => {
-          state.selected = keys.reduce<Record<Key, boolean>>(
-            (acc, key) => ({ ...acc, [key]: true }),
-            {}
-          );
-        }),
-      toggle: (key, value) =>
-        set((state) => {
-          const _value = value ?? !state.selected[key];
-          if (_value) {
-            state.selected[key] = _value;
-          } else {
-            delete state.selected[key];
-          }
-        }),
-    }))
+    devtools(
+      immer((set) => ({
+        selected: {},
+        setSelected: (keys) =>
+          set((state) => {
+            state.selected = keys.reduce<Record<Key, boolean>>(
+              (acc, key) => ({ ...acc, [key]: true }),
+              {}
+            );
+          }),
+        toggle: (key, value) =>
+          set((state) => {
+            const _value = value ?? !state.selected[key];
+            if (_value) {
+              state.selected[key] = _value;
+            } else {
+              delete state.selected[key];
+            }
+          }),
+      })),
+      { name }
+    )
   );
 
   const mapSelected = (selected: Record<Key, boolean>) => {
