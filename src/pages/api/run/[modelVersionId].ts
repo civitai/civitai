@@ -30,7 +30,6 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
       trainedWords: true,
       runStrategies: {
         select: {
-          id: true,
           url: true,
           partner: {
             select: {
@@ -46,9 +45,7 @@ export default async function runModel(req: NextApiRequest, res: NextApiResponse
 
   // Get selected, partner, or first runStrategy
   let runStrategy: (typeof modelVersion.runStrategies)[0] | undefined;
-  if (strategyId) runStrategy = modelVersion.runStrategies.find((x) => x.id == strategyId);
-  else if (partnerId)
-    runStrategy = modelVersion.runStrategies.find((x) => x.partner.id == partnerId);
+  if (partnerId) runStrategy = modelVersion.runStrategies.find((x) => x.partner.id == partnerId);
   else runStrategy = modelVersion.runStrategies[0];
 
   if (!runStrategy) return res.status(404).json({ error: "We don't have a way to run that model" });

@@ -29,11 +29,13 @@ import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { logToAxiom } from '~/server/logging/client';
+import { env } from '~/env/server.mjs';
 import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
   let token = getEncryptedCookie(ctx, generationServiceCookie.name);
+  if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({
       name: generationServiceCookie.name,

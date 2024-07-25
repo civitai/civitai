@@ -97,7 +97,6 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
               component="a"
               href={`/api/run/${modelVersionId}?${QS.stringify({
                 partnerId: partner.id,
-                strategyId: partner.strategies[0]?.id,
               })}`}
               target="_blank"
               rel="nofollow noreferrer"
@@ -223,7 +222,6 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
                           component="a"
                           href={`/api/run/${modelVersionId}?${QS.stringify({
                             partnerId: id,
-                            strategyId: strategies[0]?.id,
                           })}`}
                           target="_blank"
                           rel="nofollow noreferrer"
