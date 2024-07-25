@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+#branch="$(git rev-parse --abbrev-ref HEAD)"
+#if [ "$branch" != "main" ]; then
+#	exit 0
+#fi
+
+# NOTE: apparently tsc-files just doesn't work. at all.
+
+#echo "Running typecheck for staged files"
+#
+#npx lint-staged
+#
+#echo "Typecheck successful"
+#
+#exit 1
