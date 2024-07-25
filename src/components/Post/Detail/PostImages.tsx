@@ -10,6 +10,7 @@ import {
   Text,
   Badge,
   Tooltip,
+  ActionIcon,
 } from '@mantine/core';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Reactions } from '~/components/Reaction/Reactions';
@@ -26,6 +27,11 @@ import { PostContestCollectionItem } from '~/types/router';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CollectionItemStatus } from '@prisma/client';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { generationPanel } from '~/store/generation.store';
 
 const maxWidth = 700;
 const maxInitialImages = 20;
@@ -47,6 +53,7 @@ export function PostImages({
   const { classes, cx } = useStyles();
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
+  const features = useFeatureFlags();
 
   if (isLoading)
     return (
@@ -102,7 +109,28 @@ export function PostImages({
                         </Badge>
                       )}
                     </Group>
-                    <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
+                    <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
+                      <ImageContextMenu image={image} />
+                      {features.imageGeneration && image.hasMeta && (
+                        <HoverActionButton
+                          label="Remix"
+                          size={30}
+                          color="white"
+                          variant="filled"
+                          data-activity="remix:image-card"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            generationPanel.open({
+                              type: 'image',
+                              id: image.id,
+                            });
+                          }}
+                        >
+                          <IconBrush stroke={2.5} size={16} />
+                        </HoverActionButton>
+                      )}
+                    </div>
                     <RoutedDialogLink
                       name="imageDetail"
                       state={{ imageId: image.id, images }}
@@ -125,11 +153,7 @@ export function PostImages({
                         <EdgeMedia
                           src={image.url}
                           name={image.name}
-                          alt={
-                            image.meta
-                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                              : image.name ?? undefined
-                          }
+                          alt={image.name ?? undefined}
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}
@@ -157,6 +181,21 @@ export function PostImages({
                       targetUserId={image.user.id}
                       readonly={!safe}
                     />
+                    {image.hasMeta && (
+                      <div className="absolute bottom-2 right-2">
+                        <ImageMetaPopover2 imageId={image.id}>
+                          <ActionIcon variant="transparent" size="lg">
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover2>
+                      </div>
+                    )}
                   </>
                 )}
               </ImageGuard2>

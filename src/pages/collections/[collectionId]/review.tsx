@@ -57,6 +57,7 @@ import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import dayjs from 'dayjs';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -291,13 +292,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                     <EdgeMedia
                       src={image.url ?? ''}
                       name={image.name ?? image.id.toString()}
-                      alt={
-                        image.meta
-                          ? truncate((image.meta as ImageMetaProps).prompt, {
-                              length: constants.altTruncateLength,
-                            })
-                          : image.name ?? undefined
-                      }
+                      alt={image.name ?? undefined}
                       type={image.type}
                       width={
                         originalAspectRatio > 1
@@ -311,11 +306,8 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   ) : (
                     <MediaHash {...image} />
                   )}
-                  {reviewData.meta && (
-                    <ImageMetaPopover
-                      meta={reviewData.meta as ImageMetaProps}
-                      generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
-                    >
+                  {image.hasMeta && (
+                    <ImageMetaPopover2 imageId={image.id}>
                       <ActionIcon
                         variant="transparent"
                         style={{
@@ -334,7 +326,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                           size={26}
                         />
                       </ActionIcon>
-                    </ImageMetaPopover>
+                    </ImageMetaPopover2>
                   )}
                 </>
               );

@@ -158,7 +158,7 @@ export const REDIS_KEYS = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tagIdsForImages',
     COSMETICS: 'packed:caches:cosmetics',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
-    IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version',
+    IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model',
     BLOCKED_USERS: 'packed:caches:blocked-users',

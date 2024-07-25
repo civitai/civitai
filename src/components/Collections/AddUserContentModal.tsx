@@ -27,7 +27,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -45,6 +44,7 @@ import { trpc } from '~/utils/trpc';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { NextLink } from '@mantine/next';
 import { useCollection } from './collection.utils';
 
@@ -261,11 +261,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
                 <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
+                  alt={image.name ?? undefined}
                   type={image.type}
                   width={450}
                   placeholder="empty"
@@ -282,8 +278,8 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
           sx={{ position: 'absolute', top: 5, right: 5 }}
           readOnly
         />
-        {!image.hideMeta && image.meta && (
-          <ImageMetaPopover meta={image.meta} mainResourceId={image.modelVersionId ?? undefined}>
+        {image.hasMeta && (
+          <ImageMetaPopover2 imageId={image.id}>
             <ActionIcon
               variant="light"
               color="dark"
@@ -292,7 +288,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
             >
               <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
             </ActionIcon>
-          </ImageMetaPopover>
+          </ImageMetaPopover2>
         )}
       </div>
     </MasonryCard>

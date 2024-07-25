@@ -13,7 +13,6 @@ import {
 import { IconInfoCircle } from '@tabler/icons-react';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { NextLink } from '@mantine/next';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -26,6 +25,7 @@ import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 export function ResourceReviewCarousel({
   username,
@@ -96,13 +96,7 @@ export function ResourceReviewCarousel({
                             <EdgeMedia
                               src={image.url}
                               name={image.name ?? image.id.toString()}
-                              alt={
-                                image.meta
-                                  ? truncate(image.meta.prompt, {
-                                      length: constants.altTruncateLength,
-                                    })
-                                  : image.name ?? undefined
-                              }
+                              alt={image.name ?? undefined}
                               type={image.type}
                               width={450}
                               placeholder="empty"
@@ -126,13 +120,8 @@ export function ResourceReviewCarousel({
                         className={classes.reactions}
                         targetUserId={image.user.id}
                       />
-                      {!image.hideMeta && image.meta && (
-                        <ImageMetaPopover
-                          meta={image.meta}
-                          generationProcess={image.generationProcess ?? undefined}
-                          imageId={image.id}
-                          mainResourceId={image.modelVersionId ?? undefined}
-                        >
+                      {image.hasMeta && (
+                        <ImageMetaPopover2 imageId={image.id}>
                           <ActionIcon className={classes.info} variant="transparent" size="lg">
                             <IconInfoCircle
                               color="white"
@@ -142,7 +131,7 @@ export function ResourceReviewCarousel({
                               size={26}
                             />
                           </ActionIcon>
-                        </ImageMetaPopover>
+                        </ImageMetaPopover2>
                       )}
                     </div>
                   </Center>
