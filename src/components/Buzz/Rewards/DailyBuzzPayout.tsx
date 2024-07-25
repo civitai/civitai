@@ -223,12 +223,7 @@ export const DailyBuzzPayout = () => {
                 <Loader />
               </Center>
             ) : (
-              <Center>
-                <Text color="dimmed">
-                  Whoops! Looks like we are still collecting data on your models for this month.
-                  Come back later
-                </Text>
-              </Center>
+              <NoData />
             )}
           </Stack>
         </Paper>
@@ -238,36 +233,55 @@ export const DailyBuzzPayout = () => {
           <Title order={3} mb="xs">
             Top Earning Resources
           </Title>
-          <ScrollArea style={{ height: 400 }}>
-            <Stack>
-              {resources.map((version) => (
-                <Group key={version.id} position="apart" spacing={8} noWrap>
-                  <Stack spacing={0}>
-                    <Text size="sm" weight="bold" lineClamp={1}>
-                      {version.modelName}
-                    </Text>
-                    <Text size="xs" color="dimmed" lineClamp={1}>
-                      {version.name}
-                    </Text>
-                  </Stack>
+          {isLoading ? (
+            <Center>
+              <Loader />
+            </Center>
+          ) : resources.length > 0 ? (
+            <ScrollArea.Autosize maxHeight={400}>
+              <Stack>
+                {resources.map((version) => (
+                  <Group key={version.id} position="apart" spacing={8} noWrap>
+                    <Stack spacing={0}>
+                      <Text size="sm" weight="bold" lineClamp={1}>
+                        {version.modelName}
+                      </Text>
+                      <Text size="xs" color="dimmed" lineClamp={1}>
+                        {version.name}
+                      </Text>
+                    </Stack>
 
-                  <Group spacing={4} noWrap>
-                    <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                    <Text
-                      size="sm"
-                      color="yellow.7"
-                      weight="bold"
-                      style={{ fontVariant: 'tabular-nums' }}
-                    >
-                      {formatCurrencyForDisplay(version.dailyTotal, Currency.BUZZ)}
-                    </Text>
+                    <Group spacing={4} noWrap>
+                      <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                      <Text
+                        size="sm"
+                        color="yellow.7"
+                        weight="bold"
+                        style={{ fontVariant: 'tabular-nums' }}
+                      >
+                        {formatCurrencyForDisplay(version.dailyTotal, Currency.BUZZ)}
+                      </Text>
+                    </Group>
                   </Group>
-                </Group>
-              ))}
-            </Stack>
-          </ScrollArea>
+                ))}
+              </Stack>
+            </ScrollArea.Autosize>
+          ) : (
+            <NoData />
+          )}
         </Paper>
       </Grid.Col>
     </Grid>
   );
 };
+
+function NoData() {
+  return (
+    <Center>
+      <Text color="dimmed">
+        Whoops! Looks like we are still collecting data on your models for this month. Come back
+        later
+      </Text>
+    </Center>
+  );
+}
