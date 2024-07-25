@@ -97,11 +97,7 @@ export function GenericImageCard({
                     <EdgeMedia
                       src={image.url}
                       name={image.name ?? image.id.toString()}
-                      alt={
-                        image.meta
-                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                          : image.name ?? undefined
-                      }
+                      alt={image.name ?? undefined}
                       type={image.type}
                       width={
                         originalAspectRatio > 1

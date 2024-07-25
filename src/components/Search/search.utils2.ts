@@ -30,6 +30,7 @@ type ImagesTransformed = ReturnType<typeof imagesTransform>;
 function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
   return items.map((item) => ({
     ...item,
+    hasMeta: !item.hideMeta && Object.keys(item.meta).length > 0,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     ingestion: ImageIngestionStatus.Scanned,
   }));

@@ -380,13 +380,7 @@ export function ModelCard({ data, forceInView }: Props) {
                           <EdgeMedia
                             src={image.url}
                             name={image.name ?? image.id.toString()}
-                            alt={
-                              image.meta
-                                ? truncate((image.meta as ImageMetaProps).prompt, {
-                                    length: 125,
-                                  })
-                                : undefined
-                            }
+                            alt={image.name ?? undefined}
                             type={image.type}
                             width={
                               originalAspectRatio > 1

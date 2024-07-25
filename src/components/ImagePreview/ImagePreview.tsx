@@ -11,8 +11,9 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { CSSProperties } from 'react';
 import { EdgeMedia, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageGetInfinite } from '~/types/router';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -20,7 +21,7 @@ type ImagePreviewProps = {
   // lightboxImages?: ImageModel[];
   image: Pick<
     ImageGetInfinite[number],
-    'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'meta' | 'generationProcess' | 'type'
+    'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'generationProcess' | 'type'
   >;
   edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
@@ -30,7 +31,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { id, url, name, type, width, height, hash, meta, generationProcess },
+  image: { id, url, name, type, width, height, hash, generationProcess },
   edgeImageProps = {},
   nsfw,
   aspectRatio,
@@ -68,20 +69,6 @@ export function ImagePreview({
   }
 
   if (!width || !height) return null;
-
-  const Meta = !nsfw && withMeta && meta && (
-    <ImageMetaPopover meta={meta} generationProcess={generationProcess ?? 'txt2img'} imageId={id}>
-      <ActionIcon variant="transparent" size="lg">
-        <IconInfoCircle
-          color="white"
-          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-          opacity={0.8}
-          strokeWidth={2.5}
-          size={26}
-        />
-      </ActionIcon>
-    </ImageMetaPopover>
-  );
 
   // let NeedsReviewBadge = needsReview && (
   //   <ThemeIcon size="lg" color="yellow">
@@ -149,29 +136,45 @@ export function ImagePreview({
     />
   );
 
-  return (
-    <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
-      {aspectRatio === 0 ? (
-        Image
-      ) : (
-        <AspectRatio
-          ratio={aspectRatio}
-          sx={{
-            color: 'white',
-            ['& > img, & > video']: {
-              objectPosition: cropFocus ?? 'center',
-            },
-          }}
-        >
-          {Image}
-        </AspectRatio>
-      )}
-      <Group spacing={4} sx={{ position: 'absolute', bottom: '5px', right: '5px' }}>
-        {/* {NeedsReviewBadge} */}
-        {Meta}
-      </Group>
-    </Box>
+  return aspectRatio === 0 ? (
+    Image
+  ) : (
+    <AspectRatio
+      ratio={aspectRatio}
+      sx={{
+        color: 'white',
+        ['& > img, & > video']: {
+          objectPosition: cropFocus ?? 'center',
+        },
+      }}
+    >
+      {Image}
+    </AspectRatio>
   );
+
+  // return (
+  //   <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
+  //     {aspectRatio === 0 ? (
+  //       Image
+  //     ) : (
+  //       <AspectRatio
+  //         ratio={aspectRatio}
+  //         sx={{
+  //           color: 'white',
+  //           ['& > img, & > video']: {
+  //             objectPosition: cropFocus ?? 'center',
+  //           },
+  //         }}
+  //       >
+  //         {Image}
+  //       </AspectRatio>
+  //     )}
+  //     <Group spacing={4} sx={{ position: 'absolute', bottom: '5px', right: '5px' }}>
+  //       {NeedsReviewBadge}
+  //       {Meta}
+  //     </Group>
+  //   </Box>
+  // );
 }
 
 const useStyles = createStyles((theme, { radius }: { radius?: MantineNumberSize }) => ({

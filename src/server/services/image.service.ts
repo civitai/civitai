@@ -482,7 +482,7 @@ type GetAllImagesRaw = {
   width: number | null;
   height: number | null;
   hash: string | null;
-  meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   hideMeta: boolean;
   hasMeta: boolean;
   onSite: boolean;
@@ -495,7 +495,7 @@ type GetAllImagesRaw = {
   userId: number;
   index: number | null;
   postId: number | null;
-  // postTitle: string | null;
+  postTitle: string | null;
   modelVersionId: number | null;
   imageId: number | null;
   publishedAt: Date | null;
@@ -936,7 +936,7 @@ export const getAllImages = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
+      -- i.meta,
       i."hideMeta",
       (
         CASE
@@ -971,6 +971,7 @@ export const getAllImages = async ({
       u.image "userImage",
       u."deletedAt",
       p."availability",
+      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -1082,7 +1083,8 @@ export const getAllImages = async ({
   const now = new Date();
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
-      meta: ImageMetaProps | null; // TODO - don't fetch meta
+      // meta: ImageMetaProps | null; // TODO - don't fetch meta
+      meta?: ImageMetaProps | null; // deprecated. Only used in v1 api endpoint
       hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
       hasMeta: boolean;
       tags?: VotableTagModel[] | undefined;
@@ -1094,6 +1096,7 @@ export const getAllImages = async ({
       nsfwLevel: NsfwLevel;
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
       metadata: ImageMetadata | VideoMetadata | null;
+      onSite: boolean;
     }
   > = rawImages
     .filter((x) => {
@@ -1228,7 +1231,7 @@ export const getImage = async ({
       i.width,
       i.index,
       i.hash,
-      i.meta,
+      -- i.meta,
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
@@ -1247,6 +1250,13 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1379,12 +1389,14 @@ export type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta: ImageMetaProps | null;
+  // meta: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
   availability: Availability;
   sizeKB?: number;
+  onSite: boolean;
+  hasMeta: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -1491,8 +1503,21 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability"
-      ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+      p."availability",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
@@ -1645,8 +1670,9 @@ export const getImagesForPosts = async ({
       tippedAmountCount: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
-      meta?: Prisma.JsonValue;
       reactions?: ReviewReactions[];
+      hasMeta: boolean;
+      onSite: boolean;
     }[]
   >`
     SELECT
@@ -1663,6 +1689,20 @@ export const getImagesForPosts = async ({
       i."createdAt",
       i."generationProcess",
       i."postId",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       ${Prisma.raw(`
         jsonb_build_object(
           'prompt', i.meta->>'prompt',
@@ -1708,7 +1748,6 @@ export const getImagesForPosts = async ({
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
-    meta: (i.meta ?? {}) as ImageMetaProps,
     tagIds: rawTags.filter((t) => t.imageId === i.id).map((t) => t.tagId),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));
@@ -2545,6 +2584,7 @@ export const getImageModerationReviewQueue = async ({
 
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
+      meta: ImageMetaProps | null;
       tags?: VotableTagModel[] | undefined;
       names?: string[];
       report?:

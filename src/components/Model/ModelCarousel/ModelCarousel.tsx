@@ -14,7 +14,6 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { generationPanel } from '~/store/generation.store';
 import { useQueryImages } from '~/components/Image/image.utils';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -27,6 +26,7 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -178,7 +178,7 @@ function ModelCarouselContent({
                       <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                       <Stack spacing="xs" align="flex-end" className="absolute right-2 top-2 z-10">
                         <ImageContextMenu image={image} />
-                        {features.imageGeneration && image.meta && !image.hideMeta && (
+                        {features.imageGeneration && image.hasMeta && (
                           <HoverActionButton
                             label="Remix"
                             size={30}
@@ -235,13 +235,8 @@ function ModelCarouselContent({
                     </>
                   )}
                 </ImageGuard2>
-                {!image.hideMeta && image.meta && (
-                  <ImageMetaPopover
-                    meta={image.meta}
-                    generationProcess={image.generationProcess ?? undefined}
-                    imageId={image.id}
-                    mainResourceId={modelVersionId}
-                  >
+                {image.hasMeta && (
+                  <ImageMetaPopover2 imageId={image.id}>
                     <ActionIcon className={classes.info} variant="transparent" size="lg">
                       <IconInfoCircle
                         color="white"
@@ -251,7 +246,7 @@ function ModelCarouselContent({
                         size={26}
                       />
                     </ActionIcon>
-                  </ImageMetaPopover>
+                  </ImageMetaPopover2>
                 )}
               </div>
             </Center>

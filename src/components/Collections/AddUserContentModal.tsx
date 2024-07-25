@@ -27,7 +27,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -262,11 +261,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
                 <EdgeMedia
                   src={image.url}
                   name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
+                  alt={image.name ?? undefined}
                   type={image.type}
                   width={450}
                   placeholder="empty"
@@ -283,7 +278,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
           sx={{ position: 'absolute', top: 5, right: 5 }}
           readOnly
         />
-        {!image.hideMeta && image.meta && (
+        {image.hasMeta && (
           <ImageMetaPopover2 imageId={image.id}>
             <ActionIcon
               variant="light"

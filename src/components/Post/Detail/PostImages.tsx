@@ -125,11 +125,7 @@ export function PostImages({
                         <EdgeMedia
                           src={image.url}
                           name={image.name}
-                          alt={
-                            image.meta
-                              ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                              : image.name ?? undefined
-                          }
+                          alt={image.name ?? undefined}
                           type={image.type}
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}

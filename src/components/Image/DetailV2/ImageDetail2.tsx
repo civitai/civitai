@@ -144,7 +144,7 @@ export function ImageDetail2() {
 
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
-  const canCreate = !!image.meta?.prompt && !image.hideMeta;
+  const canCreate = image.hasMeta;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
