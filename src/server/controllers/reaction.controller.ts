@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { EntityMetric_MetricType_Type, Prisma, ReviewReactions } from '@prisma/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { notifDbRead } from '~/server/db/notifDb';
@@ -9,6 +9,7 @@ import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { createNotification } from '~/server/services/notification.service';
 import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
@@ -160,6 +161,13 @@ async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | '
   }
 }
 
+const reactionMetricMap: { [p in ReviewReactions]?: EntityMetric_MetricType_Type } = {
+  Like: 'ReactionLike',
+  Heart: 'ReactionHeart',
+  Laugh: 'ReactionLaugh',
+  Cry: 'ReactionCry',
+};
+
 export const toggleReactionHandler = async ({
   ctx,
   input,
@@ -200,6 +208,19 @@ export const toggleReactionHandler = async ({
         .catch(handleLogError);
     }
 
+    if (input.entityType === 'image') {
+      const metricTypeFromInput = reactionMetricMap[input.reaction];
+      if (metricTypeFromInput) {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Image',
+          entityId: input.entityId,
+          metricType: metricTypeFromInput,
+          amount: result === 'created' ? 1 : -1,
+        });
+      }
+    }
+
     if (result == 'created') {
       await Promise.all([
         encouragementReward
@@ -226,7 +247,6 @@ export const toggleReactionHandler = async ({
           .catch(handleLogError),
       ]);
 
-      // TODO unhandledRejection: Error: read ECONNRESET
       await createReactionNotification(input).catch();
     }
     return result;

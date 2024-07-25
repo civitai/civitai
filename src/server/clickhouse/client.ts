@@ -2,6 +2,8 @@ import { ClickHouseClient, createClient } from '@clickhouse/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
   ReportReason,
   ReportStatus,
   ReviewReactions,
@@ -11,10 +13,11 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { logToAxiom } from '~/server/logging/client';
 import { ProhibitedSources } from '~/server/schema/user.schema';
+import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
-import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -216,20 +219,31 @@ export class Tracker {
         this.actor.userId = session?.user?.id ?? this.actor.userId;
         return this.actor.userId;
       });
-      this.session.catch(() => {
-        // ignore
-        // TODO - logging
+      this.session.catch((e) => {
+        const error = e as Error;
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'Failed session',
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
+          },
+          'clickhouse'
+        ).catch();
       });
     }
   }
 
-  private async track(table: string, custom: object) {
+  private async track(table: string, custom: object, skipActorMeta = false): Promise<void> {
     if (!env.CLICKHOUSE_TRACKER_URL) return;
 
     if (this.session) await this.session;
 
+    const actorMeta = skipActorMeta ? { userId: this.actor.userId } : { ...this.actor };
+
     const data = {
-      ...this.actor,
+      ...actorMeta,
       ...custom,
     };
 
@@ -240,9 +254,19 @@ export class Tracker {
       headers: {
         'Content-Type': 'application/json',
       },
-    }).catch(() => {
-      // ignore
-      // TODO - logging
+    }).catch((e) => {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track',
+          details: { table, data: JSON.stringify(data) },
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
     });
   }
 
@@ -428,5 +452,14 @@ export class Tracker {
 
   public search(values: { query: string; index: string; filters?: any }) {
     return this.track('search', values);
+  }
+
+  public entityMetric(values: {
+    entityType: EntityMetric_EntityType_Type;
+    entityId: number;
+    metricType: EntityMetric_MetricType_Type;
+    metricValue: number;
+  }) {
+    return this.track('entityMetricEvents', { ...values, createdAt: new Date() }, true);
   }
 }
