@@ -4,8 +4,13 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { generationConfig } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
+import {
+  GenerationResource,
+  getBaseModelSetType,
+  whatIfQueryOverrides,
+} from '~/shared/constants/generation.constants';
 import { createImageElement } from '~/utils/image-utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -28,17 +33,20 @@ export function UpscaleImageModal({
     });
   }, [params.image]);
 
-  const { data, isLoading, isInitialLoading, isError } =
-    trpc.orchestrator.getImageWhatIf.useQuery({
-      resources: resources.map((x) => x.id),
-      params: {
-        ...params,
-        ...whatIfQueryOverrides,
-        upscale: Number(upscale),
-        quantity: 1,
-        ...size,
-      },
-    });
+  const defaultModel =
+    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+      ?.checkpoint ?? resources[0];
+
+  const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery({
+    resources: [defaultModel.id],
+    params: {
+      ...params,
+      ...whatIfQueryOverrides,
+      upscale: Number(upscale),
+      quantity: 1,
+      ...size,
+    },
+  });
 
   const generateImage = useSubmitCreateImage();
   const { conditionalPerformTransaction } = useBuzzTransaction({
