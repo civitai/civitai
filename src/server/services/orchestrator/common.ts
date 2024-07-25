@@ -5,6 +5,7 @@ import {
   TextToImageStep,
   WorkflowStatus,
   WorkflowStep,
+  WorkflowStepJob,
   createCivitaiClient,
 } from '@civitai/client';
 import { resourceDataCache } from '~/server/redis/caches';
@@ -256,7 +257,12 @@ function getUpscaleSize(src: number, multiplier = 1) {
   return Math.ceil((src * multiplier) / 64) * 64;
 }
 
-function getStepCost(step: WorkflowStep) {
+// Temporary fix until the `@civitai/client` gets updated
+type LegacyWorkflowStep = Omit<WorkflowStep, 'jobs'> & {
+  jobs?: Array<WorkflowStepJob & { cost?: number }> | null;
+};
+
+function getStepCost(step: LegacyWorkflowStep) {
   return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
 }
 
