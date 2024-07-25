@@ -279,16 +279,13 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
           readOnly
         />
         {image.hasMeta && (
-          <ImageMetaPopover2 imageId={image.id}>
-            <ActionIcon
-              variant="light"
-              color="dark"
-              size="lg"
-              sx={{ position: 'absolute', bottom: 5, right: 5 }}
-            >
-              <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-            </ActionIcon>
-          </ImageMetaPopover2>
+          <div className="absolute bottom-0.5 right-0.5 z-10">
+            <ImageMetaPopover2 imageId={image.id}>
+              <ActionIcon variant="light" color="dark" size="lg">
+                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+              </ActionIcon>
+            </ImageMetaPopover2>
+          </div>
         )}
       </div>
     </MasonryCard>

@@ -372,17 +372,19 @@ export function ImagesAsPostsCard({
                           targetUserId={image.user.id}
                         />
                         {image.hasMeta && (
-                          <ImageMetaPopover2 imageId={image.id}>
-                            <ActionIcon className={classes.info} variant="transparent" size="lg">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
-                          </ImageMetaPopover2>
+                          <div className="absolute bottom-0.5 right-0.5 z-10">
+                            <ImageMetaPopover2 imageId={image.id}>
+                              <ActionIcon className={classes.info} variant="transparent" size="lg">
+                                <IconInfoCircle
+                                  color="white"
+                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                  opacity={0.8}
+                                  strokeWidth={2.5}
+                                  size={26}
+                                />
+                              </ActionIcon>
+                            </ImageMetaPopover2>
+                          </div>
                         )}
                       </div>
                     )}
@@ -499,21 +501,19 @@ export function ImagesAsPostsCard({
                                     targetUserId={image.user.id}
                                   />
                                   {image.hasMeta && (
-                                    <ImageMetaPopover2 imageId={image.id}>
-                                      <ActionIcon
-                                        className={classes.info}
-                                        variant="transparent"
-                                        size="lg"
-                                      >
-                                        <IconInfoCircle
-                                          color="white"
-                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                          opacity={0.8}
-                                          strokeWidth={2.5}
-                                          size={26}
-                                        />
-                                      </ActionIcon>
-                                    </ImageMetaPopover2>
+                                    <div className="absolute bottom-0.5 right-0.5 z-10">
+                                      <ImageMetaPopover2 imageId={image.id}>
+                                        <ActionIcon variant="transparent" size="lg">
+                                          <IconInfoCircle
+                                            color="white"
+                                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                            opacity={0.8}
+                                            strokeWidth={2.5}
+                                            size={26}
+                                          />
+                                        </ActionIcon>
+                                      </ImageMetaPopover2>
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -642,10 +642,10 @@ const useStyles = createStyles((theme) => ({
     zIndex: 2,
   },
   info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-    zIndex: 1,
+    // position: 'absolute',
+    // bottom: 5,
+    // right: 5,
+    // zIndex: 1,
   },
   statBadge: {
     background: 'rgba(212,212,212,0.2)',

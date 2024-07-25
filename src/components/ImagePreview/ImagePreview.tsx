@@ -13,7 +13,6 @@ import { CSSProperties } from 'react';
 import { EdgeMedia, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGetInfinite } from '~/types/router';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
