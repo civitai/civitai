@@ -1,37 +1,38 @@
-import { GetByIdInput } from './../schema/base.schema';
-import {
-  upsertComment,
-  getComments,
-  deleteComment,
-  getCommentCount,
-  getCommentsThreadDetails,
-  toggleLockCommentsThread,
-  getComment,
-  toggleHideComment,
-} from './../services/commentsv2.service';
-import {
-  UpsertCommentV2Input,
-  GetCommentsV2Input,
-  CommentConnectorInput,
-} from './../schema/commentv2.schema';
-import { Context } from '~/server/createContext';
-import {
-  handleLogError,
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { TRPCError } from '@trpc/server';
-import { dbRead } from '../db/client';
+import { Context } from '~/server/createContext';
 import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
-import { hasEntityAccess } from '../services/common.service';
+import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import {
   BlockedByUsers,
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  handleLogError,
+  throwAuthorizationError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { dbRead } from '../db/client';
+import { hasEntityAccess } from '../services/common.service';
+import { GetByIdInput } from './../schema/base.schema';
+import {
+  CommentConnectorInput,
+  GetCommentsV2Input,
+  UpsertCommentV2Input,
+} from './../schema/commentv2.schema';
+import {
+  deleteComment,
+  getComment,
+  getCommentCount,
+  getComments,
+  getCommentsThreadDetails,
+  toggleHideComment,
+  toggleLockCommentsThread,
+  upsertComment,
+} from './../services/commentsv2.service';
 
 export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
 export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
@@ -166,6 +167,15 @@ export const upsertCommentV2Handler = async ({
           type,
           nsfw: result.nsfw,
           entityId: result.id,
+        });
+      }
+
+      if (type === 'Image') {
+        await updateEntityMetric({
+          ctx,
+          entityType: 'Image',
+          entityId: input.entityId,
+          metricType: 'Comment',
         });
       }
     }
