@@ -3,7 +3,7 @@ import { createJob } from '~/server/jobs/job';
 
 export const tempSetMissingNsfwLevel = createJob(
   'temp-set-missing-nsfw-level',
-  '0 * * * *',
+  '*/10 * * * *',
   async () => {
     const versions = await dbWrite.$queryRaw<{ id: number }[]>`
       WITH missing_level AS (
@@ -82,6 +82,20 @@ export const tempSetMissingNsfwLevel = createJob(
         level.id = m.id
         AND (level."nsfwLevel" != m."nsfwLevel")
         AND m."nsfwLevel" = 0
+      RETURNING m.id;
+    `;
+
+    await dbWrite.$queryRaw<{ id: number }[]>`
+      WITH last_version AS (
+        SELECT "modelId", max("publishedAt") "publishedAt"
+        FROM "ModelVersion"
+        WHERE status = 'Published'
+        GROUP BY "modelId"
+      )
+      UPDATE "Model" m SET "lastVersionAt" = lv."publishedAt"
+      FROM last_version lv
+      WHERE lv."modelId" = m.id
+      AND m."lastVersionAt" IS NULL
       RETURNING m.id;
     `;
 
