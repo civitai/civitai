@@ -390,7 +390,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
 
-  const versions = await dbRead.modelVersion.findMany({
+  const versions = await dbClient.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: {
       id: true,
