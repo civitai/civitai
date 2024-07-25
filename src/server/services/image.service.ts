@@ -602,11 +602,12 @@ export const getAllImages = async ({
     }
   }
 
-  if (excludeCrossPosts && modelVersionId) {
-    cacheTime = CacheTTL.day;
-    cacheTags.push(`images-modelVersion:${modelVersionId}`);
-    AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-  }
+  // TODO.fix disable excludeCrossPosts
+  // if (excludeCrossPosts && modelVersionId) {
+  //   cacheTime = CacheTTL.day;
+  //   cacheTags.push(`images-modelVersion:${modelVersionId}`);
+  //   AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+  // }
 
   if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);

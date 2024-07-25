@@ -225,7 +225,7 @@ export default function ImagesAsPostsInfinite({
                 <Group ml="auto" spacing={8}>
                   <SortFilter type="modelImages" variant="button" />
                   <ImageFiltersDropdown size="sm" filterType="modelImages" compact />
-                  <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
+                  {/* <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                     <ActionIcon
                       radius="xl"
                       variant={excludeCrossPosts ? 'light' : 'filled'}
@@ -234,7 +234,7 @@ export default function ImagesAsPostsInfinite({
                     >
                       <IconArrowsCross size={16} />
                     </ActionIcon>
-                  </ButtonTooltip>
+                  </ButtonTooltip> */}
                   {showModerationOptions && (
                     <>
                       {!!gallerySettings?.hiddenImages.length && (
