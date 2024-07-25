@@ -5,12 +5,10 @@
 #	exit 0
 #fi
 
-# NOTE: apparently tsc-files just doesn't work. at all.
+# NOTE: apparently tsc-files just doesn't work on windows. at all.
 
 #echo "Running typecheck for staged files"
 #
 #npx lint-staged
 #
 #echo "Typecheck successful"
-#
-#exit 1

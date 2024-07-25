@@ -10,5 +10,3 @@ echo "Running typecheck for all files"
 npm run typecheck
 
 echo "Typecheck successful"
-
-exit 1
