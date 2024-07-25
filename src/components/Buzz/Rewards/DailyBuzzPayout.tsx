@@ -51,7 +51,7 @@ const monthsUntilNow = getDatesAsList(now.clone().startOf('year').toDate(), now.
 const dateOptions = monthsUntilNow.reverse().map((month) => {
   const date = dayjs(month);
   return {
-    value: date.startOf('month').toISOString(),
+    value: date.toISOString(),
     label: date.format('MMMM YYYY'),
   };
 });
@@ -60,11 +60,10 @@ export const DailyBuzzPayout = () => {
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
   const { userStripeConnect } = useUserStripeConnect();
-  const { data: modelVersions = [], isLoading } =
-    trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
-      { timeframe: dayjs().diff(dayjs(selectedDate).startOf('month'), 'day') },
-      { enabled: userStripeConnect?.status === StripeConnectStatus.Approved }
-    );
+  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate },
+    { enabled: userStripeConnect?.status === StripeConnectStatus.Approved }
+  );
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -123,7 +122,7 @@ export const DailyBuzzPayout = () => {
 
   const labels = useMemo(() => {
     const data = [];
-    const today = dayjs().startOf('day');
+    const today = dayjs(selectedDate).startOf('day');
     let day = dayjs(
       maxDate(today.subtract(DEFAULT_TIMEFRAME, 'day').toDate(), today.startOf('month').toDate())
     );
@@ -133,39 +132,39 @@ export const DailyBuzzPayout = () => {
     }
 
     return data;
-  }, []);
+  }, [selectedDate]);
 
   const datasets = useMemo(() => {
     const data =
       filteredVersionIds.length > 0
-        ? modelVersions.filter((v) => filteredVersionIds.includes(v.id))
-        : modelVersions.slice(0, 10);
+        ? resources.filter((v) => filteredVersionIds.includes(v.id))
+        : resources.slice(0, 10);
 
-    return data.map((modelVersion) => {
+    return data.map((resource) => {
       return {
-        label: `${modelVersion.modelName} - ${modelVersion.modelVersionName}`,
-        data: (modelVersion.data ?? [])
+        label: `${resource.modelName} - ${resource.name}`,
+        data: (resource.data ?? [])
           .filter((data) => labels.includes(data.createdAt))
           .map((data) => ({
             x: data.createdAt,
-            y: data.generations,
+            y: data.total,
           })),
       };
     });
-  }, [filteredVersionIds, modelVersions, labels]);
+  }, [filteredVersionIds, resources, labels]);
 
   const multiselectItems = useMemo(() => {
-    return modelVersions.map((version) => ({
-      label: `${version.modelName} - ${version.modelVersionName}`,
-      value: version.id.toString(),
+    return resources.map((resource) => ({
+      label: `${resource.modelName} - ${resource.name}`,
+      value: resource.id.toString(),
     }));
-  }, [modelVersions]);
+  }, [resources]);
 
   if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
     return null;
   }
 
-  const totalBuzz = modelVersions.reduce((acc, version) => acc + version.generations, 0);
+  const totalBuzz = resources.reduce((acc, resource) => acc + resource.dailyTotal, 0);
 
   return (
     <Grid gutter="xs">
@@ -197,7 +196,7 @@ export const DailyBuzzPayout = () => {
                 </Text>
               </Group>
             </Stack>
-            {!isLoading && modelVersions.length > 0 ? (
+            {!isLoading && resources.length > 0 ? (
               <Stack>
                 <MultiSelect
                   data={multiselectItems}
@@ -241,14 +240,14 @@ export const DailyBuzzPayout = () => {
           </Title>
           <ScrollArea style={{ height: 400 }}>
             <Stack>
-              {modelVersions.map((version) => (
+              {resources.map((version) => (
                 <Group key={version.id} position="apart" spacing={8} noWrap>
                   <Stack spacing={0}>
                     <Text size="sm" weight="bold" lineClamp={1}>
                       {version.modelName}
                     </Text>
                     <Text size="xs" color="dimmed" lineClamp={1}>
-                      {version.modelVersionName}
+                      {version.name}
                     </Text>
                   </Stack>
 
@@ -260,7 +259,7 @@ export const DailyBuzzPayout = () => {
                       weight="bold"
                       style={{ fontVariant: 'tabular-nums' }}
                     >
-                      {formatCurrencyForDisplay(version.generations, Currency.BUZZ)}
+                      {formatCurrencyForDisplay(version.dailyTotal, Currency.BUZZ)}
                     </Text>
                   </Group>
                 </Group>

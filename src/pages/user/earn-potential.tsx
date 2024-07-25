@@ -160,7 +160,6 @@ export default function EarnPotential() {
   return (
     <Container size="md">
       <Stack>
-        <DailyBuzzPayout />
         <Stack spacing={0}>
           <Title mb={0}>Your Monthly Generation Earning Potential</Title>
           <Text color="dimmed">

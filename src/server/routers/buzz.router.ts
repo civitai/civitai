@@ -19,8 +19,14 @@ import {
   userBuzzTransactionInputSchema,
   clubTransactionSchema,
   getEarnPotentialSchema,
+  getDailyBuzzCompensationInput,
 } from '~/server/schema/buzz.schema';
-import { claimBuzz, getClaimStatus, getEarnPotential } from '~/server/services/buzz.service';
+import {
+  claimBuzz,
+  getClaimStatus,
+  getDailyBuzzPayoutByUser,
+  getEarnPotential,
+} from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
@@ -69,4 +75,11 @@ export const buzzRouter = router({
     if (!input.username && !input.userId) input.userId = ctx.user.id;
     return getEarnPotential(input);
   }),
+  getDailyBuzzCompensation: protectedProcedure
+    .input(getDailyBuzzCompensationInput)
+    .query(({ input, ctx }) => {
+      if (!ctx.user.isModerator) input.userId = ctx.user.id;
+      if (!input.userId) input.userId = ctx.user.id;
+      return getDailyBuzzPayoutByUser(input);
+    }),
 });
