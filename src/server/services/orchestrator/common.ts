@@ -257,15 +257,6 @@ function getUpscaleSize(src: number, multiplier = 1) {
   return Math.ceil((src * multiplier) / 64) * 64;
 }
 
-// Temporary fix until the `@civitai/client` gets updated
-type LegacyWorkflowStep = Omit<WorkflowStep, 'jobs'> & {
-  jobs?: Array<WorkflowStepJob & { cost?: number }> | null;
-};
-
-function getStepCost(step: LegacyWorkflowStep) {
-  return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
-}
-
 function getResources(step: WorkflowStep) {
   if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
   else
@@ -454,7 +445,6 @@ export function formatTextToImageStep({
     status: step.status,
     metadata: metadata,
     resources: formatGenerationResources(resources.filter((x) => !injectableIds.includes(x.id))),
-    cost: getStepCost(step),
   };
 }
 
@@ -506,7 +496,6 @@ export function formatComfyStep({
         stepResources.some((x) => x.id === resource.id)
       )
     ),
-    cost: getStepCost(step),
   };
 }
 

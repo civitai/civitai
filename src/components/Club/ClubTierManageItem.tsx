@@ -6,7 +6,6 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';

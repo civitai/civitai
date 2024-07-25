@@ -454,13 +454,7 @@ export function AmbientModelCard({ data, height }: Props) {
                             <EdgeMedia
                               src={image.url}
                               name={image.name ?? image.id.toString()}
-                              alt={
-                                image.meta
-                                  ? truncate((image.meta as ImageMetaProps).prompt, {
-                                      length: constants.altTruncateLength,
-                                    })
-                                  : image.name ?? undefined
-                              }
+                              alt={image.name ?? undefined}
                               type={image.type}
                               width={450}
                               placeholder="empty"

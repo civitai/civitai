@@ -45,7 +45,7 @@ export function PostsCard({
           <ImageGuard2 image={image} connectType="post" connectId={id}>
             {(safe) => (
               <>
-                {image.meta && 'civitaiResources' in (image.meta as object) && <OnsiteIndicator />}
+                {image.hasMeta && <OnsiteIndicator />}
 
                 <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                 {safe && (
@@ -80,13 +80,7 @@ export function PostsCard({
                       src={image.url}
                       className={sharedClasses.image}
                       name={image.name ?? image.id.toString()}
-                      alt={
-                        image.meta
-                          ? truncate(image.meta.prompt, {
-                              length: constants.altTruncateLength,
-                            })
-                          : image.name ?? undefined
-                      }
+                      alt={image.name ?? undefined}
                       anim={shouldAnimate}
                       skip={getSkipValue(image)}
                       type={image.type}

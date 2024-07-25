@@ -34,7 +34,6 @@ import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/Imag
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -50,6 +49,7 @@ import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon
 import { showSuccessNotification } from '~/utils/notifications';
 import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 export function ImagesAsPostsCard({
   data,
@@ -302,9 +302,7 @@ export function ImagesAsPostsCard({
                   <ImageGuard2 image={image}>
                     {(safe) => (
                       <div className={classes.imageContainer}>
-                        {image.meta && 'civitaiResources' in (image.meta as object) && (
-                          <OnsiteIndicator />
-                        )}
+                        {image.onSite && <OnsiteIndicator />}
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (
                           <Stack spacing="xs" className="absolute right-2 top-2 z-10">
@@ -312,7 +310,7 @@ export function ImagesAsPostsCard({
                               image={image}
                               additionalMenuItems={moderationOptions(image)}
                             />
-                            {features.imageGeneration && image.meta && !image.hideMeta && (
+                            {features.imageGeneration && image.hasMeta && (
                               <HoverActionButton
                                 label="Remix"
                                 size={30}
@@ -343,13 +341,7 @@ export function ImagesAsPostsCard({
                               <EdgeMedia
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
-                                alt={
-                                  image.meta
-                                    ? truncate(image.meta.prompt, {
-                                        length: constants.altTruncateLength,
-                                      })
-                                    : image.name ?? undefined
-                                }
+                                alt={image.name ?? undefined}
                                 type={image.type}
                                 width={450}
                                 placeholder="empty"
@@ -379,23 +371,20 @@ export function ImagesAsPostsCard({
                           className={classes.reactions}
                           targetUserId={image.user.id}
                         />
-                        {!image.hideMeta && image.meta && (
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            generationProcess={image.generationProcess ?? undefined}
-                            imageId={image.id}
-                            mainResourceId={image.modelVersionId ?? undefined}
-                          >
-                            <ActionIcon className={classes.info} variant="transparent" size="lg">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
-                          </ImageMetaPopover>
+                        {image.hasMeta && (
+                          <div className="absolute bottom-0.5 right-0.5 z-10">
+                            <ImageMetaPopover2 imageId={image.id}>
+                              <ActionIcon className={classes.info} variant="transparent" size="lg">
+                                <IconInfoCircle
+                                  color="white"
+                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                  opacity={0.8}
+                                  strokeWidth={2.5}
+                                  size={26}
+                                />
+                              </ActionIcon>
+                            </ImageMetaPopover2>
+                          </div>
                         )}
                       </div>
                     )}
@@ -440,9 +429,7 @@ export function ImagesAsPostsCard({
                             <ImageGuard2 image={image} connectType="post" connectId={postId}>
                               {(safe) => (
                                 <div className={classes.imageContainer}>
-                                  {image.meta && 'civitaiResources' in (image.meta as object) && (
-                                    <OnsiteIndicator />
-                                  )}
+                                  {image.onSite && <OnsiteIndicator />}
                                   <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                   {safe && (
                                     <Stack spacing="xs" className="absolute right-2 top-2 z-10">
@@ -450,27 +437,25 @@ export function ImagesAsPostsCard({
                                         image={image}
                                         additionalMenuItems={moderationOptions(image)}
                                       />
-                                      {features.imageGeneration &&
-                                        image.meta &&
-                                        !image.hideMeta && (
-                                          <HoverActionButton
-                                            label="Remix"
-                                            size={30}
-                                            color="white"
-                                            variant="filled"
-                                            data-activity="remix:model-gallery"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              generationPanel.open({
-                                                type: 'image',
-                                                id: image.id,
-                                              });
-                                            }}
-                                          >
-                                            <IconBrush stroke={2.5} size={16} />
-                                          </HoverActionButton>
-                                        )}
+                                      {features.imageGeneration && image.hasMeta && (
+                                        <HoverActionButton
+                                          label="Remix"
+                                          size={30}
+                                          color="white"
+                                          variant="filled"
+                                          data-activity="remix:model-gallery"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            generationPanel.open({
+                                              type: 'image',
+                                              id: image.id,
+                                            });
+                                          }}
+                                        >
+                                          <IconBrush stroke={2.5} size={16} />
+                                        </HoverActionButton>
+                                      )}
                                     </Stack>
                                   )}
                                   <RoutedDialogLink
@@ -486,13 +471,7 @@ export function ImagesAsPostsCard({
                                         <EdgeMedia
                                           src={image.url}
                                           name={image.name ?? image.id.toString()}
-                                          alt={
-                                            image.meta
-                                              ? truncate(image.meta.prompt, {
-                                                  length: constants.altTruncateLength,
-                                                })
-                                              : image.name ?? undefined
-                                          }
+                                          alt={image.name ?? undefined}
                                           type={image.type}
                                           width={450}
                                           placeholder="empty"
@@ -521,27 +500,20 @@ export function ImagesAsPostsCard({
                                     className={classes.reactions}
                                     targetUserId={image.user.id}
                                   />
-                                  {!image.hideMeta && image.meta && (
-                                    <ImageMetaPopover
-                                      meta={image.meta}
-                                      generationProcess={image.generationProcess ?? undefined}
-                                      imageId={image.id}
-                                      mainResourceId={image.modelVersionId ?? undefined}
-                                    >
-                                      <ActionIcon
-                                        className={classes.info}
-                                        variant="transparent"
-                                        size="lg"
-                                      >
-                                        <IconInfoCircle
-                                          color="white"
-                                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                          opacity={0.8}
-                                          strokeWidth={2.5}
-                                          size={26}
-                                        />
-                                      </ActionIcon>
-                                    </ImageMetaPopover>
+                                  {image.hasMeta && (
+                                    <div className="absolute bottom-0.5 right-0.5 z-10">
+                                      <ImageMetaPopover2 imageId={image.id}>
+                                        <ActionIcon variant="transparent" size="lg">
+                                          <IconInfoCircle
+                                            color="white"
+                                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                            opacity={0.8}
+                                            strokeWidth={2.5}
+                                            size={26}
+                                          />
+                                        </ActionIcon>
+                                      </ImageMetaPopover2>
+                                    </div>
                                   )}
                                 </div>
                               )}
@@ -670,10 +642,10 @@ const useStyles = createStyles((theme) => ({
     zIndex: 2,
   },
   info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-    zIndex: 1,
+    // position: 'absolute',
+    // bottom: 5,
+    // right: 5,
+    // zIndex: 1,
   },
   statBadge: {
     background: 'rgba(212,212,212,0.2)',
