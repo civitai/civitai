@@ -1987,7 +1987,6 @@ export type ResourceReviewReport = {
   reportId: number;
 };
 export type RunStrategy = {
-  id: Generated<number>;
   modelVersionId: number;
   partnerId: number;
   url: string;

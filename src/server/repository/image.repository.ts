@@ -1,5 +1,6 @@
-import { Expression, InferResult } from 'kysely';
+import { Expression, InferResult, sql } from 'kysely';
 import { jsonArrayFrom, jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
+import { UserCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
 
 const baseImageSelect = kyselyDbRead.selectFrom('Image').select((eb) => [
   'id',
@@ -16,14 +17,28 @@ const baseImageSelect = kyselyDbRead.selectFrom('Image').select((eb) => [
 ]);
 
 const listImageSelect = baseImageSelect.select((eb) => [
-  'meta', // TODO - select subset
   'postId',
-  'scannedAt',
   'createdAt',
   'needsReview',
-  'generationProcess',
-  // eb.ref('meta', '->')
+  sql<boolean>`(
+    CASE
+      WHEN meta IS NULL OR jsonb_typeof(meta) = 'null' OR "hideMeta" THEN FALSE
+      ELSE TRUE
+    END
+  )`.as('hasMeta'),
+  sql<boolean>`(
+    CASE
+      WHEN meta->>'civitaiResources' IS NOT NULL
+      THEN TRUE
+      ELSE FALSE
+    END
+  )`.as('onSite'),
+  UserCosmeticRepository.findManyByEntityIdRef({ ref: eb.ref('Image.id'), entity: 'Image' }).as(
+    'cosmetics'
+  ),
 ]);
+
+// or([eb('meta', 'is', null), eb('meta', 'is', null)])
 
 export type ImageBaseModel = InferResult<typeof baseImageSelect>;
 export type ImageListModel = InferResult<typeof listImageSelect>;
