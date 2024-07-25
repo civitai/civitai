@@ -135,21 +135,41 @@ export function ImagePreview({
     />
   );
 
-  return aspectRatio === 0 ? (
-    Image
-  ) : (
-    <AspectRatio
-      ratio={aspectRatio}
-      sx={{
-        color: 'white',
-        ['& > img, & > video']: {
-          objectPosition: cropFocus ?? 'center',
-        },
-      }}
-    >
-      {Image}
-    </AspectRatio>
+  return (
+    <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
+      {aspectRatio === 0 ? (
+        Image
+      ) : (
+        <AspectRatio
+          ratio={aspectRatio}
+          sx={{
+            color: 'white',
+            ['& > img, & > video']: {
+              objectPosition: cropFocus ?? 'center',
+            },
+          }}
+        >
+          {Image}
+        </AspectRatio>
+      )}
+    </Box>
   );
+
+  // return aspectRatio === 0 ? (
+  //   Image
+  // ) : (
+  //   <AspectRatio
+  //     ratio={aspectRatio}
+  //     sx={{
+  //       color: 'white',
+  //       ['& > img, & > video']: {
+  //         objectPosition: cropFocus ?? 'center',
+  //       },
+  //     }}
+  //   >
+  //     {Image}
+  //   </AspectRatio>
+  // );
 
   // return (
   //   <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
