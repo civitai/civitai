@@ -12,6 +12,11 @@ import { ImageIngestionStatus } from '@prisma/client';
 import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
 
 // #region [transformers]
+function handleOldImageTags(tags?: number[] | { id: number }[]) {
+  if (!tags) return [];
+  return tags.map((tag) => (typeof tag === 'number' ? tag : tag.id));
+}
+
 type ModelsTransformed = ReturnType<typeof modelsTransform>;
 function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
   return items.map((item) => ({
@@ -21,7 +26,7 @@ function modelsTransform(items: Hit<ModelSearchIndexRecord>[]) {
     images:
       item.images?.map((image) => ({
         ...image,
-        tags: image.tags?.map((t) => t.id),
+        tags: handleOldImageTags(image.tags),
       })) ?? [],
   }));
 }
