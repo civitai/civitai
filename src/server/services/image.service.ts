@@ -13,7 +13,9 @@ import {
 } from '@prisma/client';
 
 import { TRPCError } from '@trpc/server';
+import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
+import { SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
@@ -30,10 +32,14 @@ import {
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { logToAxiom } from '~/server/logging/client';
+import { metricsClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
+import { redis } from '~/server/redis/client';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
@@ -50,11 +56,15 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { ImageMetricsSearchIndexRecord } from '~/server/search-index/metrics-images.search-index';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -92,14 +102,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { redis } from '~/server/redis/client';
-import { metricsClient } from '~/server/meilisearch/client';
-import { logToAxiom } from '~/server/logging/client';
-import dayjs, { ManipulateType } from 'dayjs';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -931,7 +933,7 @@ export const getAllImages = async (
   }
 
   // TODO.metricSearch add missing props
-  getImagesFromSearch({
+  const searchResults = await getImagesFromSearch({
     modelVersionId,
     types,
     browsingLevel,
@@ -940,7 +942,8 @@ export const getAllImages = async (
     baseModels,
     period,
     sort,
-  }).catch();
+  });
+  console.log(searchResults[0], searchResults.length);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1187,6 +1190,14 @@ export const getAllImages = async (
   };
 };
 
+export const getAllImagesPost = async (
+  input: GetInfiniteImagesOutput & {
+    userId?: number;
+    user?: SessionUser;
+    headers?: Record<string, string>;
+  }
+) => {};
+
 const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
 type ImageSearchInput = {
   modelVersionId?: number;
@@ -1320,7 +1331,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
-    const results = await metricsClient.index(METRICS_SEARCH_INDEX).search(null, request);
+    // const results: SearchResponse<SearchBaseImage> = await metricsClient
+    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsClient
+      .index(METRICS_SEARCH_INDEX)
+      .search(null, request);
+
+    // console.log('HITS 1', results.hits[0]);
 
     const metrics = {
       hits: results.hits.length,
@@ -1332,7 +1348,17 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       'temp-search'
     );
 
-    return results.hits;
+    const imageMetrics = await getImageMetrics(results.hits.map((h) => h.id));
+    // console.log('METRICS 1', imageMetrics[0]);
+
+    const fullData = results.hits.map((h) => {
+      const match = imageMetrics.find((im) => im.id === h.id);
+      return { ...h, ...match };
+    });
+
+    // console.log(fullData[0]);
+
+    return fullData;
   } catch (error) {
     const err = error as Error;
     logToAxiom(
@@ -1348,6 +1374,45 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     return [];
   }
 }
+
+const getImageMetrics = async (ids: number[]) => {
+  // console.log({ len: ids.length });
+  const pgData = await dbRead.entityMetricImage.findMany({
+    where: { imageId: { in: ids } },
+    select: {
+      imageId: true,
+      reactionLike: true,
+      reactionHeart: true,
+      reactionLaugh: true,
+      reactionCry: true,
+      reactionTotal: true,
+      comment: true,
+      collection: true,
+      buzz: true,
+    },
+  });
+
+  const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
+
+  // // if no data in postgres, get latest from clickhouse
+  // if (clickhouse) {
+  //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
+  //   if (missing.length > 0) {
+  //     // TODO fix this query
+  //     const clickData = await clickhouse?.$query<typeof pgData[number]>(`
+  //         SELECT entityId, metricType, sum(metricValue)
+  //         FROM entityMetricEvents
+  //         WHERE entityType = 'Image'
+  //           AND entityId in (${missing.join(',')})
+  //         GROUP BY entityId, metricType
+  //       `
+  //     )
+  //     return pgData.concat(clickData);
+  //   }
+  // }
+
+  return finalData;
+};
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);

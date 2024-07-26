@@ -21,6 +21,7 @@ export const updateEntityMetric = async ({
 
   try {
     // Inc postgres EntityMetric
+    // TODO rawquery instead
     await dbWrite.entityMetric.upsert({
       where: { entityType_entityId_metricType: { entityType, entityId, metricType } },
       create: {

@@ -1,12 +1,12 @@
+import { ImageIngestionStatus, ImageTag, Prisma } from '@prisma/client';
+import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
+import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { ImageIngestionStatus, ImageTag, Prisma } from '@prisma/client';
-import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { isDefined } from '~/utils/type-guards';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -84,7 +84,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-type BaseImage = {
+export type SearchBaseImage = {
   id: number;
   userId: number;
   prompt: string;
@@ -131,7 +131,7 @@ export type ImageForMetricSearchIndex = {
   tags: string[];
   tools: string[];
   techniques: string[];
-} & BaseImage &
+} & SearchBaseImage &
   Metrics &
   ModelVersions;
 
@@ -156,7 +156,7 @@ const transformData = async ({
   cosmetics,
   modelVersions,
 }: {
-  images: BaseImage[];
+  images: SearchBaseImage[];
   rawTags: ImageTag[];
   metrics: Metrics[];
   tools: ImageTool[];
@@ -250,7 +250,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     ].filter(isDefined);
 
     if (step === 0) {
-      const images = await db.$queryRaw<BaseImage[]>`
+      const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
         i."id",
         i."index",
@@ -297,7 +297,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     if (step === 1) {
       // Pull metrics:
       // TODO: Use clickhouse to pull metrics.
-      const { images } = prevData as { images: BaseImage[] };
+      const { images } = prevData as { images: SearchBaseImage[] };
 
       const metrics = await db.$queryRaw`
           SELECT
@@ -318,7 +318,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
 
     if (step === 2) {
       // Pull tags:
-      const { images, metrics } = prevData as { images: BaseImage[]; metrics: Metrics[] };
+      const { images, metrics } = prevData as { images: SearchBaseImage[]; metrics: Metrics[] };
 
       const rawTags = await db.imageTag.findMany({
         where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
@@ -339,7 +339,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     if (step === 3) {
       // Tools and techniqaues
       const { images, ...other } = prevData as {
-        images: BaseImage[];
+        images: SearchBaseImage[];
         rawTags: ImageTag[];
         metrics: Metrics[];
       };
@@ -379,7 +379,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     if (step === 4) {
       // Cosmetics:
       const { images, ...other } = prevData as {
-        images: BaseImage[];
+        images: SearchBaseImage[];
         rawTags: ImageTag[];
         metrics: Metrics[];
         tools: ImageTool[];
@@ -401,7 +401,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     if (step === 5) {
       // Model versions & baseModel:
       const { images, ...other } = prevData as {
-        images: BaseImage[];
+        images: SearchBaseImage[];
         rawTags: ImageTag[];
         metrics: Metrics[];
         tools: ImageTool[];

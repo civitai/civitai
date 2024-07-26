@@ -247,6 +247,8 @@ export class Tracker {
       ...custom,
     };
 
+    // if (table === 'entityMetricEvents') console.log(data);
+
     // Perform the clickhouse insert in the background
     fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
       method: 'POST',
