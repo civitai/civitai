@@ -16,7 +16,6 @@ import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
 import { isEqual } from 'lodash';
-import { getDisplayName } from 'next/dist/shared/lib/utils';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
@@ -60,6 +59,7 @@ import {
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
