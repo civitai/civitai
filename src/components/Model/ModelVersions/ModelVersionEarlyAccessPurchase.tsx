@@ -93,7 +93,7 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   type="submit"
                   label="Get Download Access"
                   loading={purchasingModelVersionEarlyAccess}
-                  buzzAmount={earlyAccessConfig?.downloadPrice}
+                  buzzAmount={earlyAccessConfig?.downloadPrice as number}
                   onPerformTransaction={() => handlePurchase('download')}
                   disabled={canDownload}
                 />

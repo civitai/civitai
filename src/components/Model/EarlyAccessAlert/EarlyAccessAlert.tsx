@@ -14,13 +14,14 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useQueryModelVersionDonationGoals } from '../ModelVersions/model-version.utils';
 
 export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { donationGoals } = useQueryModelVersionDonationGoals({
-    modelVersionId: modelVersionId,
+    modelVersionId: versionId,
   });
 
   const inEarlyAccess = features.earlyAccessModel && !!deadline && isFutureDate(deadline);

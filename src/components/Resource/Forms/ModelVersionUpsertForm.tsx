@@ -339,6 +339,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     e.target.checked
                       ? {
                           timeframe: constants.earlyAccess.timeframeValues[0],
+                          chargeForDownload: true,
                           downloadPrice: 500,
                           chargeForGeneration: false,
                           generationPrice: 100,
@@ -403,16 +404,26 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                   </Input.Wrapper>
                   <Stack mt="sm">
-                    <InputNumber
-                      name="earlyAccessConfig.downloadPrice"
-                      label="Download price"
-                      description="How much would you like to charge for your version download?"
-                      min={500}
-                      step={100}
-                      icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                      withAsterisk
+                    <InputSwitch
+                      name="earlyAccessConfig.chargeFordownload"
+                      label="Allow users to pay for download (Includes ability to generate)"
+                      description={
+                        'Makes it so that users can download your model by paying a fee during the early access period.'
+                      }
                       disabled={isEarlyAccessOver}
                     />
+                    {earlyAccessConfig?.chargeForDownload && (
+                      <InputNumber
+                        name="earlyAccessConfig.downloadPrice"
+                        label="Download price"
+                        description="How much would you like to charge for your version download?"
+                        min={500}
+                        step={100}
+                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        withAsterisk
+                        disabled={isEarlyAccessOver}
+                      />
+                    )}
                     <InputSwitch
                       name="earlyAccessConfig.chargeForGeneration"
                       label="Allow users to pay for generation only - no download."
