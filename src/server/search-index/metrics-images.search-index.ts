@@ -45,7 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'techniques',
     'tags',
     'userId',
-    'nsfwevel',
+    'nsfwLevel',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -164,7 +164,6 @@ const transformData = async ({
   cosmetics: ImageCosmetics;
   modelVersions: ModelVersions[];
 }) => {
-  console.log(rawTags, tools, techniques, modelVersions);
   const records = images
     .map(({ userId, ...imageRecord }) => {
       const tags = rawTags
@@ -236,7 +235,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
 
     return {
       batchSize: READ_BATCH_SIZE,
-      startId,
+      startId: 7829710,
       endId,
     };
   },
