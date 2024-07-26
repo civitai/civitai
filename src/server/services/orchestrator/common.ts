@@ -257,10 +257,6 @@ function getUpscaleSize(src: number, multiplier = 1) {
   return Math.ceil((src * multiplier) / 64) * 64;
 }
 
-// function getStepCost(step: WorkflowStep) {
-//   return step.jobs ? Math.ceil(step.jobs.reduce((acc, job) => acc + (job.cost ?? 0), 0)) : 0;
-// }
-
 function getResources(step: WorkflowStep) {
   if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
   else
@@ -295,7 +291,11 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
       id: workflow.id as string,
       status: workflow.status ?? ('unassignend' as WorkflowStatus),
       createdAt: workflow.createdAt ? new Date(workflow.createdAt) : new Date(),
-      totalCost: workflow.cost?.total ?? 0,
+      totalCost:
+        workflow.transactions?.list?.reduce((acc, value) => {
+          if (value.type === 'debit') return acc + value.amount;
+          else return acc - value.amount;
+        }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       steps: workflow.steps.map((step) =>

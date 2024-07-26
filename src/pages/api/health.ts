@@ -7,6 +7,8 @@ import { clickhouse } from '~/server/clickhouse/client';
 import client from 'prom-client';
 import { pingBuzzService } from '~/server/services/buzz.service';
 import { env } from '~/env/server.mjs';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { metricsClient } from '~/server/meilisearch/client';
 
 const checkFns = {
   async write() {
@@ -20,6 +22,16 @@ const checkFns = {
       where: { id: -1 },
       select: { id: true },
     }));
+  },
+  async pgWrite() {
+    return !!(await pgDbWrite.query('SELECT 1'));
+  },
+  async pgRead() {
+    return !!(await pgDbWrite.query('SELECT 1'));
+  },
+  async searchMetrics() {
+    if (metricsClient === null) return true;
+    return !!(await metricsClient.isHealthy());
   },
   async redis() {
     return await redis
@@ -54,7 +66,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const resultsArray = await Promise.all(
     Object.entries(checkFns).map(([name, fn]) =>
-      timeoutAsyncFn(fn).then((result) => ({ [name]: result }))
+      timeoutAsyncFn(fn).then((result) => {
+        if (!result) counters[name as CheckKey].inc();
+        return { [name]: result };
+      })
     )
   );
 

@@ -127,11 +127,7 @@ function ImageContent({
             <EdgeMedia
               src={image.url}
               name={image.name ?? image.id.toString()}
-              alt={
-                image.meta
-                  ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                  : image.name ?? undefined
-              }
+              alt={image.name ?? undefined}
               type={image.type}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{

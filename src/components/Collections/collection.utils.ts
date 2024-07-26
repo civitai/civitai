@@ -66,12 +66,12 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
       return {
         type: collectionItem.type,
         image: collectionItem.data,
-        meta: collectionItem.data.meta
-          ? {
-              ...collectionItem.data.meta,
-              generationProcess: collectionItem.data.generationProcess,
-            }
-          : null,
+        // meta: collectionItem.data.meta
+        //   ? {
+        //       ...collectionItem.data.meta,
+        //       generationProcess: collectionItem.data.generationProcess,
+        //     }
+        //   : null,
         user: collectionItem.data.user,
         url: `/images/${collectionItem.data.id}`,
         baseModel: collectionItem.data.baseModel,
@@ -101,7 +101,14 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
     case 'article': {
       return {
         type: collectionItem.type,
-        image: collectionItem.data.coverImage,
+        image: collectionItem.data.coverImage
+          ? {
+              ...collectionItem.data.coverImage,
+              hasMeta:
+                !collectionItem.data.coverImage.hideMeta && !!collectionItem.data.coverImage.meta,
+              onSite: false,
+            }
+          : undefined,
         user: collectionItem.data.user,
         title: collectionItem.data.title,
         url: `/articles/${collectionItem.data.id}`,

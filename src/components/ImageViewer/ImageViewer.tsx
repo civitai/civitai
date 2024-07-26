@@ -36,7 +36,7 @@ export interface ImageProps {
   id: number;
   url: string;
   name: string | null;
-  meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   hash: string | null;
   generationProcess: ImageGenerationProcess | null;
   width: number | null;

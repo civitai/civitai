@@ -31,9 +31,7 @@ export const ModelSearchItem = forwardRef<
 
   const { images, user, nsfwLevel, type, category, metrics, version } = hit;
   const coverImage = images[0];
-  const alt = truncate((coverImage.meta as ImageMetaProps)?.prompt, {
-    length: constants.altTruncateLength,
-  });
+  const alt = coverImage.name;
 
   const nsfw = !getIsSafeBrowsingLevel(nsfwLevel);
 

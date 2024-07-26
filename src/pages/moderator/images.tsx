@@ -346,7 +346,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                         )}
                         {image.meta ? (
                           <ImageMetaPopover
-                            meta={image.meta as ImageMetaProps}
+                            meta={image.meta}
                             generationProcess={image.generationProcess ?? 'txt2img'}
                           >
                             <ActionIcon

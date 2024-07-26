@@ -1377,6 +1377,7 @@ export const publishModelById = async ({
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
             publishedAt: !republishing ? publishedAt : undefined,
+            tx,
           });
         } else if (status === ModelStatus.Scheduled) {
           // Schedule model versions:
