@@ -4,6 +4,7 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
+  MetricTimeframe,
   ModelType,
   Prisma,
   ReportReason,
@@ -96,6 +97,9 @@ import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { redis } from '~/server/redis/client';
+import { metricsClient } from '~/server/meilisearch/client';
+import { logToAxiom } from '~/server/logging/client';
+import dayjs, { ManipulateType } from 'dayjs';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -520,47 +524,51 @@ type GetAllImagesRaw = {
   availability: Availability;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
-export const getAllImages = async ({
-  limit,
-  cursor,
-  skip,
-  postId,
-  postIds,
-  collectionId, // TODO - call this from separate method?
-  modelId,
-  modelVersionId,
-  imageId, // TODO - remove, not in use
-  username, // TODO - query by `userId` instead
-  period,
-  periodMode,
-  sort,
-  tags,
-  generation,
-  reviewId, // TODO - remove, not in use
-  prioritizedUserIds,
-  include,
-  excludeCrossPosts,
-  reactions, // TODO - remove, not in use
-  ids,
-  includeBaseModel,
-  types,
-  hidden,
-  followed,
-  fromPlatform,
-  browsingLevel,
-  user,
-  pending,
-  notPublished,
-  tools,
-  techniques,
-  baseModels,
-  collectionTagId,
-  excludedUserIds,
-}: GetInfiniteImagesOutput & {
-  userId?: number;
-  user?: SessionUser;
-  headers?: Record<string, string>; // does this do anything?
-}) => {
+export const getAllImages = async (
+  input: GetInfiniteImagesOutput & {
+    userId?: number;
+    user?: SessionUser;
+    headers?: Record<string, string>; // does this do anything?
+  }
+) => {
+  let {
+    limit,
+    cursor,
+    skip,
+    postId,
+    postIds,
+    collectionId, // TODO - call this from separate method?
+    modelId,
+    modelVersionId,
+    imageId, // TODO - remove, not in use
+    username, // TODO - query by `userId` instead
+    period,
+    periodMode,
+    sort,
+    tags,
+    generation,
+    reviewId, // TODO - remove, not in use
+    prioritizedUserIds,
+    include,
+    excludeCrossPosts,
+    reactions, // TODO - remove, not in use
+    ids,
+    includeBaseModel,
+    types,
+    hidden,
+    followed,
+    fromPlatform,
+    browsingLevel,
+    user,
+    pending,
+    notPublished,
+    tools,
+    techniques,
+    baseModels,
+    collectionTagId,
+    excludedUserIds,
+  } = input;
+
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
@@ -922,6 +930,18 @@ export const getAllImages = async ({
     );
   }
 
+  // TODO.metricSearch add missing props
+  getImagesFromSearch({
+    modelVersionId,
+    types,
+    browsingLevel,
+    fromPlatform,
+    hasMeta: include.includes('meta'),
+    baseModels,
+    period,
+    sort,
+  }).catch();
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -1166,6 +1186,158 @@ export const getAllImages = async ({
     items: images,
   };
 };
+
+const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
+type ImageSearchInput = {
+  modelVersionId?: number;
+  types?: MediaType[];
+  hasMeta?: boolean;
+  fromPlatform?: boolean;
+  notPublished?: boolean;
+  baseModels?: string[];
+  period?: MetricTimeframe;
+  browsingLevel?: NsfwLevel;
+  sort?: ImageSort;
+  limit?: number;
+  page?: number;
+  offset?: number;
+  // Unsupported
+  tags?: number[];
+  techniques?: number[];
+  tools?: number[];
+  userIds?: number | number[];
+  modelId?: number;
+  reviewId?: number;
+  excludeUserIds?: number[];
+  currentUserId?: number;
+  isModerator?: boolean;
+};
+async function getImagesFromSearch(input: ImageSearchInput) {
+  if (!metricsClient) return [];
+
+  let {
+    sort,
+    modelVersionId,
+    types,
+    hasMeta,
+    fromPlatform,
+    notPublished,
+    userIds,
+    reviewId,
+    modelId,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    excludeUserIds,
+    period,
+    browsingLevel,
+    currentUserId,
+    isModerator,
+  } = input;
+
+  // TODO.metricSearch remove hash, cosmetic
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+
+  // Filter
+  //------------------------
+  const filters: string[] = [];
+
+  // NSFW Level
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  if (isModerator) browsingLevels.push(0);
+  filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
+  // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
+
+  if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
+  if (types && types.length) filters.push(`mediaType IN [${types.join(',')}]`);
+  if (hasMeta) filters.push(`hasMeta = true`);
+  if (fromPlatform) filters.push(`madeOnSite = true`);
+
+  // TODO.metricSearch add userId
+  // if (userIds) {
+  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
+  //   filters.push(`userId IN [${userIds.join(',')}]`)
+  // }
+
+  // TODO.metricSearch add published filter
+  // if (notPublished && isModerator) filters.push(`published = false`);
+
+  // TODO.metricSearch replace tags with tagIds
+  // if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
+
+  // TODO.metricSearch add tools by id
+  // if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
+
+  // TODO.metricSearch add techniques by id
+  // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
+
+  if (baseModels?.length) filters.push(`baseModels IN [${baseModels.join(',')}]`);
+
+  // Handle period filter
+  let afterDate: Date | undefined;
+  if (period && period !== 'AllTime') {
+    const now = dayjs();
+    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
+  }
+  if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
+
+  // Log properties we don't support yet
+  const cantProcess: Record<string, any> = {
+    reviewId,
+    modelId,
+    userIds,
+    notPublished,
+    tags,
+    tools,
+    techniques,
+    excludeUserIds,
+  };
+  if (input.reviewId || input.modelId) {
+    const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
+    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) });
+  }
+
+  // Sort
+  //------------------------
+  let searchSort = 'sortAt:desc';
+  if (sort === ImageSort.MostComments) searchSort = 'commentCount:desc';
+  else if (sort === ImageSort.MostReactions) searchSort = 'reactionCount:desc';
+  else if (sort === ImageSort.MostCollected) searchSort = 'collectedCount:desc';
+  else if (sort === ImageSort.Oldest) searchSort = 'sortAt:asc';
+
+  const request = {
+    filter: filters.join(' AND '),
+    sort: [searchSort],
+    limit: input.limit ?? 100,
+    offset: input.offset,
+    page: input.page,
+  };
+
+  try {
+    const results = await metricsClient.index(METRICS_SEARCH_INDEX).search(null, request);
+
+    const metrics = {
+      hits: results.hits.length,
+      total: results.estimatedTotalHits,
+      processingTimeMs: results.processingTimeMs,
+    };
+    logToAxiom(
+      { type: 'search-result', metrics, input: removeEmpty(input), request },
+      'temp-search'
+    );
+
+    return results.hits;
+  } catch (error) {
+    logToAxiom(
+      { type: 'search-error', error: (error as Error).message, input: removeEmpty(input), request },
+      'temp-search'
+    );
+    return [];
+  }
+}
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);
