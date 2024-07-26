@@ -8,20 +8,27 @@ import {
   createStyles,
   Group,
   Button,
+  Anchor,
+  Tooltip,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useMutateDonationGoal } from '~/components/DonationGoal/donation-goal.util';
-import { useQueryModelVersionDonationGoals } from '~/components/Model/ModelVersions/model-version.utils';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import {
+  useModelVersionPermission,
+  useQueryModelVersionDonationGoals,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelVersionDonationGoal } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
   donationGoalContainer: {
@@ -29,12 +36,26 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const DonationGoalItem = ({ donationGoal }: { donationGoal: ModelVersionDonationGoal }) => {
+const DonationGoalItem = ({
+  donationGoal,
+  modelVersionId,
+}: {
+  donationGoal: ModelVersionDonationGoal;
+  modelVersionId: number;
+}) => {
   const { classes } = useStyles();
   const progress = Math.min(100, (donationGoal.total / donationGoal.goalAmount) * 100);
   const [donationAmount, setDonationAmount] = useState<number>(10);
   const currentUser = useCurrentUser();
   const { donate, donating } = useMutateDonationGoal();
+
+  const { modelVersion } = useModelVersionPermission({
+    modelVersionId,
+  });
+
+  const earlyAccessEndsAt = modelVersion?.earlyAccessEndsAt;
+  const modelVersionIsEarlyAccess =
+    modelVersion?.earlyAccessEndsAt && (modelVersion?.earlyAccessEndsAt ?? new Date()) > new Date();
 
   const canDonate = donationGoal.userId !== currentUser?.id && donationGoal.active;
 
@@ -54,6 +75,8 @@ const DonationGoalItem = ({ donationGoal }: { donationGoal: ModelVersionDonation
     });
   };
 
+  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '').toLowerCase();
+
   return (
     <Paper
       key={donationGoal.id}
@@ -64,10 +87,14 @@ const DonationGoalItem = ({ donationGoal }: { donationGoal: ModelVersionDonation
       className={classes.donationGoalContainer}
     >
       <Stack spacing="xs">
-        {donationGoal.isEarlyAccess && progress < 100 && (
+        {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
           <Text color="yellow" size="xs" weight={500}>
-            By completing this goal, this model will be out of early access and open to the public.
-            Supporting this model does not grant you early access.
+            The creator of this {resourceLabel} has set a donation goal! You can donate to make this
+            resource available to everyone or just wait untill it becomes public. The remaining time
+            for early access is{' '}
+            <Text component="span" weight="bold">
+              <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
+            </Text>
           </Text>
         )}
         <Group position="apart" noWrap align="start">
@@ -101,29 +128,34 @@ const DonationGoalItem = ({ donationGoal }: { donationGoal: ModelVersionDonation
         {canDonate && (
           <Stack spacing="xs" mt="xs">
             <Group spacing="xs" noWrap>
-              <NumberInputWrapper
-                value={donationAmount}
-                onChange={(value) => setDonationAmount(value ?? 0)}
-                variant="filled"
-                label="Amount to donate"
-                rightSectionWidth="10%"
-                min={10}
-                max={100000}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
-                size={'xs'}
-                hideControls
-                labelProps={{ style: { display: 'none' } }}
-                step={10}
-                w="100%"
-                placeholder="Amount to donate"
-                disabled={donating}
-              />
+              <Group spacing="xs">
+                <NumberInputWrapper
+                  value={donationAmount}
+                  onChange={(value) => setDonationAmount(value ?? 0)}
+                  variant="filled"
+                  label="Amount to donate"
+                  rightSectionWidth="10%"
+                  min={10}
+                  max={100000}
+                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                  parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
+                  formatter={(value) =>
+                    value && !Number.isNaN(parseFloat(value))
+                      ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
+                      : ''
+                  }
+                  size={'xs'}
+                  hideControls
+                  labelProps={{ style: { display: 'none' } }}
+                  step={10}
+                  w="100%"
+                  placeholder="Amount to donate"
+                  disabled={donating}
+                />
+                <Tooltip label="Purchasing the model for generation or download does not contribute to the donation goal.">
+                  <IconInfoCircle />
+                </Tooltip>
+              </Group>
               <BuzzTransactionButton
                 onPerformTransaction={onDonate}
                 label="Donate"
@@ -173,7 +205,9 @@ const ModelVersionDonationGoals = ({ modelVersionId }: Props) => {
         Support this model
       </Title>
       {donationGoals.map((goal) => {
-        return <DonationGoalItem key={goal.id} donationGoal={goal} />;
+        return (
+          <DonationGoalItem key={goal.id} donationGoal={goal} modelVersionId={modelVersionId} />
+        );
       })}
     </Stack>
   );
