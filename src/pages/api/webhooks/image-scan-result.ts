@@ -348,6 +348,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     }
 
     if (Object.keys(data).length > 0) {
+      data.updatedAt = new Date();
       await dbWrite.image.updateMany({
         where: { id },
         data,
@@ -380,7 +381,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length}
         RETURNING "ingestion";
