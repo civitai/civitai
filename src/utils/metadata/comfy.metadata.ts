@@ -23,6 +23,15 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const isStandardComfy = exif.prompt || exif.workflow;
     if (isStandardComfy) return true;
 
+    // webp format
+    const isWebpComfy = exif?.Model?.[0]?.startsWith('prompt:');
+    if (isWebpComfy) {
+      const comfyJson = exif.Model[0].replace(/^prompt:/, '');
+      exif.prompt = comfyJson;
+      exif.workflow = comfyJson;
+      return true;
+    }
+
     // TODO: remove someday...
     // Check for our ugly hack
     let generationDetails = null;
