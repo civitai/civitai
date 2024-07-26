@@ -14,6 +14,14 @@ export const searchClient = shouldConnectToSearch
     })
   : null;
 
+const shouldConnectToMetricsSearch = !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
+export const metricsSearchClient = shouldConnectToMetricsSearch
+  ? new MeiliSearch({
+      host: env.METRICS_SEARCH_HOST as string,
+      apiKey: env.METRICS_SEARCH_API_KEY,
+    })
+  : null;
+
 const showConnectMetrics = !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
 export const metricsClient = showConnectMetrics
   ? new MeiliSearch({
