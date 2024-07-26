@@ -951,7 +951,24 @@ export function GenerationFormContent() {
                 <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
                   Quantity
                 </Text>
-                <InputQuantity name="quantity" className={classes.generateButtonQuantityInput} />
+                <Watch {...form} fields={['draft']}>
+                  {({ draft }) => {
+                    const isDraft = features.draft && draft;
+                    return (
+                      <InputQuantity
+                        name="quantity"
+                        className={classes.generateButtonQuantityInput}
+                        min={!!isDraft ? 4 : 1}
+                        max={
+                          !!isDraft
+                            ? Math.floor(status.limits.quantity / 4) * 4
+                            : status.limits.quantity
+                        }
+                        step={!!isDraft ? 4 : 1}
+                      />
+                    );
+                  }}
+                </Watch>
               </Card>
               <SubmitButton isLoading={isLoading} />
               <Button onClick={handleReset} variant="default" className="h-auto px-3">
