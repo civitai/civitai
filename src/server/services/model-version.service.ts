@@ -51,7 +51,6 @@ export const getModelVersionRunStrategies = async ({
   dbRead.runStrategy.findMany({
     where: { modelVersionId },
     select: {
-      id: true,
       partnerId: true,
     },
   });
@@ -391,7 +390,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
 
-  const versions = await dbRead.modelVersion.findMany({
+  const versions = await dbClient.modelVersion.findMany({
     where: { id: { in: modelVersionIds } },
     select: {
       id: true,
@@ -565,6 +564,12 @@ export const publishModelVersionById = async ({
     select: { id: true },
   });
 
+  if (!republishing && !meta?.unpublishedBy)
+    await updateModelLastVersionAt({ id: version.modelId });
+  await bustOrchestratorModelCache([version.id]);
+  await preventReplicationLag('model', version.modelId);
+  await preventReplicationLag('modelVersion', id);
+
   // Update search index for model and images
   await modelsSearchIndex.queueUpdate([
     { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
@@ -572,12 +577,6 @@ export const publishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-
-  if (!republishing && !meta?.unpublishedBy)
-    await updateModelLastVersionAt({ id: version.modelId });
-  await bustOrchestratorModelCache([version.id]);
-  await preventReplicationLag('model', version.modelId);
-  await preventReplicationLag('modelVersion', id);
 
   return version;
 };

@@ -82,6 +82,7 @@ import {
 } from './../schema/model.schema';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1376,6 +1377,7 @@ export const publishModelById = async ({
           await publishModelVersionsWithEarlyAccess({
             modelVersionIds: versionIds,
             publishedAt: !republishing ? publishedAt : undefined,
+            tx,
           });
         } else if (status === ModelStatus.Scheduled) {
           // Schedule model versions:
@@ -1655,10 +1657,15 @@ export async function updateModelLastVersionAt({
   });
   if (!modelVersion) return;
 
-  return dbClient.model.update({
-    where: { id },
-    data: { lastVersionAt: modelVersion.publishedAt },
-  });
+  try {
+    await dbClient.model.update({
+      where: { id },
+      data: { lastVersionAt: modelVersion.publishedAt },
+    });
+  } catch (error) {
+    logToAxiom({ type: 'lastVersionAt-failure', modelId: id, message: (error as Error).message });
+    throw error;
+  }
 }
 
 export const getAllModelsWithCategories = async ({

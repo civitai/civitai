@@ -57,6 +57,7 @@ import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import dayjs from 'dayjs';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -291,13 +292,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                     <EdgeMedia
                       src={image.url ?? ''}
                       name={image.name ?? image.id.toString()}
-                      alt={
-                        image.meta
-                          ? truncate((image.meta as ImageMetaProps).prompt, {
-                              length: constants.altTruncateLength,
-                            })
-                          : image.name ?? undefined
-                      }
+                      alt={image.name ?? undefined}
                       type={image.type}
                       width={
                         originalAspectRatio > 1
@@ -311,30 +306,20 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   ) : (
                     <MediaHash {...image} />
                   )}
-                  {reviewData.meta && (
-                    <ImageMetaPopover
-                      meta={reviewData.meta as ImageMetaProps}
-                      generationProcess={reviewData.meta.generationProcess ?? 'txt2img'}
-                    >
-                      <ActionIcon
-                        variant="transparent"
-                        style={{
-                          position: 'absolute',
-                          bottom: '5px',
-                          right: '5px',
-                          zIndex: 999,
-                        }}
-                        size="lg"
-                      >
-                        <IconInfoCircle
-                          color="white"
-                          filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                          opacity={0.8}
-                          strokeWidth={2.5}
-                          size={26}
-                        />
-                      </ActionIcon>
-                    </ImageMetaPopover>
+                  {image.hasMeta && (
+                    <div className="absolute bottom-0.5 right-0.5 z-10">
+                      <ImageMetaPopover2 imageId={image.id}>
+                        <ActionIcon variant="transparent" size="lg">
+                          <IconInfoCircle
+                            color="white"
+                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                            opacity={0.8}
+                            strokeWidth={2.5}
+                            size={26}
+                          />
+                        </ActionIcon>
+                      </ImageMetaPopover2>
+                    </div>
                   )}
                 </>
               );

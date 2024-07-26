@@ -4,6 +4,7 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
+  MetricTimeframe,
   ModelType,
   Prisma,
   ReportReason,
@@ -95,6 +96,10 @@ import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { redis } from '~/server/redis/client';
+import { metricsClient } from '~/server/meilisearch/client';
+import { logToAxiom } from '~/server/logging/client';
+import dayjs, { ManipulateType } from 'dayjs';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -482,7 +487,7 @@ type GetAllImagesRaw = {
   width: number | null;
   height: number | null;
   hash: string | null;
-  meta: ImageMetaProps | null;
+  meta?: ImageMetaProps | null;
   hideMeta: boolean;
   hasMeta: boolean;
   onSite: boolean;
@@ -519,47 +524,51 @@ type GetAllImagesRaw = {
   availability: Availability;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
-export const getAllImages = async ({
-  limit,
-  cursor,
-  skip,
-  postId,
-  postIds,
-  collectionId,
-  modelId,
-  modelVersionId,
-  imageId,
-  username,
-  period,
-  periodMode,
-  sort,
-  tags,
-  generation,
-  reviewId,
-  prioritizedUserIds,
-  include,
-  excludeCrossPosts,
-  reactions,
-  ids,
-  includeBaseModel,
-  types,
-  hidden,
-  followed,
-  fromPlatform,
-  browsingLevel,
-  user,
-  pending,
-  notPublished,
-  tools,
-  techniques,
-  baseModels,
-  collectionTagId,
-  excludedUserIds,
-}: GetInfiniteImagesOutput & {
-  userId?: number;
-  user?: SessionUser;
-  headers?: Record<string, string>; // does this do anything?
-}) => {
+export const getAllImages = async (
+  input: GetInfiniteImagesOutput & {
+    userId?: number;
+    user?: SessionUser;
+    headers?: Record<string, string>; // does this do anything?
+  }
+) => {
+  let {
+    limit,
+    cursor,
+    skip,
+    postId,
+    postIds,
+    collectionId, // TODO - call this from separate method?
+    modelId,
+    modelVersionId,
+    imageId, // TODO - remove, not in use
+    username, // TODO - query by `userId` instead
+    period,
+    periodMode,
+    sort,
+    tags,
+    generation,
+    reviewId, // TODO - remove, not in use
+    prioritizedUserIds,
+    include,
+    excludeCrossPosts,
+    reactions, // TODO - remove, not in use
+    ids,
+    includeBaseModel,
+    types,
+    hidden,
+    followed,
+    fromPlatform,
+    browsingLevel,
+    user,
+    pending,
+    notPublished,
+    tools,
+    techniques,
+    baseModels,
+    collectionTagId,
+    excludedUserIds,
+  } = input;
+
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
@@ -569,11 +578,17 @@ export const getAllImages = async ({
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
+  // TODO.fix remove test
+  if (modelVersionId) {
+    const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
+    if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
+  }
+
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
 
   // Filter to specific user content
-  let targetUserId: number | undefined;
+  let targetUserId: number | undefined; // [x]
   if (username) {
     const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
     if (!targetUser) throw new Error('User not found');
@@ -595,29 +610,34 @@ export const getAllImages = async ({
     }
   }
 
-  if (excludeCrossPosts && modelVersionId) {
-    cacheTime = CacheTTL.day;
-    cacheTags.push(`images-modelVersion:${modelVersionId}`);
-    AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-  }
+  // TODO.fix disable excludeCrossPosts
+  // if (excludeCrossPosts && modelVersionId) {
+  //   cacheTime = CacheTTL.day;
+  //   cacheTags.push(`images-modelVersion:${modelVersionId}`);
+  //   AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
+  // }
 
+  // [x]
   if (ids && ids.length > 0) {
     AND.push(Prisma.sql`i."id" IN (${Prisma.join(ids)})`);
   }
-
+  // [x]
   if (types && types.length > 0) {
     AND.push(Prisma.sql`i.type = ANY(ARRAY[${Prisma.join(types)}]::"MediaType"[])`);
   }
 
+  // [x]
   if (include.includes('meta')) {
     AND.push(
       Prisma.sql`NOT (i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" = TRUE)`
     );
   }
 
+  // [x]
   if (fromPlatform) {
     AND.push(Prisma.sql`(i.meta IS NOT NULL AND i.meta ? 'civitaiResources')`);
   }
+  // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   }
@@ -625,7 +645,7 @@ export const getAllImages = async ({
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
-  const prioritizeUser = !!prioritizedUserIds?.length;
+  const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     from = `FROM "ImageResource" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
@@ -645,6 +665,7 @@ export const getAllImages = async ({
     }
   }
 
+  // [x]
   if (targetUserId) {
     WITH.push(
       Prisma.sql`collaboratingPosts AS (
@@ -669,6 +690,7 @@ export const getAllImages = async ({
   }
 
   // Filter only followed users
+  // [x]
   if (userId && followed) {
     const followedUsers = await dbRead.userEngagement.findMany({
       where: { userId, type: 'Follow' },
@@ -691,15 +713,19 @@ export const getAllImages = async ({
   }
 
   // Filter to specific generation process
+  // [x]
   if (generation?.length) {
     AND.push(Prisma.sql`i."generationProcess" IN (${Prisma.join(generation)})`);
   }
 
   // Filter to a specific post
+  // [x]
   if (postId) AND.push(Prisma.sql`i."postId" = ${postId}`);
+  // [x]
   if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
+  // [x] not needed
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
   if (sort === ImageSort.Random && !collectionId) {
@@ -811,7 +837,7 @@ export const getAllImages = async ({
   // }
 
   // Limit to images created since period start
-  const sortingByMetrics = orderBy.includes('im.');
+  const sortingByMetrics = orderBy.includes('im.'); // [x]
   if (sortingByMetrics && period !== 'AllTime' && periodMode !== 'stats') {
     const ageGroups = getPeriods(period);
     AND.push(
@@ -825,7 +851,7 @@ export const getAllImages = async ({
   }
 
   // Handle cursor & skip conflict
-  if (cursor && skip) throw new Error('Cannot use skip with cursor');
+  if (cursor && skip) throw new Error('Cannot use skip with cursor'); // [x]
 
   // Handle cursor prop
   let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
@@ -836,6 +862,7 @@ export const getAllImages = async ({
   if (cursorClause) AND.push(cursorClause);
 
   if (prioritizeUser) {
+    // [x]
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
@@ -903,6 +930,18 @@ export const getAllImages = async ({
     );
   }
 
+  // TODO.metricSearch add missing props
+  getImagesFromSearch({
+    modelVersionId,
+    types,
+    browsingLevel,
+    fromPlatform,
+    hasMeta: include.includes('meta'),
+    baseModels,
+    period,
+    sort,
+  }).catch();
+
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -925,13 +964,12 @@ export const getAllImages = async ({
       i.width,
       i.height,
       i.hash,
-      i.meta,
+      -- i.meta,
       i."hideMeta",
       (
         CASE
-          WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-          THEN TRUE
-          ELSE FALSE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
         END
       ) AS "hasMeta",
       (
@@ -960,6 +998,7 @@ export const getAllImages = async ({
       u.image "userImage",
       u."deletedAt",
       p."availability",
+      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       ${Prisma.raw(
         includeBaseModel
           ? `(
@@ -1071,18 +1110,20 @@ export const getAllImages = async ({
   const now = new Date();
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
-      meta: ImageMetaProps | null; // TODO - don't fetch meta
+      // meta: ImageMetaProps | null; // TODO - don't fetch meta
+      meta?: ImageMetaProps | null; // deprecated. Only used in v1 api endpoint
       hideMeta: boolean; // TODO - remove references to this. Instead, use `hasMeta`
       hasMeta: boolean;
       tags?: VotableTagModel[] | undefined;
       tagIds?: number[];
       publishedAt?: Date | null;
       modelVersionId?: number | null;
-      baseModel?: string | null;
+      baseModel?: string | null; // TODO - remove
       availability?: Availability;
       nsfwLevel: NsfwLevel;
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
       metadata: ImageMetadata | VideoMetadata | null;
+      onSite: boolean;
     }
   > = rawImages
     .filter((x) => {
@@ -1145,6 +1186,161 @@ export const getAllImages = async ({
     items: images,
   };
 };
+
+const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
+type ImageSearchInput = {
+  modelVersionId?: number;
+  types?: MediaType[];
+  hasMeta?: boolean;
+  fromPlatform?: boolean;
+  notPublished?: boolean;
+  baseModels?: string[];
+  period?: MetricTimeframe;
+  browsingLevel?: NsfwLevel;
+  sort?: ImageSort;
+  limit?: number;
+  page?: number;
+  offset?: number;
+  // Unsupported
+  tags?: number[];
+  techniques?: number[];
+  tools?: number[];
+  userIds?: number | number[];
+  modelId?: number;
+  reviewId?: number;
+  excludeUserIds?: number[];
+  currentUserId?: number;
+  isModerator?: boolean;
+};
+function strArray(arr: any[]) {
+  return arr.map((x) => `'${x}'`).join(',');
+}
+async function getImagesFromSearch(input: ImageSearchInput) {
+  if (!metricsClient) return [];
+
+  let {
+    sort,
+    modelVersionId,
+    types,
+    hasMeta,
+    fromPlatform,
+    notPublished,
+    userIds,
+    reviewId,
+    modelId,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    excludeUserIds,
+    period,
+    browsingLevel,
+    currentUserId,
+    isModerator,
+  } = input;
+
+  // TODO.metricSearch remove hash, cosmetic
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+
+  // Filter
+  //------------------------
+  const filters: string[] = [];
+
+  // NSFW Level
+  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
+  else browsingLevel = onlySelectableLevels(browsingLevel);
+  const browsingLevels = Flags.instanceToArray(browsingLevel);
+  if (isModerator) browsingLevels.push(0);
+  filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
+  // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
+
+  if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
+  if (types && types.length) filters.push(`mediaType IN [${types.join(',')}]`);
+  if (hasMeta) filters.push(`hasMeta = true`);
+  if (fromPlatform) filters.push(`madeOnSite = true`);
+
+  // TODO.metricSearch add userId
+  // if (userIds) {
+  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
+  //   filters.push(`userId IN [${userIds.join(',')}]`)
+  // }
+
+  // TODO.metricSearch add published filter
+  // if (notPublished && isModerator) filters.push(`published = false`);
+
+  // TODO.metricSearch replace tags with tagIds
+  // if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
+
+  // TODO.metricSearch add tools by id
+  // if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
+
+  // TODO.metricSearch add techniques by id
+  // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
+
+  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
+
+  // Handle period filter
+  let afterDate: Date | undefined;
+  if (period && period !== 'AllTime') {
+    const now = dayjs();
+    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
+  }
+  if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
+
+  // Log properties we don't support yet
+  const cantProcess: Record<string, any> = {
+    reviewId,
+    modelId,
+    userIds,
+    notPublished,
+    tags,
+    tools,
+    techniques,
+    excludeUserIds,
+  };
+  if (input.reviewId || input.modelId) {
+    const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
+    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) });
+  }
+
+  // Sort
+  //------------------------
+  let searchSort = 'sortAt:desc';
+  if (sort === ImageSort.MostComments) searchSort = 'commentCount:desc';
+  else if (sort === ImageSort.MostReactions) searchSort = 'reactionCount:desc';
+  else if (sort === ImageSort.MostCollected) searchSort = 'collectedCount:desc';
+  else if (sort === ImageSort.Oldest) searchSort = 'sortAt:asc';
+
+  const request = {
+    filter: filters.join(' AND '),
+    sort: [searchSort],
+    limit: input.limit ?? 100,
+    offset: input.offset,
+    page: input.page,
+  };
+
+  try {
+    const results = await metricsClient.index(METRICS_SEARCH_INDEX).search(null, request);
+
+    const metrics = {
+      hits: results.hits.length,
+      total: results.estimatedTotalHits,
+      processingTimeMs: results.processingTimeMs,
+    };
+    logToAxiom(
+      { type: 'search-result', metrics, input: removeEmpty(input), request },
+      'temp-search'
+    );
+
+    return results.hits;
+  } catch (error) {
+    logToAxiom(
+      { type: 'search-error', error: (error as Error).message, input: removeEmpty(input), request },
+      'temp-search'
+    );
+    return [];
+  }
+}
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);
@@ -1217,7 +1413,7 @@ export const getImage = async ({
       i.width,
       i.index,
       i.hash,
-      i.meta,
+      -- i.meta,
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
@@ -1229,6 +1425,19 @@ export const getImage = async ({
       i.type,
       i.metadata,
       i."nsfwLevel",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
@@ -1361,12 +1570,14 @@ export type ImagesForModelVersions = {
   height: number;
   hash: string;
   modelVersionId: number;
-  meta: ImageMetaProps | null;
+  // meta: ImageMetaProps | null;
   type: MediaType;
   metadata: Prisma.JsonValue;
   tags?: number[];
   availability: Availability;
   sizeKB?: number;
+  onSite: boolean;
+  hasMeta: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -1473,8 +1684,20 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
-      p."availability"
-      ${Prisma.raw(include.includes('meta') ? ', i.meta' : '')}
+      p."availability",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
@@ -1627,8 +1850,9 @@ export const getImagesForPosts = async ({
       tippedAmountCount: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
-      meta?: Prisma.JsonValue;
       reactions?: ReviewReactions[];
+      hasMeta: boolean;
+      onSite: boolean;
     }[]
   >`
     SELECT
@@ -1645,6 +1869,19 @@ export const getImagesForPosts = async ({
       i."createdAt",
       i."generationProcess",
       i."postId",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta->>'civitaiResources' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) as "onSite",
       ${Prisma.raw(`
         jsonb_build_object(
           'prompt', i.meta->>'prompt',
@@ -1690,7 +1927,6 @@ export const getImagesForPosts = async ({
 
   return images.map(({ reactions, ...i }) => ({
     ...i,
-    meta: (i.meta ?? {}) as ImageMetaProps,
     tagIds: rawTags.filter((t) => t.imageId === i.id).map((t) => t.tagId),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   }));
@@ -1807,7 +2043,7 @@ type GetImageConnectionRaw = {
   width: number;
   height: number;
   hash: string;
-  meta: ImageMetaProps;
+  meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
@@ -1820,6 +2056,7 @@ type GetImageConnectionRaw = {
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
+  hasMeta: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -1898,6 +2135,12 @@ export const getImagesByEntity = async ({
       i."needsReview",
       i."userId",
       i."index",
+      (
+        CASE
+          WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
+          ELSE TRUE
+        END
+      ) AS "hasMeta",
       t."entityId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;
@@ -2108,8 +2351,9 @@ export const getEntityCoverImage = async ({
                   JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
                   JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
                   WHERE m."id" = e."entityId"
-                      AND i."ingestion" = 'Scanned'
-                      AND i."needsReview" IS NULL
+                    AND m.status = 'Published'
+                    AND i."ingestion" = 'Scanned'
+                    AND i."needsReview" IS NULL
                   ) mi
                   WHERE mi.rn = 1
                 )
@@ -2123,8 +2367,9 @@ export const getEntityCoverImage = async ({
                   JOIN "Post" p ON p.id = i."postId"
                   JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
                   WHERE mv."id" = e."entityId"
-                      AND i."ingestion" = 'Scanned'
-                      AND i."needsReview" IS NULL
+                    AND mv.status = 'Published'
+                    AND i."ingestion" = 'Scanned'
+                    AND i."needsReview" IS NULL
                   ORDER BY mv.index, i."postId", i.index
                   ) mi
                   LIMIT 1
@@ -2145,8 +2390,9 @@ export const getEntityCoverImage = async ({
               FROM "Image" i
               JOIN "Article" a ON a."coverId" = i.id
               WHERE a."id" = e."entityId"
-                  AND i."ingestion" = 'Scanned'
-                  AND i."needsReview" IS NULL
+                AND a."publishedAt" IS NOT NULL
+                AND i."ingestion" = 'Scanned'
+                AND i."needsReview" IS NULL
             ) ai
             LIMIT 1
           )
@@ -2159,8 +2405,9 @@ export const getEntityCoverImage = async ({
               FROM "Image" i
               JOIN "Post" p ON p.id = i."postId"
               WHERE p."id" = e."entityId"
-                  AND i."ingestion" = 'Scanned'
-                  AND i."needsReview" IS NULL
+                AND p."publishedAt" IS NOT NULL
+                AND i."ingestion" = 'Scanned'
+                AND i."needsReview" IS NULL
               ORDER BY i."postId", i.index
             ) pi
             LIMIT 1
@@ -2522,6 +2769,7 @@ export const getImageModerationReviewQueue = async ({
 
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
+      meta: ImageMetaProps | null;
       tags?: VotableTagModel[] | undefined;
       names?: string[];
       report?:

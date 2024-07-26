@@ -20,6 +20,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   type: true,
   metadata: true,
   createdAt: true,
+  hideMeta: true,
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },

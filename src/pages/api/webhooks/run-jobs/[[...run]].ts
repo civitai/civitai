@@ -50,6 +50,7 @@ import { createLogger } from '~/utils/logging';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { logToAxiom } from '~/server/logging/client';
+import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -98,6 +99,7 @@ export const jobs: Job[] = [
   processingEngingEarlyAccess,
   updateUserScore,
   tempSetMissingNsfwLevel,
+  imagesCreatedEvents,
 ];
 
 const log = createLogger('jobs', 'green');

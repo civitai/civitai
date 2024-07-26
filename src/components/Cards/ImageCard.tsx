@@ -5,7 +5,6 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
@@ -40,7 +39,7 @@ function UnroutedImageCard({ data }: Props) {
   };
 
   const originalAspectRatio = data.width && data.height ? data.width / data.height : 1;
-  const onSite = data.meta && 'civitaiResources' in data.meta;
+  const onSite = data.onSite;
   const imageWidth =
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
@@ -70,7 +69,7 @@ function UnroutedImageCard({ data }: Props) {
                   {safe && (
                     <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                       <ImageContextMenu image={data} />
-                      {features.imageGeneration && data.meta && !data.hideMeta && (
+                      {features.imageGeneration && data.hasMeta && (
                         <HoverActionButton
                           label="Remix"
                           size={30}
@@ -100,11 +99,7 @@ function UnroutedImageCard({ data }: Props) {
                     <EdgeMedia
                       src={data.url}
                       name={data.name ?? data.id.toString()}
-                      alt={
-                        data.meta
-                          ? truncate(data.meta.prompt, { length: constants.altTruncateLength })
-                          : data.name ?? undefined
-                      }
+                      alt={data.name ?? undefined}
                       type={data.type}
                       width={imageWidth}
                       className={sharedClasses.image}
@@ -160,12 +155,12 @@ function UnroutedImageCard({ data }: Props) {
                 }}
                 targetUserId={data.user.id}
               />
-              {data.hasMeta && data.meta && (
-                <ImageMetaPopover meta={data.meta}>
+              {data.hasMeta && (
+                <ImageMetaPopover2 imageId={data.id}>
                   <ActionIcon className={sharedClasses.infoChip} variant="light">
                     <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                   </ActionIcon>
-                </ImageMetaPopover>
+                </ImageMetaPopover2>
               )}
             </Group>
           </Stack>
