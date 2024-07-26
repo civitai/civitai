@@ -1212,6 +1212,9 @@ type ImageSearchInput = {
   currentUserId?: number;
   isModerator?: boolean;
 };
+function strArray(arr: any[]) {
+  return arr.map((x) => `'${x}'`).join(',');
+}
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return [];
 
@@ -1274,7 +1277,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // TODO.metricSearch add techniques by id
   // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
 
-  if (baseModels?.length) filters.push(`baseModels IN [${baseModels.join(',')}]`);
+  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
 
   // Handle period filter
   let afterDate: Date | undefined;
