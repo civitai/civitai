@@ -29,10 +29,10 @@ const checkFns = {
   async pgRead() {
     return !!(await pgDbWrite.query('SELECT 1'));
   },
-  async searchMetrics() {
-    if (metricsClient === null) return true;
-    return !!(await metricsClient.isHealthy());
-  },
+  // async searchMetrics() {
+  //   if (metricsClient === null) return true;
+  //   return await metricsClient.isHealthy();
+  // },
   async redis() {
     return await redis
       .ping()
