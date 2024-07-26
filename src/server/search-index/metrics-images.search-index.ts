@@ -11,7 +11,6 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
-
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -30,9 +29,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes: SortableAttributes = [
     'sortAt',
-    'metricsReactions',
-    'metricsComments',
-    'metricsCollected',
+    'reactionCount',
+    'commentCount',
+    'collectedCount',
   ];
 
   const filterableAttributes: FilterableAttributes = [
@@ -46,6 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'techniques',
     'tags',
     'userId',
+    'nsfwLevel',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -99,9 +99,9 @@ type BaseImage = {
 
 type Metrics = {
   id: number;
-  metricsReactions: number;
-  metricsComments: number;
-  metricsCollected: number;
+  reactionCount: number;
+  commentCount: number;
+  collectedCount: number;
 };
 
 type ModelVersions = {
@@ -164,7 +164,6 @@ const transformData = async ({
   cosmetics: ImageCosmetics;
   modelVersions: ModelVersions[];
 }) => {
-  console.log(rawTags, tools, techniques, modelVersions);
   const records = images
     .map(({ userId, ...imageRecord }) => {
       const tags = rawTags
@@ -183,9 +182,9 @@ const transformData = async ({
 
       const imageMetrics = metrics.find((m) => m.id === imageRecord.id) ?? {
         id: imageRecord.id,
-        metricsReactions: 0,
-        metricsComments: 0,
-        metricsCollected: 0,
+        reactionCount: 0,
+        commentCount: 0,
+        collectedCount: 0,
       };
 
       return {
@@ -236,7 +235,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
 
     return {
       batchSize: READ_BATCH_SIZE,
-      startId,
+      startId: 7829710,
       endId,
     };
   },

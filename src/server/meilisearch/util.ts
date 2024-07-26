@@ -25,6 +25,7 @@ const getOrCreateIndex = async (
 
       try {
         // Will swap if index is created.
+        // console.log(client);
         const index = await client.getIndex(indexName);
 
         if (options) {
