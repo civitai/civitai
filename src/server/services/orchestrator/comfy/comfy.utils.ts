@@ -82,11 +82,12 @@ export function applyResources(
   }
 
   // Add resource nodes
+  const needsResources = checkpointLoaders.length;
   let i = 0;
   const stackKeys = [`resource-stack`];
   for (const resource of resources) {
     const parsedAir = parseAIR(resource.air);
-    if (parsedAir.type === 'checkpoint') {
+    if (parsedAir.type === 'checkpoint' && needsResources) {
       workflow[stackKeys[0]] = {
         inputs: {
           ckpt_name: resource.air,
@@ -122,25 +123,12 @@ export function applyResources(
       }
     }
 
-    if (node && checkpointLoaders.length) {
+    if (node && needsResources) {
       // increment stack key
       const stackKey = `${stackKeys[0]}-${++i}`;
       stackKeys.push(stackKey);
       workflow[stackKey] = node;
     }
-  }
-
-  // TODO remove this hack once the worker is fixed
-  if (!checkpointLoaders.length && upscalers.length) {
-    workflow['dummy'] = {
-      class_type: 'CheckpointLoaderSimple',
-      inputs: {
-        ckpt_name: 'urn:air:sd1:checkpoint:civitai:4384@128713',
-      },
-      _meta: {
-        title: 'Dummy checkpoint',
-      },
-    };
   }
 
   // Update reference to point to resource nodes
