@@ -1300,7 +1300,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
   if (input.reviewId || input.modelId) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) });
+    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) }, 'temp-search');
   }
 
   // Sort
@@ -1334,8 +1334,15 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     return results.hits;
   } catch (error) {
+    const err = error as Error;
     logToAxiom(
-      { type: 'search-error', error: (error as Error).message, input: removeEmpty(input), request },
+      {
+        type: 'search-error',
+        error: err.message,
+        cause: err.cause,
+        input: removeEmpty(input),
+        request,
+      },
       'temp-search'
     );
     return [];
