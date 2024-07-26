@@ -9,8 +9,8 @@ const userCosmeticSelect = kyselyDbRead
     'cosmeticId',
     'obtainedAt',
     'claimKey',
-    'UserCosmetic.data',
-    CosmeticRepository.findOneByIdRef(eb.ref('UserCosmetic.cosmeticId')).as('cosmetic'),
+    eb.ref('data').$castTo<any>().as('data'),
+    CosmeticRepository.findOneByIdRef(eb.ref('UserCosmetic.cosmeticId')).$notNull().as('cosmetic'),
   ]);
 
 export type UserCosmeticModel = InferResult<typeof userCosmeticSelect>;

@@ -62,89 +62,9 @@ import {
 } from './../schema/user.schema';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { Flags } from '~/shared/utils';
-import { kyselyDbRead, jsonObjectFrom } from '~/server/kysely-db';
-import { Expression, SqlBool } from 'kysely';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { constants } from '~/server/common/constants';
-
-export const getUserCreator = async ({ ...where }: { username?: string; id?: number }) => {
-  const user = await dbRead.user.findFirst({
-    where: {
-      ...where,
-      deletedAt: null,
-      AND: [
-        { id: { not: constants.system.user.id } },
-        { username: { not: constants.system.user.username } },
-      ],
-    },
-    select: {
-      id: true,
-      image: true,
-      username: true,
-      muted: true,
-      bannedAt: true,
-      deletedAt: true,
-      createdAt: true,
-      publicSettings: true,
-      excludeFromLeaderboards: true,
-      links: {
-        select: {
-          url: true,
-          type: true,
-        },
-      },
-      stats: {
-        select: {
-          ratingAllTime: true,
-          ratingCountAllTime: true,
-          downloadCountAllTime: true,
-          favoriteCountAllTime: true,
-          thumbsUpCountAllTime: true,
-          followerCountAllTime: true,
-          reactionCountAllTime: true,
-          uploadCountAllTime: true,
-          generationCountAllTime: true,
-        },
-      },
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
-      cosmetics: {
-        where: { equippedAt: { not: null } },
-        select: {
-          data: true,
-          cosmetic: {
-            select: simpleCosmeticSelect,
-          },
-        },
-      },
-      profilePicture: {
-        select: profileImageSelect,
-      },
-    },
-  });
-  if (!user) return null;
-
-  const modelCount = dbRead.model.count({
-    where: {
-      userId: user?.id,
-      status: 'Published',
-    },
-  });
-
-  return {
-    ...user,
-    _count: {
-      models: Number(modelCount),
-    },
-  };
-};
 
 type GetUsersRow = {
   id: number;

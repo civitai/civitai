@@ -1,4 +1,4 @@
-import { SqlBool, Expression, InferResult } from 'kysely';
+import { SqlBool, Expression, InferResult, sql } from 'kysely';
 import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 import { ImageRepository } from '~/server/repository/image.repository';
 import { UserCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
@@ -32,7 +32,8 @@ export class UserRepository {
 
   private static get creatorUserSelect() {
     return this.cosmeticUserSelect.select((eb) => [
-      'publicSettings',
+      eb.ref('publicSettings').$castTo<any>().as('publicSettings'),
+      'excludeFromLeaderboards',
       UserLinkRepository.findManyByUserIdRef(eb.ref('User.id')).as('links'),
       UserRankRepository.findOneByUserIdRef(eb.ref('User.id')).as('rank'),
       UserStatRepository.findOneByUserIdRef(eb.ref('User.id')).as('stats'),
@@ -49,7 +50,8 @@ export class UserRepository {
 
   // #region [main]
   static async findOneUserCreator(
-    args: { id?: number; username?: never } | { id?: never; username?: string }
+    // args: { id?: number; username?: never } | { id?: never; username?: string }
+    args: { id?: number; username?: string }
   ) {
     return await this.creatorUserSelect
 

@@ -7,7 +7,15 @@ export class CosmeticRepository {
   private static get cosmeticSelect() {
     return kyselyDbRead
       .selectFrom('Cosmetic')
-      .select(['id', 'name', 'description', 'type', 'source', 'data', 'videoUrl']);
+      .select((eb) => [
+        'id',
+        'name',
+        'description',
+        'type',
+        'source',
+        eb.ref('data').$castTo<any>().as('data'),
+        'videoUrl',
+      ]);
   }
 
   static findOneByIdRef(foreignKey: Expression<number>) {

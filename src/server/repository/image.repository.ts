@@ -11,7 +11,7 @@ export class ImageRepository {
   private static get baseImageSelect() {
     return kyselyDbRead
       .selectFrom('Image')
-      .select([
+      .select((eb) => [
         'id',
         'name',
         'url',
@@ -22,7 +22,7 @@ export class ImageRepository {
         'type',
         'width',
         'height',
-        'metadata',
+        eb.ref('metadata').$castTo<any>().as('metadata'),
         'mimeType',
         'createdAt',
         'needsReview',
