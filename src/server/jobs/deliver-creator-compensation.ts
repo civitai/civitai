@@ -8,7 +8,6 @@ import dayjs from 'dayjs';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import data from '~/pages/api/generation/data';
 
 export const updateCreatorResourceCompensation = createJob(
   'update-creator-resource-compensation',
@@ -93,8 +92,6 @@ export const runDailyCompensationPayout = createJob(
       new Date()
     );
     const date = dayjs(lastUpdate).utc().subtract(1, 'day').startOf('day');
-
-    console.log({ date: date.toISOString() });
 
     const compensations = await clickhouse
       .query({
@@ -184,8 +181,6 @@ export const runDailyCompensationPayout = createJob(
     }
 
     await setLastUpdate();
-
-    console.dir({ creatorsToPay, compensationTransactions, tipTransactions }, { depth: null });
 
     return { count: Object.keys(creatorsToPay).length };
   }
