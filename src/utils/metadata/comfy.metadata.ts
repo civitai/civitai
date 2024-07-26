@@ -23,6 +23,25 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const isStandardComfy = exif.prompt || exif.workflow;
     if (isStandardComfy) return true;
 
+    // webp format
+    const isWebpComfy = exif?.Model?.[0]?.startsWith('prompt:');
+    if (isWebpComfy) {
+      const comfyJson = exif.Model[0].replace(/^prompt:/, '');
+
+      exif.prompt = comfyJson;
+      exif.workflow = comfyJson;
+      if (exif.userComment) {
+        const extrasJson = decodeBigEndianUTF16(exif.userComment);
+        try {
+          exif.extraMetadata = JSON.parse(extrasJson)?.extraMetadata;
+          // Fix for bad json
+          if (typeof exif.extraMetadata === 'string')
+            exif.extraMetadata = JSON.parse(exif.extraMetadata);
+        } catch {}
+      }
+      return true;
+    }
+
     // TODO: remove someday...
     // Check for our ugly hack
     let generationDetails = null;
@@ -49,7 +68,6 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     return false;
   },
   parse: (exif) => {
-    console.log(exif.prompt);
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
@@ -104,6 +122,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const versionIds: number[] = [];
     const modelIds: number[] = [];
     if (workflow?.extra) {
+      // Old AIR parsing
       for (const key of AIR_KEYS) {
         const airs = workflow.extra[key];
         if (!airs) continue;
@@ -116,7 +135,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
     }
 
-    const isCivitComfy = workflow?.extra?.airs?.length > 0;
+    let isCivitComfy = workflow?.extra?.airs?.length > 0;
     const metadata: ImageMetaProps = {
       prompt: getPromptText(initialSamplerNode.positive, 'positive'),
       negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
@@ -139,9 +158,22 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       versionIds,
       modelIds,
       // Converting to string to reduce bytes size
-      // TODO.justin remove once this is compliant with comfy
+      // isCivitComfy to handle old generations when we weren't compliant
       comfy: isCivitComfy ? undefined : `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
+    if (exif.extraMetadata) metadata.extra = exif.extraMetadata;
+
+    // Get airs from parsed resources
+    const workflowAirs = [
+      ...models,
+      ...upscalers,
+      ...vaes,
+      ...additionalResources.map((x) => x.name),
+    ].filter((x) => x.startsWith('urn:air:'));
+    if (workflowAirs.length > 0) {
+      workflow.extra = { airs: workflowAirs };
+      isCivitComfy = true;
+    }
 
     if (isCivitComfy) {
       metadata.civitaiResources = [];

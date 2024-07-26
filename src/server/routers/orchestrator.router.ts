@@ -29,10 +29,12 @@ import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { logToAxiom } from '~/server/logging/client';
+import { env } from '~/env/server.mjs';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
   let token = getEncryptedCookie(ctx, generationServiceCookie.name);
+  if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({
       name: generationServiceCookie.name,
@@ -133,6 +135,7 @@ export const orchestratorRouter = router({
         };
 
         let step: any;
+
         if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
         else step = await createComfyStep(args);
 
@@ -146,15 +149,14 @@ export const orchestratorRouter = router({
           },
         });
 
-        let cost = 0,
-          ready = true,
+        const cost = workflow.cost?.total ?? 0;
+
+        let ready = true,
           eta = dayjs().add(10, 'minutes').toDate(),
           position = 0;
 
         for (const step of workflow.steps ?? []) {
           for (const job of step.jobs ?? []) {
-            cost += job.cost;
-
             const { queuePosition } = job;
             if (!queuePosition) continue;
 

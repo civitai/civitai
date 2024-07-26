@@ -182,13 +182,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                         transcode: false,
                         anim: false,
                       })}
-                      alt={
-                        selectedItem.entityImage.meta
-                          ? truncate(selectedItem.entityImage.meta.prompt, {
-                              length: constants.altTruncateLength,
-                            })
-                          : undefined
-                      }
+                      alt={image.name ?? undefined}
                       radius="md"
                       width={48}
                       height={62}
@@ -199,13 +193,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                         transcode: false,
                         anim: false,
                       })}
-                      alt={
-                        image.meta
-                          ? truncate(image.meta.prompt, {
-                              length: constants.altTruncateLength,
-                            })
-                          : undefined
-                      }
+                      alt={image.name ?? undefined}
                       radius="md"
                       width={48}
                       height={62}
@@ -235,7 +223,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
 export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
-  image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'meta'>;
+  image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name'>;
   currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 

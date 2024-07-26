@@ -14,7 +14,7 @@ const parseValue = (value: string) => {
   return { workflowId, stepName, imageId };
 };
 
-const selectStore = createSelectStore<string>();
+const selectStore = createSelectStore<string>('generated-image-select');
 export const orchestratorImageSelect = {
   useSelection: () => {
     return selectStore.useSelection().map(parseValue);

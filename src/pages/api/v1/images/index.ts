@@ -94,7 +94,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       skip,
       cursor,
       periodMode: 'published',
-      include: ['count'],
+      include: ['count', 'meta'],
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,
     });

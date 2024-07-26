@@ -103,6 +103,8 @@ export const serverSchema = z.object({
   AXIOM_DATASTREAM: z.string().optional(),
   SEARCH_HOST: z.string().url().optional(),
   SEARCH_API_KEY: z.string().optional(),
+  METRICS_SEARCH_HOST: z.string().url().optional(),
+  METRICS_SEARCH_API_KEY: z.string().optional(),
   PODNAME: z.string().optional(),
   FEATUREBASE_JWT_SECRET: z.string().optional(),
   INTEGRATION_TOKEN: z.string().optional(),
