@@ -66,7 +66,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const resultsArray = await Promise.all(
     Object.entries(checkFns).map(([name, fn]) =>
-      timeoutAsyncFn(fn).then((result) => ({ [name]: result }))
+      timeoutAsyncFn(fn).then((result) => {
+        if (!result) counters[name as CheckKey].inc();
+        return { [name]: result };
+      })
     )
   );
 
