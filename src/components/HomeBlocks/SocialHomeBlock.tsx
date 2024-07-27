@@ -214,7 +214,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
         url: 'civitai',
       });
     }
-    return blocks;
+    return blocks.slice(0, 6);
   }, [socialData, isLive]);
 
   return (
