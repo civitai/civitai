@@ -32,7 +32,7 @@ export function getClient(
       ? env.NOTIFICATION_DB_REPLICA_URL
       : env.NOTIFICATION_DB_URL
     : readonly
-    ? env.DATABASE_PG_URL ?? env.DATABASE_REPLICA_URL ?? env.DATABASE_URL
+    ? env.DATABASE_REPLICA_URL ?? env.DATABASE_URL
     : env.DATABASE_URL;
 
   const connectionStringUrl = new URL(envUrl);
