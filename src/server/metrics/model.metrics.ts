@@ -301,7 +301,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
     SELECT "modelVersionId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
-    WHERE "modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
+    WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -313,13 +313,12 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       SELECT
         dg."modelVersionId",
         tf.timeframe,
-        ${snippets.timeframeSum('d."createdAt"', 'd."userId"', 'amount')} "tippedCount",
-        ${snippets.timeframeCount('d."createdAt"', 'd."userId"', 'amount')} "tippedAmountCount"
+        ${snippets.timeframeCount('d."createdAt"', 'amount')} "tippedCount",
+        ${snippets.timeframeSum('d."createdAt"', 'amount')} "tippedAmountCount"
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE dg."modelVersionId" IN (${ids})
-        and d."buzzTransactionId" IS NOT NULL
       GROUP BY dg."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
         SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = now();

@@ -128,7 +128,7 @@ const DonationGoalItem = ({
         {canDonate && (
           <Stack spacing="xs" mt="xs">
             <Group spacing="xs" noWrap>
-              <Group spacing="xs">
+              <Group spacing="xs" noWrap>
                 <NumberInputWrapper
                   value={donationAmount}
                   onChange={(value) => setDonationAmount(value ?? 0)}
@@ -166,6 +166,7 @@ const DonationGoalItem = ({
                 h={30}
                 disabled={!donationAmount}
                 loading={donating}
+                ml="auto"
               />
             </Group>
           </Stack>
