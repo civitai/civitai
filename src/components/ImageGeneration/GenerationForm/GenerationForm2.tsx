@@ -975,6 +975,16 @@ export function GenerationFormContent() {
                 Reset
               </Button>
             </div>
+            {status.available && status.message && (
+              <AlertWithIcon
+                color="yellow"
+                title="Image Generation Status Alert"
+                icon={<IconAlertTriangle size={20} />}
+                iconColor="yellow"
+              >
+                {status.message}
+              </AlertWithIcon>
+            )}
           </>
         )}
       </div>
