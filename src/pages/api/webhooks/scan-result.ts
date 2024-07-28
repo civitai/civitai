@@ -35,8 +35,13 @@ export default WebhookEndpoint(async (req, res) => {
     if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
   }
 
-  if (tasks.includes('ParseMetadata')) {
-    data.headerData = scanResult.metadata;
+  if (tasks.includes('ParseMetadata') && scanResult.metadata?.__metadata__) {
+    const headerData = scanResult.metadata?.__metadata__ as MixedObject;
+    try {
+      if (typeof headerData?.ss_tag_frequency === 'string')
+        headerData.ss_tag_frequency = JSON.parse(headerData.ss_tag_frequency);
+    } catch {}
+    data.metadata = headerData;
   }
 
   // Update url if we imported/moved the file
