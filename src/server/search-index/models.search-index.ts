@@ -58,10 +58,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.thumbsUpCount',
     'createdAt',
     'metrics.commentCount',
-    'metrics.favoriteCount',
     'metrics.downloadCount',
-    'metrics.rating',
-    'metrics.ratingCount',
     'metrics.collectedCount',
     'metrics.tippedAmountCount',
   ];
