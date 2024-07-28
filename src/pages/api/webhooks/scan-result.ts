@@ -41,7 +41,7 @@ export default WebhookEndpoint(async (req, res) => {
       if (typeof headerData?.ss_tag_frequency === 'string')
         headerData.ss_tag_frequency = JSON.parse(headerData.ss_tag_frequency);
     } catch {}
-    data.metadata = headerData;
+    data.headerData = headerData;
   }
 
   // Update url if we imported/moved the file
