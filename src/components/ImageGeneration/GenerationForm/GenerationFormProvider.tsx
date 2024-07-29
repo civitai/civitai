@@ -92,7 +92,7 @@ const formSchema = textToImageParamsSchema
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
     aspectRatio: z.string(),
-    creatorTip: z.number().min(0).max(1).optional(),
+    creatorTip: z.number().min(0).max(1).default(0.25).optional(),
     civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
@@ -343,6 +343,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
+        creatorTip: overrides.creatorTip ?? 0.25,
       },
       status.limits
     );

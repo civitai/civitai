@@ -196,7 +196,7 @@ export function GenerationCostPopover({
   ];
 
   return (
-    <Popover {...popoverProps}>
+    <Popover shadow="md" {...popoverProps}>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown p={0}>
         <DescriptionTable

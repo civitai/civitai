@@ -212,7 +212,7 @@ export function GenerationFormContent() {
       remix,
       aspectRatio,
       civitaiTip = 0,
-      creatorTip = 0,
+      creatorTip = 0.25,
       ...params
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);

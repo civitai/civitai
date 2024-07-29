@@ -3,7 +3,6 @@ import { Currency } from '@prisma/client';
 import { IconBolt, IconCategory, IconPercentage } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { DailyBuzzPayout } from '~/components/Buzz/Rewards/DailyBuzzPayout';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import {
   DescriptionTable,
