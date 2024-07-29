@@ -171,16 +171,25 @@ function formatGenerationData(
   const config = getGenerationConfig(baseModel);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
-  if (!checkpoint || getBaseModelSetType(checkpoint.baseModel) !== baseModel) {
+  if (
+    !checkpoint ||
+    getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
+    !checkpoint.available
+  ) {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
-  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel) vae = undefined;
+  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel || !vae.available) vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources
     .filter((resource) => {
-      if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') return false;
+      if (
+        resource.modelType === 'Checkpoint' ||
+        resource.modelType === 'VAE' ||
+        !resource.available
+      )
+        return false;
       const baseModelSetKey = getBaseModelSetType(resource.baseModel);
       return config.additionalResourceTypes.some((x) => {
         const modelTypeMatches = x.type === resource.modelType;
@@ -272,13 +281,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         );
       }
 
-      const formatted = formatGenerationData(
-        {
-          ...responseData,
-          resources: resources.filter((x) => x.available),
-        },
-        baseResource
-      );
+      const formatted = formatGenerationData({ ...responseData, resources }, baseResource);
 
       const data = { ...formatted, workflow };
       if (resources.length && resources.some((x) => !x.available)) {
