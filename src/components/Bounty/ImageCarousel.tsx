@@ -170,8 +170,8 @@ export function ImageCarouselContent({
         slideSize="50%"
         breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
         slideGap="xl"
-        align={filteredImages.length > 2 ? 'start' : 'center'}
-        slidesToScroll={mobile ? 1 : 2}
+        align={filteredImages.length > 1 ? 'start' : 'center'}
+        slidesToScroll="auto"
         withControls={filteredImages.length > 2 ? true : false}
         controlSize={mobile ? 32 : 56}
         loop

@@ -9,8 +9,10 @@ import { Meta } from '~/components/Meta/Meta';
 import {
   Accordion,
   ActionIcon,
+  ActionIconProps,
   Alert,
   Anchor,
+  BadgeProps,
   Box,
   Button,
   Card,
@@ -44,6 +46,7 @@ import {
   IconLock,
   IconLockOpen,
   IconPencilMinus,
+  IconProps,
   IconShare3,
   IconStar,
   IconTrash,
@@ -77,11 +80,15 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { Availability } from '@prisma/client';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
+import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
+import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -625,6 +632,7 @@ export default function BountyEntryDetailsPage({
                   <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
                 )}
               </Stack>
+              {!!activeImage && <ImageGenerationData imageId={activeImage.id} />}
             </Stack>
           </Stack>
         </Paper>
@@ -641,7 +649,7 @@ export default function BountyEntryDetailsPage({
         type="BountyEntryView"
         details={{ bountyId: bountyEntry.bountyId }}
       />
-      <Paper className={classes.root}>
+      <Paper className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
         <NavigateBack url={`/bounties/${bounty.id}`}>
           {({ onClick }) => (
             <CloseButton
@@ -711,6 +719,7 @@ export default function BountyEntryDetailsPage({
                     </Stack>
                   </Paper>
                 </div>
+                {!!activeImage && <ImageGenerationData imageId={activeImage.id} />}
               </Stack>
             </Card.Section>
           </Stack>
@@ -726,6 +735,25 @@ BountyEntryDetailsPage.getLayout = (page: React.ReactElement) => (
   </MantineProvider>
 );
 
+const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
+  variant: 'filled',
+  color: 'gray',
+  className: 'h-9 min-w-9 rounded-full normal-case',
+  classNames: { inner: 'flex gap-1 items-center' },
+};
+
+const sharedActionIconProps: Partial<Omit<ActionIconProps, 'children'>> = {
+  variant: 'filled',
+  color: 'gray',
+  className: 'h-9 w-9 rounded-full',
+};
+
+const sharedIconProps: IconProps = {
+  size: 18,
+  stroke: 2,
+  color: 'white',
+};
+
 export function BountyEntryCarousel({
   bountyEntry,
   className,
@@ -736,152 +764,43 @@ export function BountyEntryCarousel({
   onImageChange?: (image: BountyEntryGetById['images'][number]) => void;
 }) {
   const { images } = bountyEntry;
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const image = images[currentIdx];
   const { classes, cx } = useCarrouselStyles();
   const queryUtils = trpc.useContext();
+
+  const carouselNavigation = useCarouselNavigation({ items: images, onChange: onImageChange });
 
   const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
   useDidUpdate(() => {
     if (!isDeletingImage) queryUtils.bountyEntry.getById.invalidate({ id: bountyEntry?.id });
   }, [isDeletingImage]);
 
-  const { setRef, height, width } = useAspectRatioFit({
-    height: image?.height ?? 1200,
-    width: image?.width ?? 1200,
-  });
+  const image = images[carouselNavigation.index];
 
-  const hasNextImage = !!images[currentIdx + 1]?.id;
-  const hasPrevImage = !!images[currentIdx - 1]?.id;
-
-  const onPrevImage = () => {
-    setCurrentIdx(Math.max(currentIdx - 1, 0));
+  const connect: ConnectProps = {
+    connectType: 'bountyEntry',
+    connectId: bountyEntry.id,
   };
-  const onNextImage = () => {
-    setCurrentIdx(Math.min(currentIdx + 1, images.length - 1));
-  };
-
-  // #region [navigation]
-  useHotkeys([
-    ['ArrowLeft', onPrevImage],
-    ['ArrowRight', onNextImage],
-  ]);
-  // #endregion
-
-  useEffect(() => {
-    if (image && onImageChange) {
-      onImageChange?.(image);
-    }
-  }, [image]);
-
-  if (!image) {
-    return (
-      <div ref={setRef} className={cx(classes.root, className)}>
-        <Center>
-          <Alert>
-            Sorry, it looks like this entry has no images have no entries we can display. This can
-            happen due to your filter settings or when the images have been marked for review.
-          </Alert>
-        </Center>
-      </div>
-    );
-  }
-
-  const indicators = images.map(({ id }) => (
-    <UnstyledButton
-      key={id}
-      data-active={image.id === id || undefined}
-      className={classes.indicator}
-      aria-hidden
-      tabIndex={-1}
-      onClick={() => {
-        const index = images.findIndex((image) => image.id === id);
-        setCurrentIdx(index);
-      }}
-    />
-  ));
-
-  const canNavigate = hasNextImage || hasPrevImage;
 
   return (
-    <div ref={setRef} className={cx(classes.root, className)}>
-      {canNavigate && (
-        <>
-          {!!hasPrevImage && (
-            <UnstyledButton className={cx(classes.control, classes.prev)} onClick={onPrevImage}>
-              <IconChevronLeft />
-            </UnstyledButton>
-          )}
-          {!!hasNextImage && (
-            <UnstyledButton className={cx(classes.control, classes.next)} onClick={onNextImage}>
-              <IconChevronRight />
-            </UnstyledButton>
-          )}
-        </>
-      )}
-      <ImageGuard2 image={image} connectType="bountyEntry" connectId={bountyEntry.id}>
-        {(safe) => (
-          <Center
-            sx={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              opacity: isDeletingImage ? 0.5 : 1,
-            }}
-          >
-            <Center
-              style={{
-                position: 'relative',
-                height: height,
-                width: width,
-              }}
-            >
-              <ImageGuard2.BlurToggle radius="sm" className="absolute left-2 top-2 z-10" />
-
-              <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
-              {!safe ? (
-                <MediaHash {...image} />
-              ) : (
-                <EdgeMedia
-                  src={image.url}
-                  name={image.name ?? image.id.toString()}
-                  alt={
-                    image.meta
-                      ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                      : image.name ?? undefined
-                  }
-                  type={image.type}
-                  style={{ maxHeight: '100%', maxWidth: '100%' }}
-                  width={image.width ?? 1200}
-                  anim
-                />
-              )}
-
-              {image.meta && (
-                <ImageMetaPopover
-                  meta={image.meta}
-                  generationProcess={image.generationProcess ?? undefined}
-                  imageId={image.id}
-                >
-                  <ActionIcon
-                    style={{
-                      position: 'absolute',
-                      bottom: '10px',
-                      right: '10px',
-                    }}
-                    variant="light"
-                  >
-                    <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
-                  </ActionIcon>
-                </ImageMetaPopover>
-              )}
-            </Center>
-          </Center>
+    <div className="relative flex flex-1 flex-col">
+      <ImageGuard2 image={image} {...connect} explain={false}>
+        {() => (
+          <>
+            <div className="absolute inset-x-0 top-0 z-10 flex justify-between p-3">
+              <ImageGuard2.BlurToggle {...sharedBadgeProps} />
+              <ImageContextMenu image={image}>
+                <ActionIcon {...sharedActionIconProps}>
+                  <IconDotsVertical {...sharedIconProps} />
+                </ActionIcon>
+              </ImageContextMenu>
+            </div>
+            <ImageDetailCarousel images={images} connect={connect} {...carouselNavigation} />
+            <div className="absolute inset-x-0 bottom-0 z-10 p-3">
+              <CarouselIndicators {...carouselNavigation} />
+            </div>
+          </>
         )}
       </ImageGuard2>
-      {images.length > 1 && <div className={classes.indicators}>{indicators}</div>}
       {isDeletingImage && (
         <Box className={classes.loader}>
           <Center>
