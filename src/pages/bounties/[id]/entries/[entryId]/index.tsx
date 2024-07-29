@@ -40,11 +40,13 @@ import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useDidUpdate, useHotkeys } from '@mantine/hooks';
 import {
+  IconBrandWechat,
   IconChevronLeft,
   IconChevronRight,
   IconInfoCircle,
   IconLock,
   IconLockOpen,
+  IconNotes,
   IconPencilMinus,
   IconProps,
   IconShare3,
@@ -79,7 +81,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
-import { Availability } from '@prisma/client';
+import { Availability, ReviewReactions } from '@prisma/client';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
@@ -252,56 +254,50 @@ export default function BountyEntryDetailsPage({
     tippedAmountCountAllTime: number;
   } | null = bountyEntry?.stats ?? null;
 
-  const userSection = (
-    <>
-      {user && (
-        <Card.Section px={mobile ? 'xs' : 'md'} py="sm" withBorder>
-          <Stack spacing={8}>
-            <Group position="apart">
-              <Text size="xs" color="dimmed">
-                Entry added on {formatDate(bountyEntry.createdAt)} by
-              </Text>
-              <NavigateBack url={`/bounties/${bounty.id}`}>
-                {({ onClick }) => (
-                  <CloseButton
-                    size="md"
-                    radius="xl"
-                    variant="transparent"
-                    iconSize={20}
-                    onClick={onClick}
-                    ml="auto"
-                  />
-                )}
-              </NavigateBack>
-            </Group>
-            <SmartCreatorCard user={user} />
-          </Stack>
-        </Card.Section>
-      )}
-    </>
+  const navigateBackSection = (
+    <div className="flex items-center justify-between">
+      <Text size="xs" color="dimmed">
+        Entry added on {formatDate(bountyEntry.createdAt)} by
+      </Text>
+      <NavigateBack url={`/bounties/${bounty.id}`}>
+        {({ onClick }) => (
+          <CloseButton
+            size="md"
+            radius="xl"
+            variant="transparent"
+            iconSize={20}
+            onClick={onClick}
+            ml="auto"
+          />
+        )}
+      </NavigateBack>
+    </div>
   );
 
-  const awardSection = (
-    <>
-      {benefactor && benefactor.awardedToId === bountyEntry.id && (
-        <Alert color="yellow" radius={0}>
-          <Group spacing="xs">
-            <ThemeIcon
-              // @ts-ignore: transparent variant does work
-              variant="transparent"
-              color="yellow.6"
-            >
-              <IconTrophy size={20} fill="currentColor" />
-            </ThemeIcon>
-            <Text>You awarded this entry</Text>
-          </Group>
-        </Alert>
-      )}
-    </>
+  const userSection = user && (
+    <div className="flex flex-col gap-3">
+      <div className="hidden @md:block">{navigateBackSection}</div>
+      <SmartCreatorCard user={user} />
+    </div>
+  );
+
+  const awardSection = benefactor && benefactor.awardedToId === bountyEntry.id && (
+    <Alert color="yellow" radius={0}>
+      <Group spacing="xs">
+        <ThemeIcon
+          // @ts-ignore: transparent variant does work
+          variant="transparent"
+          color="yellow.6"
+        >
+          <IconTrophy size={20} fill="currentColor" />
+        </ThemeIcon>
+        <Text>You awarded this entry</Text>
+      </Group>
+    </Alert>
   );
 
   const shareSection = (
-    <Group spacing={8} px={mobile ? 'xs' : 'md'} noWrap>
+    <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
         <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
           <Button
@@ -437,7 +433,6 @@ export default function BountyEntryDetailsPage({
       multiple
       defaultValue={['files']}
       my={0}
-      px={mobile ? 'xs' : 'md'}
       styles={(theme) => ({
         content: { padding: 0 },
         item: {
@@ -554,177 +549,68 @@ export default function BountyEntryDetailsPage({
   );
 
   const notesSection = bountyEntry.description ? (
-    <>
-      <Divider label="Entry Notes" labelPosition="center" />
-      <Paper
-        component={ScrollArea}
-        radius="md"
-        p="xs"
-        mx={mobile ? 'xs' : 'md'}
-        h={200}
-        offsetScrollbars
-        withBorder={mobile}
-      >
-        <RenderHtml html={bountyEntry.description} />
-      </Paper>
-    </>
+    <Card className="flex flex-col gap-3 rounded-xl">
+      <Text className="flex items-center gap-2 text-xl font-semibold">
+        <IconNotes />
+        <span>Entry notes</span>
+      </Text>
+      <Card.Section pl="md" pb="md">
+        <ScrollArea.Autosize maxHeight={200} offsetScrollbars>
+          <RenderHtml html={bountyEntry.description} />
+        </ScrollArea.Autosize>
+      </Card.Section>
+    </Card>
   ) : null;
-
-  if (mobile) {
-    return (
-      <>
-        {meta}
-        <TrackView
-          entityId={bountyEntry.id}
-          entityType="BountyEntry"
-          type="BountyEntryView"
-          details={{ bountyId: bountyEntry.bountyId }}
-        />
-        <Paper className={classes.root}>
-          <Stack w="100%">
-            {userSection}
-            <Stack pb="lg">
-              {awardSection}
-              {shareSection}
-              {filesSection}
-              <div style={{ padding: '0 10px' }}>
-                <ImageCarousel
-                  images={bountyEntry.images}
-                  connectId={bountyEntry.id}
-                  connectType="bountyEntry"
-                  mobile
-                  onImageChange={(images) => {
-                    const [image] = images;
-                    if (image) {
-                      setActiveImage(image as BountyEntryGetById['images'][number]);
-                    }
-                  }}
-                />
-              </div>
-              {activeImage && (
-                <VotableTags
-                  entityType="image"
-                  entityId={activeImage.id}
-                  nsfwLevel={activeImage.nsfwLevel}
-                  canAdd
-                  collapsible
-                  px="sm"
-                />
-              )}
-              {notesSection}
-              <Divider label="Discussion" labelPosition="center" />
-              <Stack spacing={8} px="xs">
-                <Reactions
-                  entityId={bountyEntry.id}
-                  entityType="bountyEntry"
-                  reactions={reactions}
-                  metrics={{
-                    likeCount: stats?.likeCountAllTime,
-                    dislikeCount: stats?.dislikeCountAllTime,
-                    heartCount: stats?.heartCountAllTime,
-                    laughCount: stats?.laughCountAllTime,
-                    cryCount: stats?.cryCountAllTime,
-                    tippedAmountCount: stats?.tippedAmountCountAllTime,
-                  }}
-                  targetUserId={bountyEntry.user?.id}
-                />
-                {user?.id && (
-                  <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
-                )}
-              </Stack>
-              {!!activeImage && <ImageGenerationData imageId={activeImage.id} />}
-            </Stack>
-          </Stack>
-        </Paper>
-      </>
-    );
-  }
 
   return (
     <>
-      {meta}{' '}
+      {meta}
       <TrackView
         entityId={bountyEntry.id}
         entityType="BountyEntry"
         type="BountyEntryView"
         details={{ bountyId: bountyEntry.bountyId }}
       />
-      <Paper className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
-        <NavigateBack url={`/bounties/${bounty.id}`}>
-          {({ onClick }) => (
-            <CloseButton
-              style={{ position: 'absolute', top: 15, right: 15, zIndex: 10 }}
-              size="lg"
-              variant="default"
-              onClick={onClick}
-              className={classes.mobileOnly}
-            />
-          )}
-        </NavigateBack>
-        <BountyEntryCarousel
-          onImageChange={setActiveImage}
-          bountyEntry={bountyEntry}
-          className={classes.carousel}
-        />
-
-        <Card className={classes.sidebar} p={0}>
-          <Stack style={{ flex: 1, overflow: 'hidden' }}>
+      <div className="flex size-full flex-col overflow-y-auto bg-gray-2 @md:flex-row @md:overflow-y-hidden dark:bg-dark-9">
+        <div className="flex w-full flex-col @md:flex-1">
+          <div className="p-3 @md:hidden">{navigateBackSection}</div>
+          <BountyEntryCarousel
+            className="aspect-square w-full overflow-hidden"
+            onImageChange={setActiveImage}
+            bountyEntry={bountyEntry}
+            reactions={reactions}
+            stats={stats}
+          />
+        </div>
+        <div className="h-full  @md:w-[450px] @md:min-w-[450px] @md:overflow-y-auto">
+          <div className="flex flex-col gap-3 p-3">
             {userSection}
-            <Card.Section style={{ overflowY: 'auto' }}>
-              <Stack spacing="md">
-                {activeImage && (
-                  <VotableTags
-                    entityType="image"
-                    entityId={activeImage.id}
-                    nsfwLevel={activeImage.nsfwLevel}
-                    canAdd
-                    collapsible
-                    px="sm"
-                  />
-                )}
-                {awardSection}
-                {shareSection}
-                {filesSection}
-                {notesSection}
-                <div style={{ paddingTop: 8 }}>
-                  <Divider
-                    label="Discussion"
-                    labelPosition="center"
-                    styles={{
-                      label: {
-                        marginTop: '-9px !important',
-                        marginBottom: -9,
-                      },
-                    }}
-                  />
-                  <Paper p="sm" radius={0}>
-                    <Stack spacing={8}>
-                      <Reactions
-                        entityId={bountyEntry.id}
-                        entityType="bountyEntry"
-                        reactions={reactions}
-                        metrics={{
-                          likeCount: stats?.likeCountAllTime,
-                          dislikeCount: stats?.dislikeCountAllTime,
-                          heartCount: stats?.heartCountAllTime,
-                          laughCount: stats?.laughCountAllTime,
-                          cryCount: stats?.cryCountAllTime,
-                          tippedAmountCount: stats?.tippedAmountCountAllTime,
-                        }}
-                        targetUserId={bountyEntry.user?.id}
-                      />
-                      {user?.id && (
-                        <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
-                      )}
-                    </Stack>
-                  </Paper>
-                </div>
-                {!!activeImage && <ImageGenerationData imageId={activeImage.id} />}
-              </Stack>
-            </Card.Section>
-          </Stack>
-        </Card>
-      </Paper>
+            {awardSection}
+            {shareSection}
+            {filesSection}
+            {activeImage && (
+              <VotableTags
+                entityType="image"
+                entityId={activeImage.id}
+                nsfwLevel={activeImage.nsfwLevel}
+                canAdd
+                collapsible
+              />
+            )}
+            {notesSection}
+            {user?.id && (
+              <Card className="flex flex-col gap-3 rounded-xl">
+                <Text className="flex items-center gap-2 text-xl font-semibold">
+                  <IconBrandWechat />
+                  <span>Discussion</span>
+                </Text>
+                <BountyEntryDiscussion bountyEntryId={bountyEntry.id} userId={user.id} />
+              </Card>
+            )}
+            {!!activeImage && <ImageGenerationData imageId={activeImage.id} />}
+          </div>
+        </div>
+      </div>
     </>
   );
 }
@@ -758,10 +644,24 @@ export function BountyEntryCarousel({
   bountyEntry,
   className,
   onImageChange,
+  reactions,
+  stats,
 }: {
   bountyEntry: BountyEntryGetById;
   className: string;
   onImageChange?: (image: BountyEntryGetById['images'][number]) => void;
+  reactions: {
+    userId: number;
+    reaction: ReviewReactions;
+  }[];
+  stats: {
+    likeCountAllTime: number;
+    dislikeCountAllTime: number;
+    heartCountAllTime: number;
+    laughCountAllTime: number;
+    cryCountAllTime: number;
+    tippedAmountCountAllTime: number;
+  } | null;
 }) {
   const { images } = bountyEntry;
   const { classes, cx } = useCarrouselStyles();
@@ -782,7 +682,7 @@ export function BountyEntryCarousel({
   };
 
   return (
-    <div className="relative flex flex-1 flex-col">
+    <div className={`relative flex flex-1 flex-col ${className ? className : ''}`}>
       <ImageGuard2 image={image} {...connect} explain={false}>
         {() => (
           <>
@@ -795,7 +695,23 @@ export function BountyEntryCarousel({
               </ImageContextMenu>
             </div>
             <ImageDetailCarousel images={images} connect={connect} {...carouselNavigation} />
-            <div className="absolute inset-x-0 bottom-0 z-10 p-3">
+            <div className="absolute inset-x-0 bottom-0 z-10 flex flex-col gap-3 p-3">
+              <div className="flex justify-center">
+                <Reactions
+                  entityId={bountyEntry.id}
+                  entityType="bountyEntry"
+                  reactions={reactions}
+                  metrics={{
+                    likeCount: stats?.likeCountAllTime,
+                    dislikeCount: stats?.dislikeCountAllTime,
+                    heartCount: stats?.heartCountAllTime,
+                    laughCount: stats?.laughCountAllTime,
+                    cryCount: stats?.cryCountAllTime,
+                    tippedAmountCount: stats?.tippedAmountCountAllTime,
+                  }}
+                  targetUserId={bountyEntry.user?.id}
+                />
+              </div>
               <CarouselIndicators {...carouselNavigation} />
             </div>
           </>
