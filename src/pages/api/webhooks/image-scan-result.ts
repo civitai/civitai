@@ -5,7 +5,7 @@ import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
@@ -51,6 +51,7 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().nullish(),
+  hash: z.number().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
@@ -124,7 +125,26 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
-async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
+async function isBlocked(hash: number) {
+  // TODO.blockedImages check against "blockedImages" table using hamming distance
+  // https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
+  return false;
+}
+
+async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
+  if (hash && (await isBlocked(hash))) {
+    await dbWrite.image.updateMany({
+      where: { id },
+      data: {
+        pHash: hash,
+        ingestion: ImageIngestionStatus.Blocked,
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: 'Similar to blocked content',
+      },
+    });
+    return;
+  }
+
   if (!incomingTags) return;
 
   const image = await dbWrite.image.findUnique({
@@ -346,6 +366,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
         data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
       }
     }
+
+    if (hash) data.pHash = hash;
 
     if (Object.keys(data).length > 0) {
       data.updatedAt = new Date();

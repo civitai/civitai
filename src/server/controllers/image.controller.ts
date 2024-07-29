@@ -66,6 +66,7 @@ export const moderateImageHandler = async ({
         const tags = imageTags[id] ?? [];
         tags.push(input.reviewType ?? 'other');
         const resources = imageResources[id] ?? [];
+        // TODO.blockedImages - Add blocked image to the blocked images list
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
@@ -188,6 +189,9 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+
+    // TODO.blockedImages
+    // Add blocked image to the blocked images list
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
