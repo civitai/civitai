@@ -33,7 +33,7 @@ export function ToolBanner() {
         <div className="z-1 aspect-h-1 aspect-w-4 absolute left-0 top-0 size-full origin-center">
           <EdgeMedia
             src={selected.metadata.header as string}
-            className="aspect-video  h-auto min-h-full w-full min-w-full object-cover opacity-40	"
+            className="h-auto min-h-full w-full min-w-full object-cover opacity-40	"
             fadeIn={false}
             original
             style={{
