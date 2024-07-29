@@ -99,9 +99,21 @@ export function createAuthOptions(): NextAuthOptions {
       },
     },
     callbacks: {
-      async signIn({ account }) {
+      async signIn({ account, email, user }) {
         // console.log('signIn', account?.userId);
         if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
+        if (account?.provider === 'email' && !user.emailVerified && email?.verificationRequest) {
+          if (user.email?.includes('+')) {
+            const [emailPrefix, emailDomain] = user.email.split('@');
+            const email = `${emailPrefix.split('+')[0]}@${emailDomain}`;
+            user.email = email;
+            const alreadyExists = await dbWrite.user.findFirst({
+              where: { email },
+              select: { id: true },
+            });
+            if (alreadyExists) return '/login?error=NoExtraEmails';
+          }
+        }
 
         return true;
       },
