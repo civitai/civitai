@@ -217,7 +217,7 @@ const transformData = async ({
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
         (metrics.ratingCount + RATING_BAYESIAN_C);
 
-      const [version] = modelVersions;
+      const [{ files, ...version }] = modelVersions;
 
       if (!version) {
         return null;

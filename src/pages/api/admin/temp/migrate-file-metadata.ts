@@ -37,24 +37,24 @@ async function migrateFileMetadata(req: NextApiRequest, res: NextApiResponse) {
         return results[0];
       }
       const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
-        Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
+        Prisma.sql`SELECT MAX(id) "max" FROM "ModelFile";`
       );
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
       const { cancel, result } = await pgDbWrite.cancellableQuery(Prisma.sql`
-        UPDATE "ModelFile" SET "headerData" =
-          CASE
-            WHEN jsonb_typeof("headerData"->'__metadata__') = 'undefined' THEN null
-            ELSE
-              jsonb_set(
-                ("headerData"->'__metadata__')::jsonb,
-                '{ss_tag_frequency}',
-                ("headerData"->'__metadata__'->>'ss_tag_frequency')::jsonb
-              )
-          END
-        WHERE "headerData" IS NOT NULL
-        AND id BETWEEN ${start} AND ${end};
+        UPDATE "ModelFile" SET
+          "rawScanResult" =
+            CASE
+              WHEN "rawScanResult" ? 'metadata' THEN "rawScanResult" - 'metadata'
+              ELSE "rawScanResult"
+            END,
+          "headerData" =
+            CASE
+              WHEN "headerData" ? '__metadata__' THEN "headerData"->'__metadata__'
+              ELSE NULL
+            END
+        WHERE id BETWEEN ${start} AND ${end};
       `);
       cancelFns.push(cancel);
       await result();
