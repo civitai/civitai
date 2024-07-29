@@ -151,6 +151,7 @@ export const REDIS_KEYS = {
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
+    NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',

@@ -13,7 +13,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   const { fileId, ...query } = querySchema.parse(req.query);
   const tasks = query.tasks ?? ['Import', 'Scan', 'Hash', 'ParseMetadata'];
-  const scanResult: ScanResult = req.body;
+  const { metadata, ...scanResult }: ScanResult = req.body;
 
   const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
   const file = await dbRead.modelFile.findUnique({ where });
@@ -35,8 +35,13 @@ export default WebhookEndpoint(async (req, res) => {
     if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
   }
 
-  if (tasks.includes('ParseMetadata')) {
-    data.headerData = scanResult.metadata;
+  if (tasks.includes('ParseMetadata') && metadata?.__metadata__) {
+    const headerData = metadata?.__metadata__ as MixedObject;
+    try {
+      if (typeof headerData?.ss_tag_frequency === 'string')
+        headerData.ss_tag_frequency = JSON.parse(headerData.ss_tag_frequency);
+    } catch {}
+    data.headerData = headerData;
   }
 
   // Update url if we imported/moved the file
@@ -200,7 +205,7 @@ function examinePickleScanMessage({
   picklescanExitCode,
   picklescanDangerousImports,
   picklescanGlobalImports,
-}: ScanResult) {
+}: Omit<ScanResult, 'metadata'>) {
   if (picklescanExitCode === ScanExitCode.Pending) return {};
   picklescanDangerousImports ??= [];
   picklescanGlobalImports ??= [];
