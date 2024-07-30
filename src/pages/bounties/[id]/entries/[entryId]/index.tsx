@@ -575,7 +575,7 @@ export default function BountyEntryDetailsPage({
         <div className="flex w-full flex-col @md:flex-1">
           <div className="p-3 @md:hidden">{navigateBackSection}</div>
           <BountyEntryCarousel
-            className="aspect-square w-full overflow-hidden"
+            className="w-full overflow-hidden @max-md:aspect-square"
             onImageChange={setActiveImage}
             bountyEntry={bountyEntry}
             reactions={reactions}

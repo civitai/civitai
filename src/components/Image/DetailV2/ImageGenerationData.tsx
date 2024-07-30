@@ -16,7 +16,7 @@ export function ImageGenerationData({
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
 
   const { meta, resources } = data ?? {};
-  if (!meta && !resources) return null;
+  if (!meta && !resources?.length) return null;
 
   return (
     <Card className={`flex flex-col gap-3 ${rounded ? 'rounded-xl' : 'rounded-none'}`}>
