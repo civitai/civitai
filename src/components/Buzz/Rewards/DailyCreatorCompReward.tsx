@@ -34,7 +34,6 @@ import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
-import { externalTooltipHandler } from '~/libs/chartjs';
 import { formatDate, getDatesAsList, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
