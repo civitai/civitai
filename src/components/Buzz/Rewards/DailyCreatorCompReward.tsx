@@ -1,4 +1,5 @@
 import {
+  Button,
   Center,
   Grid,
   Group,
@@ -33,6 +34,7 @@ import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { externalTooltipHandler } from '~/libs/chartjs';
 import { getDatesAsList, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -81,12 +83,9 @@ export function DailyCreatorCompReward() {
   const options = useMemo<ChartOptions<'bar'>>(
     () => ({
       responsive: true,
+      maintainAspectRatio: false,
       scales: {
         y: {
-          title: {
-            display: true,
-            color: labelColor,
-          },
           stacked: true,
           suggestedMin: 0,
           ticks: {
@@ -114,8 +113,9 @@ export function DailyCreatorCompReward() {
             color: labelColor,
           },
         },
-        title: { display: false },
         tooltip: {
+          // enabled: false,
+          // external: externalTooltipHandler,
           callbacks: {
             footer(tooltipItems) {
               if (!filteredVersionIds.length) return;
@@ -157,10 +157,12 @@ export function DailyCreatorCompReward() {
 
     return [
       {
+        backgroundColor: theme.colors.yellow[7],
+        borderColor: theme.colors.yellow[7],
         data: data.map((resource) => ({ x: resource.createdAt, y: resource.total })),
       },
     ];
-  }, [filteredVersionIds, resources]);
+  }, [filteredVersionIds, resources, theme.colors.yellow]);
 
   if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
     return null;
@@ -186,7 +188,7 @@ export function DailyCreatorCompReward() {
     <Grid gutter="xs">
       <Grid.Col xs={12} md={8}>
         <Paper withBorder className={classes.tileCard} h="100%">
-          <Stack p="md">
+          <Stack p="md" h="100%">
             <Stack spacing={0}>
               <Group spacing={8} position="apart">
                 <Title order={3}>Generation Buzz Earned</Title>
@@ -213,14 +215,16 @@ export function DailyCreatorCompReward() {
               </Group>
             </Stack>
             {!isLoading && resources.length > 0 ? (
-              <Bar
-                key={filteredVersionIds.join('-')}
-                options={options}
-                data={{
-                  // labels,
-                  datasets,
-                }}
-              />
+              <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+                <Bar
+                  key={filteredVersionIds.join('-')}
+                  options={options}
+                  data={{
+                    // labels,
+                    datasets,
+                  }}
+                />
+              </div>
             ) : isLoading ? (
               <Center>
                 <Loader />
@@ -243,6 +247,11 @@ export function DailyCreatorCompReward() {
               value={search}
               onChange={(e) => setSearch(e.currentTarget.value)}
             />
+            {filteredVersionIds.length > 0 && (
+              <Button variant="subtle" size="xs" onClick={() => setFilteredVersionIds([])} compact>
+                Clear selection
+              </Button>
+            )}
             {isLoading ? (
               <Center px="md">
                 <Loader />
