@@ -282,7 +282,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
 async function getBuzzTasks(ctx: ImageMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent image tips
-    SELECT "entityId" as id
+    SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
     WHERE "entityType" = 'Image' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
   `;
@@ -293,7 +293,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
     await getMetrics(ctx)`
       -- update image tip metrics
       SELECT
-        "entityId",
+        "entityId" as "imageId",
         tf.timeframe,
         ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
         ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
