@@ -35,20 +35,20 @@ export const modelMetrics = createMetricProcessor({
     // Get the metric tasks
     //---------------------------------------
     const versionTasks = await Promise.all([
-      // getDownloadTasks(ctx),
-      // getGenerationTasks(ctx),
-      // getVersionRatingTasks(ctx),
+      getDownloadTasks(ctx),
+      getGenerationTasks(ctx),
+      getVersionRatingTasks(ctx),
       getVersionBuzzTasks(ctx),
     ]);
     log('modelVersionMetrics update', versionTasks.flat().length, 'tasks');
     for (const tasks of versionTasks) await limitConcurrency(tasks, 5);
 
     const modelTasks = await Promise.all([
-      // getModelRatingTasks(ctx),
-      // getCommentTasks(ctx),
-      // getCollectionTasks(ctx),
+      getModelRatingTasks(ctx),
+      getCommentTasks(ctx),
+      getCollectionTasks(ctx),
       getBuzzTasks(ctx),
-      // getVersionAggregationTasks(ctx),
+      getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
     for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
@@ -297,7 +297,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
 
 async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
-    -- get recent version donations. These are the only way to "tip" a model version 
+    -- get recent version donations. These are the only way to "tip" a model version
     SELECT "modelVersionId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
@@ -441,7 +441,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
     WHERE "entityId" IS NOT NULL AND "entityType" = 'Model'
       AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
 
-    UNION 
+    UNION
 
     SELECT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
