@@ -1613,7 +1613,9 @@ export const getSimpleModelWithVersions = async ({
 };
 
 export const updateModelEarlyAccessDeadline = async ({ id }: GetByIdInput) => {
-  const model = await dbRead.model.findUnique({
+  // Using dbWrite here cause immediately after a version has been unlocked it may update the model,
+  // meaning we need the latest version.
+  const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
       id: true,

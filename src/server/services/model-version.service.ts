@@ -139,6 +139,26 @@ export const upsertModelVersion = async ({
 }) => {
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
 
+  if (
+    updatedEarlyAccessConfig?.timeframe &&
+    !updatedEarlyAccessConfig?.chargeForDownload &&
+    !updatedEarlyAccessConfig?.chargeForGeneration
+  ) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you set an early access time frame.'
+    );
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
+    throw throwBadRequestError('You must provide a download price when charging for downloads.');
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForGeneration && !updatedEarlyAccessConfig.generationPrice) {
+    throw throwBadRequestError(
+      'You must provide a generation price when charging for generations.'
+    );
+  }
+
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
@@ -238,7 +258,11 @@ export const upsertModelVersion = async ({
     ) {
       // Check all changes related now:
 
-      if (updatedEarlyAccessConfig.downloadPrice > earlyAccessConfig.downloadPrice) {
+      if (
+        updatedEarlyAccessConfig.chargeForDownload &&
+        (updatedEarlyAccessConfig.downloadPrice as number) >
+          (earlyAccessConfig.downloadPrice as number)
+      ) {
         throw throwBadRequestError(
           'You cannot increase the download price on a model after it has been published.'
         );
@@ -1001,6 +1025,10 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('This model is public and does not require purchase.');
   }
 
+  if (type === 'download' && !earlyAccesConfig.chargeForDownload) {
+    throw throwBadRequestError('This model version does not support purchasing download.');
+  }
+
   if (
     type === 'generation' &&
     (!earlyAccesConfig.chargeForGeneration || !earlyAccesConfig.generationPrice)
@@ -1026,7 +1054,7 @@ export const earlyAccessPurchase = async ({
   let buzzTransactionId;
   const amount =
     type === 'download'
-      ? earlyAccesConfig.downloadPrice
+      ? (earlyAccesConfig.downloadPrice as number)
       : (earlyAccesConfig.generationPrice as number);
 
   try {
@@ -1099,7 +1127,7 @@ export const earlyAccessPurchase = async ({
       await createBuzzTransaction({
         fromAccountId: modelVersion.model.userId,
         toAccountId: userId,
-        amount: earlyAccesConfig.downloadPrice,
+        amount,
         type: TransactionType.Refund,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
