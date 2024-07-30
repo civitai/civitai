@@ -1689,6 +1689,7 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
+      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       p."availability",
       (
         CASE
