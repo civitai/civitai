@@ -53,67 +53,70 @@ export const processScheduledPublishing = createJob(
       AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
     `;
 
-    // Publish things
-    const transaction = [
-      dbWrite.$executeRaw`
+    await dbWrite.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`
       -- Update last version of scheduled models
       UPDATE "Model" SET "lastVersionAt" = ${now}
       WHERE id IN (
         SELECT
           mv."modelId"
         FROM "ModelVersion" mv
-        WHERE status = 'Scheduled' AND "publishedAt" <= ${now}
-      );`,
-    ];
+        WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+      );`;
 
-    if (scheduledModels.length) {
-      const scheduledModelIds = scheduledModels.map(({ id }) => id);
-      transaction.push(dbWrite.$executeRaw`
-        -- Make scheduled models published
-        UPDATE "Model" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelIds)})
-          AND status = 'Scheduled'
-          AND "publishedAt" <= ${now};
-      `);
-    }
+        if (scheduledModels.length) {
+          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+          await tx.$executeRaw`
+          -- Make scheduled models published
+          UPDATE "Model" SET status = 'Published'
+          WHERE id IN (${Prisma.join(scheduledModelIds)})
+            AND status = 'Scheduled'
+            AND "publishedAt" <= ${now};
+        `;
+        }
 
-    if (scheduledPosts.length) {
-      const scheduledPostIds = scheduledPosts.map(({ id }) => id);
-      transaction.push(dbWrite.$executeRaw`
-        -- Update scheduled versions posts
-        UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
-        FROM "ModelVersion" mv
-        JOIN "Model" m ON m.id = mv."modelId"
-        WHERE p.id IN (${Prisma.join(scheduledPostIds)})
-          AND (p."publishedAt" IS NULL)
-          AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-          AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
-      `);
-    }
+        if (scheduledPosts.length) {
+          const scheduledPostIds = scheduledPosts.map(({ id }) => id);
+          await tx.$executeRaw`
+          -- Update scheduled versions posts
+          UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
+          FROM "ModelVersion" mv
+          JOIN "Model" m ON m.id = mv."modelId"
+          WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+            AND (p."publishedAt" IS NULL)
+            AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
+            AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+        `;
+        }
 
-    if (scheduledModelVersions.length) {
-      const earlyAccess = scheduledModelVersions
-        .filter((item) => !!item.extras?.hasEarlyAccess)
-        .map(({ id }) => id);
+        if (scheduledModelVersions.length) {
+          const earlyAccess = scheduledModelVersions
+            .filter((item) => !!item.extras?.hasEarlyAccess)
+            .map(({ id }) => id);
 
-      transaction.push(dbWrite.$executeRaw`
+          await tx.$executeRaw`
         -- Update scheduled versions published
         UPDATE "ModelVersion" SET status = 'Published'
         WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
           AND status = 'Scheduled' AND "publishedAt" <= ${now};
-      `);
+      `;
 
-      if (earlyAccess.length) {
-        // The only downside to this failing is that the model version will be published with no early access.
-        // Initially, I think this will be OK.
-        await publishModelVersionsWithEarlyAccess({
-          modelVersionIds: earlyAccess,
-          continueOnError: true,
-        });
+          if (earlyAccess.length) {
+            // The only downside to this failing is that the model version will be published with no early access.
+            // Initially, I think this will be OK.
+            await publishModelVersionsWithEarlyAccess({
+              modelVersionIds: earlyAccess,
+              continueOnError: true,
+              tx,
+            });
+          }
+        }
+      },
+      {
+        timeout: 10000,
       }
-    }
-
-    await dbWrite.$transaction(transaction);
+    );
 
     // Process event engagements
     for (const model of scheduledModels) {
