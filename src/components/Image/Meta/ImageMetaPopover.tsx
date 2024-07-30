@@ -8,6 +8,7 @@ import { IconBrush } from '@tabler/icons-react';
 import { generationPanel } from '~/store/generation.store';
 import { encodeMetadata } from '~/utils/metadata';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 export function ImageMetaPopover2({
   imageId,
@@ -17,6 +18,9 @@ export function ImageMetaPopover2({
   children: React.ReactElement;
   // TODO - accept meta props
 }) {
+  const isClient = useIsClient();
+  if (!isClient) return children;
+
   return (
     <Popover className="relative">
       <PopoverButton>{children}</PopoverButton>

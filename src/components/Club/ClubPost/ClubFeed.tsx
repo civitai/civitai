@@ -336,22 +336,22 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
     );
   }
 
-  if (resourceData.entityType === 'Post' && resourceData.data) {
-    return (
-      <ImageCarousel
-        mobile={isMobile}
-        images={resourceData.data.images}
-        connectId={resourceData.entityId}
-        connectType="post"
-        onClick={(image) => {
-          triggerRoutedDialog({
-            name: 'imageDetail',
-            state: { imageId: image.id, filters: { postId: resourceData.data?.id } },
-          });
-        }}
-      />
-    );
-  }
+  // if (resourceData.entityType === 'Post' && resourceData.data) {
+  //   return (
+  //     <ImageCarousel
+  //       mobile={isMobile}
+  //       images={resourceData.data.images}
+  //       connectId={resourceData.entityId}
+  //       connectType="post"
+  //       onClick={(image) => {
+  //         triggerRoutedDialog({
+  //           name: 'imageDetail',
+  //           state: { imageId: image.id, filters: { postId: resourceData.data?.id } },
+  //         });
+  //       }}
+  //     />
+  //   );
+  // }
 
   return null;
 };

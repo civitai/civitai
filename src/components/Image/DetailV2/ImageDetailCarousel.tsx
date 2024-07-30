@@ -1,33 +1,72 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
 
-import { truncate } from 'lodash-es';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { constants } from '~/server/common/constants';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
 import useIsClient from '~/hooks/useIsClient';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
+import { UnstyledButton } from '@mantine/core';
+import { MediaType } from '@prisma/client';
 
-type ImageProps = { videoRef?: React.ForwardedRef<EdgeVideoRef> };
+type ImageDetailCarouselProps = {
+  videoRef?: React.ForwardedRef<EdgeVideoRef>;
+  connect?: ConnectProps;
+};
+type ImageProps = {
+  id: number;
+  nsfwLevel: number;
+  url: string;
+  height: number | null;
+  width: number | null;
+  type: MediaType;
+  name: string | null;
+};
 
-export function ImageDetailCarousel(props: ImageProps) {
-  const { images, index, canNavigate, connect, navigate } = useImageDetailContext();
-  const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
+type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
+type State = ReturnType<typeof useCarouselNavigation<ImageProps>>;
+const ImageDetailCarouselContext = createContext<State | null>(null);
 
+function useImageDetailCarouselContext() {
+  const context = useContext(ImageDetailCarouselContext);
+  if (!context) throw new Error('missing ImageDetailCarouselContext in tree');
+  return context;
+}
+
+export function ImageDetailCarouselProvider<T extends ImageProps>({
+  children,
+  ...args
+}: Props<T> & { children: React.ReactNode }) {
+  const state = useCarouselNavigation(args);
+
+  return (
+    <ImageDetailCarouselContext.Provider value={state}>
+      {children}
+    </ImageDetailCarouselContext.Provider>
+  );
+}
+
+export function ImageDetailCarousel({
+  images,
+  videoRef,
+  connect,
+  index,
+  canNavigate,
+  navigate,
+}: ImageDetailCarouselProps & {
+  images: ImageProps[];
+  index: number;
+  navigate?: (index: number) => void;
+  canNavigate: boolean;
+}) {
   const [embla, setEmbla] = useState<Embla | null>(null);
+
   const [slidesInView, setSlidesInView] = useState<number[]>([index]);
-  const handleSlideChange = (slide: number) => {
-    const imageId = images[slide]?.id;
-    if (imageId) navigateRef.current(imageId);
-  };
 
   useEffect(() => {
     if (!embla) return;
@@ -64,7 +103,6 @@ export function ImageDetailCarousel(props: ImageProps) {
   useEffect(() => {
     if (!slidesInView.includes(index)) {
       embla?.scrollTo(index, true);
-      // setSlidesInView([...embla.slidesInView(true)]);
     }
   }, [index, slidesInView]); // eslint-disable-line
 
@@ -76,7 +114,7 @@ export function ImageDetailCarousel(props: ImageProps) {
         key={images.length}
         withControls={canNavigate}
         className="flex-1"
-        onSlideChange={handleSlideChange}
+        onSlideChange={navigate}
         getEmblaApi={setEmbla}
         height="100%"
         initialSlide={index}
@@ -87,7 +125,7 @@ export function ImageDetailCarousel(props: ImageProps) {
       >
         {images.map((image, i) => (
           <Carousel.Slide key={image.id}>
-            {index === i && <ImageContent image={image} {...connect} {...props} />}
+            {index === i && <ImageContent image={image} {...connect} videoRef={videoRef} />}
           </Carousel.Slide>
         ))}
       </Carousel>
@@ -98,7 +136,8 @@ export function ImageDetailCarousel(props: ImageProps) {
 function ImageContent({
   image,
   videoRef,
-}: { image: ImagesInfiniteModel } & ConnectProps & ImageProps) {
+  ...connect
+}: { image: ImageProps } & ConnectProps & ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -108,19 +147,29 @@ function ImageContent({
   // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
   const isClient = useIsClient();
 
+  const imageHeight = image?.height ?? 1200;
+  const imageWidth = image?.width ?? 1200;
+
   const { setRef, height, width } = useAspectRatioFit({
-    height: image?.height ?? 1200,
-    width: image?.width ?? 1200,
+    height: imageHeight,
+    width: imageWidth,
   });
 
   const isVideo = image?.type === 'video';
 
   return (
-    <ImageGuardContent image={image}>
+    <ImageGuardContent image={image} {...connect}>
       {(safe) => (
         <div ref={setRef} className="relative flex size-full items-center justify-center">
-          {!safe ? (
-            <div className="relative size-full" style={{ maxHeight: height, maxWidth: width }}>
+          {!safe && width && height ? (
+            <div
+              className="relative flex max-h-full max-w-full flex-1"
+              style={{
+                maxHeight: height > 0 ? height : undefined,
+                maxWidth: width > 0 ? width : undefined,
+                aspectRatio: width > 0 ? `${width}/${height}` : undefined,
+              }}
+            >
               <MediaHash {...image} />
             </div>
           ) : (
@@ -150,5 +199,27 @@ function ImageContent({
         </div>
       )}
     </ImageGuardContent>
+  );
+}
+
+export function ImageDetailCarouselIndicators() {
+  const { indicators, index, navigate } = useImageDetailCarouselContext();
+
+  if (!indicators) return null;
+
+  return (
+    <div className="flex justify-center gap-1">
+      {new Array(indicators).map((_, i) => (
+        <UnstyledButton
+          key={i}
+          data-active={i === index || undefined}
+          aria-hidden
+          tabIndex={-1}
+          onClick={() => navigate(i)}
+          className={`h-1 max-w-6 flex-1 rounded border border-solid border-gray-4 bg-white shadow-2xl
+    ${i !== index ? 'dark:opacity-50' : 'bg-blue-6 dark:bg-white'}`}
+        />
+      ))}
+    </div>
   );
 }
