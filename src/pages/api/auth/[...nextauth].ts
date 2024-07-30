@@ -111,7 +111,11 @@ export function createAuthOptions(): NextAuthOptions {
               where: { email },
               select: { id: true },
             });
-            if (alreadyExists) return '/login?error=NoExtraEmails';
+
+            // Needs to return false to prevent login,
+            // otherwise next-auth fails because of a bug
+            // if we return a string and it's set to redirect: false
+            if (alreadyExists) return false;
           }
         }
 
