@@ -257,8 +257,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    // TODO fix pinned
-    const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     const modelGallerySettings = input.modelId
@@ -270,7 +269,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await getAllImages({
+      const { items: pinnedPostsImages } = await getAllImagesPost({
         ...input,
         limit: limit * 3,
         followed: false,

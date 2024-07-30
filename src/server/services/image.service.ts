@@ -1244,6 +1244,7 @@ export const getAllImagesPost = async (
     fromPlatform,
     hasMeta: include.includes('meta'),
     baseModels,
+    postIds,
     period,
     sort,
     limit,
@@ -1320,6 +1321,7 @@ type ImageSearchInput = {
   fromPlatform?: boolean;
   notPublished?: boolean;
   baseModels?: string[];
+  postIds?: number[];
   period?: MetricTimeframe;
   browsingLevel?: NsfwLevel;
   sort?: ImageSort;
@@ -1362,6 +1364,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     period,
     currentUserId,
     isModerator,
+    postIds,
   } = input;
   let { browsingLevel } = input;
 
@@ -1404,6 +1407,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
 
   if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
+  if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
   // Handle period filter
   let afterDate: Date | undefined;
