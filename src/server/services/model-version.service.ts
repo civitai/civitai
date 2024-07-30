@@ -139,6 +139,26 @@ export const upsertModelVersion = async ({
 }) => {
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
 
+  if (
+    updatedEarlyAccessConfig?.timeframe &&
+    !updatedEarlyAccessConfig?.chargeForDownload &&
+    !updatedEarlyAccessConfig?.chargeForGeneration
+  ) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you set an early access time frame.'
+    );
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
+    throw throwBadRequestError('You must provide a download price when charging for downloads.');
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForGeneration && !updatedEarlyAccessConfig.generationPrice) {
+    throw throwBadRequestError(
+      'You must provide a generation price when charging for generations.'
+    );
+  }
+
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
@@ -228,29 +248,6 @@ export const upsertModelVersion = async ({
     ) {
       throw throwBadRequestError(
         'You cannot add early access on a model after it has been published.'
-      );
-    }
-
-    if (
-      updatedEarlyAccessConfig?.timeframe &&
-      !updatedEarlyAccessConfig?.chargeForDownload &&
-      !updatedEarlyAccessConfig?.chargeForGeneration
-    ) {
-      throw throwBadRequestError(
-        'You must charge for downloads or generations if you set an early access time frame.'
-      );
-    }
-
-    if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
-      throw throwBadRequestError('You must provide a download price when charging for downloads.');
-    }
-
-    if (
-      updatedEarlyAccessConfig?.chargeForGeneration &&
-      !updatedEarlyAccessConfig.generationPrice
-    ) {
-      throw throwBadRequestError(
-        'You must provide a generation price when charging for generations.'
       );
     }
 
