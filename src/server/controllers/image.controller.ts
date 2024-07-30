@@ -343,7 +343,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      const createdAt = images.map((image) => image.createdAt).sort()[0];
+      const createdAt = images.map((image) => image.sortAt).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -354,11 +354,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
       return {
         postId: image.postId as number,
-        postTitle: image.postTitle,
-        pinned: image.postId && pinned[image.postId] ? true : false,
+        // postTitle: image.postTitle,
+        pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt: image.publishedAt,
+        publishedAt: image.sortAt,
         createdAt,
         user,
         images,

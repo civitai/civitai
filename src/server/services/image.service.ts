@@ -1256,23 +1256,23 @@ export const getAllImagesPost = async (
 
   // return getAllImages({ ...input, ids: searchIds });
 
-  console.time('ADDITIONAL');
-  const additionalData = await dbRead.image.findMany({
-    where: { id: { in: searchIds } },
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      width: true,
-      height: true,
-      nsfwLevel: true,
-      createdAt: true,
-      index: true,
-      user: { select: { id: true, image: true, username: true, deletedAt: true } },
-      post: { select: { publishedAt: true, title: true, modelVersionId: true } },
-    },
-  });
-  console.timeEnd('ADDITIONAL');
+  // console.time('ADDITIONAL');
+  // const additionalData = await dbRead.image.findMany({
+  //   where: { id: { in: searchIds } },
+  //   select: {
+  //     id: true,
+  //     name: true,
+  //     type: true,
+  //     width: true,
+  //     height: true,
+  //     nsfwLevel: true,
+  //     createdAt: true,
+  //     index: true,
+  //     user: { select: { id: true, image: true, username: true, deletedAt: true } },
+  //     post: { select: { publishedAt: true, title: true, modelVersionId: true } },
+  //   },
+  // });
+  // console.timeEnd('ADDITIONAL');
 
   console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1289,20 +1289,13 @@ export const getAllImagesPost = async (
   }
   console.timeEnd('REACTION');
 
-  const mergedData = additionalData.map((ad) => {
-    const searchMatch = searchResults.find((sr) => sr.id === ad.id)!;
+  // TODO may need to check for image existence in db
+  const mergedData = searchResults.map((sr) => {
     const reactions =
-      userReactions?.[ad.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [];
-
+      userReactions?.[sr.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [];
     return {
-      ...searchMatch,
-      onSite: searchMatch.madeOnSite,
-      //
-      ...ad,
-      postTitle: ad.post?.title,
-      publishedAt: ad.post?.publishedAt,
-      modelVersionId: ad.post?.modelVersionId,
-      //
+      ...sr,
+      modelVersionId: sr.postedToId,
       reactions,
     };
   });

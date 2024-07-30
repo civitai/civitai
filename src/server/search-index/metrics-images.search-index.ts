@@ -1,12 +1,10 @@
-import { ImageIngestionStatus, ImageTag, Prisma } from '@prisma/client';
+import { ImageTag, Prisma } from '@prisma/client';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
@@ -98,7 +96,7 @@ export type SearchBaseImage = {
   width: number;
   height: number;
   userId: number;
-  published: boolean;
+  // published: boolean;
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
@@ -160,7 +158,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ userId, ...imageRecord }) => {
+    .map((imageRecord) => {
       const tags = rawTags
         .filter((rt) => rt.imageId === imageRecord.id)
         .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
@@ -191,7 +189,7 @@ const transformData = async ({
         techniques: imageTechniques,
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
-        nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
+        nsfwLevel: imageRecord.nsfwLevel,
         tags: tags.map((t) => t.name),
       };
     })
@@ -199,8 +197,8 @@ const transformData = async ({
 
   return records;
 };
-type ImagesMetricsDetails = Awaited<ReturnType<typeof transformData>>;
 
+type ImagesMetricsDetails = Awaited<ReturnType<typeof transformData>>;
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 // TODO.imageMetrics create another index updater for specifically updating metrics
@@ -258,11 +256,10 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             THEN TRUE
             ELSE FALSE
           END
-        ) as "madeOnSite",
-        p."modelVersionId" as "postedToId",
+        ) as "onSite",
+        p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
-
         WHERE ${Prisma.join(where, ' AND ')}
       `;
 
@@ -363,7 +360,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     if (step === 4) {
       // Cosmetics:
       const { images, ...other } = prevData as {
-        images: BaseImage[];
+        images: SearchBaseImage[];
         rawTags: ImageTag[];
         metrics: Metrics[];
         tools: ImageTool[];
