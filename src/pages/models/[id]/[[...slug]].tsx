@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Alert,
+  Anchor,
   Badge,
   Box,
   Button,
@@ -16,6 +17,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
@@ -626,9 +628,18 @@ export default function ModelDetailsV2({
                     </IconBadge>
                   </InteractiveTipBuzzButton>
                   {inEarlyAccess && (
-                    <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
-                      Early Access
-                    </IconBadge>
+                    <Tooltip
+                      label={
+                        <Text>
+                          Early Access helps creators monetize,{' '}
+                          <Anchor href="/articles/6341">learn more here</Anchor>
+                        </Text>
+                      }
+                    >
+                      <IconBadge radius="sm" color="green" size="lg" icon={<IconClock size={18} />}>
+                        Early Access
+                      </IconBadge>
+                    </Tooltip>
                   )}
                 </Group>
 

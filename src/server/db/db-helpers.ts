@@ -190,3 +190,60 @@ export async function dataProcessor({
     };
   }, concurrency);
 }
+
+export type BatchRunContext = {
+  cancelFns: (() => Promise<void>)[];
+  batchSize: number;
+  concurrency: number;
+};
+type BatchProcessorOptions = {
+  batchFetcher: (context: BatchRunContext) => Promise<number[]>;
+  processor: (
+    context: BatchRunContext & { batch: number[]; batchNumber: number; batchCount: number }
+  ) => Promise<void>;
+  enableLogging?: boolean;
+  runContext: {
+    on: (event: 'close', listener: () => void) => void;
+  };
+  params: {
+    batchSize: number;
+    concurrency: number;
+    ids?: number[];
+    start?: number;
+    end?: number;
+  };
+};
+export async function batchProcessor({
+  batchFetcher,
+  processor,
+  runContext,
+  params,
+}: BatchProcessorOptions) {
+  const cancelFns: (() => Promise<void>)[] = [];
+  let stop = false;
+  runContext.on('close', async () => {
+    console.log('Cancelling');
+    stop = true;
+    await Promise.all(cancelFns.map((cancel) => cancel()));
+  });
+
+  let { batchSize, concurrency, ids } = params;
+  if (stop) return;
+  const context = { ...params, cancelFns };
+  ids ??= await batchFetcher(context);
+
+  let cursor = params.start ?? 0;
+  const batchCount = params.end ?? Math.ceil(ids.length / batchSize);
+  await limitConcurrency(() => {
+    if (stop || cursor >= batchCount) return null;
+    const start = cursor;
+    cursor++;
+    const end = cursor;
+
+    const batch = ids.slice(start * batchSize, end * batchSize);
+    const batchNumber = cursor;
+    return async () => {
+      await processor({ ...context, batch, batchNumber, batchCount });
+    };
+  }, concurrency);
+}

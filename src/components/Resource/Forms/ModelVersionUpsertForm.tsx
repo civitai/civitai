@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Card,
   Divider,
   Group,
@@ -9,6 +10,7 @@ import {
   Switch,
   Text,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
@@ -57,6 +59,7 @@ import {
 import { ModelUpsertInput } from '~/server/schema/model.schema';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -289,6 +292,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
+  const resourceLabel = getDisplayName(model?.type ?? '').toLowerCase();
 
   return (
     <>
@@ -310,7 +314,21 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 id="ea-info"
                 size="sm"
                 color="yellow"
-                title="Earn Buzz with early access!"
+                title={
+                  <Group spacing="xs">
+                    <Text>Earn Buzz with early access! </Text>
+                    <Tooltip
+                      label={
+                        <Text>
+                          Early Access helps creators monetize,{' '}
+                          <Anchor href="/articles/6341">learn more here</Anchor>
+                        </Text>
+                      }
+                    >
+                      <IconInfoCircle size={16} />
+                    </Tooltip>
+                  </Group>
+                }
                 content={
                   <>
                     <Text size="xs">
@@ -339,6 +357,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     e.target.checked
                       ? {
                           timeframe: constants.earlyAccess.timeframeValues[0],
+                          chargeForDownload: true,
                           downloadPrice: 500,
                           chargeForGeneration: false,
                           generationPrice: 100,
@@ -354,7 +373,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               {earlyAccessConfig && (
                 <Stack>
                   <Input.Wrapper
-                    label="Early Access Time Frame"
+                    label={
+                      <Group spacing="xs">
+                        <Text weight="bold">Early Access Time Frame</Text>
+                        <Tooltip label="The amount of resources you can have in early access and for how long is determined by actions you've taken on the site. increase your limits by posting more free models that people want, being kind, and generally doing good within the community.">
+                          <IconInfoCircle size={16} />
+                        </Tooltip>
+                      </Group>
+                    }
                     description="How long would you like to offer early access to your version from the date of publishing?"
                     error={form.formState.errors.earlyAccessConfig?.message}
                   >
@@ -403,22 +429,28 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                   </Input.Wrapper>
                   <Stack mt="sm">
-                    <InputNumber
-                      name="earlyAccessConfig.downloadPrice"
-                      label="Download price"
-                      description="How much would you like to charge for your version download?"
-                      min={500}
-                      step={100}
-                      icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                      withAsterisk
+                    <InputSwitch
+                      name="earlyAccessConfig.chargeForDownload"
+                      label="Allow users to pay for download (Includes ability to generate)"
+                      description={`This will require users to pay buzz to download  your ${resourceLabel} during the early access period`}
                       disabled={isEarlyAccessOver}
                     />
+                    {earlyAccessConfig?.chargeForDownload && (
+                      <InputNumber
+                        name="earlyAccessConfig.downloadPrice"
+                        label="Download price"
+                        description=" How much buzz would you like to charge for your version download?"
+                        min={500}
+                        step={100}
+                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        withAsterisk
+                        disabled={isEarlyAccessOver}
+                      />
+                    )}
                     <InputSwitch
                       name="earlyAccessConfig.chargeForGeneration"
                       label="Allow users to pay for generation only - no download."
-                      description={
-                        'This will allow users to pay for generation only, but will not grant the ability to download. Payments for download already cover generation.'
-                      }
+                      description={`This will require users to pay buzz to generate with your ${resourceLabel} during the early access period`}
                       disabled={isEarlyAccessOver}
                     />
                     {earlyAccessConfig?.chargeForGeneration && (
@@ -426,7 +458,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         <InputNumber
                           name="earlyAccessConfig.generationPrice"
                           label="Generation price"
-                          description="How much would you like to charge for your version download?"
+                          description="How much would you like to charge to generate with your version?"
                           min={100}
                           max={earlyAccessConfig?.downloadPrice}
                           step={100}
@@ -436,7 +468,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         <InputNumber
                           name="earlyAccessConfig.generationTrialLimit"
                           label="Free Trial Limit"
-                          description="How many free generations would you like to offer to users who have not paid for generation or download?"
+                          description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
                           min={10}
                           disabled={isEarlyAccessOver}
                         />

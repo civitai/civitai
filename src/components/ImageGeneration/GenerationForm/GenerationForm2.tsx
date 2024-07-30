@@ -65,7 +65,6 @@ import {
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
-import { generationPanel } from '~/store/generation.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -123,7 +122,6 @@ export function GenerationFormContent() {
   const { classes, cx, theme } = useStyles();
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { requireLogin } = useLoginRedirect({ reason: 'image-gen', returnUrl: '/generate' });
   const status = useGenerationStatus();
 
   const form = useGenerationForm();
@@ -197,12 +195,6 @@ export function GenerationFormContent() {
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
   function handleSubmit(data: GenerationFormOutput) {
-    if (!currentUser) {
-      requireLogin();
-      generationPanel.close();
-      return;
-    }
-
     const { cost = 0 } = useCostStore.getState();
 
     const {
@@ -957,36 +949,41 @@ export function GenerationFormContent() {
                 </Button>
               </Alert>
             )}
-            <QueueSnackbar />
-            <div className="flex gap-2">
-              <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
-                <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
-                  Quantity
-                </Text>
-                <Watch {...form} fields={['draft']}>
-                  {({ draft }) => {
-                    const isDraft = features.draft && draft;
-                    return (
-                      <InputQuantity
-                        name="quantity"
-                        className={classes.generateButtonQuantityInput}
-                        min={!!isDraft ? 4 : 1}
-                        max={
-                          !!isDraft
-                            ? Math.floor(status.limits.quantity / 4) * 4
-                            : status.limits.quantity
-                        }
-                        step={!!isDraft ? 4 : 1}
-                      />
-                    );
-                  }}
-                </Watch>
-              </Card>
-              <SubmitButton isLoading={isLoading} />
-              <Button onClick={handleReset} variant="default" className="h-auto px-3">
-                Reset
-              </Button>
-            </div>
+            {reviewed && (
+              <>
+                <QueueSnackbar />
+                <div className="flex gap-2">
+                  <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
+                    <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
+                      Quantity
+                    </Text>
+                    <Watch {...form} fields={['draft']}>
+                      {({ draft }) => {
+                        const isDraft = features.draft && draft;
+                        return (
+                          <InputQuantity
+                            name="quantity"
+                            className={classes.generateButtonQuantityInput}
+                            min={!!isDraft ? 4 : 1}
+                            max={
+                              !!isDraft
+                                ? Math.floor(status.limits.quantity / 4) * 4
+                                : status.limits.quantity
+                            }
+                            step={!!isDraft ? 4 : 1}
+                          />
+                        );
+                      }}
+                    </Watch>
+                  </Card>
+
+                  <SubmitButton isLoading={isLoading} />
+                  <Button onClick={handleReset} variant="default" className="h-auto px-3">
+                    Reset
+                  </Button>
+                </div>
+              </>
+            )}
             {status.available && status.message && (
               <AlertWithIcon
                 color="yellow"

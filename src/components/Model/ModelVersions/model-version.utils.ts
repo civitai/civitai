@@ -32,7 +32,6 @@ export const useQueryModelVersionsEngagement = (
 
 export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId: number }) => {
   const { data: modelVersion } = trpc.modelVersion.getById.useQuery({ id: modelVersionId });
-
   const { data: entities, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
     {
       entityId: [modelVersionId],
@@ -61,6 +60,7 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId: 
     earlyAccessEndsAt: modelVersion?.earlyAccessEndsAt,
     earlyAccessConfig: !isEarlyAccess ? undefined : earlyAccessConfig,
     modelVersion,
+    isEarlyAccess,
   };
 };
 

@@ -96,6 +96,7 @@ module.exports = {
   },
   plugins: [
     require('./src/tailwind/container-queries'),
+    require('@tailwindcss/aspect-ratio'),
     plugin(function ({ matchUtilities, theme, addUtilities, addVariant, e }) {
       matchUtilities(
         {

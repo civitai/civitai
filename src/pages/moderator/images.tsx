@@ -105,6 +105,7 @@ const ImageReviewType = {
   minor: 'Minors',
   poi: 'POI',
   tag: 'Blocked Tags',
+  newUser: 'New Users',
   reported: 'Reported',
   csam: 'CSAM',
 } as const;
