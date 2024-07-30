@@ -231,6 +231,16 @@ export const upsertModelVersion = async ({
       );
     }
 
+    if (
+      updatedEarlyAccessConfig?.timeframe &&
+      !updatedEarlyAccessConfig?.chargeForDownload &&
+      !updatedEarlyAccessConfig?.chargeForGeneration
+    ) {
+      throw throwBadRequestError(
+        'You must charge for downloads or generations if you set an early access time frame.'
+      );
+    }
+
     if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
       throw throwBadRequestError('You must provide a download price when charging for downloads.');
     }
