@@ -13,7 +13,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesSearchIndex } from '~/server/search-index';
-import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
+import {
+  deleteImageById,
+  getAllImagesPost,
+  updateImageReportStatusByReason,
+} from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -252,7 +256,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    // TODO fix pinned
     const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
@@ -283,7 +288,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     while (true) {
-      const { nextCursor, items } = await getAllImages({
+      // TODO handle/remove all these (headers, include, ids)
+      const { nextCursor, items } = await getAllImagesPost({
         ...input,
         followed: false,
         cursor,

@@ -932,17 +932,17 @@ export const getAllImages = async (
   }
 
   // TODO.metricSearch add missing props
-  const searchResults = await getImagesFromSearch({
-    modelVersionId,
-    types,
-    browsingLevel,
-    fromPlatform,
-    hasMeta: include.includes('meta'),
-    baseModels,
-    period,
-    sort,
-  });
-  console.log(searchResults[0], searchResults.length);
+  // const searchResults = await getImagesFromSearch({
+  //   modelVersionId,
+  //   types,
+  //   browsingLevel,
+  //   fromPlatform,
+  //   hasMeta: include.includes('meta'),
+  //   baseModels,
+  //   period,
+  //   sort,
+  // });
+  // console.log(searchResults[0], searchResults.length);
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1195,7 +1195,129 @@ export const getAllImagesPost = async (
     user?: SessionUser;
     headers?: Record<string, string>;
   }
-) => {};
+) => {
+  const {
+    limit,
+    cursor,
+    skip,
+    postId,
+    postIds,
+    collectionId, // TODO - call this from separate method?
+    modelId,
+    modelVersionId,
+    imageId, // TODO - remove, not in use
+    username, // TODO - query by `userId` instead
+    period,
+    periodMode,
+    tags,
+    generation,
+    reviewId, // TODO - remove, not in use
+    prioritizedUserIds,
+    include,
+    excludeCrossPosts,
+    reactions, // TODO - remove, not in use
+    ids,
+    includeBaseModel,
+    types,
+    hidden,
+    followed,
+    fromPlatform,
+    user,
+    pending,
+    notPublished,
+    tools,
+    techniques,
+    baseModels,
+    collectionTagId,
+    excludedUserIds,
+    userId,
+  } = input;
+  let { sort, browsingLevel } = input;
+
+  const offset = cursor as number | undefined;
+
+  console.time('SEARCH IDS');
+  const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
+    modelVersionId,
+    types,
+    browsingLevel,
+    fromPlatform,
+    hasMeta: include.includes('meta'),
+    baseModels,
+    period,
+    sort,
+    limit,
+    offset,
+  });
+  console.timeEnd('SEARCH IDS');
+  console.log(searchResults[0]?.id, searchResults.length);
+
+  const searchIds = searchResults.map((sr) => sr.id);
+
+  // return getAllImages({ ...input, ids: searchIds });
+
+  console.time('ADDITIONAL');
+  const additionalData = await dbRead.image.findMany({
+    where: { id: { in: searchIds } },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      width: true,
+      height: true,
+      nsfwLevel: true,
+      createdAt: true,
+      index: true,
+      user: { select: { id: true, image: true, username: true, deletedAt: true } },
+      post: { select: { publishedAt: true, title: true, modelVersionId: true } },
+    },
+  });
+  console.timeEnd('ADDITIONAL');
+
+  console.time('REACTION');
+  let userReactions: Record<number, ReviewReactions[]> | undefined;
+  if (userId) {
+    const reactionsRaw = await dbRead.imageReaction.findMany({
+      where: { imageId: { in: searchIds }, userId },
+      select: { imageId: true, reaction: true },
+    });
+    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
+      acc[imageId] ??= [] as ReviewReactions[];
+      acc[imageId].push(reaction);
+      return acc;
+    }, {} as Record<number, ReviewReactions[]>);
+  }
+  console.timeEnd('REACTION');
+
+  const mergedData = additionalData.map((ad) => {
+    const searchMatch = searchResults.find((sr) => sr.id === ad.id)!;
+    const reactions =
+      userReactions?.[ad.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [];
+
+    return {
+      ...searchMatch,
+      onSite: searchMatch.madeOnSite,
+      //
+      ...ad,
+      postTitle: ad.post?.title,
+      publishedAt: ad.post?.publishedAt,
+      modelVersionId: ad.post?.modelVersionId,
+      //
+      reactions,
+    };
+  });
+
+  // let nextCursor: string | undefined;
+  let nextCursor: number | undefined;
+  if (searchTotal) {
+    nextCursor = (offset ?? 0) + limit;
+  }
+
+  return {
+    nextCursor,
+    items: mergedData,
+  };
+};
 
 const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
 type ImageSearchInput = {
@@ -1222,12 +1344,13 @@ type ImageSearchInput = {
   currentUserId?: number;
   isModerator?: boolean;
 };
+
 function strArray(arr: any[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
-async function getImagesFromSearch(input: ImageSearchInput) {
-  if (!metricsClient) return [];
 
+async function getImagesFromSearch(input: ImageSearchInput) {
+  if (!metricsClient) return { data: [], total: 0 };
   const {
     sort,
     modelVersionId,
@@ -1297,6 +1420,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
 
+  // TODO remove, this is for 6/21 dev
+  filters.push(`sortAtUnix <= 1719002520000`);
+
   // Log properties we don't support yet
   const cantProcess: Record<string, any> = {
     reviewId,
@@ -1352,12 +1478,27 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     const fullData = results.hits.map((h) => {
       const match = imageMetrics.find((im) => im.id === h.id);
-      return { ...h, ...match };
+      return {
+        ...h,
+        stats: {
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+          dislikeCountAllTime: 0,
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+        },
+      };
     });
 
     // console.log(fullData[0]);
 
-    return fullData;
+    return {
+      data: fullData,
+      total: results.estimatedTotalHits,
+    };
   } catch (error) {
     const err = error as Error;
     logToAxiom(
@@ -1370,7 +1511,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       },
       'temp-search'
     );
-    return [];
+    return { data: [], total: 0 };
   }
 }
 
@@ -1416,9 +1557,11 @@ const getImageMetrics = async (ids: number[]) => {
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);
 }
+
 export async function clearImageTagIdsCache(imageId: number | number[]) {
   await tagIdsForImagesCache.bust(imageId);
 }
+
 export async function updateImageTagIdsForImages(imageId: number | number[]) {
   await tagIdsForImagesCache.refresh(imageId);
 }
@@ -1847,6 +1990,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
     images
   );
 }
+
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
@@ -2939,6 +3083,7 @@ type POITag = {
   name: string;
   count: number;
 };
+
 export async function getModeratorPOITags() {
   const tags = await dbRead.$queryRaw<POITag[]>`
     WITH real_person_tags AS MATERIALIZED (
@@ -2968,6 +3113,7 @@ type NameReference = {
   tagId: number;
   name: string;
 };
+
 async function removeNameReference(images: number[]) {
   const tasks = chunk(images, 500).map((images) => async () => {
     // Get images to de-reference
@@ -3271,6 +3417,7 @@ export async function updateImageTools({
     purgeImageGenerationDataCache(imageId);
   }
 }
+
 // #endregion
 
 // #region [image techniques]
@@ -3339,12 +3486,15 @@ export async function updateImageTechniques({
     purgeImageGenerationDataCache(imageId);
   }
 }
+
 // #endregion
 
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
+
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
+
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },
