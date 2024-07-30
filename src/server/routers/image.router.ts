@@ -58,6 +58,7 @@ import {
   addImageTechniques,
   getImageDetail,
   getImageGenerationData,
+  getImagesByUserIdForModeration,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -185,5 +186,11 @@ export const imageRouter = router({
   getContestCollectionDetails: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getImageContestCollectionDetailsHandler({ input })),
+  // #endregion
+
+  // #region [moderation]
+  getImagesByUserIdForModeration: moderatorProcedure
+    .input(z.object({ userId: z.number() }))
+    .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
   // #endregion
 });
