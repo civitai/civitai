@@ -338,7 +338,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
       // If user is new and image is NSFW send it for review
       const [{ isNewUser }] =
         (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
-        SELECT is_new_user(${image.userId}) "isNewUser";
+        SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
       `) ?? [];
       if (isNewUser) reviewKey = 'newUser';
     }
