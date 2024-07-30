@@ -533,7 +533,7 @@ export const getAllImages = async (
     headers?: Record<string, string>; // does this do anything?
   }
 ) => {
-  let {
+  const {
     limit,
     cursor,
     skip,
@@ -546,7 +546,6 @@ export const getAllImages = async (
     username, // TODO - query by `userId` instead
     period,
     periodMode,
-    sort,
     tags,
     generation,
     reviewId, // TODO - remove, not in use
@@ -560,7 +559,6 @@ export const getAllImages = async (
     hidden,
     followed,
     fromPlatform,
-    browsingLevel,
     user,
     pending,
     notPublished,
@@ -570,6 +568,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
   } = input;
+  let { sort, browsingLevel } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -1229,7 +1228,7 @@ function strArray(arr: any[]) {
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return [];
 
-  let {
+  const {
     sort,
     modelVersionId,
     types,
@@ -1245,10 +1244,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     baseModels,
     excludeUserIds,
     period,
-    browsingLevel,
     currentUserId,
     isModerator,
   } = input;
+  let { browsingLevel } = input;
 
   // TODO.metricSearch remove hash, cosmetic
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
@@ -1736,8 +1735,7 @@ export const getImagesForModelVersion = async ({
         JOIN "Post" p ON p.id = i."postId"
         JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
-        WHERE m."userId" != -1
-          AND (p."userId" = m."userId" OR m."userId" = -1)
+        WHERE (p."userId" = m."userId" OR m."userId" = -1)
           AND p."modelVersionId" IN (${Prisma.join(modelVersionIds)})
           AND ${Prisma.join(imageWhere, ' AND ')}
 

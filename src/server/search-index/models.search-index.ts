@@ -6,7 +6,6 @@ import { isEqual } from 'lodash-es';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { TypoTolerance } from 'meilisearch';
-import { getImagesForModelVersion } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCategoryTags } from '~/server/services/system-cache';
@@ -17,11 +16,13 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { NsfwLevel } from '../common/enums';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { imagesForModelVersionsCache } from '~/server/redis/caches';
+import { ImagesForModelVersions } from '~/server/services/image.service';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
-const READ_BATCH_SIZE = 1000;
+const READ_BATCH_SIZE = 500;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
 const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
@@ -57,10 +58,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'metrics.thumbsUpCount',
     'createdAt',
     'metrics.commentCount',
-    'metrics.favoriteCount',
     'metrics.downloadCount',
-    'metrics.rating',
-    'metrics.ratingCount',
     'metrics.collectedCount',
     'metrics.tippedAmountCount',
   ];
@@ -196,45 +194,17 @@ type Model = Prisma.ModelGetPayload<{
   select: typeof modelSelect;
 }>;
 
-const tagsOnImagesSelect = {
-  imageId: true,
-  tag: {
-    select: {
-      id: true,
-      name: true,
-    },
-  },
-};
-
-type TagsOnImages = Prisma.TagsOnImageGetPayload<{
-  select: typeof tagsOnImagesSelect;
-}>;
-
 const transformData = async ({
   models,
   cosmetics,
   images,
-  tagsOnImages,
 }: {
   models: Model[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
-  images: Awaited<ReturnType<typeof getImagesForModelVersion>>;
-  tagsOnImages: TagsOnImages[];
+  images: ImagesForModelVersions[];
 }) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
-
-  // Get tags for each image:
-  const imagesWithTags = images.map((image) => {
-    const imageTags = tagsOnImages
-      .filter((tagOnImage) => tagOnImage.imageId === image.id)
-      .map((tagOnImage) => tagOnImage.tag);
-
-    return {
-      ...image,
-      tags: imageTags,
-    };
-  });
 
   const unavailableGenResources = await getUnavailableResources();
 
@@ -247,7 +217,7 @@ const transformData = async ({
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
         (metrics.ratingCount + RATING_BAYESIAN_C);
 
-      const [version] = modelVersions;
+      const [{ files, ...version }] = modelVersions;
 
       if (!version) {
         return null;
@@ -322,7 +292,7 @@ const transformData = async ({
         return null;
       }
 
-      const modelImages = imagesWithTags.filter(
+      const modelImages = images.filter(
         (image) =>
           image.modelVersionId === modelVersion.id &&
           image.availability !== Availability.Unsearchable
@@ -440,40 +410,13 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     logger(`PullData :: Pulled cosmetics`);
 
     const modelVersionIds = models.flatMap((m) => m.modelVersions.map((m) => m.id));
-    const images = !!modelVersionIds.length
-      ? await getImagesForModelVersion({
-          modelVersionIds,
-          imagesPerVersion: 10,
-          browsingLevel: NsfwLevel.PG + NsfwLevel.PG13 + NsfwLevel.R + NsfwLevel.X + NsfwLevel.XXX, // Avoid blocked.
-        })
-      : [];
-
-    const imageIds = images.map((image) => image.id);
-    // Performs a single DB request:
-    const tagsOnImages = !imageIds.length
-      ? []
-      : await db.tagsOnImage.findMany({
-          select: {
-            imageId: true,
-            tag: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-          where: {
-            imageId: {
-              in: imageIds,
-            },
-          },
-        });
+    const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
+    const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
 
     return {
       models,
       cosmetics,
       images,
-      tagsOnImages,
     };
   },
   transformData,

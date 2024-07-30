@@ -1,7 +1,7 @@
 import client, { Counter } from 'prom-client';
 
 const PROM_PREFIX = 'civitai_app_';
-function registerCounter({ name, help }: { name: string; help: string }) {
+export function registerCounter({ name, help }: { name: string; help: string }) {
   // Do this to deal with HMR in nextjs
   try {
     return new client.Counter({ name: PROM_PREFIX + name, help });
