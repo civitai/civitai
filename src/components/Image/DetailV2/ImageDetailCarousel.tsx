@@ -65,6 +65,7 @@ export function ImageDetailCarousel({
   canNavigate: boolean;
 }) {
   const [embla, setEmbla] = useState<Embla | null>(null);
+
   const [slidesInView, setSlidesInView] = useState<number[]>([index]);
 
   useEffect(() => {
@@ -146,9 +147,12 @@ function ImageContent({
   // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
   const isClient = useIsClient();
 
+  const imageHeight = image?.height ?? 1200;
+  const imageWidth = image?.width ?? 1200;
+
   const { setRef, height, width } = useAspectRatioFit({
-    height: image?.height ?? 1200,
-    width: image?.width ?? 1200,
+    height: imageHeight,
+    width: imageWidth,
   });
 
   const isVideo = image?.type === 'video';
@@ -157,8 +161,15 @@ function ImageContent({
     <ImageGuardContent image={image} {...connect}>
       {(safe) => (
         <div ref={setRef} className="relative flex size-full items-center justify-center">
-          {!safe ? (
-            <div className="relative size-full" style={{ maxHeight: height, maxWidth: width }}>
+          {!safe && width && height ? (
+            <div
+              className="relative flex max-h-full max-w-full flex-1"
+              style={{
+                maxHeight: height > 0 ? height : undefined,
+                maxWidth: width > 0 ? width : undefined,
+                aspectRatio: width > 0 ? `${width}/${height}` : undefined,
+              }}
+            >
               <MediaHash {...image} />
             </div>
           ) : (
