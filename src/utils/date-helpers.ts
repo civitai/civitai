@@ -45,12 +45,12 @@ export function isFutureDate(value: Date) {
 
 export function maxDate(...dates: Date[]) {
   const parsedDates = dates.map(dayjs);
-  return dayjs.max(parsedDates).toDate();
+  return dayjs.max(parsedDates)?.toDate() ?? dates[0];
 }
 
 export function minDate(...dates: Date[]) {
   const parsedDates = dates.map(dayjs);
-  return dayjs.min(parsedDates).toDate();
+  return dayjs.min(parsedDates)?.toDate() ?? dates[0];
 }
 
 export function isBetweenToday(value: Date) {
