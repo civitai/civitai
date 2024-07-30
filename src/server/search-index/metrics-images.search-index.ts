@@ -3,6 +3,7 @@ import { FilterableAttributes, SearchableAttributes, SortableAttributes } from '
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -37,10 +38,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const filterableAttributes: FilterableAttributes = [
     'sortAtUnix',
     'modelVersionIds',
+    'postedToId',
     'baseModel',
-    'mediaType',
+    'type',
     'hasMeta',
-    'madeOnSite',
+    'onSite',
     'tools',
     'techniques',
     'tags',
@@ -86,15 +88,20 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
 export type SearchBaseImage = {
   id: number;
-  userId: number;
-  prompt: string;
-  url: string;
+  index: number;
   postId: number;
-  mediaType: string;
-  hasMeta: boolean;
-  madeOnSite: boolean;
-  sortAt: Date;
+  url: string;
   nsfwLevel: number;
+  prompt: string;
+  sortAt: Date;
+  type: string;
+  width: number;
+  height: number;
+  userId: number;
+  published: boolean;
+  hasMeta: boolean;
+  onSite: boolean;
+  postedToId?: number;
 };
 
 type Metrics = {
@@ -134,18 +141,6 @@ export type ImageForMetricSearchIndex = {
 } & SearchBaseImage &
   Metrics &
   ModelVersions;
-
-// This where is what we currently show in the feed - May need to be updated, but should cover the overall use case.
-const imageWhere = [
-  Prisma.sql`i."postId" IS NOT NULL`,
-  Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
-  Prisma.sql`i."tosViolation" = false`,
-  Prisma.sql`i."type" = 'image'`,
-  Prisma.sql`i."needsReview" IS NULL`,
-  Prisma.sql`p."publishedAt" IS NOT NULL`,
-  Prisma.sql`p."availability" != 'Private'::"Availability"`,
-  Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
-];
 
 const transformData = async ({
   images,
@@ -204,57 +199,42 @@ const transformData = async ({
 
   return records;
 };
+type ImagesMetricsDetails = Awaited<ReturnType<typeof transformData>>;
 
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
-export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
+// TODO.imageMetrics create another index updater for specifically updating metrics
+export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 15,
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
   pullSteps: 6,
-  prepareBatches: async ({ db }, lastUpdatedAt) => {
-    const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-    SELECT (	
-      SELECT
-      i.id FROM "Image" i 
-      ${
-        lastUpdatedAt
-          ? Prisma.sql`
-        WHERE i."createdAt" >= ${lastUpdatedAt} 
-      `
-          : Prisma.sql``
-      }
-      ORDER BY "createdAt" LIMIT 1
-    ) as "startId", (	
-      SELECT MAX (id) FROM "Image"
-    ) as "endId";      
-    `;
-
-    const { startId, endId } = data[0];
-
-    return {
-      batchSize: READ_BATCH_SIZE,
-      startId: 7829710,
-      endId,
-    };
+  prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
+    // TODO.imageMetrics set updatedAt on image when post is published
+    const query = await pg.cancellableQuery<{ id: number }>(`
+      SELECT id
+      FROM "Image"
+      WHERE "updatedAt" > ${lastUpdatedAt}
+      AND i."postId" IS NOT NULL
+      AND p."availability" != 'Private'::"Availability"
+      AND p."availability" != 'Unsearchable'::"Availability"
+    `);
+    jobContext.on('cancel', query.cancel);
+    const data = await query.result();
+    const updateIds = data.map((d) => d.id);
+    return { startId: 0, endId: 0, updateIds, batchSize: READ_BATCH_SIZE };
   },
-  pullData: async ({ db, logger }, batch, step, prevData) => {
-    logger(`PullData :: Pulling data for batch: ${batch}`);
-    const where = [
-      ...imageWhere,
-      batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
-      batch.type === 'new'
-        ? Prisma.sql`i.id >= ${batch.startId} AND i.id <= ${batch.endId}`
-        : undefined,
-    ].filter(isDefined);
+  pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
+    if (batch.type !== 'update') return null;
+    const where = [Prisma.sql`i.id IN (${Prisma.join(batch.ids)})`];
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
         i."id",
         i."index",
-        i."postId", 
+        i."postId",
         i."url",
         i."nsfwLevel",
         i."width",
@@ -263,8 +243,8 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
         i."meta"->'prompt' as "prompt",
         i."hideMeta",
         i."sortAt",
-        i."type" as "mediaType",
-        i."userId", 
+        i."type",
+        i."userId",
         (
           CASE
             WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
@@ -278,12 +258,13 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
             THEN TRUE
             ELSE FALSE
           END
-        ) as "madeOnSite"
+        ) as "madeOnSite",
+        p."modelVersionId" as "postedToId",
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
+
         WHERE ${Prisma.join(where, ' AND ')}
-        ORDER BY i."id"
-        `;
+      `;
 
       if (images.length === 0) {
         return null;
@@ -306,9 +287,9 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
             im."reactionCount" as "reactionCount",
             im."commentCount" as "commentCount"
           FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(images.map(({ id }) => id))})
+          WHERE im."imageId" IN (${Prisma.join(batch.ids)})
             AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-    `;
+      `;
 
       return {
         images,
@@ -320,18 +301,21 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
       // Pull tags:
       const { images, metrics } = prevData as { images: SearchBaseImage[]; metrics: Metrics[] };
 
-      const rawTags = await db.imageTag.findMany({
-        where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
-        select: {
-          imageId: true,
-          tagId: true,
-          tagName: true,
-        },
-      });
+      // TODO.imageMetrics - use cache if not reseting
+      // const tagIds = await tagIdsForImagesCache.fetch(batch.ids);
+
+      // TODO.imageMetrics - remove this after doing initial population
+      const tagIds = await db.$queryRaw<{ imageId: number; tagId: number }[]>`
+        SELECT
+          "imageId",
+          "tagId"
+        FROM "tagsOnImage"
+        WHERE "imageId" IN (${Prisma.join(batch.ids)})
+      `;
 
       return {
         images,
-        rawTags,
+        tagIds,
         metrics,
       };
     }
@@ -379,7 +363,7 @@ export const imagesMetricsSearchIndex = createSearchIndexUpdateProcessor({
     if (step === 4) {
       // Cosmetics:
       const { images, ...other } = prevData as {
-        images: SearchBaseImage[];
+        images: BaseImage[];
         rawTags: ImageTag[];
         metrics: Metrics[];
         tools: ImageTool[];

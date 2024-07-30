@@ -19,12 +19,15 @@ import {
 } from '~/server/search-index/utils/taskQueue';
 import { createLogger } from '~/utils/logging';
 import { MeiliSearch } from 'meilisearch';
+import { AugmentedPool } from '~/server/db/db-helpers';
+import { pgDbWrite } from '~/server/db/pgDb';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const logger = createLogger(`search-index-processor`);
 
 type SearchIndexContext = {
   db: PrismaClient;
+  pg: AugmentedPool;
   indexName: string;
   jobContext: JobContext;
   logger: ReturnType<typeof createLogger>;
@@ -69,10 +72,13 @@ const processSearchIndexTask = async (
   task: Task
 ) => {
   const { type } = task;
+  let logDetails: any = task;
+  if (task.index !== undefined && task.total) logDetails = `${task.index + 1} of ${task.total}`;
+  if (task.currentStep !== undefined) logDetails += ` - ${task.currentStep + 1} of ${task.steps}`;
+  context.logger(`processSearchIndexTask :: ${type} :: Processing task`, logDetails);
 
   try {
     if (type === 'pull') {
-      context.logger('processSearchIndexTask :: pull :: Processing task', task);
       const t = task as PullTask;
       const activeStep = t.currentStep ?? 0;
       const batch: SearchIndexPullBatch =
@@ -94,12 +100,6 @@ const processSearchIndexTask = async (
         return 'done';
       }
 
-      context.logger(
-        `processSearchIndexTask :: pull :: Done. ${
-          t.steps ? `Processing step ${activeStep + 1} of ${t.steps}` : ''
-        }`
-      );
-
       if (t?.steps && activeStep + 1 < t.steps) {
         return {
           ...t,
@@ -109,23 +109,23 @@ const processSearchIndexTask = async (
       } else {
         return {
           type: 'transform',
+          index: task.index,
+          total: task.total,
           data: pulledData,
         } as TransformTask;
       }
     } else if (type === 'transform') {
-      context.logger('processSearchIndexTask :: transform :: Processing task');
       const { data } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
-      context.logger('processSearchIndexTask :: transform :: Done');
       return {
         type: 'push',
+        index: task.index,
+        total: task.total,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
-      context.logger('processSearchIndexTask :: Push :: Processing task');
       const { data } = task as PushTask;
       await processor.pushData(context, data);
-      context.logger('processSearchIndexTask :: Push :: Done');
       return 'done';
     } else if (type === 'onComplete') {
       await processor.onComplete?.(context);
@@ -133,8 +133,10 @@ const processSearchIndexTask = async (
     }
     return 'error';
   } catch (e) {
-    console.error('processSearchIndexTask :: Error', e);
+    console.error(`processSearchIndexTask :: ${type} :: Error`, e);
     return 'error';
+  } finally {
+    context.logger(`processSearchIndexTask :: ${type} :: Done`, logDetails);
   }
 };
 
@@ -157,7 +159,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbRead, lastUpdatedAt, indexName, jobContext, logger };
+      const ctx = { db: dbWrite, pg: pgDbWrite, lastUpdatedAt, indexName, jobContext, logger };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
@@ -201,6 +203,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           mode: 'range',
           steps: processor.pullSteps,
           currentStep: 0,
+          index: i,
+          total: newItemsTasks,
           ...batch,
         });
       }
@@ -219,6 +223,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           mode: 'targeted',
           steps: processor.pullSteps,
           currentStep: 0,
+          index: i,
+          total: updateItemsTasks,
           ...batch,
         });
       }
@@ -341,7 +347,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         return getTaskQueueWorker(
           queue,
           async (task) =>
-            processSearchIndexTask(processor, { db: dbWrite, indexName, jobContext, logger }, task),
+            processSearchIndexTask(
+              processor,
+              { db: dbWrite, pg: pgDbWrite, indexName, jobContext, logger },
+              task
+            ),
           logger
         );
       });
@@ -353,14 +363,6 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     },
   };
 }
-export type SearchIndexRunContext = {
-  db: PrismaClient;
-  indexName: string;
-  jobContext: JobContext;
-  lastUpdatedAt?: Date;
-  updateIds?: number[];
-  deleteIds?: number[];
-};
 
 export type SearchIndexSetupContext = {
   indexName: string;
