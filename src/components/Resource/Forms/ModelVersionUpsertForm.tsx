@@ -430,7 +430,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   </Input.Wrapper>
                   <Stack mt="sm">
                     <InputSwitch
-                      name="earlyAccessConfig.chargeFordownload"
+                      name="earlyAccessConfig.chargeForDownload"
                       label="Allow users to pay for download (Includes ability to generate)"
                       description={`This will require users to pay buzz to download  your ${resourceLabel} during the early access period`}
                       disabled={isEarlyAccessOver}
