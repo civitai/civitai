@@ -4,10 +4,7 @@ import { EnqueuedTask } from 'meilisearch';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import {
-  createSearchIndexUpdateProcessor,
-  SearchIndexRunContext,
-} from '~/server/search-index/base.search-index';
+import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
 import { isDefined } from '~/utils/type-guards';
@@ -189,9 +186,9 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
     ].filter(isDefined);
 
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-      SELECT 
+      SELECT
         (
-          SELECT u.id 
+          SELECT u.id
           FROM "User" u
           WHERE ${Prisma.join(where, ' AND ')}
           ORDER BY u.id ASC
@@ -200,7 +197,7 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
         (
           SELECT MAX(u.id) FROM "User" u
           WHERE ${Prisma.join(where, ' AND ')}
-          
+
         ) as "endId"
     `;
 
