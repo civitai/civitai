@@ -5,7 +5,7 @@ import {
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
-  getDailyBuzzPayoutHandler,
+  getDailyCompensationRewardHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
@@ -22,12 +22,7 @@ import {
   getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
 } from '~/server/schema/buzz.schema';
-import {
-  claimBuzz,
-  getClaimStatus,
-  getDailyBuzzPayoutByUser,
-  getEarnPotential,
-} from '~/server/services/buzz.service';
+import { claimBuzz, getClaimStatus, getEarnPotential } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
@@ -78,5 +73,5 @@ export const buzzRouter = router({
   }),
   getDailyBuzzCompensation: protectedProcedure
     .input(getDailyBuzzCompensationInput)
-    .query(getDailyBuzzPayoutHandler),
+    .query(getDailyCompensationRewardHandler),
 });

@@ -35,7 +35,7 @@ import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTex
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 import { externalTooltipHandler } from '~/libs/chartjs';
-import { getDatesAsList, minDate } from '~/utils/date-helpers';
+import { formatDate, getDatesAsList, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -114,19 +114,30 @@ export function DailyCreatorCompReward() {
           },
         },
         tooltip: {
-          // enabled: false,
+          position: 'nearest',
+          xAlign: 'right',
+          yAlign: 'center',
+          displayColors: false,
+          padding: 12,
+          titleFont: { size: 14, weight: '600' },
+          titleAlign: 'center',
+          bodyFont: { size: 20, weight: 'bold' },
+          bodyColor: theme.colors.yellow[7],
+          bodyAlign: 'center',
+          footerFont: { size: 12, weight: '500' },
+          footerAlign: 'center',
           // external: externalTooltipHandler,
           callbacks: {
-            footer(tooltipItems) {
-              if (!filteredVersionIds.length) return;
+            title(tooltipItems) {
+              if (!filteredVersionIds.length) return '';
 
-              const sum = tooltipItems.reduce((acc, item) => acc + item.parsed.y, 0);
-              return `⚡️ ${formatCurrencyForDisplay(sum, 'BUZZ')}`;
+              return tooltipItems[0].dataset.label;
+            },
+            footer(tooltipItems) {
+              return `${formatDate(tooltipItems[0].parsed.x)}`;
             },
             label(tooltipItem) {
-              return filteredVersionIds.length > 0
-                ? `${tooltipItem.dataset.label}`
-                : `⚡️ ${formatCurrencyForDisplay(tooltipItem.parsed.y, 'BUZZ')}`;
+              return `⚡️ ${formatCurrencyForDisplay(tooltipItem.parsed.y, 'BUZZ')}`;
             },
           },
         },
@@ -195,11 +206,13 @@ export function DailyCreatorCompReward() {
                 <Select
                   data={dateOptions}
                   defaultValue={dateOptions[0].value}
-                  onChange={(value) =>
+                  onChange={(value) => {
                     setSelectedDate(
                       dateOptions.find((x) => x.value === value)?.value ?? selectedDate
-                    )
-                  }
+                    );
+                    setSearch('');
+                    setFilteredVersionIds([]);
+                  }}
                 />
               </Group>
               <Group position="left" spacing={4}>

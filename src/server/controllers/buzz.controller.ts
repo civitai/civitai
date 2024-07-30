@@ -19,7 +19,7 @@ import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
   createBuzzTransactionMany,
-  getDailyBuzzPayoutByUser,
+  getDailyCompensationRewardByUser,
   getMultipliersForUser,
   getUserBuzzAccount,
   getUserBuzzTransactions,
@@ -381,7 +381,7 @@ export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullab
   }
 };
 
-export function getDailyBuzzPayoutHandler({
+export function getDailyCompensationRewardHandler({
   input,
   ctx,
 }: {
@@ -392,7 +392,7 @@ export function getDailyBuzzPayoutHandler({
   if (!input.userId) input.userId = ctx.user.id;
 
   try {
-    return getDailyBuzzPayoutByUser({ userId: ctx.user.id, ...input });
+    return getDailyCompensationRewardByUser({ userId: ctx.user.id, ...input });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
