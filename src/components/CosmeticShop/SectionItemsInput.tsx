@@ -20,7 +20,6 @@ import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { trpc } from '~/utils/trpc';
-import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { getAllAvailableProfileSections } from '~/components/Profile/profile.utils';

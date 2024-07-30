@@ -22,6 +22,7 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import {
   BlockedReason,
+  ImageConnectionType,
   ImageScanType,
   ImageSort,
   NsfwLevel,
@@ -565,10 +566,14 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    bountyId,
   } = input;
   let { sort, browsingLevel } = input;
+  let hasPost = true;
 
-  const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
+  if (bountyId) hasPost = false;
+
+  const AND: Prisma.Sql[] = hasPost ? [Prisma.sql`i."postId" IS NOT NULL`] : [];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
   const cacheTags: string[] = [];
@@ -794,6 +799,14 @@ export const getAllImages = async (
     );
   }
 
+  if (bountyId) {
+    AND.push(Prisma.sql`i.id IN (
+      SELECT "imageId"
+      FROM "ImageConnection"
+      WHERE "entityType" = ${ImageConnectionType.Bounty} AND "entityId" = ${bountyId}
+    )`);
+  }
+
   if (excludedUserIds?.length) {
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
@@ -929,6 +942,7 @@ export const getAllImages = async (
     );
   }
 
+  // TODO.briant - ask justin if he meant to leave this here
   // TODO.metricSearch add missing props
   getImagesFromSearch({
     modelVersionId,
@@ -946,9 +960,9 @@ export const getAllImages = async (
     ${Prisma.raw(from)}
     ${Prisma.raw(joins.join('\n'))}
     JOIN "User" u ON u.id = i."userId"
-    JOIN "Post" p ON p.id = i."postId"
+    ${Prisma.raw(hasPost ? 'JOIN' : 'LEFT JOIN')} "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -1127,6 +1141,7 @@ export const getAllImages = async (
   > = rawImages
     .filter((x) => {
       if (isModerator) return true;
+      if (!hasPost) return true;
       // if (x.needsReview && x.userId !== userId) return false;
       if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
         return false;

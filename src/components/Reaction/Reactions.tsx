@@ -71,7 +71,7 @@ export function PostReactions({
 }
 
 export function Reactions({
-  reactions,
+  reactions = [],
   metrics,
   entityType,
   entityId,

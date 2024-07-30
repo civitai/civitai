@@ -14,6 +14,8 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -187,26 +189,26 @@ export function ImageCarouselContent({
           <Carousel.Slide key={image.id}>
             <Box
               sx={{ cursor: 'pointer' }}
-              onClick={onClick ? () => onClick(image) : undefined}
+              // onClick={onClick ? () => onClick(image) : undefined}
               tabIndex={0}
               role="button"
-              onKeyDown={
-                onClick
-                  ? (e) => {
-                      const keyDown = e.key !== undefined ? e.key : e.keyCode;
-                      if (
-                        keyDown === 'Enter' ||
-                        keyDown === 13 ||
-                        ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
-                        keyDown === 32
-                      ) {
-                        // (prevent default so the page doesn't scroll when pressing space)
-                        e.preventDefault();
-                        onClick(image);
-                      }
-                    }
-                  : undefined
-              }
+              // onKeyDown={
+              //   onClick
+              //     ? (e) => {
+              //         const keyDown = e.key !== undefined ? e.key : e.keyCode;
+              //         if (
+              //           keyDown === 'Enter' ||
+              //           keyDown === 13 ||
+              //           ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+              //           keyDown === 32
+              //         ) {
+              //           // (prevent default so the page doesn't scroll when pressing space)
+              //           e.preventDefault();
+              //           onClick(image);
+              //         }
+              //       }
+              //     : undefined
+              // }
             >
               <Center className="size-full">
                 <div className="relative w-full">
@@ -215,17 +217,22 @@ export function ImageCarouselContent({
                       <>
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
-                        <ImagePreview
-                          image={image}
-                          edgeImageProps={{
-                            width: 450,
-                            style: { objectPosition: mobile ? 'top' : 'center' },
-                          }}
-                          radius="md"
-                          style={{ width: '100%' }}
-                          aspectRatio={1}
-                          nsfw={!safe}
-                        />
+                        <RoutedDialogLink
+                          name="image"
+                          state={{ imageId: image.id, images: filteredImages }}
+                        >
+                          <ImagePreview
+                            image={image}
+                            edgeImageProps={{
+                              width: 450,
+                              style: { objectPosition: mobile ? 'top' : 'center' },
+                            }}
+                            radius="md"
+                            style={{ width: '100%' }}
+                            aspectRatio={1}
+                            nsfw={!safe}
+                          />
+                        </RoutedDialogLink>
                         {image.meta && (
                           <ImageMetaPopover
                             meta={image.meta}
@@ -258,9 +265,9 @@ export function ImageCarouselContent({
 }
 
 type Props = {
-  images: ImageProps[];
+  images: ImagesInfiniteModel[];
   mobile?: boolean;
-  onClick?: (image: ImageProps) => void;
+  onClick?: (image: ImagesInfiniteModel) => void;
   isLoading?: boolean;
-  onImageChange?: (images: ImageProps[]) => void;
+  onImageChange?: (images: ImagesInfiniteModel[]) => void;
 } & ImageGuardConnect;

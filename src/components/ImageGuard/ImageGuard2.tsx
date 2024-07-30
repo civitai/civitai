@@ -82,7 +82,9 @@ type UseImageGuardProps = {
 
 function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const currentUser = useCurrentUser();
-  const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
+  const showImage = useShowImagesStore(
+    useCallback((state) => state[image.id] ?? false, [image.id])
+  );
   const key = getConnectionKey({ connectType, connectId });
   const { nsfwLevel = 0, ...rest } = useImageStore(image);
 

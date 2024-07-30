@@ -36,6 +36,8 @@ import {
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -436,47 +438,49 @@ export const deleteBountyById = async ({
   return deletedBounty;
 };
 
-export const getBountyImages = async ({
-  id,
-  userId,
-  isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
-  const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
-    ? [{ ingestion: { notIn: [] } }]
-    : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
+// export const getBountyImages = async ({
+//   id,
+//   userId,
+//   isModerator,
+// }: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+//   const imageOr: Prisma.Enumerable<Prisma.ImageWhereInput> = isModerator
+//     ? [{ ingestion: { notIn: [] } }]
+//     : [{ ingestion: ImageIngestionStatus.Scanned, needsReview: null }];
 
-  if (userId) imageOr.push({ userId });
+//   if (userId) imageOr.push({ userId });
 
-  const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: 'Bounty',
-      image: { OR: imageOr },
-    },
-    select: { image: { select: imageSelect } },
-  });
+//   const connections = await dbRead.imageConnection.findMany({
+//     where: {
+//       entityId: id,
+//       entityType: 'Bounty',
+//       image: { OR: imageOr },
+//     },
+//     select: { image: { select: { ...imageSelect, user: { select: userWithCosmeticsSelect } } } },
+//   });
 
-  return connections.map(({ image }) => ({
-    ...image,
-    nsfwLevel: image.nsfwLevel as NsfwLevel,
-    tags: image.tags.map((t) => t.tag),
-  }));
-};
+//   return connections.map(({ image }) => ({
+//     ...image,
+//     nsfwLevel: image.nsfwLevel as NsfwLevel,
+//     tags: image.tags.map((t) => t.tag),
+//     meta: (image?.meta ?? {}) as ImageMetaProps,
+//     metadata: image?.metadata as MixedObject,
+//   }));
+// };
 
-export const getBountyFiles = async ({ id }: GetByIdInput) => {
-  const files = await dbRead.file.findMany({
-    where: { entityId: id, entityType: 'Bounty' },
-    select: {
-      id: true,
-      url: true,
-      metadata: true,
-      sizeKB: true,
-      name: true,
-    },
-  });
+// export const getBountyFiles = async ({ id }: GetByIdInput) => {
+//   const files = await dbRead.file.findMany({
+//     where: { entityId: id, entityType: 'Bounty' },
+//     select: {
+//       id: true,
+//       url: true,
+//       metadata: true,
+//       sizeKB: true,
+//       name: true,
+//     },
+//   });
 
-  return files;
-};
+//   return files;
+// };
 
 export const addBenefactorUnitAmount = async ({
   bountyId,

@@ -7,8 +7,8 @@ import {
   deleteBountyById,
   getAllBounties,
   getBountyById,
-  getBountyFiles,
-  getBountyImages,
+  // getBountyFiles,
+  // getBountyImages,
   getImagesForBounties,
   refundBounty,
   updateBountyById,
@@ -32,18 +32,19 @@ import {
 } from '../schema/bounty.schema';
 import { userWithCosmeticsSelect } from '../selectors/user.selector';
 import { getAllEntriesByBountyId, getBountyEntryEarnedBuzz } from '../services/bountyEntry.service';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaProps, getInfiniteImagesSchema } from '~/server/schema/image.schema';
 import { getAllBenefactorsByBountyId } from '../services/bountyBenefactor.service';
-import { getImagesByEntity } from '../services/image.service';
+import { getAllImages, getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency } from '@prisma/client';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
-import { NsfwLevel } from '~/server/common/enums';
+import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getInfiniteBountiesHandler = async ({
   input,
@@ -162,22 +163,26 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
       if (blocked) throw throwNotFoundError();
     }
 
-    const images = await getBountyImages({
-      id: bounty.id,
-      userId: user?.id,
-      isModerator: user?.isModerator,
+    const imageQuery = getInfiniteImagesSchema.parse({
+      bountyId: bounty.id,
+      browsingLevel: allBrowsingLevelsFlag,
+      sort: ImageSort.Newest,
     });
+
+    const { items: images } = await getAllImages({ ...imageQuery, user });
+
+    // const images = await getBountyImages({
+    //   id: bounty.id,
+    //   userId: user?.id,
+    //   isModerator: user?.isModerator,
+    // });
 
     const files = await getFilesByEntity({ id: bounty.id, type: 'Bounty' });
 
     return {
       ...bounty,
       details: bounty.details as BountyDetailsSchema,
-      images: images.map((image) => ({
-        ...image,
-        meta: (image?.meta ?? {}) as ImageMetaProps,
-        metadata: image?.metadata as MixedObject,
-      })),
+      images: images,
       tags: bounty.tags.map(({ tag }) => tag),
       files,
     };

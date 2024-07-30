@@ -313,6 +313,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
+    bountyId: z.number().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
