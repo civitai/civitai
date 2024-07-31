@@ -1,13 +1,16 @@
-import { getJobDate, JobContext } from '~/server/jobs/job';
-import { dbWrite, dbRead } from '~/server/db/client';
 import { PrismaClient } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import { MeiliSearch } from 'meilisearch';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { AugmentedPool } from '~/server/db/db-helpers';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { getJobDate, JobContext } from '~/server/jobs/job';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
   swapIndex,
 } from '~/server/meilisearch/util';
-import { chunk } from 'lodash-es';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
   getTaskQueueWorker,
@@ -18,9 +21,6 @@ import {
   TransformTask,
 } from '~/server/search-index/utils/taskQueue';
 import { createLogger } from '~/utils/logging';
-import { MeiliSearch } from 'meilisearch';
-import { AugmentedPool } from '~/server/db/db-helpers';
-import { pgDbWrite } from '~/server/db/pgDb';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const logger = createLogger(`search-index-processor`);
@@ -269,7 +269,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const swapIndexName = `${indexName}_NEW`;
       await setup({ indexName: swapIndexName });
 
-      const ctx = { db: dbRead, pg: pgDbWrite, indexName: swapIndexName, jobContext, logger };
+      const ctx = { db: dbRead, pg: pgDbRead, indexName: swapIndexName, jobContext, logger };
       // Run update
       const queue = new TaskQueue('pull', maxQueueSize);
       const { batchSize, startId = 0, endId } = await prepareBatches(ctx);

@@ -1,9 +1,9 @@
-import { createClient, commandOptions } from 'redis';
+import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
+import { commandOptions, createClient } from 'redis';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
-import { isProd } from '~/env/other';
-import { pack, unpack } from 'msgpackr';
 
 export interface PackedRedisClient extends RedisClientType {
   packed: {
@@ -28,6 +28,7 @@ declare global {
 }
 
 const log = createLogger('redis', 'green');
+
 function getCache(legacyMode = false) {
   log('Creating Redis client');
   const baseClient: RedisClientType = createClient({
@@ -159,6 +160,7 @@ export const REDIS_KEYS = {
     TAG_IDS_FOR_IMAGES: 'packed:caches:tagIdsForImages',
     COSMETICS: 'packed:caches:cosmetics',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
+    BASIC_USERS: 'packed:caches:basic-users',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model',

@@ -1,11 +1,7 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import {
-  commaDelimitedStringArray,
-  commaDelimitedStringObject,
-  stringToArray,
-} from '~/utils/zod-helpers';
+import { commaDelimitedStringArray, commaDelimitedStringObject, stringToArray } from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -165,7 +161,7 @@ export const serverSchema = z.object({
   FRESHDESK_TOKEN: z.string().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
-  CHOPPED_TOKEN: z.string().optional(), 
+  CHOPPED_TOKEN: z.string().optional(),
 });
 
 /**
@@ -202,7 +198,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
-  NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(), 
+  NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
 });
 
 /**

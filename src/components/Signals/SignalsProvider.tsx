@@ -1,12 +1,12 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { trpc } from '~/utils/trpc';
-import { SignalMessages } from '~/server/common/enums';
-import { useSession } from 'next-auth/react';
-import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
-import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import { SignalWorker, createSignalWorker } from '~/utils/signals';
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
+import { useSession } from 'next-auth/react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
+import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
+import { SignalMessages } from '~/server/common/enums';
+import { createSignalWorker, SignalWorker } from '~/utils/signals';
+import { trpc } from '~/utils/trpc';
 
 type SignalState = {
   connected: boolean;
@@ -59,6 +59,9 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useContext();
   const [status, setStatus] = useState<'connected' | 'reconnecting' | 'error' | 'closed'>();
   const workerRef = useRef<SignalWorker | null>(null);
+
+  // TODO bug: on error after connecting, we don't reset the status for "connected"
+
   if (!workerRef.current && typeof window !== 'undefined')
     workerRef.current = createSignalWorker({
       onConnected: () => {
