@@ -1184,7 +1184,7 @@ export const getAllImages = async (
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
-        tagIds: tagIdsVar?.[i.id]?.tags,
+        tagIds: tagIdsVar?.[i.id]?.tags.map((t) => t.id),
         cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
