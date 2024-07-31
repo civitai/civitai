@@ -75,7 +75,11 @@ import {
   getTagsNeedingReview,
 } from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  getBasicDataForUsers,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import {
@@ -1234,6 +1238,8 @@ export const getAllImagesPost = async (
   } = input;
   let { sort, browsingLevel } = input;
 
+  console.log({ include });
+
   const offset = cursor as number | undefined;
 
   console.time('SEARCH IDS');
@@ -1253,9 +1259,10 @@ export const getAllImagesPost = async (
   console.timeEnd('SEARCH IDS');
   console.log(searchResults[0]?.id, searchResults.length);
 
-  const searchIds = searchResults.map((sr) => sr.id);
+  const imageIds = searchResults.map((sr) => sr.id);
+  const userIds = searchResults.map((sr) => sr.userId);
 
-  // return getAllImages({ ...input, ids: searchIds });
+  // TODO may need to check for image existence in db
 
   // console.time('ADDITIONAL');
   // const additionalData = await dbRead.image.findMany({
@@ -1275,11 +1282,13 @@ export const getAllImagesPost = async (
   // });
   // console.timeEnd('ADDITIONAL');
 
+  const userDatas = await getBasicDataForUsers(userIds);
+
   console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (userId) {
     const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: searchIds }, userId },
+      where: { imageId: { in: imageIds }, userId },
       select: { imageId: true, reaction: true },
     });
     userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
@@ -1290,18 +1299,56 @@ export const getAllImagesPost = async (
   }
   console.timeEnd('REACTION');
 
-  // TODO may need to check for image existence in db
+  const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics
+  const [userCosmetics, profilePictures] = await Promise.all([
+    includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+  ]);
+
+  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
+  if (include?.includes('tagIds')) {
+    tagIdsVar = await getTagIdsForImages(imageIds);
+  }
+
+  // TODO tags? we have strings...
+
   const mergedData = searchResults.map((sr) => {
+    const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [];
+
     return {
       ...sr,
       modelVersionId: sr.postedToId,
+      type: sr.type as MediaType,
+      createdAt: sr.sortAt,
+      metadata: { width: sr.width, height: sr.height },
+      //
+      user: {
+        id: sr.userId,
+        username: thisUser.username,
+        image: thisUser.image,
+        deletedAt: thisUser.deletedAt,
+        cosmetics: userCosmetics?.[sr.userId] ?? [],
+        profilePicture: profilePictures?.[sr.userId] ?? null,
+      },
       reactions,
+      tagIds: tagIdsVar?.[sr.id]?.tags,
+      // tags: tagsVar?.filter((x) => x.imageId === i.id),
+      // TODO fix below
+      tags: [],
+      name: null,
+      needsReview: null,
+      generationProcess: null,
+      hash: null,
+      hideMeta: false,
+      scannedAt: null,
+      mimeType: null,
+      ingestion: ImageIngestionStatus.Scanned,
+      postTitle: null,
     };
   });
 
-  // let nextCursor: string | undefined;
   let nextCursor: number | undefined;
   if (searchTotal) {
     nextCursor = (offset ?? 0) + limit;
@@ -1482,10 +1529,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
           laughCountAllTime: match?.reactionLaugh ?? 0,
           heartCountAllTime: match?.reactionHeart ?? 0,
           cryCountAllTime: match?.reactionCry ?? 0,
-          dislikeCountAllTime: 0,
+
           commentCountAllTime: match?.comment ?? 0,
           collectedCountAllTime: match?.collection ?? 0,
           tippedAmountCountAllTime: match?.buzz ?? 0,
+
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
         },
       };
     });

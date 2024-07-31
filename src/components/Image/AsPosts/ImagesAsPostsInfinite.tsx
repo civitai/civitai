@@ -13,22 +13,29 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import {
-  IconArrowsCross,
   IconCloudOff,
   IconEye,
   IconEyeOff,
   IconPlus,
+  IconSettings,
   IconStar,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-
+import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { Adunit } from '~/components/Ads/AdUnit';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SortFilter } from '~/components/Filters';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -37,22 +44,12 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useSetFilters } from '~/providers/FiltersProvider';
-import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
-import { IconSettings } from '@tabler/icons-react';
-import { ModelById } from '~/types/router';
-import { GalleryModerationModal } from './GalleryModerationModal';
-import { NextLink } from '@mantine/next';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ModelById } from '~/types/router';
+import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
-import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
-import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
+import { trpc } from '~/utils/trpc';
+import { GalleryModerationModal } from './GalleryModerationModal';
 
 type ModelVersionsProps = { id: number; name: string; modelId: number };
 type ImagesAsPostsInfiniteState = {
@@ -101,7 +98,7 @@ export default function ImagesAsPostsInfinite({
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
-  const setFilters = useSetFilters('modelImages');
+  // const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
@@ -296,6 +293,7 @@ export default function ImagesAsPostsInfinite({
                 </Text>
               ) : null}
               {/* TODO.imageTags: Bring back once we support tags again.  */}
+              {/* TODO.metricSearch can we enable this? */}
               {/* <ImageCategories /> */}
               {enabled && isLoading ? (
                 <Paper style={{ minHeight: 200, position: 'relative' }}>

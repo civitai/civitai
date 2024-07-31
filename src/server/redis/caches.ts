@@ -7,7 +7,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
-import { dbWrite, dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -44,6 +44,30 @@ export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: 
   },
 });
 
+type UserBasicLookup = {
+  id: number;
+  image: string | null;
+  username: string | null;
+  deletedAt: Date | null;
+};
+export const userBasicCache = createCachedObject<UserBasicLookup>({
+  key: REDIS_KEYS.CACHES.BASIC_USERS,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const userBasicData = await dbRead.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        username: true,
+        deletedAt: true,
+        image: true,
+      },
+    });
+    return Object.fromEntries(userBasicData.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.day,
+});
+
 type UserCosmeticLookup = {
   userId: number;
   cosmetics: {
@@ -76,7 +100,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     }, {} as Record<number, UserCosmeticLookup>);
     return results;
   },
-  ttl: 60 * 60 * 24, // 24 hours
+  ttl: CacheTTL.day,
 });
 
 export const profilePictureCache = createCachedObject<ProfileImage>({
@@ -102,7 +126,7 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
     `;
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
-  ttl: 60 * 60 * 24, // 24 hours
+  ttl: CacheTTL.day,
 });
 
 type CacheFilesForModelVersions = {
@@ -185,7 +209,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
         `;
         return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
       },
-      ttl: 60 * 60 * 24, // 24 hours
+      ttl: CacheTTL.day,
     }),
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
