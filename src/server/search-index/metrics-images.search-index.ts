@@ -41,12 +41,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'hasMeta',
     'onSite',
-    'tools',
-    'techniques',
-    'tags',
+    'toolsIds',
+    'techniqueIds',
+    'tagIds',
     'userId',
     'nsfwLevel',
     'postId',
+    'published',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -97,7 +98,7 @@ export type SearchBaseImage = {
   width: number;
   height: number;
   userId: number;
-  // published: boolean;
+  published: boolean;
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
@@ -244,6 +245,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."sortAt",
         i."type",
         i."userId",
+        p."publishedAt" is not null as "published",
         (
           CASE
             WHEN i.meta IS NOT NULL AND NOT i."hideMeta"

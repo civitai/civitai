@@ -260,6 +260,10 @@ export const updateUserById = async ({
 
   const user = await dbWrite.user.update({ where: { id }, data });
 
+  if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
+    await deleteBasicDataForUser(id);
+  }
+
   return user;
 };
 
@@ -519,6 +523,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   ]);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await deleteBasicDataForUser(id);
 
   // Cancel their subscription
   await cancelSubscription({ userId: user.id });
@@ -766,7 +771,6 @@ export async function getBasicDataForUsers(userIds: number[]) {
   return await userBasicCache.fetch(userIds);
 }
 
-// TODO bust this
 export async function deleteBasicDataForUser(userId: number) {
   await userBasicCache.bust(userId);
 }

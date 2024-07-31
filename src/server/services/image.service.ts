@@ -552,7 +552,7 @@ export const getAllImages = async (
     periodMode,
     tags,
     generation,
-    reviewId, // TODO - remove, not in use
+    reviewId,
     prioritizedUserIds,
     include,
     excludeCrossPosts,
@@ -1282,9 +1282,12 @@ export const getAllImagesPost = async (
   // });
   // console.timeEnd('ADDITIONAL');
 
-  console.time('USER CACHE');
-  const userDatas = await getBasicDataForUsers(userIds);
-  console.timeEnd('USER CACHE');
+  // await dbRead.user.findMany({
+  //   where: { id: { in: userIds } },
+  //   select: {
+  //     username: true,
+  //   },
+  // });
 
   console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1302,16 +1305,12 @@ export const getAllImagesPost = async (
   console.timeEnd('REACTION');
 
   console.time('CACHE');
-  const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics
-  const [userCosmetics, profilePictures] = await Promise.all([
-    includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
+  const [userDatas, userCosmetics, profilePictures, tagIdsData] = await Promise.all([
+    await getBasicDataForUsers(userIds),
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    include?.includes('tagIds') ? await getTagIdsForImages(imageIds) : undefined,
   ]);
-
-  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
-  if (include?.includes('tagIds')) {
-    tagIdsVar = await getTagIdsForImages(imageIds);
-  }
   console.timeEnd('CACHE');
 
   // TODO tags? we have strings...
@@ -1337,19 +1336,19 @@ export const getAllImagesPost = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
-      tagIds: tagIdsVar?.[sr.id]?.tags,
+      tagIds: tagIdsData?.[sr.id]?.tags,
       // tags: tagsVar?.filter((x) => x.imageId === i.id),
       // TODO fix below
       tags: [],
-      name: null,
-      needsReview: null,
-      generationProcess: null,
-      hash: null,
-      hideMeta: false,
-      scannedAt: null,
-      mimeType: null,
-      ingestion: ImageIngestionStatus.Scanned,
-      postTitle: null,
+      name: null, // leave
+      needsReview: null, // add
+      generationProcess: null, // deprecated
+      hash: null, // add
+      hideMeta: !sr.hasMeta, // remove
+      scannedAt: null, // remove
+      mimeType: null, // need?
+      ingestion: ImageIngestionStatus.Scanned, // add? maybe remove
+      postTitle: null, // remove
     };
   });
 
@@ -1419,8 +1418,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   } = input;
   let { browsingLevel } = input;
 
-  // TODO.metricSearch remove hash, cosmetic
+  // TODO.metricSearch remove hash
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  if (reviewId) {
+  }
 
   // Filter
   //------------------------
@@ -1445,17 +1446,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   //   filters.push(`userId IN [${userIds.join(',')}]`)
   // }
 
-  // TODO.metricSearch add published filter
-  // if (notPublished && isModerator) filters.push(`published = false`);
-
-  // TODO.metricSearch replace tags with tagIds
-  // if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
-
-  // TODO.metricSearch add tools by id
-  // if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
-
-  // TODO.metricSearch add techniques by id
-  // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
+  if (notPublished && isModerator) filters.push(`published = false`);
+  if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
+  if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
+  if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
 
   if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
   if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
@@ -1510,6 +1504,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       .search(null, request);
 
     // console.log('HITS 1', results.hits[0]);
+
+    // TODO filter out non-scanned unless its the owner or moderator
+    //  maybe grab more if its low?
 
     const metrics = {
       hits: results.hits.length,
