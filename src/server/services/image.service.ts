@@ -52,7 +52,7 @@ import {
 } from '~/server/schema/image.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -100,6 +100,7 @@ import { redis } from '~/server/redis/client';
 import { metricsClient } from '~/server/meilisearch/client';
 import { logToAxiom } from '~/server/logging/client';
 import dayjs, { ManipulateType } from 'dayjs';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -3395,3 +3396,12 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     },
   }));
 };
+
+// this method should hopefully not be a lasting addition
+export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
+export async function getImagesByUserIdForModeration(userId: number) {
+  return await dbRead.image.findMany({
+    where: { userId },
+    select: { ...imageSelect, user: { select: simpleUserSelect } },
+  });
+}
