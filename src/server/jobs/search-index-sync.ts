@@ -9,6 +9,7 @@ const searchIndexSets = {
   collections: searchIndex.collectionsSearchIndex,
   bounties: searchIndex.bountiesSearchIndex,
   imageMetrics: searchIndex.imagesMetricsSearchIndex,
+  imageMetricsUpdateMetrics: searchIndex.imagesMetricsSearchIndexUpdateMetrics,
 };
 
 type SearchIndexSetKey = keyof typeof searchIndexSets;
@@ -21,6 +22,7 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
   imageMetrics: '*/5 * * * *',
+  imageMetricsUpdateMetrics: '*/1 * * * *',
 };
 
 export const searchIndexJobs = Object.entries(searchIndexSets)
