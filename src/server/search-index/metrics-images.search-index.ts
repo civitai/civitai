@@ -215,7 +215,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ${lastUpdatedAt ? ` AND i."createdAt" >= ${lastUpdatedAt}` : ``}
         ORDER BY "createdAt" LIMIT 1
       ) as "startId", (	
-        SELECT MAX (id) FROM "Image"
+        SELECT MAX (id) FROM "Image" i
         WHERE i."postId" IS NOT NULL
       ) as "endId";      
     `);

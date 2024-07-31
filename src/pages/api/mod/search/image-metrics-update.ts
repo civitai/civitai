@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { METRICS_IMAGES_SEARCH_INDEX } from '../../../../server/common/constants';
 import { updateDocs, metricsClient } from '../../../../server/meilisearch/client';
-import { ImageIngestionStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { withRetries } from '../../../../server/utils/errorHandling';
 import { dataProcessor } from '~/server/db/db-helpers';
 
@@ -42,21 +42,44 @@ const addFields = async () => {
       await withRetries(async () => {
         type ImageForSearchIndex = {
           id: number;
+          index: number;
+          postId: number;
+          url: string;
+          nsfwLevel: number;
+          prompt: string;
+          sortAt: Date;
+          type: string;
+          width: number;
+          height: number;
           userId: number;
-          postedToId?: number;
-          onSite: boolean;
           hasMeta: boolean;
-          needsReview: boolean;
+          onSite: boolean;
+          postedToId?: number;
         };
 
         console.log('Fetching records from ID: ', start, end);
         const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
         SELECT
-          i."id", 
-          i."needsReview",
+          i."id",
+          i."index",
+          i."postId",
+          i."url",
+          i."nsfwLevel",
+          i."width",
+          i."height",
+          i."hash",
+          i."meta"->'prompt' as "prompt",
+          i."hideMeta",
+          i."sortAt",
           i."type",
-          p."userId",
-          p."modelVersionId" as "postedToId",
+          i."userId",
+          (
+            CASE
+              WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+              THEN TRUE
+              ELSE FALSE
+            END
+          ) AS "hasMeta",
           (
             CASE
               WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -64,13 +87,7 @@ const addFields = async () => {
               ELSE FALSE
             END
           ) as "onSite",
-          (
-            CASE
-              WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
-              THEN TRUE
-              ELSE FALSE
-            END
-          ) AS "hasMeta"
+          p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
         WHERE i.id BETWEEN ${start} AND ${end} AND ${Prisma.join(IMAGE_WHERE, ' AND ')}; 

@@ -6,7 +6,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
-const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
+const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -27,7 +27,7 @@ type Metrics = {
   collectedCount: number;
 };
 
-const transformData = async ({ metrics }: { metrics: Metrics[] }) => {
+const transformData = async (metrics: Metrics[]) => {
   const records = metrics;
   return records;
 };
@@ -39,6 +39,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
   resetInMainIndex: true,
+  pullSteps: 1,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
     // TODO.imageMetrics set updatedAt on image when post is published
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
@@ -49,7 +50,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
         ${lastUpdatedAt ? ` AND i."createdAt" >= ${lastUpdatedAt}` : ``}
         ORDER BY "createdAt" LIMIT 1
       ) as "startId", (	
-        SELECT MAX (id) FROM "Image"
+        SELECT MAX (id) FROM "Image" i
         WHERE i."postId" IS NOT NULL
       ) as "endId";      
     `);

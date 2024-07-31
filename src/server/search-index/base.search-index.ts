@@ -73,7 +73,7 @@ const processSearchIndexTask = async (
   task: Task
 ) => {
   const { type } = task;
-  let logDetails: any = task;
+  let logDetails: any = '';
   if (task.index !== undefined && task.total) logDetails = `${task.index + 1} of ${task.total}`;
   if (task.currentStep !== undefined) logDetails += ` - ${task.currentStep + 1} of ${task.steps}`;
   context.logger(`processSearchIndexTask :: ${type} :: Processing task`, logDetails);
