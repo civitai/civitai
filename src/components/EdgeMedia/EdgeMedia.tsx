@@ -133,11 +133,17 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) =>
       transition: theme.other.fadeIn,
     },
     videoThumbRoot: {
+      height: '100%',
       position: 'relative',
       '&:hover': {
         [`& .${ref}`]: {
           backgroundColor: 'rgba(0,0,0,0.8)',
         },
+      },
+      img: {
+        objectFit: 'cover',
+        height: '100%',
+        objectPosition: '50% 50%',
       },
     },
     playButton: {
@@ -153,6 +159,7 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) =>
       position: 'absolute',
       top: '50%',
       left: '50%',
+      zIndex: 2,
       transform: 'translate(-50%, -50%)',
     },
   };
