@@ -165,9 +165,7 @@ export const serverSchema = z.object({
   FRESHDESK_TOKEN: z.string().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
-  CHOPPED_TOKEN: z.string().optional(),
-  METRICS_SEARCH_HOST: z.string().url().optional(),
-  METRICS_SEARCH_API_KEY: z.string().optional(),
+  CHOPPED_TOKEN: z.string().optional(), 
 });
 
 /**

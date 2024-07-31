@@ -3,6 +3,7 @@ import { FilterableAttributes, SearchableAttributes, SortableAttributes } from '
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { isDefined } from '~/utils/type-guards';
@@ -131,6 +132,7 @@ type ImageTechnique = {
 };
 
 type ImageCosmetics = Awaited<ReturnType<typeof getCosmeticsForEntity>>;
+type ImageTags = Awaited<ReturnType<typeof tagIdsForImagesCache.fetch>>;
 
 export type ImageForMetricSearchIndex = {
   sortAtUnix: number;
@@ -143,7 +145,7 @@ export type ImageForMetricSearchIndex = {
 
 const transformData = async ({
   images,
-  rawTags,
+  tags,
   metrics,
   tools,
   techniques,
@@ -151,7 +153,7 @@ const transformData = async ({
   modelVersions,
 }: {
   images: SearchBaseImage[];
-  rawTags: ImageTag[];
+  tags: ImageTags;
   metrics: Metrics[];
   tools: ImageTool[];
   techniques: ImageTechnique[];
@@ -160,12 +162,7 @@ const transformData = async ({
 }) => {
   const records = images
     .map((imageRecord) => {
-      const tags = rawTags
-        .filter((rt) => rt.imageId === imageRecord.id)
-        .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
-
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id).map((t) => t.tool.name);
-
       const imageTechniques = techniques
         .filter((t) => t.imageId === imageRecord.id)
         .map((t) => t.technique.name);
@@ -191,7 +188,7 @@ const transformData = async ({
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
-        tags: tags.map((t) => t.name),
+        tags: (tags[imageRecord.id] ?? { tags: [], imageId: -1 }).tags,
       };
     })
     .filter(isDefined);
@@ -199,7 +196,6 @@ const transformData = async ({
   return records;
 };
 
-type ImagesMetricsDetails = Awaited<ReturnType<typeof transformData>>;
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 // TODO.imageMetrics create another index updater for specifically updating metrics
@@ -211,22 +207,62 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   pullSteps: 6,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
     // TODO.imageMetrics set updatedAt on image when post is published
-    const query = await pg.cancellableQuery<{ id: number }>(`
-      SELECT id
-      FROM "Image"
-      WHERE "updatedAt" > ${lastUpdatedAt}
-      AND i."postId" IS NOT NULL
-      AND p."availability" != 'Private'::"Availability"
-      AND p."availability" != 'Unsearchable'::"Availability"
+    const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
+      SELECT (	
+        SELECT
+          i.id FROM "Image" i
+        WHERE i."postId" IS NOT NULL 
+        ${lastUpdatedAt ? ` AND i."createdAt" >= ${lastUpdatedAt}` : ``}
+        ORDER BY "createdAt" LIMIT 1
+      ) as "startId", (	
+        SELECT MAX (id) FROM "Image"
+        WHERE i."postId" IS NOT NULL
+      ) as "endId";      
     `);
-    jobContext.on('cancel', query.cancel);
-    const data = await query.result();
-    const updateIds = data.map((d) => d.id);
-    return { startId: 0, endId: 0, updateIds, batchSize: READ_BATCH_SIZE };
+
+    jobContext.on('cancel', newItemsQuery.cancel);
+    const newItems = await newItemsQuery.result();
+    const { startId, endId } = newItems[0];
+    const updateIds: number[] = [];
+
+    if (lastUpdatedAt) {
+      let offset = 0;
+
+      while (true) {
+        const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
+        FROM "Image"
+        WHERE "updatedAt" > ${lastUpdatedAt}
+          AND i."postId" IS NOT NULL
+        OFFSET ${offset} LIMIT ${READ_BATCH_SIZE};
+        `);
+
+        jobContext.on('cancel', updatedIdItemsQuery.cancel);
+        const ids = await updatedIdItemsQuery.result();
+
+        if (!ids.length) {
+          break;
+        }
+
+        offset += READ_BATCH_SIZE;
+        updateIds.push(...ids.map((x) => x.id));
+      }
+    }
+
+    return {
+      batchSize: READ_BATCH_SIZE,
+      startId,
+      endId,
+      updateIds,
+    };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
-    if (batch.type !== 'update') return null;
-    const where = [Prisma.sql`i.id IN (${Prisma.join(batch.ids)})`];
+    const isReset = indexName.includes('_NEW');
+    const where = [
+      batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
+      batch.type === 'new'
+        ? Prisma.sql`i.id BETWEEN ${batch.startId} AND ${batch.endId}`
+        : undefined,
+    ];
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
@@ -260,7 +296,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ) as "onSite",
         p."modelVersionId" as "postedToId"
         FROM "Image" i
-        JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
+        JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
 
@@ -285,7 +321,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             im."reactionCount" as "reactionCount",
             im."commentCount" as "commentCount"
           FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(batch.ids)})
+          WHERE im."imageId" IN (${Prisma.join(images.map((i) => i.id))})
             AND im."timeframe" = 'AllTime'::"MetricTimeframe"
       `;
 
@@ -299,21 +335,37 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       // Pull tags:
       const { images, metrics } = prevData as { images: SearchBaseImage[]; metrics: Metrics[] };
 
-      // TODO.imageMetrics - use cache if not reseting
-      // const tagIds = await tagIdsForImagesCache.fetch(batch.ids);
+      let tags: ImageTags;
 
-      // TODO.imageMetrics - remove this after doing initial population
-      const tagIds = await db.$queryRaw<{ imageId: number; tagId: number }[]>`
+      // TODO.imageMetrics - use cache if not reseting
+      if (isReset) {
+        const rawTags = await db.$queryRaw<{ imageId: number; tagId: number; tagName: string }[]>`
         SELECT
           "imageId",
-          "tagId"
+          "tagId",
+          t."name" as "tagName"
         FROM "tagsOnImage"
-        WHERE "imageId" IN (${Prisma.join(batch.ids)})
+        JOIN "Tag" t ON "tagId" = t."id"
+        WHERE "imageId" IN (${Prisma.join(images.map((i) => i.id))})
       `;
+
+        tags = rawTags.reduce((acc, { imageId, tagId, tagName }) => {
+          if (!acc[imageId.toString()]) {
+            acc[imageId.toString()] = {
+              imageId,
+              tags: [],
+            };
+          }
+          acc[imageId].tags.push({ id: tagId, name: tagName });
+          return acc;
+        }, {} as ImageTags);
+      } else {
+        tags = await tagIdsForImagesCache.fetch(images.map((i) => i.id));
+      }
 
       return {
         images,
-        tagIds,
+        tags,
         metrics,
       };
     }
@@ -322,7 +374,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       // Tools and techniqaues
       const { images, ...other } = prevData as {
         images: SearchBaseImage[];
-        rawTags: ImageTag[];
+        tags: ImageTags;
         metrics: Metrics[];
       };
 
@@ -362,7 +414,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       // Cosmetics:
       const { images, ...other } = prevData as {
         images: SearchBaseImage[];
-        rawTags: ImageTag[];
+        tags: ImageTags;
         metrics: Metrics[];
         tools: ImageTool[];
         techniques: ImageTechnique[];
@@ -384,7 +436,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       // Model versions & baseModel:
       const { images, ...other } = prevData as {
         images: SearchBaseImage[];
-        rawTags: ImageTag[];
+        tags: ImageTags;
         metrics: Metrics[];
         tools: ImageTool[];
         techniques: ImageTechnique[];

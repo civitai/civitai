@@ -1056,7 +1056,9 @@ export const getAllImages = async (
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
+  let tagIdsVar:
+    | Record<string, { tags: { id: number; name: string }[]; imageId: number }>
+    | undefined;
   if (include?.includes('tagIds')) {
     tagIdsVar = await getTagIdsForImages(imageIds);
   }
@@ -1232,7 +1234,7 @@ export const getAllImagesPost = async (
     excludedUserIds,
     userId,
   } = input;
-  let { sort, browsingLevel } = input;
+  const { sort, browsingLevel } = input;
 
   const offset = cursor as number | undefined;
 
@@ -1966,7 +1968,7 @@ export const getImagesForModelVersion = async ({
     const imageIds = images.map((i) => i.id);
     const tagIdsVar = await getTagIdsForImages(imageIds);
     for (const image of images) {
-      image.tags = tagIdsVar?.[image.id]?.tags;
+      image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id);
     }
   }
 
