@@ -64,6 +64,7 @@ type SearchIndexProcessor = {
   workerCount?: number;
   pullSteps?: number;
   client?: MeiliSearch | null;
+  resetInMainIndex?: boolean;
 };
 
 const processSearchIndexTask = async (
@@ -72,7 +73,7 @@ const processSearchIndexTask = async (
   task: Task
 ) => {
   const { type } = task;
-  let logDetails: any = task;
+  let logDetails: any = '';
   if (task.index !== undefined && task.total) logDetails = `${task.index + 1} of ${task.total}`;
   if (task.currentStep !== undefined) logDetails += ` - ${task.currentStep + 1} of ${task.steps}`;
   context.logger(`processSearchIndexTask :: ${type} :: Processing task`, logDetails);
@@ -151,6 +152,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     primaryKey = 'id',
     maxQueueSize,
     workerCount = 10,
+    resetInMainIndex,
   } = processor;
 
   return {
@@ -267,9 +269,17 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // In order to swap, the base index must exist. because of this, we need to create or get it.
       await getOrCreateIndex(indexName, { primaryKey }, processor.client);
       const swapIndexName = `${indexName}_NEW`;
-      await setup({ indexName: swapIndexName });
+      if (!resetInMainIndex) {
+        await setup({ indexName: swapIndexName });
+      }
 
-      const ctx = { db: dbRead, pg: pgDbRead, indexName: swapIndexName, jobContext, logger };
+      const ctx = {
+        db: dbRead,
+        pg: pgDbRead,
+        indexName: resetInMainIndex ? indexName : swapIndexName,
+        jobContext,
+        logger,
+      };
       // Run update
       const queue = new TaskQueue('pull', maxQueueSize);
       const { batchSize, startId = 0, endId } = await prepareBatches(ctx);
@@ -300,8 +310,10 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
-      // Finally, perform the swap:
-      await swapIndex({ indexName, swapIndexName, client: processor.client });
+      if (!resetInMainIndex) {
+        // Finally, perform the swap:
+        await swapIndex({ indexName, swapIndexName, client: processor.client });
+      }
       // Clear update queue since our index should be brand new:
       await SearchIndexUpdate.clearQueue(indexName);
     },

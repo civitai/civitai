@@ -23,7 +23,10 @@ import { reduceToBasicFileMetadata } from '~/server/services/model-file.service'
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
-export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: number[] }>({
+export const tagIdsForImagesCache = createCachedObject<{
+  imageId: number;
+  tags: { id: number; name: string }[];
+}>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
   ttl: CacheTTL.day,
@@ -32,14 +35,14 @@ export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: 
     const db = fromWrite ? dbWrite : dbRead;
     const tags = await db.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
-      select: { tagId: true, imageId: true },
+      select: { imageId: true, tag: { select: { id: true, name: true } } },
     });
 
-    const result = tags.reduce((acc, { tagId, imageId }) => {
+    const result = tags.reduce((acc, { tag, imageId }) => {
       acc[imageId.toString()] ??= { imageId, tags: [] };
-      acc[imageId.toString()].tags.push(tagId);
+      acc[imageId.toString()].tags.push(tag);
       return acc;
-    }, {} as Record<string, { imageId: number; tags: number[] }>);
+    }, {} as Record<string, { imageId: number; tags: { id: number; name: string }[] }>);
     return result;
   },
 });
@@ -185,7 +188,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     const tagIdsVar = await getTagIdsForImages(imageIds);
     for (const entry of records) {
       for (const image of entry.images) {
-        image.tags = tagIdsVar?.[image.id]?.tags;
+        image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id) ?? [];
       }
     }
   },
