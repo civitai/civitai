@@ -9,6 +9,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { useDidUpdate } from '@mantine/hooks';
 import { Currency } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
@@ -71,6 +72,27 @@ export default function Login({ providers }: Props) {
     }
   }, [reason, setLoginRedirectReason]);
 
+  useEffect(() => {
+    console.log('pushing to queue');
+    window.pgHB = window.pgHB || { que: [] };
+    window.pgHB.que.push(() => {
+      try {
+        console.log('requesting rewarded ad');
+        window.pgHB?.requestWebRewardedAd?.({
+          slotId: 'rewarded-ad',
+          callback: (success: any, errors: any) => {
+            console.log('rewarded ad callback');
+            console.log(success);
+            console.log(errors);
+          },
+        });
+      } catch (e) {
+        // Handle uncaught errors
+        console.log('BOOOM', e);
+      }
+    });
+  }, []);
+
   return (
     <>
       <Meta
@@ -79,6 +101,8 @@ export default function Login({ providers }: Props) {
       />
       <Container size="xs">
         <Stack>
+          <div id="civitaicom47459" />
+          <div id="rewarded-ad" />
           {!!redirectReason && (
             <Alert color="yellow">
               <Group position="center" spacing="xs" noWrap align="flex-start">

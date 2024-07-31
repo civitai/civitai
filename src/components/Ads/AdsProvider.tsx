@@ -9,8 +9,8 @@ import Script from 'next/script';
 import { useConsentManager } from '~/components/Ads/ads.utils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
-type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
-const adProviders: AdProvider[] = ['ascendeum'];
+type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
+const adProviders: AdProvider[] = ['pubgalaxy'];
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
@@ -25,7 +25,7 @@ const AscendeumAdsContext = createContext<{
 
 export function useAdsContext() {
   const context = useContext(AscendeumAdsContext);
-  if (!context) throw new Error('missing AscendumAdsProvider');
+  if (!context) throw new Error('missing AdsProvider');
   return context;
 }
 
@@ -33,8 +33,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState(false);
   const currentUser = useCurrentUser();
   const isMember = !!currentUser?.isMember;
-  // const enabled = env.NEXT_PUBLIC_ADS;
-  const enabled = false;
+  const enabled = env.NEXT_PUBLIC_ADS;
+  // const enabled = false;
   const adsEnabled = enabled && !isMember;
   // const { targeting: cookieConsent = false } = useConsentManager();
   const cookieConsent = true;
@@ -84,6 +84,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           />
         ))}
       {children}
+      {adProviders.includes('pubgalaxy') && <div id="uniconsent-config" />}
     </AscendeumAdsContext.Provider>
   );
 }
@@ -98,6 +99,43 @@ function LoadProviderScript({ provider, onError }: { provider: AdProvider; onErr
           src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728"
           onError={onError}
         />
+      );
+    case 'pubgalaxy':
+      return (
+        <>
+          <Script src="https://cmp.uniconsent.com/v2/stub.min.js" />
+          <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
+          <Script
+            id="ads-init"
+            type="text/javascript"
+            dangerouslySetInnerHTML={{
+              __html: `
+              console.log('loaded-ads-init');
+              window.googletag = window.googletag || {};
+              window.googletag.cmd = window.googletag.cmd || [];
+              window.googletag.cmd.push(function() {
+                window.googletag.pubads().enableAsyncRendering();
+                window.googletag.pubads().disableInitialLoad();
+              });
+              (adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1;
+
+              var loadAdScripts = function loadAdScripts() {  
+                var script = document.createElement('script');
+                script.async = true;
+                script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
+                document.head.appendChild(script);
+
+                var script = document.createElement('script');
+                script.async = true;
+                script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
+                document.head.appendChild(script);
+              };
+
+              loadAdScripts();
+            `,
+            }}
+          />
+        </>
       );
     case 'exoclick':
     default:
