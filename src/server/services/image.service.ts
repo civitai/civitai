@@ -1238,7 +1238,7 @@ export const getAllImagesPost = async (
   } = input;
   let { sort, browsingLevel } = input;
 
-  console.log({ include });
+  // include: [ 'cosmetics', 'tagIds', 'profilePictures' ]
 
   const offset = cursor as number | undefined;
 
@@ -1282,7 +1282,9 @@ export const getAllImagesPost = async (
   // });
   // console.timeEnd('ADDITIONAL');
 
+  console.time('USER CACHE');
   const userDatas = await getBasicDataForUsers(userIds);
+  console.timeEnd('USER CACHE');
 
   console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1299,6 +1301,7 @@ export const getAllImagesPost = async (
   }
   console.timeEnd('REACTION');
 
+  console.time('CACHE');
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics
   const [userCosmetics, profilePictures] = await Promise.all([
     includeCosmetics ? await getCosmeticsForUsers(userIds) : undefined,
@@ -1309,6 +1312,7 @@ export const getAllImagesPost = async (
   if (include?.includes('tagIds')) {
     tagIdsVar = await getTagIdsForImages(imageIds);
   }
+  console.timeEnd('CACHE');
 
   // TODO tags? we have strings...
 

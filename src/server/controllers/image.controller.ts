@@ -342,7 +342,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      const createdAt = images.map((image) => image.sortAt).sort()[0];
+      // TODO maybe something wrong with return here, str -> Date. also for createdAt?
+      const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
