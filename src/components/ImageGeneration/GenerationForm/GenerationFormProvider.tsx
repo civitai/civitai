@@ -15,6 +15,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   GenerationResource,
+  getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getResourcesBaseModelSetType,
@@ -153,20 +154,20 @@ function formatGenerationData(
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
-  let baseModel = getBaseModelSetType(checkpoint?.baseModel);
+  const baseModel = getBaseModelFromResources(data.resources);
 
-  if (baseResource && checkpoint) {
-    if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
-    else {
-      const possibleBaseModelSetTypes = getBaseModelSetTypes({
-        modelType: baseResource.modelType,
-        baseModel: baseResource.baseModel,
-      });
-      if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
-        baseModel = possibleBaseModelSetTypes[0];
-      }
-    }
-  }
+  // if (baseResource && checkpoint) {
+  //   if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
+  //   else {
+  //     const possibleBaseModelSetTypes = getBaseModelSetTypes({
+  //       modelType: baseResource.modelType,
+  //       baseModel: baseResource.baseModel,
+  //     });
+  //     if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
+  //       baseModel = possibleBaseModelSetTypes[0];
+  //     }
+  //   }
+  // }
 
   const config = getGenerationConfig(baseModel);
 
