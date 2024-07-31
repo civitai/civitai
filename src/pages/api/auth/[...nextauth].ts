@@ -102,21 +102,16 @@ export function createAuthOptions(): NextAuthOptions {
       async signIn({ account, email, user }) {
         // console.log('signIn', account?.userId);
         if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
-        if (account?.provider === 'email' && !user.emailVerified && email?.verificationRequest) {
-          if (user.email?.includes('+')) {
-            const [emailPrefix, emailDomain] = user.email.split('@');
-            const email = `${emailPrefix.split('+')[0]}@${emailDomain}`;
-            user.email = email;
-            const alreadyExists = await dbWrite.user.findFirst({
-              where: { email },
-              select: { id: true },
-            });
-
-            // Needs to return false to prevent login,
-            // otherwise next-auth fails because of a bug
-            // if we return a string and it's set to redirect: false
-            if (alreadyExists) return false;
-          }
+        if (
+          account?.provider === 'email' &&
+          !user.emailVerified &&
+          email?.verificationRequest &&
+          user.email?.includes('+')
+        ) {
+          // Needs to return false to prevent login,
+          // otherwise next-auth fails because of a bug
+          // if we return a string and it's set to redirect: false
+          return false;
         }
 
         return true;

@@ -7,10 +7,19 @@ import { z } from 'zod';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { Form, InputText, useForm } from '~/libs/form';
 
-const schema = z.object({ email: z.string().trim().toLowerCase().email() });
+const schema = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email()
+    .refine((value) => !value.includes('+'), {
+      message: 'Creating new accounts with + in email is not allowed',
+    }),
+});
 export const EmailLogin = ({ returnUrl }: { returnUrl: string }) => {
   const router = useRouter();
-  const [status, setStatus] = useState('idle');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'submitted'>('idle');
   const form = useForm({ schema });
   const handleEmailLogin = async ({ email }: z.infer<typeof schema>) => {
     setStatus('loading');
