@@ -20,7 +20,7 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -1408,7 +1408,9 @@ export const publishModelById = async ({
   );
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    await bustOrchestratorModelCache(model.modelVersions.map((x) => x.id));
+    const versionIds = model.modelVersions.map((x) => x.id);
+    await bustOrchestratorModelCache(versionIds);
+    await resourceDataCache.bust(versionIds);
   }
 
   // Fetch affected posts to update their images in search index

@@ -16,7 +16,8 @@ export async function getModel({
   return await getResource({ client, path: { air } });
 }
 
-export async function bustOrchestratorModelCache(versionIds: number[]) {
+export async function bustOrchestratorModelCache(versionIds: number | number[]) {
+  if (!Array.isArray(versionIds)) versionIds = [versionIds];
   const resources = await getResourceDataWithAirs(versionIds);
   if (!resources.length) return;
 
