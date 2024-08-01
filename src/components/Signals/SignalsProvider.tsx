@@ -60,7 +60,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<'connected' | 'reconnecting' | 'error' | 'closed'>();
   const workerRef = useRef<SignalWorker | null>(null);
 
-  // TODO bug: on error after connecting, we don't reset the status for "connected"
+  // TODO bug: websocket errors need to be checked, connected is seen as true even though communication is down
 
   if (!workerRef.current && typeof window !== 'undefined')
     workerRef.current = createSignalWorker({

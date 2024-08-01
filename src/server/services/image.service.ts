@@ -11,7 +11,6 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
-
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
@@ -64,6 +63,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -106,18 +106,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-<<<<<<< HEAD
-=======
-import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { redis } from '~/server/redis/client';
-import { metricsClient } from '~/server/meilisearch/client';
-import { logToAxiom } from '~/server/logging/client';
-import dayjs, { ManipulateType } from 'dayjs';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
->>>>>>> origin/main
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1215,40 +1203,44 @@ export const getAllImagesPost = async (
   }
 ) => {
   const {
+    userId,
     limit,
     cursor,
+    postIds,
+    modelVersionId,
+    period,
+    include,
+    types,
+    fromPlatform,
+    baseModels,
+    tools,
+    techniques,
+    tags,
+    notPublished,
+    withMeta: hasMeta,
     skip,
     postId,
-    postIds,
     collectionId, // TODO - call this from separate method?
     modelId,
-    modelVersionId,
     imageId, // TODO - remove, not in use
     username, // TODO - query by `userId` instead
-    period,
     periodMode,
-    tags,
     generation,
     reviewId, // TODO - remove, not in use
     prioritizedUserIds,
-    include,
     excludeCrossPosts,
     reactions, // TODO - remove, not in use
     ids,
     includeBaseModel,
-    types,
     hidden,
     followed,
-    fromPlatform,
     user,
     pending,
-    notPublished,
-    tools,
-    techniques,
-    baseModels,
     collectionTagId,
     excludedUserIds,
-    userId,
+    headers,
+    excludedTagIds,
+    withTags,
   } = input;
   const { sort, browsingLevel } = input;
 
@@ -1262,10 +1254,14 @@ export const getAllImagesPost = async (
     types,
     browsingLevel,
     fromPlatform,
-    hasMeta: include.includes('meta'),
+    hasMeta,
     baseModels,
     postIds,
     period,
+    tools,
+    techniques,
+    tags,
+    notPublished,
     sort,
     limit,
     offset,
@@ -1410,6 +1406,7 @@ function strArray(arr: any[]) {
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return { data: [], total: 0 };
+
   const {
     sort,
     modelVersionId,
@@ -1426,9 +1423,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     baseModels,
     excludeUserIds,
     period,
-    currentUserId,
     isModerator,
     postIds,
+    currentUserId,
   } = input;
   let { browsingLevel } = input;
 
@@ -1450,23 +1447,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
   if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
-  if (types && types.length) filters.push(`mediaType IN [${types.join(',')}]`);
   if (hasMeta) filters.push(`hasMeta = true`);
   if (fromPlatform) filters.push(`madeOnSite = true`);
+  if (notPublished && isModerator) filters.push(`published = false`);
+
+  if (types?.length) filters.push(`mediaType IN [${types.join(',')}]`);
+  if (tags?.length) filters.push(`tagIds IN [${tags.join(',')}]`);
+  if (tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
+  if (techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
+  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
+  if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
   // TODO.metricSearch add userId
   // if (userIds) {
   //   userIds = Array.isArray(userIds) ? userIds : [userIds];
   //   filters.push(`userId IN [${userIds.join(',')}]`)
   // }
-
-  if (notPublished && isModerator) filters.push(`published = false`);
-  if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
-  if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
-  if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
-
-  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
-  if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
   // Handle period filter
   let afterDate: Date | undefined;
@@ -1484,13 +1480,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId,
     modelId,
     userIds,
-    notPublished,
-    tags,
-    tools,
-    techniques,
     excludeUserIds,
   };
-  if (input.reviewId || input.modelId) {
+  if (input.reviewId || input.modelId || input.userIds || input.excludeUserIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
     logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) }, 'temp-search');
   }
@@ -3675,6 +3667,7 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
 
 // this method should hopefully not be a lasting addition
 export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
+
 export async function getImagesByUserIdForModeration(userId: number) {
   return await dbRead.image.findMany({
     where: { userId },
