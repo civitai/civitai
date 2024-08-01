@@ -18,14 +18,11 @@ import { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stri
 import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { closeAllModals } from '@mantine/modals';
 import { usePaymentIntent, useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
 import { PaymentMethodItem } from '~/components/Account/PaymentMethodsCard';
-import { useRecaptchaToken } from '../Recaptcha/useReptchaToken';
-import { RECAPTCHA_ACTIONS } from '../../server/common/constants';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
@@ -66,7 +63,18 @@ const StripeTransactionModal = ({
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const [success, setSuccess] = useState<boolean>(false);
   const supportedUserPaymentMethods = useMemo(() => {
-    return userPaymentMethods?.filter((method) => paymentMethodTypes.includes(method.type)) ?? [];
+    const available =
+      userPaymentMethods?.filter((method) => paymentMethodTypes.includes(method.type)) ?? [];
+    const deduped = [];
+    const seen = new Set();
+    for (const method of available) {
+      const id = method.card?.last4 ?? method.id;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      deduped.push(method);
+    }
+
+    return deduped;
   }, [userPaymentMethods, paymentMethodTypes]);
 
   const { trackAction } = useTrackEvent();
@@ -98,6 +106,34 @@ const StripeTransactionModal = ({
         </Group>
         <Divider mx="-lg" />
         {successMessage ? <>{successMessage}</> : <Text>Thank you for your purchase!</Text>}
+        <Button
+          onClick={() => {
+            closeAllModals();
+            onClose();
+          }}
+        >
+          Close
+        </Button>
+      </Stack>
+    );
+  }
+
+  if (successTransactionButError) {
+    return (
+      <Stack>
+        <Group position="apart" noWrap>
+          <Text size="lg" weight={700}>
+            Complete your transaction
+          </Text>
+        </Group>
+        <Divider mx="-lg" />
+        <Text>
+          Thank you, we have received your payment but something seems to have gone wrong. Please{' '}
+          <Text component="span" weight="bold">
+            DO NOT ATTEMPT TO PURCHASE AGAIN
+          </Text>
+          . If your Buzz is not delivered within the next few minutes, please contact support.
+        </Text>
         <Button
           onClick={() => {
             closeAllModals();
