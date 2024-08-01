@@ -825,14 +825,12 @@ export const getAllImages = async (
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
-    else {
-      if (from.indexOf(`irr`) !== -1) {
-        // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
-        orderBy = `irr."imageId" DESC`;
-      } else {
-        orderBy = `i."id" DESC`;
-      }
+    else if (sort === ImageSort.Oldest) {
+      orderBy = 'i."sortAt" ASC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
+    } else {
+      orderBy = 'i."sortAt" DESC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
     }
   }
 
@@ -928,11 +926,15 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (isModerator) {
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else {
+      AND.push(
+        browsingLevel
+          ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+          : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+      );
+    }
   }
 
   // TODO.metricSearch add missing props

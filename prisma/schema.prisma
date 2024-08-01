@@ -1226,6 +1226,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
+  sortAt            DateTime                @default(now())
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1257,6 +1258,7 @@ model Image {
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+  @@index([sortAt])
 }
 
 model ImageConnection {

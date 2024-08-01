@@ -1,7 +1,4 @@
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
-import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import {
   CosmeticSource,
   CosmeticType,
@@ -10,16 +7,18 @@ import {
   MediaType,
   Prisma,
 } from '@prisma/client';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
-import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
-import { isDefined } from '~/utils/type-guards';
-import { NsfwLevel } from '~/server/common/enums';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { isDefined } from '~/utils/type-guards';
+import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
@@ -47,7 +46,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ];
 
   const sortableAttributes: SortableAttributes = [
-    'createdAt',
+    'sortAt',
     'stats.commentCountAllTime',
     'stats.reactionCountAllTime',
     'stats.collectedCountAllTime',
@@ -320,6 +319,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."hideMeta",
         i."generationProcess",
         i."createdAt",
+        i."sortAt",
         i."mimeType",
         i."scannedAt",
         i."type",

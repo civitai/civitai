@@ -1,16 +1,13 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { z } from 'zod';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { IMAGES_SEARCH_INDEX } from '../../../../server/common/constants';
-import { updateDocs } from '../../../../server/meilisearch/client';
 import { CosmeticSource, CosmeticType, ImageIngestionStatus, Prisma } from '@prisma/client';
-import { isDefined } from '../../../../utils/type-guards';
-import { withRetries } from '../../../../server/utils/errorHandling';
-import {
-  ImageModelWithIngestion,
-  profileImageSelect,
-} from '../../../../server/selectors/image.selector';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { z } from 'zod';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
+import { updateDocs } from '~/server/meilisearch/client';
+import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
@@ -26,8 +23,10 @@ const IMAGE_WHERE: (idOffset: number) => Prisma.Sql[] = (idOffset: number) => [
 ];
 
 const schema = z.object({
-  update: z.enum(['user']),
+  update: z.enum(['user', 'dateFields']),
 });
+
+// TODO add sortAt
 
 const updateUserDetails = (idOffset: number) =>
   withRetries(async () => {
@@ -150,12 +149,55 @@ const updateUserDetails = (idOffset: number) =>
     return updateIndexReadyRecords[updateIndexReadyRecords.length - 1].id;
   });
 
+const updateDateFields = (idOffset: number) =>
+  withRetries(async () => {
+    type ImageForSearchIndex = {
+      id: number;
+      sortAt?: Date;
+      publishedAt?: Date;
+    };
+
+    console.log('Fetching records from ID: ', idOffset);
+    const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
+        SELECT
+          i."id", 
+          i."sortAt",
+          p."publishedAt" as "publishedAt"
+        FROM "Image" i
+        JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
+        WHERE ${Prisma.join(IMAGE_WHERE(idOffset), ' AND ')}
+        ORDER BY i."id"
+        LIMIT ${BATCH_SIZE};
+    `;
+
+    console.log(
+      'Fetched records: ',
+      records[0]?.id ?? 'N/A',
+      ' - ',
+      records[records.length - 1]?.id ?? 'N/A'
+    );
+
+    if (records.length === 0) {
+      return -1;
+    }
+
+    await updateDocs({
+      indexName: INDEX_ID,
+      documents: records,
+      batchSize: BATCH_SIZE,
+    });
+
+    console.log('Indexed records count: ', records.length);
+
+    return records[records.length - 1].id;
+  });
+
 export default ModEndpoint(
   async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
     const updateMethod: ((idOffset: number) => Promise<number>) | null =
-      update === 'user' ? updateUserDetails : null;
+      update === 'user' ? updateUserDetails : update === 'dateFields' ? updateDateFields : null;
 
     try {
       if (!updateMethod) {
