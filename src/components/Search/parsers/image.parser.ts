@@ -22,9 +22,6 @@ const imageSearchParamsSchema = searchParamsSchema
     index: z.literal('images'),
     createdAt: z.string(),
     sortBy: z.enum(ImagesSearchIndexSortBy),
-    generationTool: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
     baseModel: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
@@ -32,6 +29,12 @@ const imageSearchParamsSchema = searchParamsSchema
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
     tags: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    tools: z
+      .union([z.array(z.string()), z.string()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    techniques: z
       .union([z.array(z.string()), z.string()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
     users: z
@@ -57,10 +60,11 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   routeToState: (routeState: ImageUiState) => {
     const images: ImageSearchParams = (routeState[IMAGES_SEARCH_INDEX] || {}) as ImageSearchParams;
     const refinementList: Record<string, string[]> = removeEmpty({
-      generationTool: images.generationTool as string[],
       aspectRatio: images.aspectRatio as string[],
       baseModel: images.baseModel as string[],
       tagNames: images.tags as string[],
+      toolNames: images.tools as string[],
+      techniqueNames: images.techniques as string[],
       'user.username': images.users as string[],
     });
     const range = removeEmpty({
@@ -87,10 +91,11 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
     }
 
     const createdAt = uiState[IMAGES_SEARCH_INDEX].range?.['createdAtUnix'];
-    const generationTool = uiState[IMAGES_SEARCH_INDEX].refinementList?.['generationTool'];
     const aspectRatio = uiState[IMAGES_SEARCH_INDEX].refinementList?.['aspectRatio'];
     const baseModel = uiState[IMAGES_SEARCH_INDEX].refinementList?.['baseModel'];
     const tags = uiState[IMAGES_SEARCH_INDEX].refinementList?.['tagNames'];
+    const tools = uiState[IMAGES_SEARCH_INDEX].refinementList?.['toolNames'];
+    const techniques = uiState[IMAGES_SEARCH_INDEX].refinementList?.['techniqueNames'];
     const users = uiState[IMAGES_SEARCH_INDEX].refinementList?.['user.username'];
     const sortBy =
       (uiState[IMAGES_SEARCH_INDEX].sortBy as ImageSearchParams['sortBy']) || defaultSortBy;
@@ -100,13 +105,14 @@ export const imagesInstantSearchRoutingParser: InstantSearchRoutingParser = {
 
     const state: ImageSearchParams = {
       tags,
+      tools,
+      techniques,
       users,
       sortBy,
       query,
       imageId,
       baseModel,
       aspectRatio,
-      generationTool,
       createdAt,
     };
 

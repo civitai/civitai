@@ -354,6 +354,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
     }
+    if (!reviewKey && nsfw) {
+      // If user is new and image is NSFW send it for review
+      const [{ isNewUser }] =
+        (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
+        SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
+      `) ?? [];
+      if (isNewUser) reviewKey = 'newUser';
+    }
 
     const data: Prisma.ImageUpdateInput = {};
     if (reviewKey) data.needsReview = reviewKey;

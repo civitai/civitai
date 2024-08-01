@@ -35,6 +35,7 @@ import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
+import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -187,6 +188,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
+          <DailyCreatorCompReward />
           <SpendingBuzz withCTA />
           <PurchasableRewards />
         </Stack>

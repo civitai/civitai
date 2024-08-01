@@ -70,7 +70,8 @@ const processSearchIndexTask = async (
 
   try {
     if (type === 'pull') {
-      context.logger('processSearchIndexTask :: pull :: Processing task', task);
+      context.logger('processSearchIndexTask :: pull :: Processing task');
+      const start = (task.start ??= Date.now());
       const t = task as PullTask;
       const activeStep = t.currentStep ?? 0;
       const batch: SearchIndexPullBatch =
@@ -88,7 +89,10 @@ const processSearchIndexTask = async (
 
       if (!pulledData) {
         // We don't need to do anything if no data was pulled.
-        context.logger('processSearchIndexTask :: pull :: No data pulled. Marking as done.');
+        context.logger(
+          'processSearchIndexTask :: pull :: No data pulled. Marking as done.',
+          start ? (Date.now() - start) / 1000 : 'unknown duration'
+        );
         return 'done';
       }
 
@@ -103,27 +107,35 @@ const processSearchIndexTask = async (
           ...t,
           currentData: pulledData,
           currentStep: activeStep + 1,
+          start,
         } as PullTask;
       } else {
         return {
+          start,
           type: 'transform',
           data: pulledData,
         } as TransformTask;
       }
     } else if (type === 'transform') {
       context.logger('processSearchIndexTask :: transform :: Processing task');
-      const { data } = task as TransformTask;
+      const { data, start } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
       context.logger('processSearchIndexTask :: transform :: Done');
       return {
+        start,
         type: 'push',
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
       context.logger('processSearchIndexTask :: Push :: Processing task');
-      const { data } = task as PushTask;
+      const { data, start } = task as PushTask;
       await processor.pushData(context, data);
-      context.logger('processSearchIndexTask :: Push :: Done');
+      context.logger(
+        'processSearchIndexTask :: Push :: Done',
+        start ? (Date.now() - start) / 1000 : 'unknown duration'
+      );
+      // --
+
       return 'done';
     } else if (type === 'onComplete') {
       await processor.onComplete?.(context);

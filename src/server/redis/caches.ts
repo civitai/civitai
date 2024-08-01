@@ -7,7 +7,9 @@ import {
   Prisma,
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -29,11 +31,12 @@ export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: 
   ttl: CacheTTL.day,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
-    const db = fromWrite ? dbWrite : dbRead;
-    const tags = await db.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: { tagId: true, imageId: true },
-    });
+    const db = fromWrite ? pgDbWrite : pgDbRead;
+    const { rows: tags } = await db.query<{ imageId: number; tagId: number }>(`
+    SELECT "imageId", "tagId"
+    FROM "TagsOnImage"
+    WHERE "imageId" IN (${imageIds.join(',')});
+    `);
 
     const result = tags.reduce((acc, { tagId, imageId }) => {
       acc[imageId.toString()] ??= { imageId, tags: [] };
@@ -227,6 +230,52 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
 
     return records;
   },
+});
+
+type UserBasicLookup = {
+  id: number;
+  image: string | null;
+  username: string | null;
+  deletedAt: Date | null;
+};
+export const userBasicCache = createCachedObject<UserBasicLookup>({
+  key: REDIS_KEYS.CACHES.BASIC_USERS,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const userBasicData = await dbRead.user.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        username: true,
+        deletedAt: true,
+        image: true,
+      },
+    });
+    return Object.fromEntries(userBasicData.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.day,
+});
+
+type TagLookup = {
+  id: number;
+  name: string | null;
+  nsfwLevel: NsfwLevel;
+};
+export const tagCache = createCachedObject<TagLookup>({
+  key: REDIS_KEYS.CACHES.BASIC_TAGS,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const tagBasicData = await dbRead.tag.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        nsfwLevel: true,
+      },
+    });
+    return Object.fromEntries(tagBasicData.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.day,
 });
 
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];

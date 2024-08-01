@@ -15,6 +15,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   GenerationResource,
+  getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getResourcesBaseModelSetType,
@@ -54,7 +55,7 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true })
   .extend({
-    tier: userTierSchema,
+    tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
     // .refine(
     //   (x) => x.available !== false,
@@ -92,6 +93,8 @@ const formSchema = textToImageParamsSchema
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
     aspectRatio: z.string(),
+    creatorTip: z.number().min(0).max(1).default(0.25).optional(),
+    civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -153,20 +156,20 @@ function formatGenerationData(
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
-  let baseModel = getBaseModelSetType(checkpoint?.baseModel);
+  const baseModel = getBaseModelFromResources(data.resources);
 
-  if (baseResource && checkpoint) {
-    if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
-    else {
-      const possibleBaseModelSetTypes = getBaseModelSetTypes({
-        modelType: baseResource.modelType,
-        baseModel: baseResource.baseModel,
-      });
-      if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
-        baseModel = possibleBaseModelSetTypes[0];
-      }
-    }
-  }
+  // if (baseResource && checkpoint) {
+  //   if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
+  //   else {
+  //     const possibleBaseModelSetTypes = getBaseModelSetTypes({
+  //       modelType: baseResource.modelType,
+  //       baseModel: baseResource.baseModel,
+  //     });
+  //     if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
+  //       baseModel = possibleBaseModelSetTypes[0];
+  //     }
+  //   }
+  // }
 
   const config = getGenerationConfig(baseModel);
 
@@ -344,6 +347,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
+        creatorTip: overrides.creatorTip ?? 0.25,
       },
       status.limits
     );

@@ -70,7 +70,7 @@ export function UpscaleImageModal({
       });
       dialog.onClose();
     }
-    conditionalPerformTransaction(data?.cost ?? 0, performTransaction);
+    conditionalPerformTransaction(data?.cost?.total ?? 0, performTransaction);
   }
 
   return (
@@ -91,7 +91,7 @@ export function UpscaleImageModal({
         <GenerateButton
           onClick={handleSubmit}
           loading={isLoading || generateImage.isLoading}
-          cost={data?.cost}
+          cost={data?.cost?.total ?? 0}
           error={
             !isInitialLoading && isError
               ? 'Error calculating cost. Please try updating your values'

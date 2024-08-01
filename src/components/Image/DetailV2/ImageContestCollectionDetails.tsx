@@ -1,7 +1,6 @@
 import { Anchor, Button, Card, Divider, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { IconTournament } from '@tabler/icons-react';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { formatDate } from '~/utils/date-helpers';
@@ -10,17 +9,18 @@ export const ImageContestCollectionDetails = ({
   imageId,
   isOwner,
   isModerator,
+  shareUrl,
 }: {
   imageId: number;
   isOwner: boolean;
   isModerator?: boolean;
+  shareUrl?: string;
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
   const { collectionItems } = useImageContestCollectionDetails(
     { id: imageId },
     { enabled: !!imageId }
   );
-  const { shareUrl } = useImageDetailContext();
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =

@@ -76,6 +76,7 @@ export const constants = {
     'PixArt E',
     'Hunyuan 1',
     'Lumina',
+    'Kolors',
     'Other',
   ],
   hiddenBaseModels: [
@@ -398,6 +399,7 @@ export const baseModelSetTypes = [
   'PixArtA',
   'PixArtE',
   'Lumina',
+  'Kolors',
   'HyDit1',
   'ODOR',
 ] as const;
@@ -412,6 +414,7 @@ export const baseModelSets = defineBaseModelSets({
   PixArtA: ['PixArt a'],
   PixArtE: ['PixArt E'],
   Lumina: ['Lumina'],
+  Kolors: ['Kolors'],
   HyDit1: ['Hunyuan 1'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
@@ -474,6 +477,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     name: 'Tencent Hunyuan Community License Agreement',
   },
+  'kolors license': {
+    url: 'https://raw.githubusercontent.com/Kwai-Kolors/Kolors/master/MODEL_LICENSE',
+    name: 'Kolors License',
+  },
   'apache 2.0': {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
     name: 'Apache 2.0',
@@ -505,6 +512,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'PixArt E': baseLicenses['openrail++'],
   'Hunyuan 1': baseLicenses['hunyuan community'],
   Lumina: baseLicenses['apache 2.0'],
+  Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
@@ -571,6 +579,8 @@ export const generation = {
     baseModel: 'SD1',
     denoise: 0.4,
     upscale: 1.5,
+    civitaiTip: 0,
+    creatorTip: 0.25,
     model: {
       id: 128713,
       name: '8',

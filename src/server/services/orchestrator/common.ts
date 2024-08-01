@@ -296,6 +296,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
           if (value.type === 'debit') return acc + value.amount;
           else return acc - value.amount;
         }, 0) ?? 0,
+      cost: workflow.cost,
       tags: workflow.tags ?? [],
       steps: workflow.steps.map((step) =>
         formatWorkflowStep({

@@ -173,10 +173,7 @@ export const createImageSchema = z.object({
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z
-    .string()
-    .url()
-    .or(z.string().uuid('One of the files did not upload properly, please try again')),
+  url: z.string().uuid('One of the files did not upload properly, please try again'),
   meta: z.preprocess((value) => {
     if (typeof value !== 'object') return null;
     if (value && !Object.keys(value).length) return null;
@@ -219,7 +216,7 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag']),
+  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag', 'newUser']),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 

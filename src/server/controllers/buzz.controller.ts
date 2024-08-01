@@ -10,6 +10,7 @@ import {
   CompleteStripeBuzzPurchaseTransactionInput,
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
+  GetDailyBuzzCompensationInput,
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
@@ -18,6 +19,7 @@ import {
   completeStripeBuzzTransaction,
   createBuzzTransaction,
   createBuzzTransactionMany,
+  getDailyCompensationRewardByUser,
   getMultipliersForUser,
   getUserBuzzAccount,
   getUserBuzzTransactions,
@@ -378,3 +380,20 @@ export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullab
     throw parsedError;
   }
 };
+
+export function getDailyCompensationRewardHandler({
+  input,
+  ctx,
+}: {
+  input: GetDailyBuzzCompensationInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  if (!ctx.user.isModerator) input.userId = ctx.user.id;
+  if (!input.userId) input.userId = ctx.user.id;
+
+  try {
+    return getDailyCompensationRewardByUser({ userId: ctx.user.id, ...input });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}

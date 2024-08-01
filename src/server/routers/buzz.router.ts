@@ -5,6 +5,7 @@ import {
   depositClubFundsHandler,
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
+  getDailyCompensationRewardHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
@@ -19,6 +20,7 @@ import {
   userBuzzTransactionInputSchema,
   clubTransactionSchema,
   getEarnPotentialSchema,
+  getDailyBuzzCompensationInput,
 } from '~/server/schema/buzz.schema';
 import { claimBuzz, getClaimStatus, getEarnPotential } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
@@ -69,4 +71,7 @@ export const buzzRouter = router({
     if (!input.username && !input.userId) input.userId = ctx.user.id;
     return getEarnPotential(input);
   }),
+  getDailyBuzzCompensation: protectedProcedure
+    .input(getDailyBuzzCompensationInput)
+    .query(getDailyCompensationRewardHandler),
 });

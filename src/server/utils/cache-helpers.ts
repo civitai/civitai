@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
 import { redis } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
@@ -64,7 +65,11 @@ export function createCachedArray<T extends object>({
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
     const results = new Set<T>();
-    const cacheResults = await redis.packed.mGet<T>(ids.map((id) => `${key}:${id}`));
+    const cacheResults: T[] = [];
+    for (const batch of chunk(ids, 200)) {
+      const batchResults = await redis.packed.mGet<T>(batch.map((id) => `${key}:${id}`));
+      cacheResults.push(...batchResults.filter((x) => x !== null));
+    }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 

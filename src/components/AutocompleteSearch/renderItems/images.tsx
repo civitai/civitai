@@ -25,7 +25,7 @@ export const ImagesSearchItem = forwardRef<
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
   const { user, tagNames, stats } = hit;
-  const alt = truncate((hit.meta as ImageMetaProps)?.prompt, {
+  const alt = truncate(hit.prompt, {
     length: constants.altTruncateLength,
   });
   const { commentCountAllTime, reactionCountAllTime } = stats || {
@@ -77,13 +77,13 @@ export const ImagesSearchItem = forwardRef<
         )}
       </Center>
       <Stack spacing={8} sx={{ flex: '1 !important' }}>
-        {hit.meta && (
+        {!hit.hideMeta && hit.prompt && (
           <Text lineClamp={2} size="sm" inline>
             <Text weight={600} ml={1} span>
               Positive prompt:{' '}
             </Text>
 
-            {hit.meta?.prompt ?? ''}
+            {hit.prompt ?? ''}
           </Text>
         )}
         <UserAvatar size="xs" user={user} withUsername />
