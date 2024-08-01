@@ -1,4 +1,3 @@
-#!/usr/bin/env sh
 
 #branch="$(git rev-parse --abbrev-ref HEAD)"
 #if [ "$branch" != "main" ]; then
