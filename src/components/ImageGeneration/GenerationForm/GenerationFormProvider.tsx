@@ -55,7 +55,7 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true })
   .extend({
-    tier: userTierSchema,
+    tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
     // .refine(
     //   (x) => x.available !== false,
@@ -93,6 +93,8 @@ const formSchema = textToImageParamsSchema
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
     aspectRatio: z.string(),
+    creatorTip: z.number().min(0).max(1).default(0.25).optional(),
+    civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -345,6 +347,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
+        creatorTip: overrides.creatorTip ?? 0.25,
       },
       status.limits
     );

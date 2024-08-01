@@ -1,10 +1,15 @@
-import { Workflow as GeneratedWorkflow, WorkflowStep, TextToImageStep } from '@civitai/client';
+import {
+  Workflow as GeneratedWorkflow,
+  WorkflowStep,
+  TextToImageStep,
+  WorkflowCost,
+} from '@civitai/client';
 import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
 
 export * from './comfy/comfy.types';
 
 export type GenerationWhatIfResponse = {
-  cost: number;
+  cost?: WorkflowCost;
   ready: boolean;
   eta: Date;
   position: number;
