@@ -66,6 +66,16 @@ export function GenerationCostPopover({
 
   const items: DescriptionTableProps['items'] = [
     {
+      label: 'Quantity',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {Math.ceil(workflowCost.factors?.quantity ?? 0)}x
+        </Group>
+      ),
+      visible: !!workflowCost.factors?.quantity && workflowCost.factors?.quantity > 1,
+      className: classes.tableCell,
+    },
+    {
       label: 'Size',
       value: (
         <Group spacing={4} position="right" noWrap>

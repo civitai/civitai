@@ -34,7 +34,7 @@ import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
-import { formatDate, getDatesAsList, minDate } from '~/utils/date-helpers';
+import { formatDate, getDatesAsList, maxDate, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -50,7 +50,8 @@ ChartJS.register(
 );
 
 const now = dayjs();
-const monthsUntilNow = getDatesAsList(now.clone().startOf('year').toDate(), now.toDate(), 'month');
+const startDate = maxDate(dayjs('2024-07-01').toDate(), now.clone().startOf('year').toDate());
+const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
 const dateOptions = monthsUntilNow.reverse().map((month) => {
@@ -260,7 +261,13 @@ export function DailyCreatorCompReward() {
               onChange={(e) => setSearch(e.currentTarget.value)}
             />
             {filteredVersionIds.length > 0 && (
-              <Button variant="subtle" size="xs" onClick={() => setFilteredVersionIds([])} compact>
+              <Button
+                variant="subtle"
+                size="xs"
+                radius={0}
+                onClick={() => setFilteredVersionIds([])}
+                compact
+              >
                 Clear selection
               </Button>
             )}
@@ -277,7 +284,8 @@ export function DailyCreatorCompReward() {
                     return (
                       <UnstyledButton
                         key={version.id}
-                        p={4}
+                        py={4}
+                        px={8}
                         sx={(theme) => ({
                           borderRadius: theme.radius.sm,
                           backgroundColor: isSelected
