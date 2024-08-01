@@ -1348,15 +1348,15 @@ export const getAllImagesPost = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
-      tagIds: tagIdsData?.[sr.id]?.tags,
+      tagIds: tagIdsData?.[sr.id]?.tags.map((t) => t.id),
       // tags: tagsVar?.filter((x) => x.imageId === i.id),
       // TODO fix below
       tags: [],
       name: null, // leave
       needsReview: null, // add
       generationProcess: null, // deprecated
-      hash: null, // add
-      hideMeta: !sr.hasMeta, // remove
+      // hash: null, // add
+      // hideMeta: !sr.hasMeta, // remove
       scannedAt: null, // remove
       mimeType: null, // need?
       ingestion: ImageIngestionStatus.Scanned, // add? maybe remove
@@ -1454,9 +1454,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (notPublished && isModerator) filters.push(`published = false`);
 
   if (types?.length) filters.push(`mediaType IN [${types.join(',')}]`);
-  if (tags?.length) filters.push(`tagIds IN [${tags.join(',')}]`);
-  if (tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
-  if (techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
+  if (tags?.length) filters.push(`tags IN [${tags.join(',')}]`);
+  if (tools?.length) filters.push(`tools IN [${tools.join(',')}]`);
+  if (techniques?.length) filters.push(`techniques IN [${techniques.join(',')}]`);
   if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
   if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
