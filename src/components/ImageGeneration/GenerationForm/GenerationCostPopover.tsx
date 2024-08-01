@@ -232,17 +232,21 @@ function BreakdownExplanation() {
   return (
     <ul className="list-inside list-none text-sm">
       <li className="mb-2">
-        <span className="font-semibold">Base Cost:</span> The base cost of generating an image with
-        the selected model. SDXL has a base cost of ⚡4 and SD1.5 has a base cost of ⚡1.
+        <span className="font-semibold">Base Cost:</span> The base cost of generating an image is
+        ⚡1 for 512x512 at 30 steps with a basic sampler.
       </li>
       <li className="mb-2">
-        <span className="font-semibold">Size Cost:</span> Based on the size difference between what
-        you&apos;re requesting and the base resolution for your image, we charge a Size Cost. The
-        base size of SDXL is 1024x1024 and for SD1.5 it&apos;s 512x512.
+        <span className="font-semibold">Size Multiplier:</span> Based on the size difference between
+        what you&apos;re requesting and the base resolution for your image, we charge a Size
+        Multiplier. For example SDXL at 1024x1024 will have a multiplier of 4x.
       </li>
       <li className="mb-2">
-        <span className="font-semibold">Step Cost:</span> Basic generations cover 25 steps, if you
-        do more or less than that, the amount you are charged is adjusted accordingly
+        <span className="font-semibold">Step Multiplier:</span> Basic generations cover 30 steps, if
+        you do more or less than that, the amount you are charged is adjusted accordingly.
+      </li>
+      <li className="mb-2">
+        <span className="font-semibold">Sampler Multiplier:</span> Some samplers cause generation to
+        take more time and because of that increase the total cost of generating.
       </li>
       <li className="mb-2">
         <span className="font-semibold">Workflow Cost:</span> Some workflows cost extra because they
