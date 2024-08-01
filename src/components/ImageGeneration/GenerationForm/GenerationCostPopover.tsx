@@ -49,6 +49,7 @@ export function GenerationCostPopover({
   creatorTipInputOptions,
   civitaiTipInputOptions,
   readOnly,
+  disabled,
   ...popoverProps
 }: Props) {
   const { classes, cx } = useStyles();
@@ -205,6 +206,8 @@ export function GenerationCostPopover({
     },
   ];
 
+  if (disabled) return <>{children}</>;
+
   return (
     <Popover shadow="md" {...popoverProps}>
       <Popover.Target>{children}</Popover.Target>
@@ -266,9 +269,11 @@ function BreakdownExplanation() {
   );
 }
 
-type Props = PopoverProps & {
+type Props = Omit<PopoverProps, 'children'> & {
+  children: React.ReactNode;
   workflowCost: WorkflowCost;
   creatorTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   civitaiTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   readOnly?: boolean;
+  disabled?: boolean;
 };
