@@ -1,18 +1,38 @@
-import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
+import { JsonPatchFactory, WorkflowEvent, WorkflowStepJobEvent, applyPatch } from '@civitai/client';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
+import { cloneDeep } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflowStepHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
-import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
-import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
-import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
-import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
+import {
+  GeneratedImageStepMetadata,
+  TextToImageStepImageMetadata,
+} from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  PatchWorkflowParams,
+  PatchWorkflowStepParams,
+  TagsPatchSchema,
+  workflowQuerySchema,
+} from '~/server/schema/orchestrator/workflows.schema';
+import {
+  WorkflowStepFormatted,
+  queryGeneratedImageWorkflows,
+} from '~/server/services/orchestrator/common';
+import {
+  IWorkflow,
+  IWorkflowsInfinite,
+  UpdateWorkflowStepParams,
+} from '~/server/services/orchestrator/orchestrator.schema';
+import {
+  WORKFLOW_TAGS,
+  orchestratorCompletedStatuses,
+} from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -148,6 +168,203 @@ export function useCancelTextToImageRequest() {
       });
     },
   });
+}
+
+export type UpdateImageStepMetadataArgs = {
+  workflowId: string;
+  stepName: string;
+  images: Record<string, TextToImageStepImageMetadata>;
+};
+
+export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+
+  function updateImages(args: Array<UpdateImageStepMetadataArgs>) {
+    const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
+      queryKey,
+      exact: false,
+    });
+
+    // add workflows from query cache to an array for quick reference
+    const workflows: IWorkflow[] = [];
+    loop: for (const [, queryData] of allQueriesData) {
+      for (const page of queryData?.pages ?? []) {
+        for (const workflow of page.items) {
+          const match = args.find((x) => x.workflowId === workflow.id);
+          if (match) workflows.push(workflow);
+          if (workflows.length === args.length) break loop;
+        }
+      }
+    }
+
+    const workflowPatches: PatchWorkflowParams[] = [];
+    const stepPatches: PatchWorkflowStepParams[] = [];
+    const updated: UpdateImageStepMetadataArgs[] = [];
+    const tags: { workflowId: string; tag: string; op: 'add' | 'remove' }[] = [];
+    const toDelete: string[] = [];
+
+    function addWorkflowPatches({ workflowId, patches }: PatchWorkflowParams) {
+      const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
+      if (index === -1) workflowPatches.push({ workflowId, patches });
+      else workflowPatches[index].patches = workflowPatches[index].patches.concat(patches);
+    }
+
+    for (const workflow of workflows) {
+      const match = args.find((x) => x.workflowId === workflow.id);
+      if (!match) continue;
+      const { workflowId, stepName, images } = match;
+      let favorites: boolean | undefined;
+      for (const step of workflow.steps as WorkflowStepFormatted[]) {
+        if (step.name !== stepName) continue;
+        const metadata = step.metadata ?? {};
+        const jsonPatch = new JsonPatchFactory<GeneratedImageStepMetadata>();
+        // const images = metadata.images ?? {}
+        if (!metadata.images) jsonPatch.addOperation({ op: 'add', path: 'images', value: {} });
+        for (const imageId in images) {
+          if (!metadata.images?.[imageId])
+            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}`, value: {} });
+
+          const current = metadata.images?.[imageId] ?? {};
+          const { hidden, feedback, comments, postId, favorite } = match.images[imageId];
+          if (hidden)
+            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}/hidden`, value: true });
+          if (feedback) {
+            jsonPatch.addOperation({
+              op: feedback !== current.feedback ? 'add' : 'remove',
+              path: `images/${imageId}/feedback`,
+              value: feedback,
+            });
+          }
+          if (comments)
+            jsonPatch.addOperation({
+              op: 'add',
+              path: `images/${imageId}/comments`,
+              value: comments,
+            });
+          if (postId)
+            jsonPatch.addOperation({
+              op: 'add',
+              path: `images/${imageId}/postId`,
+              value: postId,
+            });
+          if (favorite)
+            jsonPatch.addOperation({
+              op: current.favorite !== favorite ? 'add' : 'remove',
+              path: `images/${imageId}/favorite`,
+              value: true,
+            });
+        }
+
+        const clone = cloneDeep(metadata);
+        applyPatch(clone, jsonPatch.operations);
+        const patchedImages = clone.images ?? {};
+
+        // first check if the workflow should be deleted
+        const hiddenCount = Object.values(patchedImages).filter((x) => x.hidden).length;
+        if (step.images.length === hiddenCount) {
+          toDelete.push(workflow.id);
+        } else {
+          const images = removeEmpty(patchedImages);
+          // return transformed data
+          updated.push({ workflowId, stepName, images });
+
+          // determine if we need to toggle favorites tag
+          // if (
+          //   workflow.tags.includes(WORKFLOW_TAGS.FAVORITES) &&
+          //   Object.values(images).every((x) => !x.favorite)
+          // )
+          //   tags.push({ workflowId, tag: 'favorites', op: 'remove' });
+          // else if (Object.values(images).some((x) => x.favorite))
+          //   tags.push({ workflowId, tag: 'favorites', op: 'add' });
+
+          if (Object.values(images).every((x) => !x.favorite)) favorites = false;
+          else if (Object.values(images).some((x) => x.favorite)) favorites = true;
+
+          addWorkflowPatches({
+            workflowId,
+            patches: jsonPatch.operations.map((operation) => ({
+              ...operation,
+              path: `/steps/${stepName}/metadata${operation.path}`,
+            })),
+          });
+          // stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
+        }
+
+        const tagPatches = new JsonPatchFactory<{ tags: string[] }>();
+        if (favorites === true) {
+          tagPatches.addOperation({
+            op: 'add',
+            path: 'tags/-',
+            value: WORKFLOW_TAGS.FAVORITES,
+          });
+        } else if (favorites === false) {
+          const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITES);
+          if (favoritesIndex > -1)
+            tagPatches.addOperation({ op: 'remove', path: `tags/${favoritesIndex}` });
+        }
+        if (tagPatches.operations.length > 0) {
+          addWorkflowPatches({ workflowId, patches: tagPatches.operations });
+          // const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
+          // if (index > -1)
+          //   workflowPatches[index].patches = workflowPatches[index].patches.concat(
+          //     tagPatches.operations
+          //   );
+          // else workflowPatches.push({ workflowId, patches: tagPatches.operations });
+        }
+      }
+    }
+
+    mutate(
+      {
+        workflows: workflowPatches.length ? workflowPatches : undefined,
+        steps: stepPatches.length ? stepPatches : undefined,
+        remove: toDelete.length ? toDelete : undefined,
+        // tags: tags.length ? tags : undefined,
+      },
+      {
+        onSuccess: () => {
+          updateQueries<IWorkflowsInfinite>(queryKey, (old) => {
+            for (const page of old.pages) {
+              // remove deleted items
+              page.items = page.items.filter((x) => !toDelete.includes(x.id));
+              for (const workflow of page.items) {
+                // add/remove workflow tags
+                const addTagsMatch = tags.find(
+                  (x) => x.workflowId === workflow.id && x.op === 'add'
+                );
+                const removeTagsMatch = tags.find(
+                  (x) => x.workflowId === workflow.id && x.op === 'remove'
+                );
+                if (addTagsMatch) workflow.tags.push(addTagsMatch.tag);
+                if (removeTagsMatch)
+                  workflow.tags = workflow.tags.filter((tag) => tag !== removeTagsMatch.tag);
+
+                const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
+                if (!toUpdate.length) continue;
+                for (const step of workflow.steps) {
+                  const images = toUpdate.find((x) => x.stepName === step.name)?.images;
+                  if (images) step.metadata = { ...step.metadata, images };
+                }
+              }
+            }
+          });
+          options?.onSuccess?.();
+        },
+      }
+    );
+  }
+
+  return { updateImages, isLoading };
+}
+
+export function usePatchTags() {
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  function patchTags(tags: TagsPatchSchema[]) {
+    mutate({ tags });
+  }
+
+  return { patchTags, isLoading };
 }
 
 export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {

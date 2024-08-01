@@ -32,7 +32,7 @@ import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
@@ -65,6 +65,7 @@ export function GeneratedImage({
     imageId: image.id,
   });
 
+  const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
 
@@ -82,8 +83,6 @@ export function GeneratedImage({
       checked
     );
   const { copied, copy } = useClipboard();
-
-  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();
 
   const handleImageClick = () => {
     if (!image || !available) return;
@@ -119,8 +118,11 @@ export function GeneratedImage({
           {
             workflowId: request.id,
             stepName: step.name,
-            imageId: image.id,
-            hidden: true,
+            images: {
+              [image.id]: {
+                hidden: true,
+              },
+            },
           },
         ]),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
@@ -166,8 +168,11 @@ export function GeneratedImage({
       {
         workflowId: request.id,
         stepName: step.name,
-        imageId: image.id,
-        feedback: newFeedback,
+        images: {
+          [image.id]: {
+            feedback: newFeedback,
+          },
+        },
       },
     ]);
   }

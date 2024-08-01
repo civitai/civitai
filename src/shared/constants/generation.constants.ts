@@ -14,7 +14,12 @@ import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
   IMAGE: 'img',
-  TEXT_TO_IMAGE: 'txt2img',
+  FAVORITES: 'favorites',
+  FOLDER: 'folder',
+  FEEDBACK: {
+    LIKED: 'feedback-liked',
+    DISLIKED: 'feedback-disliked',
+  },
 };
 
 export const generationServiceCookie = {

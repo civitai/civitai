@@ -52,6 +52,7 @@ const textToImageStepImageMetadataSchema = z.object({
   feedback: z.enum(['liked', 'disliked']).optional(),
   comments: z.string().optional(),
   postId: z.number().optional(),
+  favorite: z.boolean().optional(),
 });
 
 /**

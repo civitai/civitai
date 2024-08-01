@@ -5,7 +5,8 @@ import { useRouter } from 'next/router';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
   useGetTextToImageRequests,
-  useUpdateTextToImageStepMetadata,
+  useUpdateImageStepMetadata,
+  UpdateImageStepMetadataArgs,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
@@ -137,7 +138,7 @@ export const useGeneratedImageActions = () => {
   const deselect = () => orchestratorImageSelect.setSelected([]);
   const [zipping, setZipping] = useState(false);
 
-  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata({
+  const { updateImages, isLoading } = useUpdateImageStepMetadata({
     onSuccess: () => deselect(),
   });
   const createPostMutation = trpc.post.create.useMutation();
@@ -159,12 +160,18 @@ export const useGeneratedImageActions = () => {
       confirmProps: { color: 'red' },
       onConfirm: () => {
         updateImages(
-          selected.map(({ workflowId, stepName, imageId }) => ({
-            workflowId,
-            stepName,
-            imageId,
-            hidden: true,
-          }))
+          selected.reduce<UpdateImageStepMetadataArgs[]>(
+            (acc, { workflowId, stepName, imageId }) => {
+              const index = acc.findIndex(
+                (x) => x.workflowId === workflowId && x.stepName === stepName
+              );
+              if (index === -1)
+                acc.push({ workflowId, stepName, images: { [imageId]: { hidden: true } } });
+              else acc[index].images[imageId] = { hidden: true };
+              return acc;
+            },
+            []
+          )
         );
       },
       zIndex: constants.imageGeneration.drawerZIndex + 2,

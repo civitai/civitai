@@ -2,11 +2,13 @@ import { deepOmit } from '~/utils/object-helpers';
 import {
   $OpenApiTs,
   getWorkflowStep as clientGetWorkflowStep,
+  patchWorkflowStep,
   updateWorkflowStep,
 } from '@civitai/client';
 
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
+import { PatchWorkflowStepParams } from '~/server/schema/orchestrator/workflows.schema';
 
 export async function getWorkflowStep({
   token,
@@ -38,6 +40,22 @@ export async function updateWorkflowSteps({
           stepName,
         },
       });
+    })
+  );
+}
+
+export async function patchWorkflowSteps({
+  input,
+  token,
+}: {
+  input: PatchWorkflowStepParams[];
+  token: string;
+}) {
+  const client = createOrchestratorClient(token);
+  await Promise.all(
+    input.map(async ({ workflowId, stepName, patches }) => {
+      // console.dir({ body: patches, path: { stepName, workflowId } }, { depth: null });
+      await patchWorkflowStep({ client, body: patches, path: { stepName, workflowId } });
     })
   );
 }

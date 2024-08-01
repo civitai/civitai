@@ -279,6 +279,7 @@ function combineResourcesWithInputResource(
   });
 }
 
+export type GeneratedImageResponseFormatted = AsyncReturnType<typeof formatGeneratedImageResponses>;
 export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
@@ -320,6 +321,7 @@ function getTextToImageAirs(inputs: TextToImageInput[]) {
   ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 
+export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
   workflowId: string;
   step: WorkflowStep;
