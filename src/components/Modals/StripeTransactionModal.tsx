@@ -196,11 +196,11 @@ const StripeTransactionModal = ({
             }}
             disabled={processingPayment}
           >
-            {processingTooLong ? 'Close' : 'Cancel'}
+            {processingTooLong || successTransactionButError ? 'Close' : 'Cancel'}
           </Button>
           <Button
             component="button"
-            disabled={processingPayment || processingTooLong}
+            disabled={processingPayment || processingTooLong || successTransactionButError}
             loading={processingPayment}
             type="submit"
           >
