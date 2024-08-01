@@ -15,7 +15,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { ImagesInfiniteModel, ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -26,21 +26,27 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { ImageSort } from '~/server/common/enums';
+import { ImageModel } from '~/server/selectors/image.selector';
+import { trpc } from '~/utils/trpc';
 
 export function CsamImageSelection({ onNext }: { onNext: () => void }) {
   const { userId, user } = useCsamContext();
 
   // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
-  const {
-    flatData: images,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isRefetching,
-  } = useQueryImages(
-    { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [], pending: true },
-    { applyHiddenPreferences: false, enabled: !!user }
-  );
+  // const {
+  //   flatData: images,
+  //   isLoading,
+  //   fetchNextPage,
+  //   hasNextPage,
+  //   isRefetching,
+  // } = useQueryImages(
+  //   { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [], pending: true },
+  //   { applyHiddenPreferences: false, enabled: !!user }
+  // );
+
+  const { data: images, isLoading } = trpc.image.getImagesByUserIdForModeration.useQuery({
+    userId,
+  });
 
   const hasSelected = useCsamImageSelectStore(
     useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
@@ -67,20 +73,18 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
         </Title>
         <IsClient>
           <MasonryContainer>
-            <ImagesProvider images={images}>
-              <MasonryColumns
-                data={images}
-                imageDimensions={(data) => {
-                  const width = data?.width ?? 450;
-                  const height = data?.height ?? 450;
-                  return { width, height };
-                }}
-                maxItemHeight={600}
-                render={CsamImageCard}
-                itemId={(data) => data.id}
-              />
-            </ImagesProvider>
-            {hasNextPage && (
+            <MasonryColumns
+              data={images}
+              imageDimensions={(data) => {
+                const width = data?.width ?? 450;
+                const height = data?.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={CsamImageCard}
+              itemId={(data) => data.id}
+            />
+            {/* {hasNextPage && (
               <InViewLoader
                 loadFn={fetchNextPage}
                 loadCondition={!isRefetching}
@@ -90,7 +94,7 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
                   <Loader />
                 </Center>
               </InViewLoader>
-            )}
+            )} */}
           </MasonryContainer>
         </IsClient>
       </ScrollArea>
@@ -119,7 +123,7 @@ function SelectedCount() {
   return <>{count.toString()}</>;
 }
 
-function CsamImageCard({ data: image, height }: { data: ImagesInfiniteModel; height: number }) {
+function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const theme = useMantineTheme();
   const userId = image.user.id;

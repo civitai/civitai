@@ -11,6 +11,7 @@ const errors: Record<string, string> = {
     'To confirm your identity, sign in with the same account you used originally.',
   EmailSignin: 'Check your email address.',
   CredentialsSignin: 'Sign in failed. Check the details you provided are correct.',
+  NoExtraEmails: 'Creating new accounts with + in email is not allowed.',
   default: 'Unable to sign in.',
 };
 

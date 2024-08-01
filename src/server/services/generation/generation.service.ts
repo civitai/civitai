@@ -32,6 +32,7 @@ import {
   defaultCheckpoints,
   formatGenerationResources,
   GenerationResource,
+  getBaseModelFromResources,
   getBaseModelSet,
   getBaseModelSetType,
 } from '~/shared/constants/generation.constants';
@@ -228,12 +229,13 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
     const [vae] = await resourceDataCache.fetch([resource.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
+
+  const deduped = uniqBy(formatGenerationResources(resources), 'id');
+
   return {
-    resources: uniqBy(formatGenerationResources(resources), 'id'),
+    resources: deduped,
     params: {
-      // only pass base model if model is checkpoint
-      baseModel:
-        resource.model.type === 'Checkpoint' ? getBaseModelSetType(resource.baseModel) : undefined,
+      baseModel: getBaseModelFromResources(deduped),
       clipSkip: resource.clipSkip ?? undefined,
     },
     remix: {
@@ -250,9 +252,14 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
     const [vae] = await resourceDataCache.fetch([checkpoint.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
+
+  const deduped = uniqBy(formatGenerationResources(resources), 'id');
+
   return {
-    resources: uniqBy(formatGenerationResources(resources), 'id'),
-    params: {},
+    resources: deduped,
+    params: {
+      baseModel: getBaseModelFromResources(deduped),
+    },
   };
 };
 
@@ -315,8 +322,7 @@ const getImageGenerationData = async (id: number) => {
     }
   }
 
-  const checkpoint = deduped.find((x) => x.modelType === 'Checkpoint');
-  const baseModel = getBaseModelSetType(checkpoint?.baseModel);
+  const baseModel = getBaseModelFromResources(deduped);
 
   // Clean-up bad values
   if (meta.cfgScale == 0) meta.cfgScale = 7;
@@ -335,7 +341,7 @@ const getImageGenerationData = async (id: number) => {
 
   return {
     // only send back resources if we have a checkpoint resource
-    resources: checkpoint ? deduped : [],
+    resources: deduped,
     params: {
       ...meta,
       clipSkip,

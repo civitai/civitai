@@ -122,6 +122,10 @@ a {
   text-decoration: underline;
 }
 
+.mantine-Alert-body .markdown-content a {
+  color: inherit;
+}
+
 .light .markdown-content blockquote {
   background: #eee;
   border-top: 4px solid #ddd;

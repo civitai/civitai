@@ -41,51 +41,20 @@ export function BountyEntryDiscussion({ bountyEntryId, userId, showEmptyState }:
               </Stack>
             )}
             <Stack className={activeComment ? classes.rootCommentReplyInset : undefined}>
-              <CreateComment />
-              {data?.length || created.length ? (
-                <>
-                  {data?.map((comment) => (
-                    <Comment key={comment.id} comment={comment} />
-                  ))}
-                  {!!remaining && !showMore && (
-                    <Divider
-                      label={
-                        <Group spacing="xs" align="center">
-                          <Text variant="link" sx={{ cursor: 'pointer' }} onClick={toggleShowMore}>
-                            Show {remaining} More
-                          </Text>
-                        </Group>
-                      }
-                      labelPosition="center"
-                      variant="dashed"
-                    />
-                  )}
-                  {created.map((comment) => (
-                    <Comment key={comment.id} comment={comment} />
-                  ))}
-                </>
-              ) : showEmptyState ? (
-                <Paper
-                  p="xl"
-                  radius="md"
-                  sx={(theme) => ({
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                  })}
-                >
-                  <Stack spacing="sm" align="center">
-                    <Text size={24} weight={600} align="center">
-                      No comments yet
-                    </Text>
-                    <Text color="dimmed" align="center">
-                      Start the conversation by leaving a comment.
-                    </Text>
-                  </Stack>
-                </Paper>
-              ) : null}
+              <CreateComment key={activeComment?.id} borderless />
+              {data?.map((comment) => (
+                <Comment key={comment.id} comment={comment} borderless />
+              ))}
+              {!!remaining && !showMore && (
+                <div className="flex justify-center">
+                  <Text variant="link" className="cursor-pointer text-sm" onClick={toggleShowMore}>
+                    Show {remaining} More
+                  </Text>
+                </div>
+              )}
+              {created.map((comment) => (
+                <Comment key={comment.id} comment={comment} borderless />
+              ))}
             </Stack>
           </Stack>
         )

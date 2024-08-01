@@ -68,7 +68,6 @@ function RenderFilters() {
         sortBy={['name']}
         attribute="aspectRatio"
       />
-      <ChipRefinementList title="Generated With" sortBy={['name']} attribute="generationTool" />
       <SearchableMultiSelectRefinementList
         title="Users"
         attribute="user.username"
@@ -77,6 +76,18 @@ function RenderFilters() {
       <SearchableMultiSelectRefinementList
         title="Tags"
         attribute="tagNames"
+        operator="and"
+        searchable={true}
+      />
+      <SearchableMultiSelectRefinementList
+        title="Tools"
+        attribute="toolNames"
+        operator="and"
+        searchable={true}
+      />
+      <SearchableMultiSelectRefinementList
+        title="Techniques"
+        attribute="techniqueNames"
         operator="and"
         searchable={true}
       />

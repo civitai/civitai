@@ -20,6 +20,8 @@ import {
   ActionIcon,
   Group,
 } from '@mantine/core';
+import ReactMarkdown from 'react-markdown';
+import { hashify } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
@@ -77,7 +79,7 @@ import {
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
 import {
@@ -87,6 +89,7 @@ import {
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -123,6 +126,10 @@ export function GenerationFormContent() {
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const messageHash = useMemo(
+    () => (status.message ? hashify(status.message).toString() : null),
+    [status.message]
+  );
 
   const form = useGenerationForm();
 
@@ -984,15 +991,20 @@ export function GenerationFormContent() {
                 </div>
               </>
             )}
-            {status.available && status.message && (
-              <AlertWithIcon
+            {status.available && status.message && messageHash && (
+              <DismissibleAlert
                 color="yellow"
                 title="Image Generation Status Alert"
-                icon={<IconAlertTriangle size={20} />}
-                iconColor="yellow"
+                id={messageHash}
               >
-                {status.message}
-              </AlertWithIcon>
+                <ReactMarkdown
+                  allowedElements={['a', 'strong']}
+                  unwrapDisallowed
+                  className="markdown-content"
+                >
+                  {status.message}
+                </ReactMarkdown>
+              </DismissibleAlert>
             )}
           </>
         )}

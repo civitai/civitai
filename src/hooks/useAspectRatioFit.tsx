@@ -57,32 +57,32 @@ export function useAspectRatioFit<TElement extends HTMLElement = HTMLDivElement>
   return { setRef: ref, ...dimensions };
 }
 
-export function useAspectRatioFit2<TElement extends HTMLElement = HTMLDivElement>({
-  width,
-  height,
-}: {
-  width: number;
-  height: number;
-}) {
-  const ref = useRef<TElement | null>(null);
-  const debouncer = useDebouncer(200);
-  const [dimensions, setDimensions] = useState<{ width: number; height: number }>(getDimensions());
+// export function useAspectRatioFit2<TElement extends HTMLElement = HTMLDivElement>({
+//   width,
+//   height,
+// }: {
+//   width: number;
+//   height: number;
+// }) {
+//   const ref = useRef<TElement | null>(null);
+//   const debouncer = useDebouncer(200);
+//   const [dimensions, setDimensions] = useState<{ width: number; height: number }>(getDimensions());
 
-  function getDimensions() {
-    return calculateAspectRatioFit(
-      width,
-      height,
-      ref.current?.clientWidth ?? 0,
-      ref.current?.clientHeight ?? 0
-    );
-  }
+//   function getDimensions() {
+//     return calculateAspectRatioFit(
+//       width,
+//       height,
+//       ref.current?.clientWidth ?? 0,
+//       ref.current?.clientHeight ?? 0
+//     );
+//   }
 
-  function handleResize() {
-    debouncer(() => setDimensions(getDimensions()));
-  }
+//   function handleResize() {
+//     debouncer(() => setDimensions(getDimensions()));
+//   }
 
-  useWindowEvent('resize', handleResize);
-  useEffect(() => setDimensions(getDimensions()), []);
+//   useWindowEvent('resize', handleResize);
+//   useEffect(() => setDimensions(getDimensions()), []);
 
-  return { setRef: ref, ...dimensions };
-}
+//   return { setRef: ref, ...dimensions };
+// }

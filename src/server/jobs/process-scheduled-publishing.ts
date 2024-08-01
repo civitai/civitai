@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { isDefined } from '~/utils/type-guards';
@@ -134,7 +134,8 @@ export const processScheduledPublishing = createJob(
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustOrchestratorModelCache([modelVersion.id]);
+      await bustOrchestratorModelCache(modelVersion.id);
+      await resourceDataCache.bust(modelVersion.id);
     }
     for (const post of scheduledPosts) {
       await eventEngine.processEngagement({

@@ -99,9 +99,20 @@ export function createAuthOptions(): NextAuthOptions {
       },
     },
     callbacks: {
-      async signIn({ account }) {
+      async signIn({ account, email, user }) {
         // console.log('signIn', account?.userId);
         if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
+        if (
+          account?.provider === 'email' &&
+          !user.emailVerified &&
+          email?.verificationRequest &&
+          user.email?.includes('+')
+        ) {
+          // Needs to return false to prevent login,
+          // otherwise next-auth fails because of a bug
+          // if we return a string and it's set to redirect: false
+          return false;
+        }
 
         return true;
       },

@@ -42,6 +42,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
+import { resourceDataCache } from '~/server/redis/caches';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -210,6 +211,7 @@ export const upsertModelVersion = async ({
       ),
     ]);
     await preventReplicationLag('modelVersion', version.id);
+    await resourceDataCache.bust(version.id);
 
     return version;
   } else {
@@ -372,6 +374,7 @@ export const upsertModelVersion = async ({
       },
     });
     await preventReplicationLag('modelVersion', version.id);
+    await resourceDataCache.bust(version.id);
 
     return version;
   }
@@ -382,6 +385,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
+    await resourceDataCache.bust(deleted.id);
 
     return deleted;
   });
@@ -396,6 +400,7 @@ export const updateModelVersionById = async ({
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
+  await resourceDataCache.bust(id);
 };
 
 export const publishModelVersionsWithEarlyAccess = async ({
@@ -590,7 +595,8 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await bustOrchestratorModelCache([version.id]);
+  await bustOrchestratorModelCache(version.id);
+  await resourceDataCache.bust(version.id);
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
@@ -673,6 +679,7 @@ export const unpublishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await updateModelLastVersionAt({ id: version.model.id });
+  await resourceDataCache.bust(version.id);
 
   return version;
 };

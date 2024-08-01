@@ -258,6 +258,14 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
   });
 }
 
+export function getBaseModelFromResources(resources: GenerationResource[]) {
+  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
+  if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
+  else return 'SD1';
+}
+
 export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   params: T,
   limits?: GenerationLimits
@@ -274,7 +282,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio)
+  if (!params.aspectRatio && params.width && params.height)
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
 
   // handle SDXL ClipSkip

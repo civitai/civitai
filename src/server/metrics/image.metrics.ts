@@ -42,6 +42,7 @@ export const imageMetrics = createMetricProcessor({
       log('update metrics', i + 1, 'of', tasks.length);
 
       const batchJson = JSON.stringify(batch);
+      const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
       const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
       const metricValues = metrics
         .map(
@@ -60,7 +61,7 @@ export const imageMetrics = createMetricProcessor({
 
       await executeRefresh(ctx)`
         -- update image metrics
-        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("imageId" INT, "heartCount" INT[], "likeCount" INT[], "dislikeCount" INT[], "laughCount" INT[], "cryCount" INT[], "commentCount" INT[], "collectedCount" INT[], "tippedCount" INT[], "tippedAmountCount" INT[], "viewCount" INT[]))
+        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("imageId" INT, ${metricInsertColumns}))
         INSERT INTO "ImageMetric" ("imageId", "timeframe", "updatedAt", ${metricInsertKeys})
         SELECT
           d."imageId",
@@ -281,7 +282,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
 async function getBuzzTasks(ctx: ImageMetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent image tips
-    SELECT "entityId" as id
+    SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
     WHERE "entityType" = 'Image' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
   `;
@@ -289,10 +290,10 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getBuzzTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
+    await getMetrics(ctx)`
       -- update image tip metrics
       SELECT
-        "entityId",
+        "entityId" as "imageId",
         tf.timeframe,
         ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
         ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
