@@ -8,7 +8,7 @@ import { Prisma } from '@prisma/client';
 import { withRetries } from '../../../../server/utils/errorHandling';
 import { dataProcessor } from '~/server/db/db-helpers';
 
-const BATCH_SIZE = 100000;
+const BATCH_SIZE = 10000;
 const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
 const IMAGE_WHERE: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
 
@@ -55,6 +55,7 @@ const addFields = async () => {
           hasMeta: boolean;
           onSite: boolean;
           postedToId?: number;
+          needsReview: boolean;
         };
 
         console.log('Fetching records from ID: ', start, end);
@@ -73,6 +74,7 @@ const addFields = async () => {
           i."sortAt",
           i."type",
           i."userId",
+          i."needsReview",
           (
             CASE
               WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
@@ -106,7 +108,10 @@ const addFields = async () => {
 
         await updateDocs({
           indexName: INDEX_ID,
-          documents: records,
+          documents: records.map((r) => ({
+            ...r,
+            sortAtUnix: r.sortAt.getTime(),
+          })),
           batchSize: BATCH_SIZE,
           client: metricsClient,
         });
