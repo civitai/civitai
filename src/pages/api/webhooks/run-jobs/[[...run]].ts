@@ -52,6 +52,7 @@ import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-
 import { logToAxiom } from '~/server/logging/client';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import * as deliverCreatorCompensations from '~/server/jobs/deliver-creator-compensation';
+import { confirmMutes } from '~/server/jobs/confirm-mutes';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -102,6 +103,7 @@ export const jobs: Job[] = [
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   ...Object.values(deliverCreatorCompensations),
+  confirmMutes,
 ];
 
 const log = createLogger('jobs', 'green');
