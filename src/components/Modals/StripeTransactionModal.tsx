@@ -86,6 +86,7 @@ const StripeTransactionModal = ({
   };
 
   const processingTooLong = paymentIntentStatus === 'processing_too_long';
+  const successTransactionButError = paymentIntentStatus === 'success_with_error';
 
   if (success) {
     return (
@@ -147,7 +148,7 @@ const StripeTransactionModal = ({
                         details: { ...metadata, method: paymentMethod.type },
                       }).catch(() => undefined);
                     }}
-                    disabled={processingPayment || processingTooLong}
+                    disabled={processingPayment || processingTooLong || successTransactionButError}
                     loading={processingPayment}
                   >
                     Pay ${formatPriceForDisplay(unitAmount, currency)}
