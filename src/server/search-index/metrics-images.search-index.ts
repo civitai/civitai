@@ -101,6 +101,7 @@ export type SearchBaseImage = {
   sortAt: Date;
   type: string;
   userId: number;
+  needsReview: string;
   published: boolean;
   hasMeta: boolean;
   onSite: boolean;
@@ -283,6 +284,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."sortAt",
         i."type",
         i."userId",
+        i."needsReview",
         p."publishedAt" is not null as "published",
         (
           CASE

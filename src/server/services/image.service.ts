@@ -937,19 +937,6 @@ export const getAllImages = async (
     }
   }
 
-  // TODO.metricSearch add missing props
-  // const searchResults = await getImagesFromSearch({
-  //   modelVersionId,
-  //   types,
-  //   browsingLevel,
-  //   fromPlatform,
-  //   hasMeta: include.includes('meta'),
-  //   baseModels,
-  //   period,
-  //   sort,
-  // });
-  // console.log(searchResults[0], searchResults.length);
-
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
     ${Prisma.raw(from)}
@@ -1267,6 +1254,8 @@ export const getAllImagesPost = async (
     sort,
     limit,
     offset,
+    currentUserId: user?.id,
+    isModerator: user?.isModerator,
   });
   console.timeEnd('SEARCH IDS');
   console.log(searchResults[0]?.id, searchResults.length);
@@ -1353,13 +1342,15 @@ export const getAllImagesPost = async (
       // TODO fix below
       tags: [],
       name: null, // leave
-      needsReview: null, // add
       generationProcess: null, // deprecated
-      // hash: null, // add
-      // hideMeta: !sr.hasMeta, // remove
       scannedAt: null, // remove
       mimeType: null, // need?
-      ingestion: ImageIngestionStatus.Scanned, // add? maybe remove
+      ingestion:
+        sr.nsfwLevel === NsfwLevel.Blocked
+          ? ImageIngestionStatus.Blocked
+          : sr.nsfwLevel === 0
+          ? ImageIngestionStatus.NotFound
+          : ImageIngestionStatus.Scanned, // add? maybe remove
       postTitle: null, // remove
     };
   });
@@ -1408,7 +1399,25 @@ function strArray(arr: any[]) {
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return { data: [], total: 0 };
-
+  /*
+  modelVersionId,
+      types,
+      browsingLevel,
+      fromPlatform,
+      hasMeta,
+      baseModels,
+      postIds,
+      period,
+      tools,
+      techniques,
+      tags,
+      notPublished,
+      sort,
+      limit,
+      offset,
+      currentUserId: user?.id,
+      isModerator: user?.isModerator,
+   */
   const {
     sort,
     modelVersionId,
@@ -1416,25 +1425,23 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     hasMeta,
     fromPlatform,
     notPublished,
-    userIds,
-    reviewId,
-    modelId,
     tags,
     tools,
     techniques,
     baseModels,
-    excludeUserIds,
     period,
     isModerator,
     postIds,
     currentUserId,
+    userIds, // missing
+    reviewId, // missing
+    modelId, // missing
+    excludeUserIds, // missing
+    limit,
+    offset,
+    page,
   } = input;
   let { browsingLevel } = input;
-
-  // TODO.metricSearch remove hash
-  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
-  if (reviewId) {
-  }
 
   // Filter
   //------------------------
@@ -1460,6 +1467,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
   if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
+  // TODO.metricSearch remove hash
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  // if (reviewId) {}
+
   // TODO.metricSearch add userId
   // if (userIds) {
   //   userIds = Array.isArray(userIds) ? userIds : [userIds];
@@ -1484,7 +1495,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     userIds,
     excludeUserIds,
   };
-  if (input.reviewId || input.modelId || input.userIds || input.excludeUserIds) {
+  if (reviewId || modelId || userIds || excludeUserIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
     logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) }, 'temp-search');
   }
@@ -1500,24 +1511,27 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const request = {
     filter: filters.join(' AND '),
     sort: [searchSort],
-    limit: input.limit ?? 100,
-    offset: input.offset,
-    page: input.page,
+    limit: limit ?? 100,
+    offset,
+    page,
   };
 
   try {
-    // const results: SearchResponse<SearchBaseImage> = await metricsClient
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 
-    // console.log('HITS 1', results.hits[0]);
+    const filtered = results.hits.filter((hit) => {
+      // filter out non-scanned unless it's the owner or moderator
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel)) return true;
+      return hit.userId === currentUserId || isModerator;
+    });
 
-    // TODO filter out non-scanned unless its the owner or moderator
-    //  maybe grab more if its low?
+    // TODO maybe grab more if the number is now too low?
 
     const metrics = {
       hits: results.hits.length,
+      filtered: filtered.length,
       total: results.estimatedTotalHits,
       processingTimeMs: results.processingTimeMs,
     };
@@ -1526,10 +1540,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       'temp-search'
     );
 
-    const imageMetrics = await getImageMetrics(results.hits.map((h) => h.id));
-    // console.log('METRICS 1', imageMetrics[0]);
+    const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
 
-    const fullData = results.hits.map((h) => {
+    const fullData = filtered.map((h) => {
       const match = imageMetrics.find((im) => im.id === h.id);
       return {
         ...h,
@@ -1548,8 +1561,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         },
       };
     });
-
-    // console.log(fullData[0]);
 
     return {
       data: fullData,
@@ -1572,7 +1583,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 const getImageMetrics = async (ids: number[]) => {
-  // console.log({ len: ids.length });
   const pgData = await dbRead.entityMetricImage.findMany({
     where: { imageId: { in: ids } },
     select: {
