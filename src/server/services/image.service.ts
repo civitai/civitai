@@ -1,5 +1,6 @@
 import {
   Availability,
+  BlockImageReason,
   CollectionMode,
   ImageGenerationProcess,
   ImageIngestionStatus,
@@ -33,7 +34,7 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { GetByIdInput, UserPreferencesInput, getByIdSchema } from '~/server/schema/base.schema';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
@@ -169,8 +170,10 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
-    const affected = await dbWrite.$queryRaw<{ id: number; userId: number; nsfwLevel: number }[]>`
-      SELECT id, "userId", "nsfwLevel" FROM "Image"
+    const affected = await dbWrite.$queryRaw<
+      { id: number; userId: number; nsfwLevel: number; pHash: bigint }[]
+    >`
+      SELECT id, "userId", "nsfwLevel", "pHash" FROM "Image"
       WHERE id IN (${Prisma.join(ids)});
     `;
 
@@ -3404,4 +3407,41 @@ export async function getImagesByUserIdForModeration(userId: number) {
     where: { userId },
     select: { ...imageSelect, user: { select: simpleUserSelect } },
   });
+}
+
+export function addBlockedImage({
+  hash,
+  reason,
+}: {
+  hash: bigint | number;
+  reason: BlockImageReason;
+}) {
+  return dbWrite.blockedImage.create({ data: { hash, reason } });
+}
+
+export function bulkAddBlockedImages({
+  data,
+}: {
+  data: { hash: bigint | number; reason: BlockImageReason }[];
+}) {
+  return dbWrite.blockedImage.createMany({ data });
+}
+
+export async function bulkRemoveBlockedImages({
+  ids,
+  hashes,
+}: {
+  hashes?: bigint[] | number[];
+  ids?: number[];
+}) {
+  if (ids) {
+    const images = await dbWrite.image.findMany({
+      where: { id: { in: ids } },
+      select: { pHash: true },
+    });
+
+    hashes = images.map((i) => i.pHash as bigint);
+  }
+
+  return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 }

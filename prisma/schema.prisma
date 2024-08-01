@@ -1194,7 +1194,7 @@ enum MediaType {
 
 model Image {
   id                Int                     @id @default(autoincrement())
-  pHash             BigInt
+  pHash             BigInt?
   name              String?
   url               String
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
