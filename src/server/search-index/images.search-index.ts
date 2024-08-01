@@ -1,4 +1,3 @@
-import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import {
   CosmeticSource,
   CosmeticType,
@@ -10,6 +9,7 @@ import {
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
