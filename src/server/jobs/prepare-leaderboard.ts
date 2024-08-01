@@ -11,6 +11,9 @@ import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { insertSorted } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
+import { clickhouse } from '~/server/clickhouse/client';
+import { chunk } from 'lodash-es';
+import { metrics } from '@tensorflow/tfjs';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -22,7 +25,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
       active: true,
-      query: { not: '' },
+      // query: { not: '' },
+      query: { contains: 'clickhouse_data' },
     },
     select: {
       id: true,
@@ -58,7 +62,9 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
       id,
     }).catch();
 
-    if (includesCTE && query.includes('image_scores AS')) {
+    if (includesCTE && query.includes('clickhouse_')) {
+      await clickhouseLeaderboardPopulation(context);
+    } else if (includesCTE && query.includes('image_scores AS')) {
       if (!imageRange) imageRange = await getImageRange();
       await imageLeaderboardPopulation(context, imageRange);
     } else {
@@ -341,6 +347,44 @@ async function setCoverImageNsfwLevel() {
     FROM model_nsfw_level level
     WHERE level.id = m.id;
   `;
+}
+
+type ClickhouseScores = {
+  userId: number;
+  score: number;
+  metrics: string;
+};
+const CLICKHOUSE_INSERT_BATCH_SIZE = 500;
+async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
+  if (!clickhouse) return;
+  log('Leaderboard', ctx.id, 'Clickhouse');
+  const scores = (await clickhouse.$query<ClickhouseScores>(ctx.query))
+    ?.slice(0, 1000)
+    .map((s) => ({
+      ...s,
+      metrics: JSON.parse(s.metrics),
+    }));
+  const tasks = chunk(scores, CLICKHOUSE_INSERT_BATCH_SIZE).map((batch, i) => async () => {
+    const batchJson = JSON.stringify(batch);
+    const positionStart = i * CLICKHOUSE_INSERT_BATCH_SIZE;
+    log('Leaderboard', ctx.id, 'Inserting', i + 1, 'of', tasks.length);
+    const query = await pgDbWrite.cancellableQuery(`
+      WITH scores AS (SELECT * FROM jsonb_to_recordset('${batchJson}'::jsonb) AS s("userId" int, score int, metrics jsonb))
+      INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+      SELECT
+        '${ctx.id}' as "leaderboardId",
+        current_date + interval '${ctx.addDays} days' as date,
+        s.*,
+        (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
+      FROM scores s
+      JOIN "User" u ON u.id = s."userId"
+      WHERE NOT u."excludeFromLeaderboards"
+    `);
+    ctx.jobContext.on('cancel', query.cancel);
+    await query.result();
+    log('Leaderboard', ctx.id, 'Inserted', i + 1, 'of', tasks.length);
+  });
+  await limitConcurrency(tasks, 5);
 }
 
 const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', async () => {
