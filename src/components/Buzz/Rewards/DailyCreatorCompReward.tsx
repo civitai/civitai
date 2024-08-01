@@ -143,7 +143,7 @@ export function DailyCreatorCompReward() {
         },
       },
     }),
-    [filteredVersionIds.length, labelColor, maxSelectedDate, minSelectedDate]
+    [filteredVersionIds.length, labelColor, maxSelectedDate, minSelectedDate, theme.colors.yellow]
   );
 
   const datasets = useMemo(() => {
