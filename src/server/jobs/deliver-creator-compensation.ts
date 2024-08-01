@@ -138,7 +138,7 @@ async function runPayout(lastUpdate: Date) {
       toAccountId: Number(userId),
       amount: compensations.reduce((acc, c) => acc + c.comp, 0),
       description: `Generation creator compensation (${formatDate(date)})`,
-      type: TransactionType.Incentive,
+      type: TransactionType.Compensation,
       externalTransactionId: `creator-comp-${formatDate(date, 'YYYY-MM-DD')}`,
     }))
     .filter((comp) => comp.amount > 0);
