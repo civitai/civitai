@@ -61,7 +61,7 @@ import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { ImageMetricsSearchIndexRecord } from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
@@ -106,6 +106,18 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+<<<<<<< HEAD
+=======
+import { collectionSelect } from '~/server/selectors/collection.selector';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { redis } from '~/server/redis/client';
+import { metricsClient } from '~/server/meilisearch/client';
+import { logToAxiom } from '~/server/logging/client';
+import dayjs, { ManipulateType } from 'dayjs';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+>>>>>>> origin/main
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1947,6 +1959,7 @@ export const getImagesForModelVersion = async ({
       i.type,
       i.metadata,
       t."modelVersionId",
+      ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       p."availability",
       (
         CASE
@@ -3659,3 +3672,12 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     },
   }));
 };
+
+// this method should hopefully not be a lasting addition
+export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
+export async function getImagesByUserIdForModeration(userId: number) {
+  return await dbRead.image.findMany({
+    where: { userId },
+    select: { ...imageSelect, user: { select: simpleUserSelect } },
+  });
+}

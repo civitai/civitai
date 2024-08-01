@@ -523,7 +523,8 @@ export const entityAvailabilityUpdate = async ({
 
   await dbWrite.$executeRawUnsafe<{ entityId: number; isOwner: boolean }[]>(`
     UPDATE "${entityType}" t
-    SET "availability" = '${availability}'::"Availability"
+    SET "availability" = '${availability}'::"Availability",
+      "updatedAt" = NOW()
     WHERE t.id IN (${entityIds.join(', ')})`);
 };
 

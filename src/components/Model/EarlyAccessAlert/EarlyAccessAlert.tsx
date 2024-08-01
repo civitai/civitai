@@ -14,11 +14,15 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useQueryModelVersionDonationGoals } from '../ModelVersions/model-version.utils';
 
 export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Props) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const { donationGoals } = useQueryModelVersionDonationGoals({
+    modelVersionId: versionId,
+  });
 
   const inEarlyAccess = features.earlyAccessModel && !!deadline && isFutureDate(deadline);
 
@@ -66,7 +70,9 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
     toggleNotifyMutation.mutate({ id: versionId });
   };
 
-  if (!inEarlyAccess || currentUser?.isMember) return null;
+  if (!inEarlyAccess) return null;
+
+  const earlyAccessDonationGoal = (donationGoals ?? []).find((dg) => dg.isEarlyAccess);
 
   return (
     <AlertWithIcon
@@ -74,22 +80,13 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
       iconColor="yellow.1"
       icon={<CurrencyIcon currency={Currency.BUZZ} />}
     >
-      This {getDisplayName(modelType).toLowerCase()} is in &rsquo;Early Access&rsquo; and as such,
-      is only available for people who buy it with Buzz. It will be available to download for free
-      in <Countdown endTime={deadline} />
-      {'. '}
-      <LoginRedirect reason="notify-version">
-        <Text
-          variant="link"
-          onClick={!toggleNotifyMutation.isLoading ? handleNotifyMeClick : undefined}
-          sx={{ cursor: toggleNotifyMutation.isLoading ? 'not-allowed' : 'pointer', lineHeight: 1 }}
-          span
-        >
-          {alreadyNotifying
-            ? 'Remove me from this notification.'
-            : `Notify me when it's available.`}
-        </Text>
-      </LoginRedirect>
+      The creator of this {getDisplayName(modelType).toLowerCase()} has set this version to{' '}
+      <Text weight="bold" component="span">
+        Early Access
+      </Text>{' '}
+      and as such it is only availble for people who purchase it. it will be available for free in{' '}
+      <Countdown endTime={deadline} />
+      {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}.
     </AlertWithIcon>
   );
 }

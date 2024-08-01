@@ -1,5 +1,6 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '@prisma/client';
+import { IconPlayerPlayFilled } from '@tabler/icons-react';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -73,8 +74,8 @@ export function EdgeMedia({
   });
 
   switch (inferredType) {
-    case 'image':
-      return (
+    case 'image': {
+      const img = (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
         <img
           ref={imgRef}
@@ -86,6 +87,17 @@ export function EdgeMedia({
           {...imgProps}
         />
       );
+      if (type === 'video') {
+        return (
+          <div className={classes.videoThumbRoot}>
+            <IconPlayerPlayFilled className={classes.playButton} />
+            {img}
+          </div>
+        );
+      } else {
+        return img;
+      }
+    }
     case 'video':
       return (
         <EdgeVideo
@@ -108,14 +120,47 @@ export function EdgeMedia({
   }
 }
 
-const useStyles = createStyles((theme, params: { maxWidth?: number }) => ({
-  responsive: {
-    width: '100%',
-    height: 'auto',
-    maxWidth: params.maxWidth,
-  },
-  fadeIn: {
-    opacity: 0,
-    transition: theme.other.fadeIn,
-  },
-}));
+const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) => {
+  const ref = getRef('playButton');
+  return {
+    responsive: {
+      width: '100%',
+      height: 'auto',
+      maxWidth: params.maxWidth,
+    },
+    fadeIn: {
+      opacity: 0,
+      transition: theme.other.fadeIn,
+    },
+    videoThumbRoot: {
+      height: '100%',
+      position: 'relative',
+      '&:hover': {
+        [`& .${ref}`]: {
+          backgroundColor: 'rgba(0,0,0,0.8)',
+        },
+      },
+      img: {
+        objectFit: 'cover',
+        height: '100%',
+        objectPosition: '50% 50%',
+      },
+    },
+    playButton: {
+      ref,
+      width: 80,
+      height: 80,
+      color: theme.white,
+      backgroundColor: 'rgba(0,0,0,.6)',
+      padding: 20,
+      borderRadius: '50%',
+      boxShadow: `0 2px 2px 1px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.2)`,
+      transition: 'background-color 200ms ease',
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      zIndex: 2,
+      transform: 'translate(-50%, -50%)',
+    },
+  };
+});

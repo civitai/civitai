@@ -88,16 +88,16 @@ export const upsertCosmeticShopItem = async ({
 }: UpsertCosmeticShopItemInput & { userId: number }) => {
   const existingItem = id
     ? await dbRead.cosmeticShopItem.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        _count: {
-          select: {
-            purchases: true,
+        where: { id },
+        select: {
+          id: true,
+          _count: {
+            select: {
+              purchases: true,
+            },
           },
         },
-      },
-    })
+      })
     : undefined;
 
   if (availableTo && availableFrom && availableTo < availableFrom) {
@@ -123,21 +123,21 @@ export const upsertCosmeticShopItem = async ({
 
   const item = id
     ? await dbWrite.cosmeticShopItem.update({
-      where: { id },
-      data,
-      select: cosmeticShopItemSelect,
-    })
+        where: { id },
+        data,
+        select: cosmeticShopItemSelect,
+      })
     : await dbWrite.cosmeticShopItem.create({
-      data: {
-        ...data,
-        addedById: userId,
-        meta: {
-          ...(cosmeticShopItem.meta ?? {}),
-          purchases: 0,
+        data: {
+          ...data,
+          addedById: userId,
+          meta: {
+            ...(cosmeticShopItem.meta ?? {}),
+            purchases: 0,
+          },
         },
-      },
-      select: cosmeticShopItemSelect,
-    });
+        select: cosmeticShopItemSelect,
+      });
 
   if (videoUrl) {
     await upsertCosmetic({
@@ -188,10 +188,10 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
     ...section,
     image: !!section.image
       ? {
-        ...section.image,
-        meta: section.image.meta as ImageMetaProps,
-        metadata: section.image.metadata as MixedObject,
-      }
+          ...section.image,
+          meta: section.image.meta as ImageMetaProps,
+          metadata: section.image.metadata as MixedObject,
+        }
       : section.image,
   }));
 };
@@ -223,10 +223,10 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
     ...section,
     image: !!section.image
       ? {
-        ...section.image,
-        meta: section.image.meta as ImageMetaProps,
-        metadata: section.image.metadata as MixedObject,
-      }
+          ...section.image,
+          meta: section.image.meta as ImageMetaProps,
+          metadata: section.image.metadata as MixedObject,
+        }
       : section.image,
   };
 };
@@ -241,9 +241,9 @@ export const upsertCosmeticShopSection = async ({
   const shouldCreateImage = image && !image.id;
   const [imageRecord] = shouldCreateImage
     ? await createEntityImages({
-      userId,
-      images: [image],
-    })
+        userId,
+        images: [image],
+      })
     : [];
 
   if (!image && !id) {
@@ -278,10 +278,10 @@ export const upsertCosmeticShopSection = async ({
         shopSectionId: id,
         shopItemId: items.length
           ? {
-            notIn: items.map((itemId) => itemId),
-          }
+              notIn: items.map((itemId) => itemId),
+            }
           : // Undefined deletes 'em all
-          undefined,
+            undefined,
       },
     });
 
@@ -296,11 +296,11 @@ export const upsertCosmeticShopSection = async ({
       await dbWrite.$executeRaw`
         INSERT INTO "CosmeticShopSectionItem" ("shopSectionId", "shopItemId", "index")
         VALUES ${Prisma.join(
-        data.map(
-          ({ shopSectionId, shopItemId, index }) =>
-            Prisma.sql`(${shopSectionId}, ${shopItemId}, ${index})`
-        )
-      )}
+          data.map(
+            ({ shopSectionId, shopItemId, index }) =>
+              Prisma.sql`(${shopSectionId}, ${shopItemId}, ${index})`
+          )
+        )}
         ON CONFLICT ("shopSectionId", "shopItemId") DO UPDATE SET "index" = EXCLUDED."index"
       `;
     }
@@ -383,11 +383,11 @@ export const getShopSectionsWithItems = async ({
             OR: isModerator
               ? undefined
               : [
-                {
-                  availableTo: { gte: new Date() },
-                },
-                { availableTo: null },
-              ],
+                  {
+                    availableTo: { gte: new Date() },
+                  },
+                  { availableTo: null },
+                ],
           },
         },
         orderBy: { index: 'asc' },
@@ -412,10 +412,10 @@ export const getShopSectionsWithItems = async ({
         ...section,
         image: !!section.image
           ? {
-            ...section.image,
-            meta: section.image.meta as ImageMetaProps,
-            metadata: section.image.metadata as MixedObject,
-          }
+              ...section.image,
+              meta: section.image.meta as ImageMetaProps,
+              metadata: section.image.metadata as MixedObject,
+            }
           : section.image,
       }))
   );
@@ -482,7 +482,7 @@ export const purchaseCosmeticShopItem = async ({
 
   if (onlySupportsSinglePurchase) {
     // Confirm the user doesn't own it already:
-    const userCosmetic = await dbRead.userCosmetic.findFirst({
+    const userCosmetic = await dbWrite.userCosmetic.findFirst({
       where: {
         userId,
         cosmeticId: shopItem.cosmeticId,
