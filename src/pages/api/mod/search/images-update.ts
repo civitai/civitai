@@ -26,8 +26,6 @@ const schema = z.object({
   update: z.enum(['user', 'dateFields']),
 });
 
-// TODO add sortAt
-
 const updateUserDetails = (idOffset: number) =>
   withRetries(async () => {
     type ImageForSearchIndex = {
