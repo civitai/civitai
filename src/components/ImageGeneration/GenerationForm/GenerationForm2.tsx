@@ -15,7 +15,6 @@ import {
   Anchor,
   Badge,
   Divider,
-  useMantineTheme,
   LoadingOverlay,
   ActionIcon,
   Group,
@@ -226,7 +225,9 @@ export function GenerationFormContent() {
         await mutateAsync({
           resources,
           params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
-          tips: { creators: creatorTip, civitai: civitaiTip },
+          tips: featureFlags.creatorComp
+            ? { creators: creatorTip, civitai: civitaiTip }
+            : undefined,
           remix,
         });
       } catch (e) {
@@ -1034,6 +1035,7 @@ function ReadySection() {
 function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
+  const features = useFeatureFlags();
   const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip']);
 
   useEffect(() => {
@@ -1043,24 +1045,32 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   const cost = data?.cost?.base ?? 0;
-  const totalCost = Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost);
+  const totalCost = features.creatorComp
+    ? Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost)
+    : cost;
+
+  const generateButton = (
+    <GenerateButton
+      type="submit"
+      className="h-full flex-1"
+      loading={isInitialLoading || props.isLoading}
+      cost={totalCost}
+      error={
+        !isInitialLoading && isError
+          ? error
+            ? (error as any).message
+            : 'Error calculating cost. Please try updating your values'
+          : undefined
+      }
+    />
+  );
+
+  if (!features.creatorComp) return generateButton;
 
   return (
     <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
       <Group className="flex-1" spacing={6} noWrap>
-        <GenerateButton
-          type="submit"
-          className="h-full flex-1"
-          loading={isInitialLoading || props.isLoading}
-          cost={totalCost}
-          error={
-            !isInitialLoading && isError
-              ? error
-                ? (error as any).message
-                : 'Error calculating cost. Please try updating your values'
-              : undefined
-          }
-        />
+        {generateButton}
         <GenerationCostPopover
           width={300}
           workflowCost={data?.cost ?? {}}

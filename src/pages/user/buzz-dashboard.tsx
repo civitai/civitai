@@ -188,7 +188,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
-          <DailyCreatorCompReward />
+          {features.creatorComp && <DailyCreatorCompReward />}
           <SpendingBuzz withCTA />
           <PurchasableRewards />
         </Stack>
