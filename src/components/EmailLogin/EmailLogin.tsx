@@ -8,14 +8,7 @@ import { SocialButton } from '~/components/Social/SocialButton';
 import { Form, InputText, useForm } from '~/libs/form';
 
 const schema = z.object({
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .email()
-    .refine((value) => !value.includes('+'), {
-      message: 'Creating new accounts with + in email is not allowed',
-    }),
+  email: z.string().trim().toLowerCase().email(),
 });
 export const EmailLogin = ({ returnUrl }: { returnUrl: string }) => {
   const router = useRouter();

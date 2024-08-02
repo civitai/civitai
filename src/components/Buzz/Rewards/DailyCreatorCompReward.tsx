@@ -13,7 +13,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { Currency, StripeConnectStatus } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import {
   BarElement,
   CategoryScale,
@@ -33,7 +33,6 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
 import { formatDate, getDatesAsList, maxDate, minDate } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -68,12 +67,9 @@ export function DailyCreatorCompReward() {
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { userStripeConnect } = useUserStripeConnect();
-
-  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
-    { date: selectedDate },
-    { enabled: userStripeConnect?.status === StripeConnectStatus.Approved }
-  );
+  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery({
+    date: selectedDate,
+  });
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -174,10 +170,6 @@ export function DailyCreatorCompReward() {
       },
     ];
   }, [filteredVersionIds, resources, theme.colors.yellow]);
-
-  if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
-    return null;
-  }
 
   const selectedResources = resources.filter((v) => filteredVersionIds.includes(v.id));
   const combinedResources = [
