@@ -62,6 +62,8 @@ export const constants = {
     'SDXL 1.0',
     'SD 3',
     'Pony',
+    'Flux.1 S',
+    'Flux.1 D',
     'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -409,6 +411,7 @@ export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
+  Flux1: ['Flux.1 S', 'Flux.1 D'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
   PixArtA: ['PixArt a'],
@@ -485,6 +488,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
     name: 'Apache 2.0',
   },
+  flux1D: {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -516,6 +527,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
+  'Flux.1 S': baseLicenses['apache 2.0'],
+  'Flux.1 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
 };
