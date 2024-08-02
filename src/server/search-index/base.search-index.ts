@@ -217,11 +217,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       const updatedItems = [...new Set<number>([...(updateIds ?? []), ...queuedUpdates.content])];
 
-      const updateItemsTasks = Math.ceil(updatedItems.length / batchSize);
+      const maxUpdateBatchSize = Math.min(batchSize, 10000); // To avoid too large batches for postgres
+      const updateItemsTasks = Math.ceil(updatedItems.length / maxUpdateBatchSize);
 
       for (let i = 0; i < updateItemsTasks; i++) {
         const batch = {
-          ids: updatedItems.slice(i * batchSize, (i + 1) * batchSize),
+          ids: updatedItems.slice(i * maxUpdateBatchSize, (i + 1) * maxUpdateBatchSize),
         };
 
         queue.addTask({

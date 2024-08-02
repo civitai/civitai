@@ -95,7 +95,12 @@ export function createCachedArray<T extends object>({
     // If we have cache misses, we need to fetch from the DB
     if (cacheMisses.size > 0) {
       log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
-      const dbResults = await lookupFn([...cacheMisses] as typeof ids);
+      const dbResults: Record<string, T> = {};
+      const lookupBatches = chunk([...cacheMisses], 10000);
+      for (const batch of lookupBatches) {
+        const batchResults = await lookupFn([...batch] as typeof ids);
+        Object.assign(dbResults, batchResults);
+      }
 
       const toCache: Record<string, MixedObject> = {};
       const toCacheNotFound: Record<string, MixedObject> = {};
