@@ -204,17 +204,17 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
     const tags: { workflowId: string; tag: string; op: 'add' | 'remove' }[] = [];
     const toDelete: string[] = [];
 
-    function addWorkflowPatches({ workflowId, patches }: PatchWorkflowParams) {
-      const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
-      if (index === -1) workflowPatches.push({ workflowId, patches });
-      else workflowPatches[index].patches = workflowPatches[index].patches.concat(patches);
-    }
+    // function addWorkflowPatches({ workflowId, patches }: PatchWorkflowParams) {
+    //   const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
+    //   if (index === -1) workflowPatches.push({ workflowId, patches });
+    //   else workflowPatches[index].patches = workflowPatches[index].patches.concat(patches);
+    // }
 
     for (const workflow of workflows) {
       const match = args.find((x) => x.workflowId === workflow.id);
       if (!match) continue;
       const { workflowId, stepName, images } = match;
-      let favorites: boolean | undefined;
+      // let favorites: boolean | undefined;
       for (const step of workflow.steps as WorkflowStepFormatted[]) {
         if (step.name !== stepName) continue;
         const metadata = step.metadata ?? {};
@@ -270,48 +270,42 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           updated.push({ workflowId, stepName, images });
 
           // determine if we need to toggle favorites tag
-          // if (
-          //   workflow.tags.includes(WORKFLOW_TAGS.FAVORITES) &&
-          //   Object.values(images).every((x) => !x.favorite)
-          // )
-          //   tags.push({ workflowId, tag: 'favorites', op: 'remove' });
-          // else if (Object.values(images).some((x) => x.favorite))
-          //   tags.push({ workflowId, tag: 'favorites', op: 'add' });
+          if (
+            workflow.tags.includes(WORKFLOW_TAGS.FAVORITES) &&
+            Object.values(images).every((x) => !x.favorite)
+          )
+            tags.push({ workflowId, tag: 'favorites', op: 'remove' });
+          else if (Object.values(images).some((x) => x.favorite))
+            tags.push({ workflowId, tag: 'favorites', op: 'add' });
 
-          if (Object.values(images).every((x) => !x.favorite)) favorites = false;
-          else if (Object.values(images).some((x) => x.favorite)) favorites = true;
+          // if (Object.values(images).every((x) => !x.favorite)) favorites = false;
+          // else if (Object.values(images).some((x) => x.favorite)) favorites = true;
 
-          addWorkflowPatches({
-            workflowId,
-            patches: jsonPatch.operations.map((operation) => ({
-              ...operation,
-              path: `/steps/${stepName}/metadata${operation.path}`,
-            })),
-          });
-          // stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
+          // addWorkflowPatches({
+          //   workflowId,
+          //   patches: jsonPatch.operations.map((operation) => ({
+          //     ...operation,
+          //     path: `/steps/${stepName}/metadata${operation.path}`,
+          //   })),
+          // });
+          stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
         }
 
-        const tagPatches = new JsonPatchFactory<{ tags: string[] }>();
-        if (favorites === true) {
-          tagPatches.addOperation({
-            op: 'add',
-            path: 'tags/-',
-            value: WORKFLOW_TAGS.FAVORITES,
-          });
-        } else if (favorites === false) {
-          const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITES);
-          if (favoritesIndex > -1)
-            tagPatches.addOperation({ op: 'remove', path: `tags/${favoritesIndex}` });
-        }
-        if (tagPatches.operations.length > 0) {
-          addWorkflowPatches({ workflowId, patches: tagPatches.operations });
-          // const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
-          // if (index > -1)
-          //   workflowPatches[index].patches = workflowPatches[index].patches.concat(
-          //     tagPatches.operations
-          //   );
-          // else workflowPatches.push({ workflowId, patches: tagPatches.operations });
-        }
+        // const tagPatches = new JsonPatchFactory<{ tags: string[] }>();
+        // if (favorites === true) {
+        //   tagPatches.addOperation({
+        //     op: 'add',
+        //     path: 'tags/-',
+        //     value: WORKFLOW_TAGS.FAVORITES,
+        //   });
+        // } else if (favorites === false) {
+        //   const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITES);
+        //   if (favoritesIndex > -1)
+        //     tagPatches.addOperation({ op: 'remove', path: `tags/${favoritesIndex}` });
+        // }
+        // if (tagPatches.operations.length > 0) {
+        //   addWorkflowPatches({ workflowId, patches: tagPatches.operations });
+        // }
       }
     }
 
@@ -320,7 +314,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         workflows: workflowPatches.length ? workflowPatches : undefined,
         steps: stepPatches.length ? stepPatches : undefined,
         remove: toDelete.length ? toDelete : undefined,
-        // tags: tags.length ? tags : undefined,
+        tags: tags.length ? tags : undefined,
       },
       {
         onSuccess: () => {
