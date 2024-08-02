@@ -54,7 +54,9 @@ export async function patchWorkflowSteps({
   const client = createOrchestratorClient(token);
   await Promise.all(
     input.map(async ({ workflowId, stepName, patches }) => {
-      // console.dir({ body: patches, path: { stepName, workflowId } }, { depth: null });
+      console.dir(JSON.stringify({ body: patches, path: { stepName, workflowId } }), {
+        depth: null,
+      });
       await patchWorkflowStep({ client, body: patches, path: { stepName, workflowId } });
     })
   );
