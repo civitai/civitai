@@ -206,7 +206,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 
   const blocks = useMemo(() => {
-    const blocks: SocialBlockProps[] = [...socialData];
+    const blocks: SocialBlockProps[] = socialData.slice(0, 2);
     if (typeof window === 'undefined') return blocks;
     if (isLive) {
       blocks.unshift({
@@ -230,28 +230,32 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
             })}
           </div>
         </div>
-        <ActionIcon
-          className={cx(classes.nextButton, { [classes.hidden]: atStart })}
-          radius="xl"
-          size="md"
-          color="gray"
-          p={4}
-          sx={{ position: 'absolute', top: '50%', left: 10 }}
-          onClick={() => scroll('left')}
-        >
-          <IconChevronLeft />
-        </ActionIcon>
-        <ActionIcon
-          className={cx(classes.nextButton, { [classes.hidden]: atEnd })}
-          radius="xl"
-          size="md"
-          color="gray"
-          p={4}
-          sx={{ position: 'absolute', top: '50%', right: 10 }}
-          onClick={() => scroll('right')}
-        >
-          <IconChevronRight />
-        </ActionIcon>
+        {blocks.length > 2 && (
+          <>
+            <ActionIcon
+              className={cx(classes.nextButton, { [classes.hidden]: atStart })}
+              radius="xl"
+              size="md"
+              color="gray"
+              p={4}
+              sx={{ position: 'absolute', top: '50%', left: 10 }}
+              onClick={() => scroll('left')}
+            >
+              <IconChevronLeft />
+            </ActionIcon>
+            <ActionIcon
+              className={cx(classes.nextButton, { [classes.hidden]: atEnd })}
+              radius="xl"
+              size="md"
+              color="gray"
+              p={4}
+              sx={{ position: 'absolute', top: '50%', right: 10 }}
+              onClick={() => scroll('right')}
+            >
+              <IconChevronRight />
+            </ActionIcon>
+          </>
+        )}
       </div>
     </>
   );
