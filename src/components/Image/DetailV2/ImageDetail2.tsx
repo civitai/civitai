@@ -111,8 +111,6 @@ export function ImageDetail2() {
     defaultValue: true,
   });
 
-  const { blockedUsers } = useHiddenPreferencesData();
-  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
   const videoRef = useRef<EdgeVideoRef | null>(null);
 
   const carouselNavigation = useCarouselNavigation({
@@ -122,6 +120,9 @@ export function ImageDetail2() {
   });
 
   const image = images[carouselNavigation.index];
+
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
 
   const { collectionItems = [] } = useImageContestCollectionDetails(
     { id: image?.id as number },

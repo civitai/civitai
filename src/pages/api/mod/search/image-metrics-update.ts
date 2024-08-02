@@ -55,7 +55,7 @@ const addFields = async () => {
           hasMeta: boolean;
           onSite: boolean;
           postedToId?: number;
-          needsReview: boolean;
+          needsReview: string | null;
         };
 
         console.log('Fetching records from ID: ', start, end);

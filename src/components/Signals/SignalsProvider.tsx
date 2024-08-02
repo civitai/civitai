@@ -66,7 +66,11 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     workerRef.current = createSignalWorker({
       onConnected: () => {
         console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
-        setStatus('connected');
+        setStatus((prevStatus) => {
+          if (prevStatus === 'closed' || prevStatus === 'error')
+            queryUtils.orchestrator.queryGeneratedImages.invalidate();
+          return 'connected';
+        });
       },
       onReconnected: () => {
         console.debug('signal service reconnected'); // eslint-disable-line no-console

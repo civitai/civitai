@@ -1,17 +1,15 @@
-import { SegmentedControl, Stack, Title, createStyles } from '@mantine/core';
+import { createStyles, SegmentedControl, Stack, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
-
 import { Announcements } from '~/components/Announcements/Announcements';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
-import { constants } from '~/server/common/constants';
 // import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
+import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { FeedLayout } from '~/components/AppLayout/FeedLayout';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSession: true,
@@ -72,15 +70,8 @@ export default function BountiesPage() {
       />
 
       <MasonryContainer>
+        <Announcements />
         <Stack spacing="xs">
-          <Announcements
-            sx={() => ({
-              marginBottom: -35,
-              [containerQuery.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           {query.engagement && (
             <Stack spacing="xl" align="flex-start">
               <Title>My Bounties</Title>

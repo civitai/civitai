@@ -43,11 +43,23 @@ export async function createComfyStep(
   });
   applyResources(comfyWorkflow, resources);
 
+  const imageMetadata = JSON.stringify({
+    prompt: params.prompt,
+    negativePrompt: params.negativePrompt,
+    steps: params.steps,
+    cfgScale: params.cfgScale,
+    sampler: sampler,
+    seed: params.seed,
+    workflowId: params.workflow,
+    resources: resources.map(({ id, strength }) => ({ modelVersionId: id, strength: strength })),
+  });
+
   return {
     $type: 'comfy',
     input: {
       quantity: params.quantity,
       comfyWorkflow,
+      imageMetadata,
     },
     timeout: '00:10:00',
     metadata: {
@@ -61,7 +73,7 @@ export async function createComfyStep(
 export async function createComfy(
   args: z.infer<typeof generateImageSchema> & { user: SessionUser; token: string }
 ) {
-  const { user } = args;
+  const { user, tips } = args;
   const step = await createComfyStep(args);
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
@@ -70,6 +82,7 @@ export async function createComfy(
     body: {
       tags: [WORKFLOW_TAGS.IMAGE, args.params.workflow, ...args.tags],
       steps: [step],
+      tips,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

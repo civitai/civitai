@@ -24,6 +24,7 @@ const getOrCreateIndex = async (
       }
 
       try {
+        console.log('getOrCreateIndex :: Getting index :: ', indexName);
         // Will swap if index is created.
         // console.log(client);
         const index = await client.getIndex(indexName);
@@ -34,6 +35,7 @@ const getOrCreateIndex = async (
 
         return index;
       } catch (e) {
+        console.error('getOrCreateIndex :: Error :: ', e);
         const meiliSearchError = e as MeiliSearchErrorInfo;
 
         if (meiliSearchError.code === 'index_not_found') {

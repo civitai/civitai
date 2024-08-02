@@ -45,7 +45,12 @@ export function isFutureDate(value: Date) {
 
 export function maxDate(...dates: Date[]) {
   const parsedDates = dates.map(dayjs);
-  return dayjs.max(parsedDates).toDate();
+  return dayjs.max(parsedDates)?.toDate() ?? dates[0];
+}
+
+export function minDate(...dates: Date[]) {
+  const parsedDates = dates.map(dayjs);
+  return dayjs.min(parsedDates)?.toDate() ?? dates[0];
 }
 
 export function isBetweenToday(value: Date) {
@@ -71,13 +76,13 @@ export function endOfDay(value: dayjs.ConfigType) {
   return dayjs(value).endOf('day').toDate();
 }
 
-export function getDatesAsList(startDate: Date, endDate: Date) {
+export function getDatesAsList(startDate: Date, endDate: Date, unit: dayjs.ManipulateType = 'day') {
   const dates = [];
   let currentDate = startDate;
 
   while (currentDate <= endDate) {
     dates.push(currentDate);
-    currentDate = increaseDate(currentDate, 1, 'day');
+    currentDate = increaseDate(currentDate, 1, unit);
   }
 
   return dates;
@@ -91,4 +96,9 @@ export function secondsAsMinutes(seconds: number) {
   if (min === 0) return `${sec}s`;
 
   return `${min}m ${sec}s`;
+}
+
+export function dateWithoutTimezone(date: Date) {
+  const withoutTimezone = new Date(date.valueOf()).toISOString().slice(0, -1);
+  return new Date(withoutTimezone);
 }

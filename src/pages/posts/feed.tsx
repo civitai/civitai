@@ -8,7 +8,6 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function PostFeed() {
   const { query } = usePostQueryParams();
@@ -21,15 +20,8 @@ export default function PostFeed() {
       maxSingleColumnWidth={450}
     >
       <MasonryContainer>
+        <Announcements />
         <Stack spacing="xs">
-          <Announcements
-            sx={() => ({
-              marginBottom: -35,
-              [containerQuery.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           <Group position="apart" spacing={8}>
             <SortFilter type="posts" />
             <PeriodFilter type="posts" />

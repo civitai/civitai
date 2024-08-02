@@ -80,6 +80,8 @@ const processSearchIndexTask = async (
 
   try {
     if (type === 'pull') {
+      context.logger('processSearchIndexTask :: pull :: Processing task');
+      const start = (task.start ??= Date.now());
       const t = task as PullTask;
       const activeStep = t.currentStep ?? 0;
       const batch: SearchIndexPullBatch =
@@ -97,7 +99,10 @@ const processSearchIndexTask = async (
 
       if (!pulledData) {
         // We don't need to do anything if no data was pulled.
-        context.logger('processSearchIndexTask :: pull :: No data pulled. Marking as done.');
+        context.logger(
+          'processSearchIndexTask :: pull :: No data pulled. Marking as done.',
+          start ? (Date.now() - start) / 1000 : 'unknown duration'
+        );
         return 'done';
       }
 
@@ -106,9 +111,11 @@ const processSearchIndexTask = async (
           ...t,
           currentData: pulledData,
           currentStep: activeStep + 1,
+          start,
         } as PullTask;
       } else {
         return {
+          start,
           type: 'transform',
           index: task.index,
           total: task.total,
@@ -116,17 +123,25 @@ const processSearchIndexTask = async (
         } as TransformTask;
       }
     } else if (type === 'transform') {
-      const { data } = task as TransformTask;
+      context.logger('processSearchIndexTask :: transform :: Processing task');
+      const { data, start } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
       return {
+        start,
         type: 'push',
         index: task.index,
         total: task.total,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
-      const { data } = task as PushTask;
+      context.logger('processSearchIndexTask :: Push :: Processing task');
+      const { data, start } = task as PushTask;
       await processor.pushData(context, data);
+      context.logger(
+        'processSearchIndexTask :: Push :: Done',
+        start ? (Date.now() - start) / 1000 : 'unknown duration'
+      );
+
       return 'done';
     } else if (type === 'onComplete') {
       await processor.onComplete?.(context);
@@ -213,11 +228,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       const updatedItems = [...new Set<number>([...(updateIds ?? []), ...queuedUpdates.content])];
 
-      const updateItemsTasks = Math.ceil(updatedItems.length / batchSize);
+      const maxUpdateBatchSize = Math.min(batchSize, 10000); // To avoid too large batches for postgres
+      const updateItemsTasks = Math.ceil(updatedItems.length / maxUpdateBatchSize);
 
       for (let i = 0; i < updateItemsTasks; i++) {
         const batch = {
-          ids: updatedItems.slice(i * batchSize, (i + 1) * batchSize),
+          ids: updatedItems.slice(i * maxUpdateBatchSize, (i + 1) * maxUpdateBatchSize),
         };
 
         queue.addTask({

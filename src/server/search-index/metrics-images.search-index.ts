@@ -101,12 +101,11 @@ export type SearchBaseImage = {
   sortAt: Date;
   type: string;
   userId: number;
-  needsReview: string;
   published: boolean;
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
-  needsReview: boolean;
+  needsReview: string | null;
 };
 
 type Metrics = {
@@ -302,7 +301,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
           END
         ) as "onSite",
         p."modelVersionId" as "postedToId",
-        i."needsReview"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

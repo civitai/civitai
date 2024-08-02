@@ -94,7 +94,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - brutal fights, graphic injuries, or human death
   - graphic violence or bestiality
 - (d) "Loli", "lolicon", "shota", "shotacon" content;
-- (e) Content depicting the excrement of "scat" or fecal matter;
+- (e) Content depicting scat, fecal matter, gaseous emission, object or lifeform being ejected from an anus, or coprophagia (the ingestion of fecal matter);
 - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
   For additional information about how content is moderated, please review our Content Moderation Policy.
 

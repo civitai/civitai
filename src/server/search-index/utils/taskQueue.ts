@@ -11,6 +11,7 @@ type BaseTask = {
   steps?: number;
   index?: number;
   total?: number;
+  start?: number;
 };
 
 export type PullTask = BaseTask &
@@ -87,6 +88,7 @@ export class TaskQueue {
   }
 
   async addTask(task: Task): Promise<void> {
+    if (!task.start) task.start = Date.now();
     const queue = this.queues[task.type];
     // logInfo(`${task.pluginName}: Queuing ${task.type} task`);
     if (task.type !== this.queueEntry) await this.waitForQueueCapacity(queue);
@@ -176,9 +178,13 @@ export const getTaskQueueWorker = (
       } else {
         queue.completeTask(task);
         if (result !== 'done') {
+          result.start = task.start;
           queue.addTask(result);
         } else {
-          logger?.(`Worker :: Task done`, queue.data);
+          logger?.(
+            `Worker :: Task done`,
+            task.start ? (Date.now() - task.start) / 1000 : 'unknown duration'
+          );
         }
       }
     }

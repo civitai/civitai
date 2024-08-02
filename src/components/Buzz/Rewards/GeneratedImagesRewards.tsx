@@ -30,16 +30,16 @@ ChartJS.register(
   Colors,
   Legend
 );
+
+const DEFAULT_TIMEFRAME = 30;
+
 export const GeneratedImagesReward = () => {
-  const [timeframe, setTimeframe] = useState(30);
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const { userStripeConnect } = useUserStripeConnect();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
-      { timeframe },
-      {
-        enabled: userStripeConnect?.status === StripeConnectStatus.Approved,
-      }
+      { timeframe: DEFAULT_TIMEFRAME },
+      { enabled: userStripeConnect?.status === StripeConnectStatus.Approved }
     );
 
   const { classes, theme } = useBuzzDashboardStyles();
@@ -83,14 +83,14 @@ export const GeneratedImagesReward = () => {
         },
       },
     }),
-    [theme.colorScheme]
+    [labelColor]
   );
 
   const labels = useMemo(() => {
     const data = [];
     const today = dayjs().startOf('day');
     let day = dayjs(
-      maxDate(today.subtract(timeframe, 'day').toDate(), today.startOf('month').toDate())
+      maxDate(today.subtract(DEFAULT_TIMEFRAME, 'day').toDate(), today.startOf('month').toDate())
     );
     while (day.isBefore(today)) {
       data.push(day.format('YYYY-MM-DD'));
