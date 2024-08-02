@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowsHorizontal,
+  IconBolt,
   IconBookmark,
   IconBox,
   IconBrush,
@@ -142,6 +143,10 @@ const metricTypes: Record<
   bookmark: () => ({
     tooltip: 'Bookmarks',
     icon: <IconBookmark {...iconProps} />,
+  }),
+  lifetime: () => ({
+    tooltip: 'Lifetime Buzz',
+    icon: <IconBolt {...iconProps} />,
   }),
   reactionCount: () => ({
     tooltip: 'Reactions',
