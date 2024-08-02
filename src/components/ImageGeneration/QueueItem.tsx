@@ -39,7 +39,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
@@ -55,6 +55,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useRouter } from 'next/router';
 
 // const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
@@ -78,8 +79,10 @@ export function QueueItem({
 }) {
   const { classes } = useStyle();
   const features = useFeatureFlags();
+  const { pathname } = useRouter();
 
   const generationStatus = useGenerationStatus();
+  const view = useGenerationStore((state) => state.view);
   const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();
@@ -131,6 +134,7 @@ export function QueueItem({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed: undefined },
+      view: !pathname.includes('generate') ? 'generate' : view,
     });
   };
 
@@ -166,44 +170,42 @@ export function QueueItem({
     <Card withBorder px="xs" id={id}>
       <Card.Section py={4} inheritPadding withBorder>
         <div className="flex justify-between">
-          <div className="flex flex-wrap items-center gap-1">
-            <div className="flex items-center gap-1">
-              {!!images.length && (
-                <GenerationStatusBadge
-                  status={request.status}
-                  complete={completedCount}
-                  processing={processingCount}
-                  quantity={images.length}
-                  tooltipLabel={overwriteStatusLabel}
-                  progress
-                />
-              )}
+          <div className="flex items-center gap-1">
+            {!!images.length && (
+              <GenerationStatusBadge
+                status={request.status}
+                complete={completedCount}
+                processing={processingCount}
+                quantity={images.length}
+                tooltipLabel={overwriteStatusLabel}
+                progress
+              />
+            )}
 
-              <Text size="xs" color="dimmed">
-                {formatDateMin(request.createdAt)}
-              </Text>
-              {!!actualCost &&
-                dayjs(request.createdAt).toDate() >=
-                  constants.buzz.generationBuzzChargingStartDate && (
-                  <GenerationCostPopover
-                    workflowCost={request.cost ?? {}}
-                    disabled={!features.creatorComp}
-                    readOnly
-                  >
-                    {/* Wrapped in div for the popover to work properly */}
-                    <div className="cursor-pointer">
-                      <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
-                    </div>
-                  </GenerationCostPopover>
-                )}
-              <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-                <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                  {copied ? <IconCheck /> : <IconInfoHexagon />}
-                </ActionIcon>
-              </ButtonTooltip>
-            </div>
+            <Text size="xs" color="dimmed">
+              {formatDateMin(request.createdAt)}
+            </Text>
+            {!!actualCost &&
+              dayjs(request.createdAt).toDate() >=
+                constants.buzz.generationBuzzChargingStartDate && (
+                <GenerationCostPopover
+                  workflowCost={request.cost ?? {}}
+                  disabled={!features.creatorComp}
+                  readOnly
+                >
+                  {/* Wrapped in div for the popover to work properly */}
+                  <div className="cursor-pointer">
+                    <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                  </div>
+                </GenerationCostPopover>
+              )}
           </div>
           <div className="flex gap-1">
+            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
+              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                {copied ? <IconCheck /> : <IconInfoHexagon />}
+              </ActionIcon>
+            </ButtonTooltip>
             {generationStatus.available && canRemix && (
               <ButtonTooltip {...tooltipProps} label="Remix">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
