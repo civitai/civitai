@@ -696,7 +696,7 @@ export const upsertArticle = async ({
 
     const article = await dbWrite.article.findUnique({
       where: { id },
-      select: { id: true, cover: true, coverId: true, userId: true },
+      select: { id: true, cover: true, coverId: true, userId: true, publishedAt: true },
     });
     if (!article) throw throwNotFoundError();
 
@@ -708,6 +708,7 @@ export const upsertArticle = async ({
         where: { id },
         data: {
           ...data,
+          publishedAt: article.publishedAt ?? data.publishedAt,
           coverId,
           tags: tags
             ? {

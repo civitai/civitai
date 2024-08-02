@@ -33,7 +33,7 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { formatDate, getDatesAsList, maxDate, minDate } from '~/utils/date-helpers';
+import { formatDate, getDatesAsList } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -49,7 +49,7 @@ ChartJS.register(
 );
 
 const now = dayjs();
-const startDate = maxDate(dayjs('2024-07-01').toDate(), now.clone().startOf('year').toDate());
+const startDate = dayjs('2024-08-01').toDate();
 const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
@@ -74,7 +74,7 @@ export function DailyCreatorCompReward() {
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
-  const maxSelectedDate = minDate(dayjs(selectedDate).endOf('month').toDate(), new Date());
+  const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
   const options = useMemo<ChartOptions<'bar'>>(
     () => ({
