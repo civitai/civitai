@@ -1,4 +1,4 @@
-import { ImageTag, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
@@ -42,9 +42,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'hasMeta',
     'onSite',
-    'toolsIds',
-    'techniqueIds',
-    'tagIds',
+    'tools', // Ids?
+    'techniques',
+    'tags',
     'userId',
     'nsfwLevel',
     'postId',
@@ -93,12 +93,15 @@ export type SearchBaseImage = {
   postId: number;
   url: string;
   nsfwLevel: number;
-  prompt: string;
-  sortAt: Date;
-  type: string;
   width: number;
   height: number;
+  hash: string;
+  prompt: string;
+  hideMeta: boolean;
+  sortAt: Date;
+  type: string;
   userId: number;
+  needsReview: string;
   published: boolean;
   hasMeta: boolean;
   onSite: boolean;
@@ -282,6 +285,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."sortAt",
         i."type",
         i."userId",
+        i."needsReview",
         p."publishedAt" is not null as "published",
         (
           CASE

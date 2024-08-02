@@ -66,7 +66,7 @@ const getConnection = async ({ token }: { token: string }) => {
       await connection.send('ping');
     }, 5 * 60 * 1000);
   } catch (e) {
-    emitter.emit('connectionError', { message: JSON.stringify(e) });
+    emitter.emit('connectionError', { message: (e as Error).message ?? '' });
     connection = null;
   }
 
