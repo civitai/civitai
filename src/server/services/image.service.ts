@@ -649,19 +649,30 @@ export const getAllImages = async (
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
     from = `FROM "ImageResource" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
+    const modelVersionIds = [];
+
+    if (modelVersionId) modelVersionIds.push(modelVersionId);
+    if (modelId) {
+      // Fetch versions for model
+      const modelVersions = await dbRead.modelVersion.findMany({
+        where: { modelId, status: 'Published' },
+        select: { id: true },
+      });
+      modelVersionIds.push(...modelVersions.map((x) => x.id));
+    }
     if (reviewId) {
-      joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
-      AND.push(Prisma.sql`re."id" = ${reviewId}`);
-      cacheTime = 0;
-    } else if (modelVersionId) {
-      AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
+      // Fetch review model versions
+      const review = await dbRead.resourceReview.findUnique({
+        where: { id: reviewId },
+        select: { modelVersionId: true },
+      });
+      if (review) modelVersionIds.push(review.modelVersionId);
+    }
+
+    if (modelVersionIds.length) {
+      AND.push(Prisma.sql`irr."modelVersionId" IN (${Prisma.join(modelVersionIds)})`);
       cacheTime = CacheTTL.day;
       cacheTags.push(`images-modelVersion:${modelVersionId}`);
-    } else if (modelId) {
-      joins.push(`JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`);
-      AND.push(Prisma.sql`mv."modelId" = ${modelId}`);
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-model:${modelId}`);
     }
   }
 
