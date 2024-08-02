@@ -49,12 +49,14 @@ export default function ReportCsamUserPage() {
             <Badge>
               Reporting: {progress + 1} / {userCountRef.current}
             </Badge>
-            <Text size="xs" align="center">
-              User:{' '}
-              <Text component={Link} variant="link" href={`/user/${user.username}`}>
-                {user.username}
+            {user.username && (
+              <Text size="xs" align="center">
+                User:{' '}
+                <Text component={Link} variant="link" href={`/user/${user.username}`}>
+                  {user.username}
+                </Text>
               </Text>
-            </Text>
+            )}
           </Group>
         </Card>
       )}
