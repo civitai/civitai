@@ -10,12 +10,12 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 
-import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
+import { ImagesCard, ImagesCard2 } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryColumns, MasonryColumns2 } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { ImageSort } from '~/server/common/enums';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -101,7 +101,7 @@ export function ImagesInfiniteContent({
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
           <ImagesProvider images={images}>
-            <MasonryColumns
+            {/* <MasonryColumns
               data={images}
               imageDimensions={(data) => {
                 const width = data?.width ?? 450;
@@ -110,6 +110,18 @@ export function ImagesInfiniteContent({
               }}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCard}
+              itemId={(data) => data.id}
+              withAds={showAds}
+            /> */}
+            <MasonryColumns2
+              data={images}
+              imageDimensions={(data) => {
+                const width = data?.width ?? 450;
+                const height = data?.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={MasonryItem ?? ImagesCard2}
               itemId={(data) => data.id}
               withAds={showAds}
             />

@@ -15,6 +15,7 @@ import {
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -99,7 +100,11 @@ export function Queue() {
 
   return (
     <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
-      <Stack>
+      <IntersectionObserverProvider
+        id="generator-queue"
+        className="flex flex-col gap-3"
+        options={{ rootMargin: '200% 0px' }}
+      >
         {canDownload && (
           <Text size="xs" color="dimmed" my={-10}>
             <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
@@ -135,7 +140,7 @@ export function Queue() {
         ) : (
           <div className="p-6">{RetentionPolicyUpdate}</div>
         )}
-      </Stack>
+      </IntersectionObserverProvider>
     </ScrollArea>
   );
 }
