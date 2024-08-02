@@ -143,6 +143,7 @@ export const orchestratorRouter = router({
           token: args.token,
           body: {
             steps: [step],
+            tips: args.tips,
           },
           query: {
             whatif: true,

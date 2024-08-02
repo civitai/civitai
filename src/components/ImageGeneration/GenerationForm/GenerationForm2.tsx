@@ -1045,9 +1045,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   const cost = data?.cost?.base ?? 0;
-  const totalCost = features.creatorComp
-    ? Math.ceil(cost + (creatorTip ?? 0) * cost + (civitaiTip ?? 0) * cost)
-    : cost;
+  const totalTip = Math.ceil(cost * (creatorTip ?? 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+  const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
     <GenerateButton
