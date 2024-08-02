@@ -15,14 +15,16 @@ import {
   Anchor,
   Badge,
   Divider,
-  useMantineTheme,
   LoadingOverlay,
   ActionIcon,
+  Group,
 } from '@mantine/core';
+import ReactMarkdown from 'react-markdown';
+import { hashify } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
-import { IconPlus, IconX } from '@tabler/icons-react';
+import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -76,7 +78,7 @@ import {
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
 import {
@@ -85,6 +87,8 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -117,11 +121,14 @@ export function GenerationForm2() {
 
 // #region [form component]
 export function GenerationFormContent() {
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const messageHash = useMemo(
+    () => (status.message ? hashify(status.message).toString() : null),
+    [status.message]
+  );
 
   const form = useGenerationForm();
 
@@ -196,7 +203,16 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     const { cost = 0 } = useCostStore.getState();
 
-    const { model, resources: additionalResources, vae, remix, aspectRatio, ...params } = data;
+    const {
+      model,
+      resources: additionalResources,
+      vae,
+      remix,
+      aspectRatio,
+      civitaiTip = 0,
+      creatorTip = 0.25,
+      ...params
+    } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
 
     const resources = [model, ...additionalResources, vae]
@@ -209,6 +225,9 @@ export function GenerationFormContent() {
         await mutateAsync({
           resources,
           params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
+          tips: featureFlags.creatorComp
+            ? { creators: creatorTip, civitai: civitaiTip }
+            : undefined,
           remix,
         });
       } catch (e) {
@@ -221,7 +240,8 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    conditionalPerformTransaction(cost, performTransaction);
+    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
+    conditionalPerformTransaction(totalCost, performTransaction);
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
@@ -972,15 +992,20 @@ export function GenerationFormContent() {
                 </div>
               </>
             )}
-            {status.available && status.message && (
-              <AlertWithIcon
+            {status.available && status.message && messageHash && (
+              <DismissibleAlert
                 color="yellow"
                 title="Image Generation Status Alert"
-                icon={<IconAlertTriangle size={20} />}
-                iconColor="yellow"
+                id={messageHash}
               >
-                {status.message}
-              </AlertWithIcon>
+                <ReactMarkdown
+                  allowedElements={['a', 'strong']}
+                  unwrapDisallowed
+                  className="markdown-content"
+                >
+                  {status.message}
+                </ReactMarkdown>
+              </DismissibleAlert>
             )}
           </>
         )}
@@ -1009,19 +1034,26 @@ function ReadySection() {
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const form = useGenerationForm();
+  const features = useFeatureFlags();
+  const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip']);
 
   useEffect(() => {
     if (data) {
-      useCostStore.setState({ cost: data.cost });
+      useCostStore.setState({ cost: data.cost?.base ?? 0 });
     }
   }, [data?.cost]); // eslint-disable-line
 
-  return (
+  const cost = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(cost * (creatorTip ?? 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+  const totalCost = features.creatorComp ? cost + totalTip : cost;
+
+  const generateButton = (
     <GenerateButton
       type="submit"
-      className="h-auto flex-1"
+      className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
-      cost={data?.cost}
+      cost={totalCost}
       error={
         !isInitialLoading && isError
           ? error
@@ -1030,6 +1062,32 @@ function SubmitButton(props: { isLoading?: boolean }) {
           : undefined
       }
     />
+  );
+
+  if (!features.creatorComp) return generateButton;
+
+  return (
+    <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
+      <Group className="flex-1" spacing={6} noWrap>
+        {generateButton}
+        <GenerationCostPopover
+          width={300}
+          workflowCost={data?.cost ?? {}}
+          creatorTipInputOptions={{
+            value: (creatorTip ?? 0) * 100,
+            onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
+          }}
+          civitaiTipInputOptions={{
+            value: (civitaiTip ?? 0) * 100,
+            onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
+          }}
+        >
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
+            <IconInfoCircle stroke={2.5} />
+          </ActionIcon>
+        </GenerationCostPopover>
+      </Group>
+    </Paper>
   );
 }
 // #endregion

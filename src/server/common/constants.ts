@@ -579,6 +579,8 @@ export const generation = {
     baseModel: 'SD1',
     denoise: 0.4,
     upscale: 1.5,
+    civitaiTip: 0,
+    creatorTip: 0.25,
     model: {
       id: 128713,
       name: '8',

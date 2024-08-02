@@ -812,6 +812,13 @@ export const earlyAccessModelVersionsOnTimeframe = async ({
   return modelVersions;
 };
 
+type ModelVersionForGeneratedImages = {
+  id: number;
+  modelName: string;
+  modelVersionName: string;
+  userId: number;
+};
+
 export const modelVersionGeneratedImagesOnTimeframe = async ({
   userId,
   // Timeframe is on days
@@ -819,24 +826,17 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 }: ModelVersionsGeneratedImagesOnTimeframeSchema & {
   userId: number;
 }) => {
-  type ModelVersionForGeneratedImages = {
-    id: number;
-    modelName: string;
-    modelVersionName: string;
-    userId: number;
-  };
-
   const modelVersions = await dbRead.$queryRaw<ModelVersionForGeneratedImages[]>`
-      SELECT
-        mv.id,
-        m."userId",
-        m.name as "modelName",
-        mv.name as "modelVersionName"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON mv."modelId" = m.id
-      WHERE mv."status" = 'Published'
-        AND m."userId" = ${userId}
-    `;
+    SELECT
+      mv.id,
+      m."userId",
+      m.name as "modelName",
+      mv.name as "modelVersionName"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON mv."modelId" = m.id
+    WHERE mv."status" = 'Published'
+      AND m."userId" = ${userId}
+  `;
 
   if (!clickhouse || modelVersions.length === 0) return [];
 
@@ -848,21 +848,21 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const generationData = await clickhouse
     .query({
       query: `
-    SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
         SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-    GROUP BY resourceId, createdAt
-    ORDER BY createdAt DESC, generations DESC;
-`,
+            resourceId as modelVersionId,
+            createdAt,
+            SUM(1) as generations
+        FROM (
+            SELECT
+                arrayJoin(resourcesUsed) as resourceId,
+                createdAt::date as createdAt
+            FROM orchestration.textToImageJobs
+            WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+        )
+        WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+        GROUP BY resourceId, createdAt
+        ORDER BY createdAt DESC, generations DESC;
+      `,
       format: 'JSONEachRow',
     })
     .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());

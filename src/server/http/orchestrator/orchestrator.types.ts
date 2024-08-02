@@ -128,6 +128,8 @@ export namespace Orchestrator {
       priority: z.object({ min: z.number(), max: z.number() }).optional(),
       baseModel: z.string().optional(),
       callbackUrl: z.string().optional(),
+      creatorTip: z.number().min(0).max(1).optional(),
+      civitaiTip: z.number().min(0).max(1).optional(),
     });
 
     export type TextToImageJobPayload = z.infer<typeof textToImageJobInputSchema>;

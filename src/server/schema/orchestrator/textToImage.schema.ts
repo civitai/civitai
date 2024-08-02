@@ -74,6 +74,12 @@ export const generateImageSchema = z.object({
   resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),
   remix: textToImageStepRemixMetadataSchema.optional(),
+  tips: z
+    .object({
+      creators: z.number().min(0).max(1).default(0).optional(),
+      civitai: z.number().min(0).max(1).default(0).optional(),
+    })
+    .optional(),
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({

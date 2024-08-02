@@ -50,6 +50,7 @@ import {
   ThemeIcon,
   List,
   LoadingOverlay,
+  Popover,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -61,6 +62,7 @@ import {
   IconArrowAutofitDown,
   IconCheck,
   IconCopy,
+  IconInfoCircle,
   IconPlus,
 } from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';

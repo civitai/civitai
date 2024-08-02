@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { createJob } from '~/server/jobs/job';
+import { createJob, getJobDate } from '~/server/jobs/job';
 
 export const tempSetMissingNsfwLevel = createJob(
   'temp-set-missing-nsfw-level',
@@ -85,7 +85,24 @@ export const tempSetMissingNsfwLevel = createJob(
       RETURNING m.id;
     `;
 
-    await dbWrite.$queryRaw<{ id: number }[]>`
+    // Update old lastVersionAt
+    const [lastRun, setLastRun] = await getJobDate('temp-set-missing-nsfw-level');
+    await dbWrite.$executeRaw`
+      WITH last_version AS (
+        SELECT "modelId", max("publishedAt") "publishedAt"
+        FROM "ModelVersion"
+        WHERE status = 'Published' AND "publishedAt" >= ${lastRun}
+        GROUP BY "modelId"
+      )
+      UPDATE "Model" m SET "lastVersionAt" = lv."publishedAt"
+      FROM last_version lv
+      WHERE lv."modelId" = m.id
+      AND m."lastVersionAt" < lv."publishedAt";
+    `;
+    await setLastRun();
+
+    // Update missing lastVersionAt
+    await dbWrite.$executeRaw`
       WITH last_version AS (
         SELECT "modelId", max("publishedAt") "publishedAt"
         FROM "ModelVersion"
@@ -95,8 +112,7 @@ export const tempSetMissingNsfwLevel = createJob(
       UPDATE "Model" m SET "lastVersionAt" = lv."publishedAt"
       FROM last_version lv
       WHERE lv."modelId" = m.id
-      AND m."lastVersionAt" IS NULL
-      RETURNING m.id;
+      AND m."lastVersionAt" IS NULL;
     `;
 
     return {

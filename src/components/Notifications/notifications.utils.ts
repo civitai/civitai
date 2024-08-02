@@ -58,19 +58,36 @@ export const useMarkReadNotification = () => {
     async onMutate({ category, all, id }) {
       // Lower notification count
       const categoryStr = category?.toLowerCase();
-      queryUtils.user.checkNotifications.cancel();
+
+      await queryUtils.user.checkNotifications.cancel();
       queryUtils.user.checkNotifications.setData(undefined, (old) => {
         const newCounts: Record<string, number> = { ...old, all: old?.all ?? 0 };
-        for (const key of Object.keys(newCounts)) {
-          // TODO fix issue here with category clearing out all when it shouldnt
-          const keyMatch = !categoryStr || key === categoryStr || key === 'all';
-          if (keyMatch) {
-            if (all) newCounts[key] = 0;
-            else newCounts[key]--;
-          }
 
+        if (id) {
+          // if we have an id, set that category-- and all-- and that's it
+          newCounts['all']--;
+          if (!!categoryStr && categoryStr in newCounts) {
+            newCounts[categoryStr]--;
+          }
+        } else {
+          if (!!categoryStr) {
+            // otherwise, if we have a category, set that to 0 and -X from all
+            if (categoryStr in newCounts) {
+              newCounts['all'] -= newCounts[categoryStr] ?? 0;
+              newCounts[categoryStr] = 0;
+            }
+          } else {
+            // if we don't, set everything to 0
+            for (const key of Object.keys(newCounts)) {
+              newCounts[key] = 0;
+            }
+          }
+        }
+
+        for (const key of Object.keys(newCounts)) {
           if (newCounts[key] < 0) newCounts[key] = 0;
         }
+
         return newCounts;
       });
 

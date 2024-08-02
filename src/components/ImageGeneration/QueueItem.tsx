@@ -53,6 +53,8 @@ import {
   orchestratorRefundableStatuses,
 } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 // const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
@@ -75,6 +77,7 @@ export function QueueItem({
   id: string;
 }) {
   const { classes } = useStyle();
+  const features = useFeatureFlags();
 
   const generationStatus = useGenerationStatus();
   const { unstableResources } = useUnstableResources();
@@ -182,7 +185,16 @@ export function QueueItem({
               {!!actualCost &&
                 dayjs(request.createdAt).toDate() >=
                   constants.buzz.generationBuzzChargingStartDate && (
-                  <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                  <GenerationCostPopover
+                    workflowCost={request.cost ?? {}}
+                    disabled={!features.creatorComp}
+                    readOnly
+                  >
+                    {/* Wrapped in div for the popover to work properly */}
+                    <div className="cursor-pointer">
+                      <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                    </div>
+                  </GenerationCostPopover>
                 )}
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>

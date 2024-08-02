@@ -164,6 +164,8 @@ export const REDIS_KEYS = {
     DATA_FOR_MODEL: 'packed:caches:data-for-model',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
+    BASIC_USERS: 'packed:caches:basic-users',
+    BASIC_TAGS: 'packed:caches:basic-tags',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
