@@ -148,14 +148,6 @@ export function QueueItem({
       ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
       : status;
 
-  // const refunded = Math.ceil(
-  //   !!cost
-  //     ? (cost / params.quantity) *
-  //         (params.quantity -
-  //           (images.filter((x) => !orchestratorRefundableStatuses.includes(x.status)).length ?? 0))
-  //     : 0
-  // );
-  // const actualCost = !!cost ? cost - refunded : 0;
   const actualCost = cost;
 
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
