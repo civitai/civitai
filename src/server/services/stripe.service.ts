@@ -259,6 +259,8 @@ export const createSubscribeSession = async ({
         items,
         billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
         proration_behavior: 'none',
+        // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
+        payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
         // @ts-ignore This is valid as per stripe's documentation
         discounts,
       });
