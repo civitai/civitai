@@ -1,4 +1,4 @@
-import { Badge, Button, Group, Stack, Text, Title } from '@mantine/core';
+import { Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
@@ -12,7 +12,6 @@ import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ModelsPage() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
@@ -33,16 +32,9 @@ export default function ModelsPage() {
       />
 
       <MasonryContainer>
+        <Announcements />
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         <Stack spacing="xs">
-          <Announcements
-            sx={() => ({
-              marginBottom: -35,
-              [containerQuery.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           <IsClient>
             <EarlyAccessHighlight />
             <CategoryTags />

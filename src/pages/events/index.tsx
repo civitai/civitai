@@ -1,18 +1,14 @@
 import { Center, Loader, Stack } from '@mantine/core';
-
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { env } from '~/env/client.mjs';
-import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -38,15 +34,8 @@ export default function EventsPage() {
       />
 
       <MasonryContainer>
+        <Announcements />
         <Stack spacing="xs">
-          <Announcements
-            sx={() => ({
-              marginBottom: -35,
-              [containerQuery.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           {isLoading ? (
             <Center p="xl">
               <Loader size="xl" />

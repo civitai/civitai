@@ -1,7 +1,7 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 import { Alert, createStyles, Group, MantineColor, Stack, Sx, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import useIsClient from '~/hooks/useIsClient';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -65,11 +65,20 @@ const Announcement = ({
     key: `announcement-${id}`,
     defaultValue: false,
   });
+  const alertRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    alertRef.current?.style?.setProperty(
+      'margin-bottom',
+      `${-1 * Math.ceil(alertRef.current?.offsetHeight ?? 35)}px`
+    );
+  }, [alertRef.current?.offsetHeight]);
 
   if (dismissed) return null;
 
   return (
     <Alert
+      ref={alertRef}
       color={color}
       py={8}
       className={cx(className, classes.announcement)}

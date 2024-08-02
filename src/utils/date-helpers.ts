@@ -97,3 +97,8 @@ export function secondsAsMinutes(seconds: number) {
 
   return `${min}m ${sec}s`;
 }
+
+export function dateWithoutTimezone(date: Date) {
+  const withoutTimezone = new Date(date.valueOf()).toISOString().slice(0, -1);
+  return new Date(withoutTimezone);
+}
