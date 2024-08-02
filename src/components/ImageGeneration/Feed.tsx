@@ -1,11 +1,15 @@
 import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedImage, GeneratedImageProps } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import {
+  IntersectionObserverProvider,
+  useIntersectionObserverContext,
+} from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Feed() {
   const { classes } = useStyles();
@@ -55,15 +59,20 @@ export function Feed() {
   return (
     <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
-      <div className={classes.grid}>
+      <IntersectionObserverProvider
+        id="generator-feed"
+        className={classes.grid}
+        options={{ rootMargin: '200% 0px' }}
+      >
         {steps.map((step) =>
           step.images
+            .filter((x) => x.status === 'succeeded')
             .map((image) => {
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
 
               return (
-                <GeneratedImage
+                <FeedItem
                   key={`${image.workflowId}_${image.id}`}
                   request={request}
                   step={step}
@@ -73,7 +82,8 @@ export function Feed() {
             })
             .filter(isDefined)
         )}
-      </div>
+      </IntersectionObserverProvider>
+
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
           <Center sx={{ height: 60 }}>
@@ -82,6 +92,15 @@ export function Feed() {
         </InViewLoader>
       )}
     </ScrollArea>
+  );
+}
+
+function FeedItem(args: GeneratedImageProps) {
+  const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: args.image.id });
+  return (
+    <div ref={ref} style={{ height: sizeMapping?.height }}>
+      {inView && <GeneratedImage {...args} />}
+    </div>
   );
 }
 
