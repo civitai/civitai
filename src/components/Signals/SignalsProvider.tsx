@@ -84,7 +84,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       onClosed: (message) => {
         // A closed connection will not recover on its own.
         console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
-        queryUtils.signals.getAccessToken.invalidate();
+        queryUtils.signals.getToken.invalidate();
         setStatus('closed');
       },
       onError: (message) => {
@@ -92,7 +92,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         console.error({ type: 'SignalsProvider :: signal service error', message });
       },
     });
-  const { data } = trpc.signals.getAccessToken.useQuery(undefined, {
+  const { data } = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!session.data?.user,
   });
 
