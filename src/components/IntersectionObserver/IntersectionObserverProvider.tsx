@@ -27,21 +27,24 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
   const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
   const [inView, setInView] = useState(!sizeMapping ? true : false);
+  const inViewRef = useRef(inView);
 
   useEffect(() => {
+    const key = keyRef.current;
     const target = ref.current;
 
-    if (target && !sizeMappings.get(keyRef.current)) {
+    if (target && !sizeMappings.get(key)) {
       const bounds = target.getBoundingClientRect();
-      sizeMappings.set(keyRef.current, { height: bounds.height, width: bounds.width });
+      sizeMappings.set(key, { height: bounds.height, width: bounds.width });
     }
 
     function callback({ intersecting, size }: ObserverCallbackArgs) {
-      const sizeMapping = sizeMappings.get(keyRef.current);
+      const sizeMapping = sizeMappings.get(key);
       const inView = !sizeMapping ? true : intersecting;
       setInView(inView);
-      sizeMappings.set(keyRef.current, size);
+      sizeMappings.set(key, size);
       setSizeMapping(size);
+      inViewRef.current = inView;
       // if (target) {
       //   if (!inView) {
       //     target.style.height = `${size.height}px`;
@@ -58,6 +61,9 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
     return () => {
       if (target) {
         unobserve(target);
+      }
+      if (inViewRef.current && key) {
+        sizeMappings.delete(key);
       }
     };
   }, []);
@@ -80,26 +86,8 @@ export function IntersectionObserverProvider({
   const mappingRef = useRef<Map<Element, ObserverCallback>>();
   if (!mappingRef.current) mappingRef.current = new Map<Element, ObserverCallback>();
 
-  // if (!observerRef.current) {
-  //   observerRef.current = new IntersectionObserver(
-  //     (entries) => {
-  //       for (const entry of entries) {
-  //         const bounds = entry.target.getBoundingClientRect();
-  //         const callback = mappingRef.current?.get(entry.target);
-  //         callback?.({
-  //           intersecting: entry.isIntersecting,
-  //           size: { width: bounds.width, height: bounds.height },
-  //         });
-  //       }
-  //     },
-  //     {
-  //       root: node?.current,
-  //       ...options,
-  //     }
-  //   );
-  // }
-
   useEffect(() => {
+    // assigne the observer in the effect so that we can access the targetRef
     if (!observerRef.current)
       observerRef.current = new IntersectionObserver(
         (entries) => {
