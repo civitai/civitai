@@ -64,17 +64,19 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       onConnected: () => {
         console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
         setStatus((prevStatus) => {
-          if (prevStatus === 'closed' || prevStatus === 'error')
-            queryUtils.orchestrator.queryGeneratedImages.invalidate();
+          // TODO.signals reenable when stable
+          // if (prevStatus === 'closed' || prevStatus === 'error')
+          //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
           return 'connected';
         });
       },
       onReconnected: () => {
         console.debug('signal service reconnected'); // eslint-disable-line no-console
-        if (userId) {
-          queryUtils.buzz.getBuzzAccount.invalidate();
-          queryUtils.orchestrator.queryGeneratedImages.invalidate();
-        }
+        // TODO.signals reenable when stable
+        // if (userId) {
+        //   queryUtils.buzz.getBuzzAccount.invalidate();
+        //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        // }
         setStatus('connected');
       },
       onReconnecting: () => {
