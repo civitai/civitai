@@ -942,16 +942,16 @@ export const getAllImages = async (
   }
 
   // TODO.metricSearch add missing props
-  getImagesFromSearch({
-    modelVersionId,
-    types,
-    browsingLevel,
-    fromPlatform,
-    hasMeta: include.includes('meta'),
-    baseModels,
-    period,
-    sort,
-  }).catch();
+  // getImagesFromSearch({
+  //   modelVersionId,
+  //   types,
+  //   browsingLevel,
+  //   fromPlatform,
+  //   hasMeta: include.includes('meta'),
+  //   baseModels,
+  //   period,
+  //   sort,
+  // }).catch();
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1043,7 +1043,8 @@ export const getAllImages = async (
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  // const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
