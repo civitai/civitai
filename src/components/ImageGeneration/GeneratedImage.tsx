@@ -35,9 +35,9 @@ import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedIm
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { useIntersectionObserverContext } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
-import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -65,6 +65,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
+  const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
   // const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
@@ -187,56 +188,33 @@ export function GeneratedImage({
   const canRemix = step.params.workflow !== 'img2img-upscale';
 
   return (
-    <AspectRatio ratio={step.params.width / step.params.height}>
-      <>
-        <Card
-          p={0}
-          className={classes.imageWrapper}
-          style={available ? { cursor: 'pointer' } : undefined}
-        >
-          <Box
+    <div
+      ref={ref}
+      className="shadow-inner card"
+      style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
+    >
+      {inView && (
+        <>
+          <div
+            className={`flex flex-1 cursor-pointer flex-col items-center justify-center`}
             onClick={handleImageClick}
             onMouseDown={(e) => {
               if (e.button === 1) return handleAuxClick();
             }}
           >
-            <Box className={classes.innerGlow} />
-            {!available ? (
-              <Center className={classes.centeredAbsolute} p="xs">
-                {image.status === 'processing' ? (
-                  <Stack align="center">
-                    <Loader size={24} />
-                    <Text color="dimmed" size="xs" align="center">
-                      Generating
-                    </Text>
-                  </Stack>
-                ) : image.status === 'failed' ? (
-                  <Text color="dimmed" size="xs" align="center">
-                    Could not load image
-                  </Text>
-                ) : (
-                  <Stack align="center">
-                    <IconHourglass />
-                    <Text color="dimmed" size="xs">
-                      Queued
-                    </Text>
-                  </Stack>
-                )}
-              </Center>
-            ) : (
-              // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-              <img
-                ref={imageRef}
-                alt=""
-                src={image.url}
-                style={{ zIndex: 2, width: '100%' }}
-                onDragStart={(e) => {
-                  if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-                }}
-              />
-            )}
-          </Box>
-          <label className={classes.checkboxLabel}>
+            <div className={classes.innerGlow} />
+            {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
+            <img
+              ref={imageRef}
+              alt=""
+              src={image.url}
+              style={{ zIndex: 2, width: '100%' }}
+              onDragStart={(e) => {
+                if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
+              }}
+            />
+          </div>
+          <label className="absolute left-3 top-3 z-10">
             <Checkbox
               className={classes.checkbox}
               checked={selected}
@@ -247,7 +225,7 @@ export function GeneratedImage({
           </label>
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
-              <div className={classes.menuTarget}>
+              <div className="absolute right-3 top-3 z-10">
                 <ActionIcon variant="transparent">
                   <IconDotsVertical
                     size={26}
@@ -320,99 +298,92 @@ export function GeneratedImage({
               </Menu.Item>
             </Menu.Dropdown>
           </Menu>
-          {available && (
-            <Group className={classes.info} w="100%" position="apart">
-              <Group spacing={4} className={classes.actionsWrapper}>
-                <ActionIcon
-                  size="md"
-                  variant={goodFeedbackSelected ? 'light' : undefined}
-                  color={goodFeedbackSelected ? 'green' : undefined}
-                  disabled={isLoading}
-                  onClick={() => handleToggleFeedback('liked')}
-                >
-                  <IconThumbUp size={16} />
-                </ActionIcon>
 
-                <ActionIcon
-                  size="md"
-                  variant={badFeedbackSelected ? 'light' : undefined}
-                  color={badFeedbackSelected ? 'red' : undefined}
-                  disabled={isLoading}
-                  onClick={() => handleToggleFeedback('disliked')}
-                >
-                  <IconThumbDown size={16} />
-                </ActionIcon>
-
-                {!!img2imgWorkflows?.length && canRemix && (
-                  <Menu
-                    zIndex={400}
-                    trigger="hover"
-                    openDelay={100}
-                    closeDelay={100}
-                    transition="fade"
-                    transitionDuration={150}
-                  >
-                    <Menu.Target>
-                      <ActionIcon size="md">
-                        <IconWand size={16} />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown className={classes.improveMenu}>
-                      {img2imgWorkflows?.map((workflow) => (
-                        <Menu.Item
-                          key={workflow.key}
-                          onClick={() => {
-                            if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
-                            else handleSelectWorkflow(workflow.key);
-                          }}
-                        >
-                          {workflow.name}
-                        </Menu.Item>
-                      ))}
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
-              </Group>
-              <ImageMetaPopover
-                meta={step.params}
-                zIndex={constants.imageGeneration.drawerZIndex + 1}
-                hideSoftware
+          <Group className={classes.info} w="100%" position="apart">
+            <Group spacing={4} className={classes.actionsWrapper}>
+              <ActionIcon
+                size="md"
+                variant={goodFeedbackSelected ? 'light' : undefined}
+                color={goodFeedbackSelected ? 'green' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('liked')}
               >
-                <ActionIcon variant="transparent" size="md">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </ActionIcon>
-              </ImageMetaPopover>
+                <IconThumbUp size={16} />
+              </ActionIcon>
+
+              <ActionIcon
+                size="md"
+                variant={badFeedbackSelected ? 'light' : undefined}
+                color={badFeedbackSelected ? 'red' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </ActionIcon>
+
+              {!!img2imgWorkflows?.length && canRemix && (
+                <Menu
+                  zIndex={400}
+                  trigger="hover"
+                  openDelay={100}
+                  closeDelay={100}
+                  transition="fade"
+                  transitionDuration={150}
+                >
+                  <Menu.Target>
+                    <ActionIcon size="md">
+                      <IconWand size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown className={classes.improveMenu}>
+                    {img2imgWorkflows?.map((workflow) => (
+                      <Menu.Item
+                        key={workflow.key}
+                        onClick={() => {
+                          if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                          else handleSelectWorkflow(workflow.key);
+                        }}
+                      >
+                        {workflow.name}
+                      </Menu.Item>
+                    ))}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
             </Group>
-          )}
-        </Card>
-      </>
-    </AspectRatio>
+            <ImageMetaPopover
+              meta={step.params}
+              zIndex={constants.imageGeneration.drawerZIndex + 1}
+              hideSoftware
+            >
+              <ActionIcon variant="transparent" size="md">
+                <IconInfoCircle
+                  color="white"
+                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  opacity={0.8}
+                  strokeWidth={2.5}
+                  size={26}
+                />
+              </ActionIcon>
+            </ImageMetaPopover>
+          </Group>
+        </>
+      )}
+    </div>
   );
 }
 
 export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
-  const { classes } = useStyles();
-
   return (
-    <AspectRatio ratio={width / height}>
-      <Card p={0} className={classes.imageWrapper}>
-        <Box className={classes.innerGlow} />
-        <Center className={classes.centeredAbsolute} p="xs">
-          <Stack align="center">
-            <Loader size={24} />
-            <Text color="dimmed" size="xs" align="center">
-              Generating
-            </Text>
-          </Stack>
-        </Center>
-      </Card>
-    </AspectRatio>
+    <div
+      className="flex flex-col items-center justify-center border card"
+      style={{ aspectRatio: width / height }}
+    >
+      <Loader size={24} />
+      <Text color="dimmed" size="xs" align="center">
+        Generating
+      </Text>
+    </div>
   );
 }
 
@@ -490,6 +461,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
       borderRadius: theme.radius.sm,
       pointerEvents: 'none',
+      zIndex: 10,
     },
     actionsWrapper: {
       ref: thumbActionRef,
