@@ -1,11 +1,14 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { create } from 'zustand';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 
 type SizeMapping = { height: number; width: number };
-const sizeMappings = new Map<string, SizeMapping>();
+// const sizeMappings = new Map<string, SizeMapping>();
 function getSizeMappingKey(ids: string[]) {
   return ids.join('_');
 }
+
+const useSizeMappingStore = create<Record<string, SizeMapping>>(() => ({}));
 
 type ObserverCallbackArgs = { intersecting: boolean; size: SizeMapping };
 type ObserverCallback = (args: ObserverCallbackArgs) => void;
@@ -25,35 +28,21 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const { providerId, observe, unobserve } = useProviderContext();
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
-  const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
+  const sizeMapping = useSizeMappingStore(useCallback((state) => state[keyRef.current], []));
+  // const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
   const [inView, setInView] = useState(!sizeMapping ? true : false);
-  // const inViewRef = useRef(inView);
 
   useEffect(() => {
     const key = keyRef.current;
     const target = ref.current;
 
-    // if (target && !sizeMapping) {
-    //   const bounds = target.getBoundingClientRect();
-    //   sizeMappings.set(key, { height: bounds.height, width: bounds.width });
-    // }
-
     function callback({ intersecting, size }: ObserverCallbackArgs) {
-      // const sizeMapping = sizeMappings.get(key);
-      // const inView = !sizeMapping ? true : intersecting;
       if (!intersecting) {
-        sizeMappings.set(key, size);
-        setSizeMapping(size);
+        useSizeMappingStore.setState({ [key]: size });
+        // sizeMappings.set(key, size);
+        // setSizeMapping(size);
       }
       setInView(intersecting);
-      // inViewRef.current = inView;
-      // if (target) {
-      //   if (!inView) {
-      //     target.style.height = `${size.height}px`;
-      //   } else {
-      //     target.style.removeProperty('height');
-      //   }
-      // }
     }
 
     if (target) {
@@ -64,9 +53,6 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
       if (target) {
         unobserve(target);
       }
-      // if (inViewRef.current && key) {
-      //   sizeMappings.delete(key);
-      // }
     };
   }, []);
 
@@ -89,7 +75,7 @@ export function IntersectionObserverProvider({
   if (!mappingRef.current) mappingRef.current = new Map<Element, ObserverCallback>();
 
   useEffect(() => {
-    // assigne the observer in the effect so that we can access the targetRef
+    // assigne the observer in the effect so that we react has time to assign refs before we initialize
     if (!observerRef.current)
       observerRef.current = new IntersectionObserver(
         (entries) => {
