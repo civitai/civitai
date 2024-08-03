@@ -93,7 +93,7 @@ export function Feed() {
               }
 
               return (
-                <FeedItem
+                <GeneratedImage
                   key={`${image.workflowId}_${image.id}`}
                   request={request}
                   step={step}
@@ -124,6 +124,7 @@ function FeedItem(args: GeneratedImageProps) {
       className="card"
       style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
     >
+      {/* <div style={{ height: 400 }}></div> */}
       {inView && <GeneratedImage {...args} />}
     </div>
   );
