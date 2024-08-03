@@ -69,6 +69,7 @@ export default function GeneratePage() {
         radius="xl"
         color="gray"
         classNames={classes}
+        keepMounted={false}
       >
         <Tabs.List px="md" py="xs">
           <Group position="apart" w="100%">
