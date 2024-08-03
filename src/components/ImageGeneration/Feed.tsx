@@ -98,7 +98,11 @@ export function Feed() {
 function FeedItem(args: GeneratedImageProps) {
   const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: args.image.id });
   return (
-    <div ref={ref} style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}>
+    <div
+      ref={ref}
+      className="card"
+      style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
+    >
       {inView && <GeneratedImage {...args} />}
     </div>
   );
