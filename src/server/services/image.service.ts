@@ -670,7 +670,9 @@ export const getAllImages = async (
     }
 
     if (modelVersionIds.length) {
-      AND.push(Prisma.sql`irr."modelVersionId" IN (${Prisma.join(modelVersionIds)})`);
+      if (modelVersionIds.length === 1)
+        AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionIds[0]})`);
+      else AND.push(Prisma.sql`irr."modelVersionId" IN (${Prisma.join(modelVersionIds)})`);
       cacheTime = CacheTTL.day;
       cacheTags.push(`images-modelVersion:${modelVersionId}`);
     }
@@ -1043,8 +1045,8 @@ export const getAllImages = async (
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  // const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
-  const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
+  const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
