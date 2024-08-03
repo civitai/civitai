@@ -33,17 +33,19 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
     const key = keyRef.current;
     const target = ref.current;
 
-    if (target && !sizeMappings.get(key)) {
-      const bounds = target.getBoundingClientRect();
-      sizeMappings.set(key, { height: bounds.height, width: bounds.width });
-    }
+    // if (target && !sizeMapping) {
+    //   const bounds = target.getBoundingClientRect();
+    //   sizeMappings.set(key, { height: bounds.height, width: bounds.width });
+    // }
 
     function callback({ intersecting, size }: ObserverCallbackArgs) {
       // const sizeMapping = sizeMappings.get(key);
       // const inView = !sizeMapping ? true : intersecting;
+      if (!intersecting) {
+        sizeMappings.set(key, size);
+        setSizeMapping(size);
+      }
       setInView(intersecting);
-      sizeMappings.set(key, size);
-      setSizeMapping(size);
       // inViewRef.current = inView;
       // if (target) {
       //   if (!inView) {
