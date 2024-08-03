@@ -36,7 +36,7 @@ export const createSignalWorker = ({
   }));
 
   const worker = new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-    name: 'civitai-signals:1.3',
+    name: 'civitai-signals:1.2',
     type: 'module',
   });
 
