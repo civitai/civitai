@@ -26,7 +26,7 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
   const { providerId, observe, unobserve } = useProviderContext();
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
   const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
-  const [inView, setInView] = useState(false);
+  const [inView, setInView] = useState(!sizeMapping ? true : false);
   // const inViewRef = useRef(inView);
 
   useEffect(() => {
