@@ -26,8 +26,8 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
   const { providerId, observe, unobserve } = useProviderContext();
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
   const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
-  const [inView, setInView] = useState(!sizeMapping ? true : false);
-  const inViewRef = useRef(inView);
+  const [inView, setInView] = useState(false);
+  // const inViewRef = useRef(inView);
 
   useEffect(() => {
     const key = keyRef.current;
@@ -39,12 +39,12 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
     }
 
     function callback({ intersecting, size }: ObserverCallbackArgs) {
-      const sizeMapping = sizeMappings.get(key);
-      const inView = !sizeMapping ? true : intersecting;
-      setInView(inView);
+      // const sizeMapping = sizeMappings.get(key);
+      // const inView = !sizeMapping ? true : intersecting;
+      setInView(intersecting);
       sizeMappings.set(key, size);
       setSizeMapping(size);
-      inViewRef.current = inView;
+      // inViewRef.current = inView;
       // if (target) {
       //   if (!inView) {
       //     target.style.height = `${size.height}px`;
@@ -62,9 +62,9 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
       if (target) {
         unobserve(target);
       }
-      if (inViewRef.current && key) {
-        sizeMappings.delete(key);
-      }
+      // if (inViewRef.current && key) {
+      //   sizeMappings.delete(key);
+      // }
     };
   }, []);
 
