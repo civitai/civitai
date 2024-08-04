@@ -1,5 +1,5 @@
 import { useResizeObserver } from '~/hooks/useResizeObserver';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { createKeyDebouncer } from '~/utils/debouncer';
 import { EventEmitter } from '~/utils/eventEmitter';

@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { create } from 'zustand';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
 
@@ -12,7 +20,6 @@ const useSizeMappingStore = create<Record<string, SizeMapping>>(() => ({}));
 
 type ObserverCallback = (inView: boolean, entry: IntersectionObserverEntry) => void;
 const IntersectionObserverCtx = createContext<{
-  ready: boolean;
   providerId: string;
   observe: (element: HTMLElement, callback: ObserverCallback) => void;
   unobserve: (element: HTMLElement) => void;
@@ -26,13 +33,12 @@ function useProviderContext() {
 
 export function useIntersectionObserverContext({ id }: { id: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { ready, providerId, observe, unobserve } = useProviderContext();
+  const { providerId, observe, unobserve } = useProviderContext();
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
   const sizeMapping = useSizeMappingStore(useCallback((state) => state[keyRef.current], []));
   const [inView, setInView] = useState(!sizeMapping ? true : false);
 
   useEffect(() => {
-    if (!ready) return;
     console.log(2);
     const key = keyRef.current;
     const target = ref.current;
@@ -54,7 +60,7 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
         unobserve(target);
       }
     };
-  }, [ready]);
+  }, []);
 
   return { ref, inView, sizeMapping: !inView ? sizeMapping : undefined } as const;
 }
@@ -72,10 +78,9 @@ export function IntersectionObserverProvider({
   const targetRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver>();
   const mappingRef = useRef<Map<Element, ObserverCallback>>();
-  const [ready, setReady] = useState(false);
   if (!mappingRef.current) mappingRef.current = new Map<Element, ObserverCallback>();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     // assigne the observer in the effect so that we react has time to assign refs before we initialize
     if (!observerRef.current) {
       console.log(1);
@@ -91,7 +96,7 @@ export function IntersectionObserverProvider({
           ...options,
         }
       );
-      setReady(true);
+      // setReady(true);
     }
 
     return () => {
@@ -112,7 +117,7 @@ export function IntersectionObserverProvider({
 
   return (
     <div id={id} ref={targetRef} {...rest}>
-      <IntersectionObserverCtx.Provider value={{ ready, providerId: id, observe, unobserve }}>
+      <IntersectionObserverCtx.Provider value={{ providerId: id, observe, unobserve }}>
         {children}
       </IntersectionObserverCtx.Provider>
     </div>
