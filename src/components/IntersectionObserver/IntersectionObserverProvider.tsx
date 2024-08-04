@@ -10,9 +10,9 @@ function getSizeMappingKey(ids: string[]) {
 
 const useSizeMappingStore = create<Record<string, SizeMapping>>(() => ({}));
 
-type ObserverCallbackArgs = { intersecting: boolean; size: SizeMapping };
-type ObserverCallback = (args: ObserverCallbackArgs) => void;
+type ObserverCallback = (inView: boolean, entry: IntersectionObserverEntry) => void;
 const IntersectionObserverCtx = createContext<{
+  ready: boolean;
   providerId: string;
   observe: (element: HTMLElement, callback: ObserverCallback) => void;
   unobserve: (element: HTMLElement) => void;
@@ -26,23 +26,23 @@ function useProviderContext() {
 
 export function useIntersectionObserverContext({ id }: { id: string }) {
   const ref = useRef<HTMLDivElement>(null);
-  const { providerId, observe, unobserve } = useProviderContext();
+  const { ready, providerId, observe, unobserve } = useProviderContext();
   const keyRef = useRef(getSizeMappingKey([providerId, id]));
   const sizeMapping = useSizeMappingStore(useCallback((state) => state[keyRef.current], []));
-  // const [sizeMapping, setSizeMapping] = useState(sizeMappings.get(keyRef.current));
   const [inView, setInView] = useState(!sizeMapping ? true : false);
 
   useEffect(() => {
+    if (!ready) return;
+    console.log(2);
     const key = keyRef.current;
     const target = ref.current;
 
-    function callback({ intersecting, size }: ObserverCallbackArgs) {
-      if (!intersecting) {
-        useSizeMappingStore.setState({ [key]: size });
-        // sizeMappings.set(key, size);
-        // setSizeMapping(size);
+    function callback(inView: boolean, entry: IntersectionObserverEntry) {
+      if (!inView) {
+        const bounds = entry.target.getBoundingClientRect();
+        useSizeMappingStore.setState({ [key]: { width: bounds.width, height: bounds.height } });
       }
-      setInView(intersecting);
+      setInView(inView);
     }
 
     if (target) {
@@ -54,7 +54,7 @@ export function useIntersectionObserverContext({ id }: { id: string }) {
         unobserve(target);
       }
     };
-  }, []);
+  }, [ready]);
 
   return { ref, inView, sizeMapping: !inView ? sizeMapping : undefined } as const;
 }
@@ -72,20 +72,18 @@ export function IntersectionObserverProvider({
   const targetRef = useRef<HTMLDivElement>(null);
   const observerRef = useRef<IntersectionObserver>();
   const mappingRef = useRef<Map<Element, ObserverCallback>>();
+  const [ready, setReady] = useState(false);
   if (!mappingRef.current) mappingRef.current = new Map<Element, ObserverCallback>();
 
   useEffect(() => {
     // assigne the observer in the effect so that we react has time to assign refs before we initialize
-    if (!observerRef.current)
+    if (!observerRef.current) {
+      console.log(1);
       observerRef.current = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {
-            const bounds = entry.target.getBoundingClientRect();
             const callback = mappingRef.current?.get(entry.target);
-            callback?.({
-              intersecting: entry.isIntersecting,
-              size: { width: bounds.width, height: bounds.height },
-            });
+            callback?.(entry.isIntersecting, entry);
           }
         },
         {
@@ -93,6 +91,13 @@ export function IntersectionObserverProvider({
           ...options,
         }
       );
+      setReady(true);
+    }
+
+    return () => {
+      observerRef.current?.disconnect();
+      observerRef.current = undefined;
+    };
   }, []);
 
   function observe(element: HTMLElement, callback: ObserverCallback) {
@@ -107,7 +112,7 @@ export function IntersectionObserverProvider({
 
   return (
     <div id={id} ref={targetRef} {...rest}>
-      <IntersectionObserverCtx.Provider value={{ providerId: id, observe, unobserve }}>
+      <IntersectionObserverCtx.Provider value={{ ready, providerId: id, observe, unobserve }}>
         {children}
       </IntersectionObserverCtx.Provider>
     </div>
