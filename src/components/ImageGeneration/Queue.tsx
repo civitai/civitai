@@ -93,7 +93,7 @@ export function Queue() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'queue' }} className="flex flex-col gap-2 px-3">
+    <ScrollArea scrollRestore={{ key: 'queue' }} className="px-3">
       <IntersectionObserverProvider
         id="generator-queue"
         className="flex flex-col gap-3"
