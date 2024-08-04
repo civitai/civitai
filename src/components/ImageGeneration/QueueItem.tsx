@@ -56,7 +56,6 @@ import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useRouter } from 'next/router';
-import { useIntersectionObserverContext } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 // const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
 // const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
@@ -103,7 +102,6 @@ export function QueueItem({
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
   const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
-  const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id });
 
   useEffect(() => {
     if (!pendingProcessing) return;
@@ -161,144 +159,129 @@ export function QueueItem({
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
   return (
-    <div ref={ref} style={sizeMapping?.height ? { height: sizeMapping.height } : undefined}>
-      {inView && (
-        <Card withBorder px="xs" id={id}>
-          {inView && (
-            <Card.Section py={4} inheritPadding withBorder>
-              <div className="flex justify-between">
-                <div className="flex items-center gap-1">
-                  {!!images.length && (
-                    <GenerationStatusBadge
-                      status={request.status}
-                      complete={completedCount}
-                      processing={processingCount}
-                      quantity={images.length}
-                      tooltipLabel={overwriteStatusLabel}
-                      progress
-                    />
-                  )}
-
-                  <Text size="xs" color="dimmed">
-                    {formatDateMin(request.createdAt)}
-                  </Text>
-                  {!!actualCost &&
-                    dayjs(request.createdAt).toDate() >=
-                      constants.buzz.generationBuzzChargingStartDate && (
-                      <GenerationCostPopover
-                        workflowCost={request.cost ?? {}}
-                        disabled={!features.creatorComp}
-                        readOnly
-                      >
-                        {/* Wrapped in div for the popover to work properly */}
-                        <div className="cursor-pointer">
-                          <CurrencyBadge
-                            unitAmount={actualCost}
-                            currency={Currency.BUZZ}
-                            size="xs"
-                          />
-                        </div>
-                      </GenerationCostPopover>
-                    )}
-                </div>
-                <div className="flex gap-1">
-                  <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
-                    <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                      {copied ? <IconCheck /> : <IconInfoHexagon />}
-                    </ActionIcon>
-                  </ButtonTooltip>
-                  {generationStatus.available && canRemix && (
-                    <ButtonTooltip {...tooltipProps} label="Remix">
-                      <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
-                        <IconArrowsShuffle />
-                      </ActionIcon>
-                    </ButtonTooltip>
-                  )}
-                  <PopConfirm
-                    message={`Are you sure you want to ${
-                      pendingProcessing ? 'cancel' : 'delete'
-                    } this job?`}
-                    position="bottom-end"
-                    onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
-                  >
-                    <ButtonTooltip
-                      {...tooltipProps}
-                      label={pendingProcessing ? 'Cancel job' : 'Delete job'}
-                    >
-                      <ActionIcon size="md" disabled={cancellingDeleting} color="red">
-                        {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
-                      </ActionIcon>
-                    </ButtonTooltip>
-                  </PopConfirm>
-                </div>
-              </div>
-            </Card.Section>
-          )}
-          {inView && (
-            <div className="flex flex-col gap-3 py-3 @container">
-              {showDelayedMessage && pendingProcessing && (
-                <Alert color="yellow" p={0}>
-                  <div className="flex items-center gap-2 px-2 py-1">
-                    <Text size="xs" color="yellow" lh={1}>
-                      <IconAlertTriangleFilled size={20} />
-                    </Text>
-                    <Text size="xs" lh={1.2} color="yellow">
-                      <Text weight={500} component="span">
-                        This is taking longer than usual.
-                      </Text>
-                      {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
-                        refundTime
-                      )} we'll refund you automatically.`}
-                    </Text>
-                  </div>
-                </Alert>
-              )}
-
-              <ContentClamp maxHeight={36} labelSize="xs">
-                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
-                  {prompt}
-                </Text>
-              </ContentClamp>
-
-              <div className="-my-2">
-                {workflowDefinition && (
-                  <Badge radius="sm" color="violet" size="sm">
-                    {workflowDefinition.label}
-                  </Badge>
-                )}
-              </div>
-              <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
-              {inView && (!!images?.length || processing) && (
-                <div className={classes.grid}>
-                  {images.map((image) => (
-                    <GeneratedImage key={image.id} image={image} request={request} step={step} />
-                  ))}
-                  {processing && (
-                    <GenerationPlaceholder width={params.width} height={params.height} />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          {inView && (
-            <Card.Section
-              withBorder
-              sx={(theme) => ({
-                marginLeft: -theme.spacing.xs,
-                marginRight: -theme.spacing.xs,
-              })}
-            >
-              <GenerationDetails
-                label="Additional Details"
-                params={details}
-                labelWidth={150}
-                paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+    <Card withBorder px="xs" id={id}>
+      <Card.Section py={4} inheritPadding withBorder>
+        <div className="flex justify-between">
+          <div className="flex items-center gap-1">
+            {!!images.length && (
+              <GenerationStatusBadge
+                status={request.status}
+                complete={completedCount}
+                processing={processingCount}
+                quantity={images.length}
+                tooltipLabel={overwriteStatusLabel}
+                progress
               />
-            </Card.Section>
+            )}
+
+            <Text size="xs" color="dimmed">
+              {formatDateMin(request.createdAt)}
+            </Text>
+            {!!actualCost &&
+              dayjs(request.createdAt).toDate() >=
+                constants.buzz.generationBuzzChargingStartDate && (
+                <GenerationCostPopover
+                  workflowCost={request.cost ?? {}}
+                  disabled={!features.creatorComp}
+                  readOnly
+                >
+                  {/* Wrapped in div for the popover to work properly */}
+                  <div className="cursor-pointer">
+                    <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
+                  </div>
+                </GenerationCostPopover>
+              )}
+          </div>
+          <div className="flex gap-1">
+            <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
+              <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                {copied ? <IconCheck /> : <IconInfoHexagon />}
+              </ActionIcon>
+            </ButtonTooltip>
+            {generationStatus.available && canRemix && (
+              <ButtonTooltip {...tooltipProps} label="Remix">
+                <ActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
+                  <IconArrowsShuffle />
+                </ActionIcon>
+              </ButtonTooltip>
+            )}
+            <PopConfirm
+              message={`Are you sure you want to ${
+                pendingProcessing ? 'cancel' : 'delete'
+              } this job?`}
+              position="bottom-end"
+              onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
+            >
+              <ButtonTooltip
+                {...tooltipProps}
+                label={pendingProcessing ? 'Cancel job' : 'Delete job'}
+              >
+                <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+                  {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
+                </ActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          </div>
+        </div>
+      </Card.Section>
+
+      <div className="flex flex-col gap-3 py-3 @container">
+        {showDelayedMessage && pendingProcessing && (
+          <Alert color="yellow" p={0}>
+            <div className="flex items-center gap-2 px-2 py-1">
+              <Text size="xs" color="yellow" lh={1}>
+                <IconAlertTriangleFilled size={20} />
+              </Text>
+              <Text size="xs" lh={1.2} color="yellow">
+                <Text weight={500} component="span">
+                  This is taking longer than usual.
+                </Text>
+                {` Don't want to wait? Cancel this job to get refunded for any undelivered images. If we aren't done by ${formatDateMin(
+                  refundTime
+                )} we'll refund you automatically.`}
+              </Text>
+            </div>
+          </Alert>
+        )}
+
+        <ContentClamp maxHeight={36} labelSize="xs">
+          <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+            {prompt}
+          </Text>
+        </ContentClamp>
+
+        <div className="-my-2">
+          {workflowDefinition && (
+            <Badge radius="sm" color="violet" size="sm">
+              {workflowDefinition.label}
+            </Badge>
           )}
-        </Card>
-      )}
-    </div>
+        </div>
+        <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+
+        <div className={classes.grid}>
+          {images.map((image) => (
+            <GeneratedImage key={image.id} image={image} request={request} step={step} />
+          ))}
+          {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
+        </div>
+      </div>
+
+      <Card.Section
+        withBorder
+        sx={(theme) => ({
+          marginLeft: -theme.spacing.xs,
+          marginRight: -theme.spacing.xs,
+        })}
+      >
+        <GenerationDetails
+          label="Additional Details"
+          params={details}
+          labelWidth={150}
+          paperProps={{ radius: 0, sx: { borderWidth: '1px 0 0 0' } }}
+        />
+      </Card.Section>
+    </Card>
   );
 }
 
