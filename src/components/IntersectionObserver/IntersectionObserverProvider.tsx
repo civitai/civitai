@@ -195,8 +195,10 @@ export function InViewDiv({
   }, [ready]);
 
   useEffect(() => {
-    if (inView && (preserveHeight || preserveWidth)) {
-      ref.current?.removeAttribute('style');
+    const target = ref.current;
+    if (target && inView) {
+      if (preserveHeight) target.style.removeProperty('height');
+      if (preserveWidth) target.style.removeProperty('width');
     }
   }, [inView]);
 
