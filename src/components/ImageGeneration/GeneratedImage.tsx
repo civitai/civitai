@@ -37,7 +37,7 @@ import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedIm
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { useIntersectionObserverContext } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { InViewDiv } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { constants } from '~/server/common/constants';
@@ -67,7 +67,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
-  const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
+  // const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
   // const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
@@ -208,14 +208,16 @@ export function GeneratedImage({
   if (!available) return <></>;
 
   const canRemix = step.params.workflow !== 'img2img-upscale';
+  const { params } = step;
 
   return (
-    <div
-      ref={ref}
+    <InViewDiv
+      id={image.id}
       className="shadow-inner card"
-      style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
+      style={{ aspectRatio: params.width / params.height }}
+      // style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
     >
-      {inView && (
+      {true && (
         <>
           <div
             className={`flex flex-1 cursor-pointer flex-col items-center justify-center`}
@@ -404,7 +406,7 @@ export function GeneratedImage({
           </Group>
         </>
       )}
-    </div>
+    </InViewDiv>
   );
 }
 
