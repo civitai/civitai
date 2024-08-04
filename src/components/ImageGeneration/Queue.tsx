@@ -14,7 +14,10 @@ import {
   downloadGeneratedImagesByDate,
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import {
+  InViewDiv,
+  IntersectionObserverProvider,
+} from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -122,7 +125,9 @@ export function Queue() {
         )} */}
         {data.map((request) =>
           request.steps.map((step) => (
-            <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} />
+            <InViewDiv key={request.id} id={request.id.toString()}>
+              <QueueItem id={request.id.toString()} request={request} step={step} />
+            </InViewDiv>
           ))
         )}
         {hasNextPage ? (
