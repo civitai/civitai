@@ -1,6 +1,6 @@
 import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
-import { GeneratedImage, GeneratedImageProps } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
@@ -11,6 +11,7 @@ import {
   IntersectionObserverProvider,
   useIntersectionObserverContext,
 } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Feed() {
   const { classes } = useStyles();
@@ -113,20 +114,6 @@ export function Feed() {
         </InViewLoader>
       )}
     </ScrollArea>
-  );
-}
-
-function FeedItem(args: GeneratedImageProps) {
-  const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: args.image.id });
-  return (
-    <div
-      ref={ref}
-      className="card"
-      style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
-    >
-      {/* <div style={{ height: 400 }}></div> */}
-      {inView && <GeneratedImage {...args} />}
-    </div>
   );
 }
 
