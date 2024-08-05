@@ -98,7 +98,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
           },
         },
         files: withFiles ? { select: modelFileSelect } : false,
-        posts: withFiles ? { select: { id: true } } : false,
+        posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
         recommendedResources: {

@@ -80,19 +80,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       }
     );
 
-  const confirmPublish = (date?: Date) => {
+  const handleShowConfirmPublish = (date?: Date) => {
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
         title: params.confirmTitle,
         message: params.confirmMessage ?? 'Are you sure you want to publish this post?',
-        onConfirm: () => handlePublish(date),
+        onConfirm: () => handlePublish(date, false),
       },
     });
   };
 
-  const handlePublish = (date?: Date) => {
-    params.confirmPublish ? confirmPublish(date) : publish(date);
+  const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
+    confirmPublish ? handleShowConfirmPublish(date) : publish(date);
   };
 
   const handleScheduleClick = () => {
