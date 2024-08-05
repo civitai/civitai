@@ -14,6 +14,7 @@ import {
   downloadGeneratedImagesByDate,
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -22,6 +23,11 @@ export function Queue() {
   const { downloading } = useSchedulerDownloadingStore();
   const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
   const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
+
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
 
   if (isError)
     return (

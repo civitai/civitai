@@ -8,6 +8,7 @@ import {
   useUpdateImageStepMetadata,
   UpdateImageStepMetadataArgs,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { trpc } from '~/utils/trpc';
@@ -61,6 +62,8 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-between gap-6">
+      <MarkerFiltersDropdown />
+
       <Checkbox
         checked={allChecked}
         indeterminate={indeterminate}

@@ -6,11 +6,20 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Feed() {
   const { classes } = useStyles();
+
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
+
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequestsImages();
+    useGetTextToImageRequestsImages({
+      tags: filters.marker ? [filters.marker] : undefined
+    });
 
   if (isError)
     return (
@@ -64,8 +73,20 @@ export function Feed() {
           step.images
             .filter((x) => x.status === 'succeeded')
             .map((image) => {
+              if (image.status !== 'succeeded') return null;
+
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
+
+              if (filters.marker !== undefined) {
+                if (typeof step.metadata.images === 'undefined') return null;
+
+                if (!(image.id in step.metadata.images)) return null;
+
+                const imageMetadata = step.metadata.images[image.id];
+                const { feedback } = imageMetadata;
+                if (feedback !== filters.marker) return null;
+              }
 
               return (
                 <GeneratedImage

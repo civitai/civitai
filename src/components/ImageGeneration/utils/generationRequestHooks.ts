@@ -90,6 +90,7 @@ export function useGetTextToImageRequests(
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
   const { data, steps, ...rest } = useGetTextToImageRequests(input);
+
   return { requests: data, steps, ...rest };
 }
 
@@ -386,11 +387,11 @@ export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => v
           index > -1
             ? acc[index]
             : {
-                $type: 'textToImage',
-                workflowId,
-                stepName,
-                metadata: {},
-              };
+              $type: 'textToImage',
+              workflowId,
+              stepName,
+              metadata: {},
+            };
         const images = toUpdate.metadata.images ?? {};
         images[imageId] = { ...images[imageId], ...removeEmpty(metadata) };
         toUpdate.metadata.images = images;

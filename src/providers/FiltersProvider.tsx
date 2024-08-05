@@ -23,6 +23,7 @@ import {
   QuestionSort,
   QuestionStatus,
   ThreadSort,
+  MarkerType,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
@@ -148,6 +149,13 @@ const threadFilterSchema = z.object({
   sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
 });
 
+export type MarkerFilterSchema = z.infer<typeof markerFilterSchema>;
+const markerFilterSchema = z.object({
+  marker: z.nativeEnum(MarkerType).optional(),
+  tags: z.string().array().optional(),
+});
+
+
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -160,6 +168,7 @@ type StorageState = {
   clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
+  markers: MarkerFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -182,6 +191,7 @@ type StoreState = FilterState & {
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
+  setMarkerFilters: (filters: Partial<MarkerFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -197,6 +207,7 @@ const localStorageSchemas: LocalStorageSchema = {
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
+  markers: { key: 'marker-filters', schema: markerFilterSchema },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -269,6 +280,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
       setThreadFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
+      setMarkerFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'markers', data, state })),
     }))
   );
 
@@ -306,19 +319,20 @@ export function useSetFilters(type: FilterSubTypes) {
   return useFiltersContext(
     useCallback(
       (state) =>
-        ({
-          models: state.setModelFilters,
-          posts: state.setPostFilters,
-          images: state.setImageFilters,
-          questions: state.setQuestionFilters,
-          modelImages: state.setModelImageFilters,
-          articles: state.setArticleFilters,
-          collections: state.setCollectionFilters,
-          bounties: state.setBountyFilters,
-          clubs: state.setClubFilters,
-          videos: state.setVideoFilters,
-          threads: state.setThreadFilters,
-        }[type]),
+      ({
+        models: state.setModelFilters,
+        posts: state.setPostFilters,
+        images: state.setImageFilters,
+        questions: state.setQuestionFilters,
+        modelImages: state.setModelImageFilters,
+        articles: state.setArticleFilters,
+        collections: state.setCollectionFilters,
+        bounties: state.setBountyFilters,
+        clubs: state.setClubFilters,
+        videos: state.setVideoFilters,
+        threads: state.setThreadFilters,
+        markers: state.setMarkerFilters,
+      }[type]),
       [type]
     )
   );

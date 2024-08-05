@@ -197,6 +197,12 @@ export enum ThreadSort {
   MostReactions = 'Most Reactions',
 }
 
+export enum MarkerType {
+  Liked = 'liked',
+  Disliked = 'disliked',
+  Faved = 'faved',
+};
+
 export enum NsfwLevel {
   PG = 1,
   PG13 = 2,
