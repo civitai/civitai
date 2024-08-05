@@ -320,7 +320,6 @@ export const getInfiniteImagesSchema = baseQuerySchema
     if (value.withMeta) {
       if (!value.include) value.include = [];
       value.include.push('meta');
-      value.include.push('metaSelect');
     }
     return value;
   });

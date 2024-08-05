@@ -89,7 +89,6 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
-    const include = withMeta ? (['meta', 'metaSelect'] as const) : (['metaSelect'] as const);
 
     const { items, nextCursor } = await getAllImages({
       ...data,
@@ -97,7 +96,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       limit,
       skip,
       cursor,
-      include,
+      include: withMeta ? ['meta', 'metaSelect'] : ['metaSelect'],
       periodMode: 'published',
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,
