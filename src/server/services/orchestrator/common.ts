@@ -16,9 +16,11 @@ import {
   InjectableResource,
   WORKFLOW_TAGS,
   allInjectableResourceIds,
+  fluxModeOptions,
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
+  getIsFlux,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -107,6 +109,22 @@ export async function parseGenerateImageInput({
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
 
+  // Handle Flux Mode
+  const isFlux = getIsFlux(originalParams.baseModel);
+  if (isFlux && originalParams.fluxMode) {
+    const { version } = parseAIR(originalParams.fluxMode);
+    originalParams.sampler = 'undefined';
+    originalResources = [{ id: version, strength: 1 }];
+    originalParams.nsfw = false;
+    originalParams.draft = false;
+    if (originalParams.fluxMode === fluxModeOptions[0].value) {
+      originalParams.steps = 4;
+      originalParams.cfgScale = 1;
+    }
+  } else {
+    originalParams.fluxMode = undefined;
+  }
+
   let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
@@ -133,6 +151,7 @@ export async function parseGenerateImageInput({
   const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
+  console.log(getBaseModelSetType(checkpoint.baseModel));
   if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
@@ -144,7 +163,7 @@ export async function parseGenerateImageInput({
   if (params.draft && !injectableResources.draft)
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
-  // handle missing coverage
+  handle missing coverage
   if (!resourceData.resources.every((x) => x.available))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
@@ -234,7 +253,7 @@ export async function parseGenerateImageInput({
 
   let quantity = params.quantity;
   let batchSize = 1;
-  if (params.draft) {
+  if (isFlux ? params.fluxMode === fluxModeOptions[0].value : params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
   }
