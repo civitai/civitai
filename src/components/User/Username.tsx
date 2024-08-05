@@ -78,6 +78,8 @@ export const BadgeDisplay = ({
           <div style={{ fontSize: 'small', color: 'gray' }}>{badge.description}</div>
         </div>
       }
+      maw={300}
+      multiline
       withArrow
       withinPortal
     >

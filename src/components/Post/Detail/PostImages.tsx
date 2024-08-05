@@ -19,7 +19,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { MAX_POST_IMAGES_WIDTH, constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
@@ -33,7 +33,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generationPanel } from '~/store/generation.store';
 
-const maxWidth = 700;
+const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
 export function PostImages({
   postId,

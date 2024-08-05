@@ -5,7 +5,7 @@ import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
@@ -334,6 +334,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
     }
+    if (!reviewKey && nsfw) {
+      // If user is new and image is NSFW send it for review
+      const [{ isNewUser }] =
+        (await dbRead.$queryRaw<{ isNewUser: boolean }[]>`
+        SELECT is_new_user(CAST(${image.userId} AS INT)) "isNewUser";
+      `) ?? [];
+      if (isNewUser) reviewKey = 'newUser';
+    }
 
     const data: Prisma.ImageUpdateInput = {};
     if (reviewKey) data.needsReview = reviewKey;
@@ -348,6 +356,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
     }
 
     if (Object.keys(data).length > 0) {
+      data.updatedAt = new Date();
       await dbWrite.image.updateMany({
         where: { id },
         data,
@@ -380,7 +389,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length}
         RETURNING "ingestion";

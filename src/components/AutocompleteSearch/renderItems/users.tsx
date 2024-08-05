@@ -14,7 +14,7 @@ export const UserSearchItem = forwardRef<
 >(({ value, hit, ...props }, ref) => {
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { image, username, stats, metrics } = hit;
+  const { image, username, metrics } = hit;
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -35,20 +35,22 @@ export const UserSearchItem = forwardRef<
         <Text size="md" lineClamp={1}>
           <Username {...hit} inherit />
         </Text>
-        <Group spacing={4}>
-          <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.uploadCount)}
-          </ActionIconBadge>
-          <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
-            {abbreviateNumber(metrics.followerCount)}
-          </ActionIconBadge>
-          <ActionIconBadge icon={<ThumbsUpIcon size={12} />}>
-            {abbreviateNumber(stats?.thumbsUpCountAllTime ?? 0)}
-          </ActionIconBadge>
-          <ActionIconBadge icon={<IconDownload size={16} />}>
-            {abbreviateNumber(stats?.downloadCountAllTime ?? 0)}
-          </ActionIconBadge>
-        </Group>
+        {metrics && (
+          <Group spacing={4}>
+            <ActionIconBadge icon={<IconUpload size={12} stroke={2.5} />}>
+              {abbreviateNumber(metrics.uploadCount)}
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconUsers size={12} stroke={2.5} />}>
+              {abbreviateNumber(metrics.followerCount)}
+            </ActionIconBadge>
+            <ActionIconBadge icon={<ThumbsUpIcon size={12} />}>
+              {abbreviateNumber(metrics.thumbsUpCount ?? 0)}
+            </ActionIconBadge>
+            <ActionIconBadge icon={<IconDownload size={16} />}>
+              {abbreviateNumber(metrics.downloadCount ?? 0)}
+            </ActionIconBadge>
+          </Group>
+        )}
       </Stack>
     </Group>
   );

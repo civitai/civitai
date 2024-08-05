@@ -30,6 +30,7 @@ import { unzipTrainingData } from '~/utils/training';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import nodeFetch from 'node-fetch';
 import JSZip from 'jszip';
+import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 
 type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
   details: CsamReportDetails;
@@ -515,17 +516,14 @@ export async function processCsamReport(report: CsamReportProps) {
       const details = report.details as CsamReportDetails;
       details.trainingData = results;
 
+      removeDir(dir);
       return {
         reportId,
         reportSentAt: new Date(),
         details,
       };
-
-      // removeDir(dir);
     } catch (e) {
-      // try {
-      //   removeDir(dir);
-      // } catch (e) {}
+      removeDir(dir);
       throw e;
     }
   }
@@ -663,11 +661,12 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     throw e;
   }
 
+  // writes a json file of user data to disk before uploading
   async function archiveBaseReportData() {
     const { userId, reportId } = report;
     if (userId === -1) return;
 
-    const outPath = `${reportDirs.base}/${userId}_csam.zip`;
+    const outPath = `${reportDirs.base}/${userId}_data.json`;
     await fsAsync.writeFile(
       outPath,
       JSON.stringify({
@@ -684,17 +683,35 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
     await uploadStream({ stream: readableStream, userId, filename: 'data.json' });
   }
 
+  // writes a zip file to disk before adding user images directly to the zip file
   async function archiveImages() {
     const { userId } = report;
 
     const outPath = `${reportDirs.images}/${userId}_images.zip`;
 
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    const output = fs.createWriteStream(outPath);
+
+    // output.on('close', function () {
+    //   console.log(`archive closed: ${outPath}`);
+    // });
+
+    archive.on('error', function (err) {
+      throw err;
+    });
+
+    archive.pipe(output);
+
     // concurrency limiter
+    const maxWidth = MAX_POST_IMAGES_WIDTH;
     const limit = plimit(10);
     await Promise.all(
       images.map((image) => {
         return limit(async () => {
-          const blob = await fetchBlob(getEdgeUrl(image.url, { type: image.type }));
+          const width = image.width ?? maxWidth;
+          const blob = await fetchBlob(
+            getEdgeUrl(image.url, { type: image.type, width: width < maxWidth ? width : maxWidth })
+          );
           if (!blob) return;
           const arrayBuffer = await blob.arrayBuffer();
           const buffer = Buffer.from(arrayBuffer);
@@ -704,30 +721,18 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
             : image.url;
           const name = imageName.length ? imageName : image.url;
           const filename = `${name}.${blob.type.split('/').pop()}`;
-          const path = `${reportDirs.images}/${filename}`;
 
-          await fsAsync.writeFile(path, buffer);
+          archive.append(buffer, { name: filename });
         });
       })
     );
-
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    const stream = fs.createWriteStream(outPath);
-
-    await new Promise<void>((resolve, reject) => {
-      archive
-        .directory(reportDirs.images, false)
-        .on('error', (err) => reject(err))
-        .pipe(stream);
-
-      stream.on('close', () => resolve());
-      archive.finalize();
-    });
+    archive.finalize();
 
     const readableStream = fs.createReadStream(outPath);
     await uploadStream({ stream: readableStream, userId, filename: 'images.zip' });
   }
 
+  // downloads training data zip file, writes it to disk, and then uploads that zip
   async function archiveTrainingData() {
     const { userId } = report;
 

@@ -11,7 +11,6 @@ import {
   RingProgress,
   ScrollArea,
   Text,
-  UnstyledButton,
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
@@ -38,6 +37,7 @@ import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -65,6 +65,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
@@ -99,33 +100,34 @@ const sharedIconProps: IconProps = {
   color: 'white',
 };
 
-const maxIndicators = 20;
-
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const {
-    images,
-    image: image,
-    isLoading,
-    active,
-    close,
-    toggleInfo,
-    shareUrl,
-    navigate,
-  } = useImageDetailContext();
-  const { collectionItems = [] } = useImageContestCollectionDetails(
-    { id: image?.id as number },
-    { enabled: !!image?.id }
-  );
+  const { images, isLoading, active, close, toggleInfo, shareUrl, connect, navigate, index } =
+    useImageDetailContext();
+
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
     defaultValue: true,
   });
 
+  const videoRef = useRef<EdgeVideoRef | null>(null);
+
+  const carouselNavigation = useCarouselNavigation({
+    items: images,
+    initialIndex: index,
+    onChange: (image) => navigate(image.id),
+  });
+
+  const image = images[carouselNavigation.index];
+
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
-  const videoRef = useRef<EdgeVideoRef | null>(null);
+
+  const { collectionItems = [] } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
 
   if (isLoading) return <PageLoader />;
   if (!image || isBlocked) return <NotFound />;
@@ -283,8 +285,14 @@ export function ImageDetail2() {
                     </ActionIcon>
                   </div>
                 </div>
+
                 {/* IMAGE CAROUSEL */}
-                <ImageDetailCarousel videoRef={videoRef} />
+                <ImageDetailCarousel
+                  images={images}
+                  videoRef={videoRef}
+                  connect={connect}
+                  {...carouselNavigation}
+                />
                 {/* FOOTER */}
                 <div className="flex flex-col gap-3 p-3">
                   <div className="flex justify-center">
@@ -327,21 +335,7 @@ export function ImageDetail2() {
                       />
                     </ReactionSettingsProvider>
                   </div>
-                  {images.length <= maxIndicators && images.length > 1 && (
-                    <div className="flex justify-center gap-1">
-                      {images.map(({ id }) => (
-                        <UnstyledButton
-                          key={id}
-                          data-active={image.id === id || undefined}
-                          aria-hidden
-                          tabIndex={-1}
-                          onClick={() => navigate(id)}
-                          className={`h-1 max-w-6 flex-1 rounded border border-solid border-gray-4 bg-white shadow-2xl
-                        ${image.id !== id ? 'dark:opacity-50' : 'bg-blue-6 dark:bg-white'}`}
-                        />
-                      ))}
-                    </div>
-                  )}
+                  <CarouselIndicators {...carouselNavigation} />
                 </div>
               </>
             )}

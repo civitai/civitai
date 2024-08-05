@@ -6,10 +6,8 @@ import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/Ap
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
@@ -23,7 +21,7 @@ export function AppLayout({
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-  withFooter?: boolean
+  withFooter?: boolean;
 }) {
   const { classes } = useStyles();
   const user = useCurrentUser();
@@ -53,7 +51,7 @@ export function AppLayout({
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className="flex flex-col flex-1 w-full h-full relative overflow-hidden">
+      <main className="relative flex size-full flex-1 flex-col overflow-hidden">
         {children}
         {/* {flags.assistant && (
               <div className={classes.assistant}>

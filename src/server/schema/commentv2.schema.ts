@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CommentV2Sort } from '~/server/common/enums';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
 export const commentConnectorSchema = z.object({
@@ -32,7 +33,11 @@ export const getCommentsV2Schema = commentConnectorSchema.extend({
 export type UpsertCommentV2Input = z.infer<typeof upsertCommentv2Schema>;
 export const upsertCommentv2Schema = commentConnectorSchema.extend({
   id: z.number().optional(),
-  content: z.string(),
+  content: getSanitizedStringSchema({
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
+  }).refine((data) => {
+    return data && data.length > 0 && data !== '<p></p>';
+  }, 'Cannot be empty'),
   nsfw: z.boolean().optional(),
   tosViolation: z.boolean().optional(),
 });

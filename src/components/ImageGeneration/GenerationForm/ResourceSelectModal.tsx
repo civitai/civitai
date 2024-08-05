@@ -282,7 +282,7 @@ function ResourceSelectCard({
   data: SearchIndexDataMap['models'][number];
 }) {
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const { ref, inView } = useInView<HTMLAnchorElement>({ rootMargin: '600px' });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({

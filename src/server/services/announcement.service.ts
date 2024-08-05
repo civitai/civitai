@@ -1,11 +1,11 @@
-import { dbRead } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
+import { SessionUser } from 'next-auth';
+import { dbRead } from '~/server/db/client';
 import {
   AnnouncementMetaSchema,
   GetAnnouncementsInput,
   GetLatestAnnouncementInput,
 } from '~/server/schema/announcement.schema';
-import { SessionUser } from 'next-auth';
 
 export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementSelect>({
   dismissed,

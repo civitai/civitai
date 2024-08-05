@@ -1,12 +1,15 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 import { clickhouse } from '~/server/clickhouse/client';
-import client from 'prom-client';
 import { pingBuzzService } from '~/server/services/buzz.service';
 import { env } from '~/env/server.mjs';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { metricsClient } from '~/server/meilisearch/client';
+import { registerCounter } from '~/server/prom/client';
+import client from 'prom-client';
 
 const checkFns = {
   async write() {
@@ -20,6 +23,16 @@ const checkFns = {
       where: { id: -1 },
       select: { id: true },
     }));
+  },
+  async pgWrite() {
+    return !!(await pgDbWrite.query('SELECT 1'));
+  },
+  async pgRead() {
+    return !!(await pgDbWrite.query('SELECT 1'));
+  },
+  async searchMetrics() {
+    if (metricsClient === null) return true;
+    return await metricsClient.isHealthy();
   },
   async redis() {
     return await redis
@@ -42,7 +55,7 @@ const checkFns = {
 type CheckKey = keyof typeof checkFns;
 const counters = (() =>
   [...Object.keys(checkFns), 'overall'].reduce((agg, name) => {
-    agg[name as CheckKey] = new client.Counter({
+    agg[name as CheckKey] = registerCounter({
       name: `healthcheck_${name.toLowerCase()}`,
       help: `Healthcheck for ${name}`,
     });
@@ -54,11 +67,21 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   const resultsArray = await Promise.all(
     Object.entries(checkFns).map(([name, fn]) =>
-      timeoutAsyncFn(fn).then((result) => ({ [name]: result }))
+      timeoutAsyncFn(fn).then((result) => {
+        if (!result) counters[name as CheckKey].inc();
+        return { [name]: result };
+      })
     )
   );
+  const nonCriticalChecks = JSON.parse(
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS)) ??
+      '[]'
+  ) as CheckKey[];
 
-  const healthy = resultsArray.every((result) => Object.values(result)[0]);
+  const healthy = resultsArray.every((result) => {
+    const [key, value] = Object.entries(result)[0];
+    return nonCriticalChecks.includes(key as CheckKey) || value;
+  });
   if (!healthy) counters.overall.inc();
 
   const results = resultsArray.reduce((agg, result) => ({ ...agg, ...result }), {}) as Record<

@@ -1,4 +1,14 @@
-import { Button, Center, Group, Loader, Modal, Stack, Text, createStyles } from '@mantine/core';
+import {
+  Anchor,
+  Button,
+  Center,
+  Group,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+  createStyles,
+} from '@mantine/core';
 import { useRouter } from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -9,11 +19,11 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersionId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const router = useRouter();
   const features = useFeatureFlags();
   const {
     isLoadingAccess,
@@ -48,10 +58,17 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
   };
 
   const supportsGeneration = features.imageGeneration && modelVersion?.canGenerate;
+  const supportsDownloadPurchase =
+    earlyAccessConfig?.chargeForDownload && earlyAccessConfig?.downloadPrice;
   const supportsGenerationPurchase =
     supportsGeneration &&
     earlyAccessConfig?.chargeForGeneration &&
     earlyAccessConfig?.generationPrice;
+
+  const userCanDoLabel = [canDownload && 'download', canGenerate && 'generate']
+    .filter(Boolean)
+    .join(' or ');
+  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '').toLowerCase();
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
@@ -62,27 +79,30 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
       ) : (
         <Stack>
           <Text size="sm">
-            This model version is in early access. You can get access to it by purchasing it during
-            the early access period or just waiting until it becomes public. The remaining time for
-            early access is{' '}
+            The creator of this {resourceLabel} has set this version to early access, You can{' '}
+            {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
+            period or just waiting untill it becomes public. The remaining time for early access is{' '}
             <Text component="span" weight="bold">
               <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>
-            <Stack spacing={0}>
-              <BuzzTransactionButton
-                type="submit"
-                label="Get Download Access"
-                loading={purchasingModelVersionEarlyAccess}
-                buzzAmount={earlyAccessConfig?.downloadPrice}
-                onPerformTransaction={() => handlePurchase('download')}
-                disabled={canDownload}
-              />
-              <Text size="xs" color="dimmed">
-                Generation access is included with download access
-              </Text>
-            </Stack>
+            {supportsDownloadPurchase && (
+              <Stack spacing={0}>
+                <BuzzTransactionButton
+                  type="submit"
+                  label="Get Download Access"
+                  loading={purchasingModelVersionEarlyAccess}
+                  buzzAmount={earlyAccessConfig?.downloadPrice as number}
+                  onPerformTransaction={() => handlePurchase('download')}
+                  disabled={canDownload}
+                />
+                <Text size="xs" color="dimmed">
+                  Download access also grants generation access, this does not contribute to the
+                  donation goal
+                </Text>
+              </Stack>
+            )}
 
             {supportsGenerationPurchase && (
               <Stack spacing={0}>
@@ -95,8 +115,10 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   disabled={canGenerate}
                 />
                 <Text size="xs" color="dimmed">
-                  You will not be able to download this model, but you will be able to generate with
-                  it.
+                  The creator of the {resourceLabel} has enabled trials, test this {resourceLabel}{' '}
+                  <Anchor href="/test">here</Anchor>. You will not be able to download this
+                  resource, but you can make unlimited generations with it, this does not contribute
+                  to the donation goal.
                 </Text>
               </Stack>
             )}

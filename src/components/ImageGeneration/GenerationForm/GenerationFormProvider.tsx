@@ -15,6 +15,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   GenerationResource,
+  getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
   getResourcesBaseModelSetType,
@@ -54,7 +55,7 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true })
   .extend({
-    tier: userTierSchema,
+    tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
     // .refine(
     //   (x) => x.available !== false,
@@ -92,6 +93,8 @@ const formSchema = textToImageParamsSchema
       }),
     remix: textToImageStepRemixMetadataSchema.optional(),
     aspectRatio: z.string(),
+    creatorTip: z.number().min(0).max(1).default(0.25).optional(),
+    civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -153,34 +156,43 @@ function formatGenerationData(
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
-  let baseModel = getBaseModelSetType(checkpoint?.baseModel);
+  const baseModel = getBaseModelFromResources(data.resources);
 
-  if (baseResource && checkpoint) {
-    if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
-    else {
-      const possibleBaseModelSetTypes = getBaseModelSetTypes({
-        modelType: baseResource.modelType,
-        baseModel: baseResource.baseModel,
-      });
-      if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
-        baseModel = possibleBaseModelSetTypes[0];
-      }
-    }
-  }
+  // if (baseResource && checkpoint) {
+  //   if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
+  //   else {
+  //     const possibleBaseModelSetTypes = getBaseModelSetTypes({
+  //       modelType: baseResource.modelType,
+  //       baseModel: baseResource.baseModel,
+  //     });
+  //     if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
+  //       baseModel = possibleBaseModelSetTypes[0];
+  //     }
+  //   }
+  // }
 
   const config = getGenerationConfig(baseModel);
 
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
-  if (!checkpoint || getBaseModelSetType(checkpoint.baseModel) !== baseModel) {
+  if (
+    !checkpoint ||
+    getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
+    !checkpoint.available
+  ) {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
-  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel) vae = undefined;
+  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel || !vae.available) vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources
     .filter((resource) => {
-      if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE') return false;
+      if (
+        resource.modelType === 'Checkpoint' ||
+        resource.modelType === 'VAE' ||
+        !resource.available
+      )
+        return false;
       const baseModelSetKey = getBaseModelSetType(resource.baseModel);
       return config.additionalResourceTypes.some((x) => {
         const modelTypeMatches = x.type === resource.modelType;
@@ -272,13 +284,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         );
       }
 
-      const formatted = formatGenerationData(
-        {
-          ...responseData,
-          resources: resources.filter((x) => x.available),
-        },
-        baseResource
-      );
+      const formatted = formatGenerationData({ ...responseData, resources }, baseResource);
 
       const data = { ...formatted, workflow };
       if (resources.length && resources.some((x) => !x.available)) {
@@ -341,6 +347,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
+        creatorTip: overrides.creatorTip ?? 0.25,
       },
       status.limits
     );

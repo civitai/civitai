@@ -42,6 +42,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
+import { resourceDataCache } from '~/server/redis/caches';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -139,6 +140,26 @@ export const upsertModelVersion = async ({
 }) => {
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
 
+  if (
+    updatedEarlyAccessConfig?.timeframe &&
+    !updatedEarlyAccessConfig?.chargeForDownload &&
+    !updatedEarlyAccessConfig?.chargeForGeneration
+  ) {
+    throw throwBadRequestError(
+      'You must charge for downloads or generations if you set an early access time frame.'
+    );
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForDownload && !updatedEarlyAccessConfig.downloadPrice) {
+    throw throwBadRequestError('You must provide a download price when charging for downloads.');
+  }
+
+  if (updatedEarlyAccessConfig?.chargeForGeneration && !updatedEarlyAccessConfig.generationPrice) {
+    throw throwBadRequestError(
+      'You must provide a generation price when charging for generations.'
+    );
+  }
+
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
@@ -190,6 +211,7 @@ export const upsertModelVersion = async ({
       ),
     ]);
     await preventReplicationLag('modelVersion', version.id);
+    await resourceDataCache.bust(version.id);
 
     return version;
   } else {
@@ -238,7 +260,11 @@ export const upsertModelVersion = async ({
     ) {
       // Check all changes related now:
 
-      if (updatedEarlyAccessConfig.downloadPrice > earlyAccessConfig.downloadPrice) {
+      if (
+        updatedEarlyAccessConfig.chargeForDownload &&
+        (updatedEarlyAccessConfig.downloadPrice as number) >
+          (earlyAccessConfig.downloadPrice as number)
+      ) {
         throw throwBadRequestError(
           'You cannot increase the download price on a model after it has been published.'
         );
@@ -348,6 +374,7 @@ export const upsertModelVersion = async ({
       },
     });
     await preventReplicationLag('modelVersion', version.id);
+    await resourceDataCache.bust(version.id);
 
     return version;
   }
@@ -358,6 +385,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
+    await resourceDataCache.bust(deleted.id);
 
     return deleted;
   });
@@ -372,6 +400,7 @@ export const updateModelVersionById = async ({
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
+  await resourceDataCache.bust(id);
 };
 
 export const publishModelVersionsWithEarlyAccess = async ({
@@ -566,7 +595,8 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await bustOrchestratorModelCache([version.id]);
+  await bustOrchestratorModelCache(version.id);
+  await resourceDataCache.bust(version.id);
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
@@ -649,6 +679,7 @@ export const unpublishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await updateModelLastVersionAt({ id: version.model.id });
+  await resourceDataCache.bust(version.id);
 
   return version;
 };
@@ -781,6 +812,13 @@ export const earlyAccessModelVersionsOnTimeframe = async ({
   return modelVersions;
 };
 
+type ModelVersionForGeneratedImages = {
+  id: number;
+  modelName: string;
+  modelVersionName: string;
+  userId: number;
+};
+
 export const modelVersionGeneratedImagesOnTimeframe = async ({
   userId,
   // Timeframe is on days
@@ -788,24 +826,17 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 }: ModelVersionsGeneratedImagesOnTimeframeSchema & {
   userId: number;
 }) => {
-  type ModelVersionForGeneratedImages = {
-    id: number;
-    modelName: string;
-    modelVersionName: string;
-    userId: number;
-  };
-
   const modelVersions = await dbRead.$queryRaw<ModelVersionForGeneratedImages[]>`
-      SELECT
-        mv.id,
-        m."userId",
-        m.name as "modelName",
-        mv.name as "modelVersionName"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON mv."modelId" = m.id
-      WHERE mv."status" = 'Published'
-        AND m."userId" = ${userId}
-    `;
+    SELECT
+      mv.id,
+      m."userId",
+      m.name as "modelName",
+      mv.name as "modelVersionName"
+    FROM "ModelVersion" mv
+    JOIN "Model" m ON mv."modelId" = m.id
+    WHERE mv."status" = 'Published'
+      AND m."userId" = ${userId}
+  `;
 
   if (!clickhouse || modelVersions.length === 0) return [];
 
@@ -817,21 +848,21 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
   const generationData = await clickhouse
     .query({
       query: `
-    SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
         SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-    GROUP BY resourceId, createdAt
-    ORDER BY createdAt DESC, generations DESC;
-`,
+            resourceId as modelVersionId,
+            createdAt,
+            SUM(1) as generations
+        FROM (
+            SELECT
+                arrayJoin(resourcesUsed) as resourceId,
+                createdAt::date as createdAt
+            FROM orchestration.textToImageJobs
+            WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
+        )
+        WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
+        GROUP BY resourceId, createdAt
+        ORDER BY createdAt DESC, generations DESC;
+      `,
       format: 'JSONEachRow',
     })
     .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
@@ -1001,6 +1032,10 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('This model is public and does not require purchase.');
   }
 
+  if (type === 'download' && !earlyAccesConfig.chargeForDownload) {
+    throw throwBadRequestError('This model version does not support purchasing download.');
+  }
+
   if (
     type === 'generation' &&
     (!earlyAccesConfig.chargeForGeneration || !earlyAccesConfig.generationPrice)
@@ -1026,7 +1061,7 @@ export const earlyAccessPurchase = async ({
   let buzzTransactionId;
   const amount =
     type === 'download'
-      ? earlyAccesConfig.downloadPrice
+      ? (earlyAccesConfig.downloadPrice as number)
       : (earlyAccesConfig.generationPrice as number);
 
   try {
@@ -1099,7 +1134,7 @@ export const earlyAccessPurchase = async ({
       await createBuzzTransaction({
         fromAccountId: modelVersion.model.userId,
         toAccountId: userId,
-        amount: earlyAccesConfig.downloadPrice,
+        amount,
         type: TransactionType.Refund,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });

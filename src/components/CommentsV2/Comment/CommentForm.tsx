@@ -76,7 +76,7 @@ export const CommentForm = ({
     [data]
   );
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { mutate, isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
       // if it has an id, just set the data with state
@@ -93,7 +93,7 @@ export const CommentForm = ({
             if (!item) {
               store.editComment(entityType, entityId, response);
             } else {
-              item.content = request.content;
+              item.content = request.content as string;
             }
           })
         );

@@ -6,14 +6,20 @@ import { ImageResources } from '~/components/Image/DetailV2/ImageResources';
 import { encodeMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 
-export function ImageGenerationData({ imageId }: { imageId: number }) {
+export function ImageGenerationData({
+  imageId,
+  rounded = true,
+}: {
+  imageId: number;
+  rounded?: boolean;
+}) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
 
   const { meta, resources } = data ?? {};
-  if (!meta && !resources) return null;
+  if (!meta && !resources?.length) return null;
 
   return (
-    <Card className="flex flex-col gap-3 rounded-xl">
+    <Card className={`flex flex-col gap-3 ${rounded ? 'rounded-xl' : 'rounded-none'}`}>
       <div className="flex items-center gap-3">
         <Text className="flex items-center gap-2 text-xl font-semibold">
           <IconForms />

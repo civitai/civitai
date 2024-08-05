@@ -1,4 +1,5 @@
 import {
+  Blob,
   ComfyStep,
   ImageJobNetworkParams,
   TextToImageInput,
@@ -296,6 +297,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
           if (value.type === 'debit') return acc + value.amount;
           else return acc - value.amount;
         }, 0) ?? 0,
+      cost: workflow.cost,
       tags: workflow.tags ?? [],
       steps: workflow.steps.map((step) =>
         formatWorkflowStep({
@@ -393,24 +395,27 @@ export function formatTextToImageStep({
       ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
     )?.[0] ?? generation.defaultValues.sampler;
 
-  const images: NormalizedGeneratedImage[] =
-    output?.images
-      ?.map((image, i) => {
-        const seed = input.seed;
-        const job = jobs?.find((x) => x.id === image.jobId);
-        if (!job) return null;
-        return {
-          workflowId,
-          stepName: step.name ?? '$0',
-          jobId: job.id,
-          id: image.id,
-          status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-          seed: seed ? seed + i : undefined,
-          completed: job.completedAt ? new Date(job.completedAt) : undefined,
-          url: image.url as string,
-        };
-      })
-      .filter(isDefined) ?? [];
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.images
+          ?.filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            workflowId,
+            stepName: step.name ?? '$0',
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: input.seed ? input.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
 
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)
@@ -460,23 +465,27 @@ export function formatComfyStep({
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
-  const images: NormalizedGeneratedImage[] =
-    output?.blobs
-      ?.map((image, i) => {
-        const job = jobs?.find((x) => x.id === image.jobId);
-        if (!job) return null;
-        return {
-          workflowId,
-          stepName: step.name,
-          jobId: job.id,
-          id: image.id,
-          status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-          seed: params?.seed ? params.seed + i : undefined,
-          completed: job.completedAt ? new Date(job.completedAt) : undefined,
-          url: image.url as string,
-        };
-      })
-      .filter(isDefined) ?? [];
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.blobs
+          ?.filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            workflowId,
+            stepName: step.name ?? '$0',
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: params?.seed ? params.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
 
   if (params?.aspectRatio) {
     const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);

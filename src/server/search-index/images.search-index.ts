@@ -19,10 +19,14 @@ import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getCosmeticsForUsers } from '~/server/services/user.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { tagCache, userBasicCache } from '~/server/redis/caches';
+import { getTagIdsForImages } from '~/server/services/image.service';
+import { dbRead } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 
-const READ_BATCH_SIZE = 10000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
+const READ_BATCH_SIZE = 1000; // Do not increase - might break Redis from what we've been able to tell.
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -39,12 +43,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes: SearchableAttributes = [
-    'meta.prompt',
-    'generationProcess',
-    'tagNames',
-    'user.username',
-  ];
+  const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
   const sortableAttributes: SortableAttributes = [
     'createdAt',
@@ -59,10 +58,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'tagNames',
     'user.username',
     'baseModel',
-    'generationTool',
     'aspectRatio',
     'nsfwLevel',
     'type',
+    'toolNames',
+    'techniqueNames',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -101,14 +101,32 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   console.log('onIndexSetup :: all tasks completed');
 };
 
-type ImageForSearchIndex = {
+type Metrics = {
+  id: number;
+  reactionCount: number;
+  commentCount: number;
+  collectedCount: number;
+  likeCount: number;
+  cryCount: number;
+  tippedAmountCount: number;
+  heartCount: number;
+  laughCount: number;
+};
+
+type ModelVersions = {
+  id: number;
+  baseModel: string;
+  modelVersionIds: number[];
+};
+
+type BaseImage = {
   type: MediaType;
   id: number;
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   name: string | null;
   url: string;
-  meta: Prisma.JsonValue;
+  prompt: string;
   hash: string | null;
   height: number | null;
   width: number | null;
@@ -120,109 +138,61 @@ type ImageForSearchIndex = {
   index: number | null;
   scannedAt: Date | null;
   mimeType: string | null;
-  modelVersionId: number | null;
-  baseModel?: string | null;
   userId?: number | null;
-  user: {
-    id: number;
-    image: string | null;
-    username: string | null;
-    deletedAt: Date | null;
-    profilePictureId: number | null;
-    profilePicture: ImageModelWithIngestion | null;
-  };
-  cosmetics: {
-    data: Prisma.JsonValue;
-    cosmetic: {
-      data: Prisma.JsonValue;
-      type: CosmeticType;
-      id: number;
-      name: string;
-      source: CosmeticSource;
-    };
-  }[];
-  tagNames: string[];
-  tagIds: number[];
-  stats: {
-    cryCountAllTime: number;
-    dislikeCountAllTime: number;
-    heartCountAllTime: number;
-    laughCountAllTime: number;
-    likeCountAllTime: number;
-    reactionCountAllTime: number;
-    commentCountAllTime: number;
-    collectedCountAllTime: number;
-    tippedAmountCountAllTime: number;
-  } | null;
+  modelVersionId: number | null;
+  sortAt?: Date | null;
 };
 
 const imageWhere = [
   Prisma.sql`i."postId" IS NOT NULL`,
   Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
   Prisma.sql`i."tosViolation" = false`,
-  Prisma.sql`i."type" = 'image'`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
 ];
 
-type ProfileImage = Prisma.ImageGetPayload<{
-  select: typeof profileImageSelect;
-}>;
-
-type ImageTag = {
-  imageId: number;
-  tagId: number;
-  tagName: string;
-};
-
-type User = {
-  id: number;
-  username?: string | null;
-  deletedAt?: Date | null;
-  image?: string | null;
-  profilePictureId?: number | null;
-};
+type ImageTags = Record<number, { tagNames: string[]; tagIds: number[] }>;
 
 const transformData = async ({
   users,
   images,
-  rawTags,
+  imageTags,
   userCosmetics,
   imageCosmetics,
   profilePictures,
+  metrics,
+  tools,
+  techs,
 }: {
-  images: ImageForSearchIndex[];
-  rawTags: ImageTag[];
+  images: BaseImage[];
+  imageTags: ImageTags;
   imageCosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
-  profilePictures: ProfileImage[];
-  users: User[];
+  profilePictures: Awaited<ReturnType<typeof getProfilePicturesForUsers>>;
+  users: Awaited<ReturnType<typeof userBasicCache.fetch>>;
   userCosmetics: Awaited<ReturnType<typeof getCosmeticsForUsers>>;
+  metrics: Metrics[];
+  tools: { imageId: number; tool: string }[];
+  techs: { imageId: number; tech: string }[];
 }) => {
   const records = images
-    .map(({ meta, userId, ...imageRecord }) => {
-      const user = userId ? users.find((u) => u.id === userId) ?? null : null;
+    .map(({ userId, id, ...imageRecord }) => {
+      const user = userId ? users[userId] ?? null : null;
 
-      if (!user) {
+      if (!user || !userId) {
         return null;
       }
 
       const userCosmetic = userId ? userCosmetics[userId] ?? null : null;
-
-      const parsed = imageGenerationSchema
-        .omit({ comfy: true, hashes: true })
-        .partial()
-        .safeParse(meta);
-      const tags = rawTags
-        .filter((rt) => rt.imageId === imageRecord.id)
-        .map((rt) => ({ id: rt.tagId, name: rt.tagName }));
-      const profilePicture = user
-        ? profilePictures.find((p) => p.id === user.profilePictureId) ?? null
-        : null;
+      const profilePicture = user ? profilePictures[userId] ?? null : null;
+      const imageMetrics = metrics.find((m) => m.id === id);
+      const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
+      const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
 
       return {
         ...imageRecord,
+        id,
         nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
@@ -233,28 +203,34 @@ const transformData = async ({
             : imageRecord.width < imageRecord.height
             ? 'Portrait'
             : 'Square',
-        generationTool: meta?.hasOwnProperty('comfy')
-          ? 'Comfy'
-          : meta?.hasOwnProperty('prompt')
-          ? 'Automatic1111'
-          : 'Unknown',
-        meta: parsed.success ? parsed.data : {},
         user: {
           ...user,
           cosmetics: userCosmetic ?? [],
           profilePicture,
         },
-        tagNames: tags.map((t) => t.name),
-        tagIds: tags.map((t) => t.id),
+        tagNames: imageTags[id]?.tagNames ?? [],
+        tagIds: imageTags[id]?.tagIds ?? [],
+        toolNames,
+        techniqueNames,
         reactions: [],
-        cosmetic: imageCosmetics[imageRecord.id] ?? null,
+        cosmetic: imageCosmetics[id] ?? null,
+        stats: {
+          cryCountAllTime: imageMetrics?.cryCount ?? 0,
+          dislikeCountAllTime: 0,
+          heartCountAllTime: imageMetrics?.heartCount ?? 0,
+          laughCountAllTime: imageMetrics?.laughCount ?? 0,
+          likeCountAllTime: imageMetrics?.likeCount ?? 0,
+          reactionCountAllTime: imageMetrics?.reactionCount ?? 0,
+          commentCountAllTime: imageMetrics?.commentCount ?? 0,
+          collectedCountAllTime: imageMetrics?.collectedCount ?? 0,
+          tippedAmountCountAllTime: imageMetrics?.tippedAmountCount ?? 0,
+        },
       };
     })
     .filter(isDefined);
 
   return records;
 };
-
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
@@ -262,23 +238,23 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
-  pullSteps: 3,
+  pullSteps: 6,
   prepareBatches: async ({ db }, lastUpdatedAt) => {
     const data = await db.$queryRaw<{ startId: number; endId: number }[]>`
-    SELECT (	
+    SELECT (
       SELECT
-      i.id FROM "Image" i 
+      i.id FROM "Image" i
       ${
         lastUpdatedAt
           ? Prisma.sql`
-        WHERE i."createdAt" >= ${lastUpdatedAt} 
+        WHERE i."createdAt" >= ${lastUpdatedAt}
       `
           : Prisma.sql``
       }
       ORDER BY "createdAt" LIMIT 1
-    ) as "startId", (	
+    ) as "startId", (
       SELECT MAX (id) FROM "Image"
-    ) as "endId";      
+    ) as "endId";
     `;
 
     const { startId, endId } = data[0];
@@ -290,7 +266,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
     };
   },
   pullData: async ({ db, logger }, batch, step, prevData) => {
-    logger(`PullData :: Pulling data for batch: ${batch}`);
+    logger(
+      `PullData :: Pulling data for batch`,
+      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
+    );
     const where = [
       ...imageWhere,
 
@@ -301,88 +280,38 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
     ].filter(isDefined);
 
     if (step === 0) {
-      const images = await db.$queryRaw<ImageForSearchIndex[]>`
-      WITH target AS MATERIALIZED (
-        SELECT
+      const images = await db.$queryRaw<BaseImage[]>`
+      SELECT
+        i."type",
         i."id",
-        i."index",
-        i."postId",
+        i."userId",
+        i."generationProcess",
+        i."createdAt",
         i."name",
         i."url",
         i."nsfwLevel",
-        i."width",
-        i."height",
+        i."meta"->'prompt' as "prompt",
         i."hash",
-        jsonb_build_object(
-          'prompt', i."meta"->'prompt',
-          'comfy', i."meta"->'comfy'
-        ) "meta",
-        i."hideMeta",
-        i."generationProcess",
-        i."createdAt",
-        i."mimeType",
-        i."scannedAt",
-        i."type",
+        i."height",
+        i."width",
         i."metadata",
-        i."userId",
+        i."nsfwLevel",
+        i."postId",
+        i."needsReview",
+        i."hideMeta",
+        i."index",
+        i."scannedAt",
+        i."mimeType",
         p."modelVersionId",
-        p."publishedAt",
-        (
-          SELECT mv."baseModel" FROM "ModelVersion" mv
-          RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
-          JOIN "Model" m ON mv."modelId" = m.id
-          WHERE m."type" = 'Checkpoint'
-          LIMIT 1
-        ) "baseModel"
-          FROM "Image" i
-          JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
-          WHERE ${Prisma.join(where, ' AND ')}
-        ORDER BY i."id"
-      ), stats AS MATERIALIZED (
-          SELECT
-            im."imageId",
-            jsonb_build_object(
-              'commentCountAllTime', SUM("commentCount"),
-              'laughCountAllTime', SUM("laughCount"),
-              'heartCountAllTime', SUM("heartCount"),
-              'dislikeCountAllTime', SUM("dislikeCount"),
-              'likeCountAllTime', SUM("likeCount"),
-              'cryCountAllTime', SUM("cryCount"),
-              'reactionCountAllTime', SUM("reactionCount"),
-              'collectedCountAllTime', SUM("collectedCount"),
-              'tippedAmountCountAllTime', SUM("tippedAmountCount")
-            ) stats
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (SELECT id FROM target)
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-          GROUP BY im."imageId"
-      )
-      SELECT
-        t.*,
-        (SELECT stats FROM stats s WHERE s."imageId" = t.id)
-      FROM target t
-    `;
+        i."sortAt"
+        FROM "Image" i
+        JOIN "Post" p ON p."id" = i."postId"
+        WHERE ${Prisma.join(where, ' AND ')}
+      `;
+
       if (images.length === 0) {
         return null;
       }
-
-      return {
-        images,
-      };
-    }
-
-    if (step === 1) {
-      // Pull tags:
-      const { images } = prevData as { images: ImageForSearchIndex[] };
-
-      const rawTags = await db.imageTag.findMany({
-        where: { imageId: { in: images.map((i) => i.id) }, concrete: true },
-        select: {
-          imageId: true,
-          tagId: true,
-          tagName: true,
-        },
-      });
 
       // Also, queue model updates:
       if (batch.type === 'update') {
@@ -408,46 +337,105 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
 
       return {
         images,
-        rawTags,
       };
     }
 
-    if (step === 2) {
-      const { images, rawTags } = prevData as {
-        images: ImageForSearchIndex[];
-        rawTags: ImageTag[];
-      };
+    // Get metrics
+    if (step === 1) {
+      // TODO: Use clickhouse to pull metrics.
+      const { images } = prevData as { images: BaseImage[] };
 
-      const users = await db.user.findMany({
-        select: {
-          id: true,
-          username: true,
-          deletedAt: true,
-          image: true,
-          profilePictureId: true,
-        },
-        where: {
-          id: { in: images.map((i) => i.userId).filter(isDefined) },
-        },
-      });
-
-      const profilePictures = await db.image.findMany({
-        where: { id: { in: users.map((u) => u.profilePictureId).filter(isDefined) } },
-        select: profileImageSelect,
-      });
-
-      const cosmetics = await getCosmeticsForEntity({
-        ids: images.map((i) => i.id),
-        entity: 'Image',
-      });
-
-      const userCosmetics = await getCosmeticsForUsers([
-        ...new Set<number>(images.map((i) => i.userId).filter(isDefined)),
-      ]);
+      const metrics = await db.$queryRaw`
+          SELECT
+            im."imageId" as id,
+            im."collectedCount" as "collectedCount",
+            im."reactionCount" as "reactionCount",
+            im."commentCount" as "commentCount",
+            im."likeCount" as "likeCount",
+            im."cryCount" as "cryCount",
+            im."laughCount" as "laughCount",
+            im."tippedAmountCount" as "tippedAmountCount",
+            im."heartCount" as "heartCount"
+          FROM "ImageMetric" im
+          WHERE im."imageId" IN (${Prisma.join(images.map((i) => i.id))})
+            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
+      `;
 
       return {
+        ...prevData,
         images,
-        rawTags,
+        metrics,
+      };
+    }
+
+    // Get modelVersionIds
+    if (step === 2) {
+      // Model versions & baseModel:
+      const { images, ...other } = prevData as {
+        images: BaseImage[];
+      };
+
+      const { rows: modelVersions } = await pgDbRead.query<ModelVersions>(`
+        SELECT
+          ir."imageId" as id,
+          string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
+          array_agg(mv."id") as "modelVersionIds"
+        FROM "ImageResource" ir
+        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
+        JOIN "Model" m ON mv."modelId" = m."id"
+        WHERE ir."imageId" IN (${images.map((i) => i.id).join(',')})
+        GROUP BY ir."imageId", mv."baseModel"
+      `);
+
+      return {
+        ...prevData,
+        images,
+        modelVersions,
+      };
+    }
+
+    // Get tags
+    if (step === 3) {
+      const { images } = prevData as { images: BaseImage[] };
+
+      const imageIds = images.map((i) => i.id);
+      const imageTagIds = await getTagIdsForImages(imageIds);
+      const tagIds = [...new Set(Object.values(imageTagIds).flatMap((x) => x.tags))];
+      const tags = await tagCache.fetch(tagIds);
+
+      const imageTags = {} as Record<number, { tagNames: string[]; tagIds: number[] }>;
+      for (const [imageId, { tags: tagIds }] of Object.entries(imageTagIds)) {
+        imageTags[+imageId] = {
+          tagNames: tagIds.map((tagId) => tags[tagId].name).filter(isDefined),
+          tagIds,
+        };
+      }
+
+      return {
+        ...prevData,
+        images,
+        imageTags,
+      };
+    }
+
+    // User & Cosmetic Information
+    if (step === 4) {
+      const { images } = prevData as {
+        images: BaseImage[];
+      };
+
+      const imageIds = images.map((i) => i.id);
+      const userIds = [...new Set(images.map((i) => i.userId).filter(isDefined))];
+      const users = await userBasicCache.fetch(userIds);
+      const profilePictures = await getProfilePicturesForUsers(userIds);
+      const cosmetics = await getCosmeticsForEntity({
+        ids: imageIds,
+        entity: 'Image',
+      });
+      const userCosmetics = await getCosmeticsForUsers(userIds);
+
+      return {
+        ...prevData,
         profilePictures,
         imageCosmetics: cosmetics,
         userCosmetics,
@@ -455,7 +443,40 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       };
     }
 
-    return null;
+    // Get tools & techs
+    if (step === 5) {
+      const { images } = prevData as {
+        images: BaseImage[];
+      };
+
+      const imageIds = images.map((i) => i.id);
+      const tools = await dbRead.$queryRaw<{ imageId: number; tool: string }[]>`
+        SELECT
+          it."imageId",
+          t."name" as tool
+        FROM "ImageTool" it
+        JOIN "Tool" t ON it."toolId" = t."id"
+        WHERE it."imageId" IN (${Prisma.join(imageIds)})
+      `;
+
+      const techs = await dbRead.$queryRaw<{ imageId: number; tech: string }[]>`
+        SELECT
+          it."imageId",
+          t."name" as tech
+        FROM "ImageTechnique" it
+        JOIN "Technique" t ON it."techniqueId" = t."id"
+        WHERE it."imageId" IN (${Prisma.join(imageIds)})
+      `;
+
+      return {
+        ...prevData,
+        images,
+        tools,
+        techs,
+      };
+    }
+
+    return prevData;
   },
   transformData,
   pushData: async ({ indexName }, data) => {

@@ -45,7 +45,7 @@ export function PostsCard({
           <ImageGuard2 image={image} connectType="post" connectId={id}>
             {(safe) => (
               <>
-                {image.hasMeta && <OnsiteIndicator />}
+                {image.onSite && <OnsiteIndicator />}
 
                 <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                 {safe && (

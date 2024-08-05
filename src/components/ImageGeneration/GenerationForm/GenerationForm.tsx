@@ -50,6 +50,7 @@ import {
   ThemeIcon,
   List,
   LoadingOverlay,
+  Popover,
 } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -61,6 +62,7 @@ import {
   IconArrowAutofitDown,
   IconCheck,
   IconCopy,
+  IconInfoCircle,
   IconPlus,
 } from '@tabler/icons-react';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -69,7 +71,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';

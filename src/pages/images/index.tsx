@@ -10,7 +10,6 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { env } from '~/env/client.mjs';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function ImagesPage() {
   const { query } = useImageQueryParams();
@@ -25,16 +24,9 @@ export default function ImagesPage() {
       />
       <ToolBanner />
       <MasonryContainer>
+        <Announcements />
         {hidden && <Title>Your Hidden Images</Title>}
         <Stack spacing="xs">
-          <Announcements
-            sx={() => ({
-              marginBottom: -35,
-              [containerQuery.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           <IsClient>
             <ImageCategories />
             <ImagesInfinite showEof showAds />

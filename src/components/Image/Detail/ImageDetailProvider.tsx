@@ -16,19 +16,15 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 
 type ImageDetailState = {
   images: ImageGetInfinite;
-  image?: ImageGetInfinite[number] | ImageGetById;
   isLoading: boolean;
   active: boolean;
   connect: ConnectProps;
   isMod?: boolean;
   isOwner?: boolean;
   shareUrl: string;
-  canNavigate?: boolean;
   index: number;
   toggleInfo: () => void;
   close: () => void;
-  next: () => void;
-  previous: () => void;
   navigate: (id: number) => void;
 };
 
@@ -95,19 +91,19 @@ export function ImageDetailProvider({
     images.unshift(prefetchedImage as any);
   }
 
-  useEffect(() => {
-    if (prefetchedImage && shouldFetchImage) {
-      browserRouter.replace(
-        {
-          query: removeEmpty({
-            ...browserRouter.query,
-            postId: prefetchedImage.postId || undefined,
-          }),
-        },
-        `/images/${imageId}`
-      );
-    }
-  }, [prefetchedImage]); // eslint-disable-line
+  // useEffect(() => {
+  //   if (prefetchedImage && shouldFetchImage) {
+  //     browserRouter.replace(
+  //       {
+  //         query: removeEmpty({
+  //           ...browserRouter.query,
+  //           postId: prefetchedImage.postId || undefined,
+  //         }),
+  //       },
+  //       `/images/${imageId}`
+  //     );
+  //   }
+  // }, [prefetchedImage]); // eslint-disable-line
 
   function findCurrentImageIndex() {
     const index = images.findIndex((x) => x.id === imageId);
@@ -115,7 +111,6 @@ export function ImageDetailProvider({
   }
 
   const index = findCurrentImageIndex();
-  const image = images[index];
   // #endregion
 
   // #region [back button functionality]
@@ -143,10 +138,6 @@ export function ImageDetailProvider({
   // #endregion
 
   // #region [navigation]
-  const prevIndex = index - 1;
-  const nextIndex = index + 1;
-  const canNavigate = images.length > 1;
-
   const navigate = (id: number) => {
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
@@ -157,20 +148,6 @@ export function ImageDetailProvider({
         query: QS.parse(queryString) as any,
       }
     );
-  };
-
-  const previous = () => {
-    if (canNavigate) {
-      const id = prevIndex > -1 ? images[prevIndex].id : images[images.length - 1].id;
-      navigate(id);
-    }
-  };
-
-  const next = () => {
-    if (canNavigate) {
-      const id = nextIndex < images.length ? images[nextIndex].id : images[0].id;
-      navigate(id);
-    }
   };
   // #endregion
 
@@ -195,18 +172,14 @@ export function ImageDetailProvider({
     <ImageDetailContext.Provider
       value={{
         images,
-        image,
-        isLoading: !image ? imagesLoading || imageLoading : imageLoading,
+        isLoading: imagesLoading || imageLoading,
         active,
         connect,
         toggleInfo,
         close,
-        next,
-        previous,
         isOwner,
         isMod,
         shareUrl,
-        canNavigate,
         navigate,
         index,
       }}

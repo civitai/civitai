@@ -152,8 +152,8 @@ export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
 export const modelVersionEarlyAccessConfigSchema = z.object({
   timeframe: z.number(),
-  downloadPrice: z.number(),
-  // buzzTransactionId: z.string().optional(),
+  chargeForDownload: z.boolean().default(false),
+  downloadPrice: z.number().optional(),
   chargeForGeneration: z.boolean().default(false),
   generationPrice: z.number().optional(),
   generationTrialLimit: z.number().default(10),
