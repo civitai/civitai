@@ -1,17 +1,16 @@
-import { Group, Stack, ThemeIcon, Title, createStyles } from '@mantine/core';
+import { createStyles, Group, Stack, ThemeIcon, Title } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-
 import { Announcements } from '~/components/Announcements/Announcements';
+import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
+import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { env } from '~/env/client.mjs';
-import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
 import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
-import { IconInfoCircle } from '@tabler/icons-react';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -92,15 +91,8 @@ export default function ClubsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
+          <Announcements />
           <Stack spacing="xs">
-            <Announcements
-              sx={(theme) => ({
-                marginBottom: -35,
-                [theme.fn.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
             <Group position="apart" spacing={8}>
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 {!query.engagement && (

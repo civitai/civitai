@@ -28,6 +28,7 @@ import {
   IconTrash,
   IconWand,
 } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
@@ -44,7 +45,7 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { generationStore } from '~/store/generation.store';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -64,6 +65,8 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+  const { pathname } = useRouter();
+  const view = useGenerationStore((state) => state.view);
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
@@ -101,6 +104,7 @@ export function GeneratedImage({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
+      view: !pathname.includes('/generate') ? 'generate' : view,
     });
   };
 

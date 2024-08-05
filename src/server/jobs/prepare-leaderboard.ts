@@ -25,8 +25,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const leaderboards = await dbWrite.leaderboard.findMany({
     where: {
       active: true,
-      // query: { not: '' },
-      query: { contains: 'clickhouse_data' },
+      query: { not: '' },
     },
     select: {
       id: true,
@@ -377,7 +376,7 @@ async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
         s.*,
         (${positionStart} + row_number() OVER (ORDER BY score DESC)) as position
       FROM scores s
-      JOIN "User" u ON u.id = s."userId"
+      JOIN "User" u ON u.id = s."userId" AND NOT u."isModerator" AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL
       WHERE NOT u."excludeFromLeaderboards"
     `);
     ctx.jobContext.on('cancel', query.cancel);

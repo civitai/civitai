@@ -10,7 +10,7 @@ body {
   padding: 0;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
-    Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
   block-size: 100%;
   inline-size: 100%;
   overflow: hidden;
@@ -354,6 +354,15 @@ ol {
   border-radius: 8px;
 
 }
+
 [data-type="strawPoll"] iframe {
   flex-grow: 1;
+}
+
+div[data-youtube-video] > iframe {
+  aspect-ratio: 16 / 9;
+  height: 100%;
+  width: 100%;
+  max-width: 640px;
+  min-width: 200px;
 }

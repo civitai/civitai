@@ -43,11 +43,23 @@ export async function createComfyStep(
   });
   applyResources(comfyWorkflow, resources);
 
+  const imageMetadata = JSON.stringify({
+    prompt: params.prompt,
+    negativePrompt: params.negativePrompt,
+    steps: params.steps,
+    cfgScale: params.cfgScale,
+    sampler: sampler,
+    seed: params.seed,
+    workflowId: params.workflow,
+    resources: resources.map(({ id, strength }) => ({ modelVersionId: id, strength: strength })),
+  });
+
   return {
     $type: 'comfy',
     input: {
       quantity: params.quantity,
       comfyWorkflow,
+      imageMetadata,
     },
     timeout: '00:10:00',
     metadata: {

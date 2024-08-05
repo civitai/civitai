@@ -68,12 +68,14 @@ export default MixedAuthEndpoint(async function handler(
   let skip: number | undefined;
   const usingPaging = page && !cursor;
   if (usingPaging) {
-    ({ skip } = getPagination(limit, page));
-    if (skip && skip * limit > 10000)
+    if (page && page * limit > 1000) {
       // Enforce new paging limit
       return res
         .status(429)
         .json({ error: "You've requested too many pages, please use cursors instead" });
+    }
+
+    ({ skip } = getPagination(limit, page));
   }
 
   let collectionId: number | undefined;

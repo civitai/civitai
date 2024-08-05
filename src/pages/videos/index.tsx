@@ -2,7 +2,6 @@ import { Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -21,16 +20,9 @@ export default function VideosPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/videos`, rel: 'canonical' }]}
       />
       <MasonryContainer>
+        <Announcements />
         {hidden && <Title>Your Hidden Videos</Title>}
         <Stack spacing="xs">
-          <Announcements
-            sx={(theme) => ({
-              marginBottom: -35,
-              [theme.fn.smallerThan('md')]: {
-                marginBottom: -5,
-              },
-            })}
-          />
           <IsClient>
             {/* TODO.imageTags: Bring back once we support tags again.  */}
             {/* <ImageCategories /> */}

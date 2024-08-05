@@ -32,6 +32,10 @@ const emitter = new EventEmitter<{
   pong: undefined;
 }>();
 
+let pingTimeout: NodeJS.Timeout | null = null;
+const PING_TIMEOUT = 5000;
+// const PING_INTERVAL = 15 * 1000;
+const PING_INTERVAL = null; // Disabled for now
 const getConnection = async ({ token }: { token: string }) => {
   if (connection) return connection;
 
@@ -59,12 +63,30 @@ const getConnection = async ({ token }: { token: string }) => {
       if (pingInterval) clearInterval(pingInterval);
     });
 
-    // TODO - attach intervals to variables and clear on close
-    // send a ping every 5 minutes
-    pingInterval = setInterval(async () => {
-      if (!connection || connection.state !== HubConnectionState.Connected) return;
-      await connection.send('ping');
-    }, 5 * 60 * 1000);
+    const includePing = (PING_INTERVAL && PING_TIMEOUT) ?? false;
+    console.log('ping', includePing);
+    // Handle cases where signalr is in an odd state
+    pingInterval = PING_INTERVAL
+      ? setInterval(async () => {
+          if (!connection || connection.state !== HubConnectionState.Connected) {
+            if (pingInterval) clearInterval(pingInterval);
+            return;
+          }
+          await connection.send('ping');
+          pingTimeout = setTimeout(async () => {
+            console.log('timed out');
+            if (!connection) return;
+            await connection.stop();
+            connection = null;
+            emitter.emit('connectionError', { message: 'ping timeout' });
+          }, PING_TIMEOUT);
+        }, PING_INTERVAL)
+      : null;
+    // Backend response with `Pong` to the `ping`
+    connection.on('Pong', () => {
+      console.log('pong');
+      if (pingTimeout) clearTimeout(pingTimeout);
+    });
   } catch (e) {
     emitter.emit('connectionError', { message: JSON.stringify(e) });
     connection = null;

@@ -8,6 +8,7 @@ import dayjs from 'dayjs';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const CREATOR_COMP = 0.25;
 const BASE_MODEL_COMP = 0.25;
@@ -70,12 +71,10 @@ export const updateCreatorResourceCompensation = createJob(
 
     await clickhouse.$query('OPTIMIZE TABLE buzz_resource_compensation;');
 
-    const [lastPayout, setLastPayout] = await getJobDate(
-      'run-daily-compensation-payout',
-      new Date()
-    );
     // If it's a new day, we need to run the compensation payout job
-    if (dayjs(lastPayout).isBefore(dayjs().startOf('day'))) {
+    let [lastPayout, setLastPayout] = await getJobDate('run-daily-compensation-payout', new Date());
+    const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
+    if (shouldPayout) {
       await runPayout(lastPayout);
       await setLastPayout();
     }
@@ -85,7 +84,7 @@ export const updateCreatorResourceCompensation = createJob(
 type UserVersions = { userId: number; modelVersionIds: number[] };
 type Compensation = { modelVersionId: number; comp: number; tip: number };
 
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
 async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
@@ -100,7 +99,6 @@ async function runPayout(lastUpdate: Date) {
     FROM buzz_resource_compensation
     WHERE date = parseDateTimeBestEffortOrNull('${date.toISOString()}');
   `);
-
   if (!compensations.length) return;
 
   const creatorsToPay: Record<number, Compensation[]> = {};
@@ -120,7 +118,7 @@ async function runPayout(lastUpdate: Date) {
       `;
 
     for (const { userId, modelVersionIds } of userVersions) {
-      if (!modelVersionIds.length) continue;
+      if (!modelVersionIds.length || userId === -1) continue;
 
       if (!creatorsToPay[userId]) creatorsToPay[userId] = [];
 
@@ -129,7 +127,6 @@ async function runPayout(lastUpdate: Date) {
       );
     }
   }
-
   if (isEmpty(creatorsToPay)) return;
 
   const compensationTransactions = Object.entries(creatorsToPay)
@@ -139,7 +136,7 @@ async function runPayout(lastUpdate: Date) {
       amount: compensations.reduce((acc, c) => acc + c.comp, 0),
       description: `Generation creator compensation (${formatDate(date)})`,
       type: TransactionType.Compensation,
-      externalTransactionId: `creator-comp-${formatDate(date, 'YYYY-MM-DD')}`,
+      externalTransactionId: `creator-comp-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
     }))
     .filter((comp) => comp.amount > 0);
 
@@ -150,17 +147,17 @@ async function runPayout(lastUpdate: Date) {
       amount: compensations.reduce((acc, c) => acc + c.tip, 0),
       description: `Generation tips (${formatDate(date)})`,
       type: TransactionType.Tip,
-      externalTransactionId: `creator-tip-${formatDate(date, 'YYYY-MM-DD')}`,
+      externalTransactionId: `creator-tip-${formatDate(date, 'YYYY-MM-DD')}-${userId}`,
     }))
     .filter((tip) => tip.amount > 0);
 
-  const compensationBatches = chunk(compensationTransactions, BATCH_SIZE);
-  for (const batch of compensationBatches) {
-    await withRetries(() => createBuzzTransactionMany(batch), 1);
-  }
-
-  const tipBatches = chunk(tipTransactions, BATCH_SIZE);
-  for (const batch of tipBatches) {
-    await withRetries(() => createBuzzTransactionMany(batch), 1);
-  }
+  const tasks = [
+    ...chunk(compensationTransactions, BATCH_SIZE).map((batch) => async () => {
+      await withRetries(() => createBuzzTransactionMany(batch), 1);
+    }),
+    ...chunk(tipTransactions, BATCH_SIZE).map((batch) => async () => {
+      await withRetries(() => createBuzzTransactionMany(batch), 1);
+    }),
+  ];
+  await limitConcurrency(tasks, 2);
 }
