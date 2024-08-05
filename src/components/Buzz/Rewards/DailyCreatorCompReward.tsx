@@ -48,13 +48,13 @@ ChartJS.register(
   TimeScale
 );
 
-const now = dayjs();
-const startDate = dayjs('2024-08-01').toDate();
+const now = dayjs.utc();
+const startDate = dayjs.utc('2024-08-01').toDate();
 const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
 const dateOptions = monthsUntilNow.reverse().map((month) => {
-  const date = dayjs(month);
+  const date = dayjs.utc(month);
   return {
     value: date.toISOString(),
     label: date.format('MMMM YYYY'),
@@ -73,8 +73,8 @@ export function DailyCreatorCompReward() {
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
-  const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
-  const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
+  const minSelectedDate = dayjs.utc(selectedDate).startOf('month').toDate();
+  const maxSelectedDate = dayjs.utc(selectedDate).endOf('month').toDate();
 
   const options = useMemo<ChartOptions<'bar'>>(
     () => ({
