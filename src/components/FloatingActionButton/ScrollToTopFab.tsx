@@ -2,7 +2,7 @@ import { IconArrowUp } from '@tabler/icons-react';
 import React, { useState } from 'react';
 
 import { FloatingActionButton, FloatingActionButton2 } from './FloatingActionButton';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Button } from '@mantine/core';
 
 type Props = Omit<

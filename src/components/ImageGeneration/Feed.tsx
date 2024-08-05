@@ -7,10 +7,6 @@ import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  IntersectionObserverProvider,
-  useIntersectionObserverContext,
-} from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Feed() {
@@ -67,13 +63,13 @@ export function Feed() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
+    <ScrollArea
+      scrollRestore={{ key: 'feed' }}
+      className="flex flex-col gap-2 px-3"
+      id="feed-queue"
+    >
       {/* <GeneratedImagesBuzzPrompt /> */}
-      <IntersectionObserverProvider
-        id="generator-feed"
-        className={classes.grid}
-        options={{ rootMargin: '200% 0px' }}
-      >
+      <div className={classes.grid}>
         {steps.map((step) =>
           step.images
             .filter((x) => x.status === 'succeeded')
@@ -104,7 +100,7 @@ export function Feed() {
             })
             .filter(isDefined)
         )}
-      </IntersectionObserverProvider>
+      </div>
 
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>

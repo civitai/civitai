@@ -5,10 +5,7 @@ import { StoreApi, createStore } from 'zustand';
 import { Adunit } from '~/components/Ads/AdUnit';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import {
-  IntersectionObserverProvider,
-  useIntersectionObserverContext,
-} from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { IsClient } from '~/components/IsClient/IsClient';
 import OnboardingWizard from '~/components/Onboarding/OnboardingWizard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -23,27 +20,7 @@ const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 export default function Test() {
   return (
     <IsClient>
-      <>
-        <IntersectionObserverProvider
-          id="test_list"
-          className="container flex max-w-xs flex-col gap-3"
-        >
-          {array.map((height, i) => (
-            <InnerContent key={i} height={height} index={i} />
-          ))}
-        </IntersectionObserverProvider>
-      </>
+      <></>
     </IsClient>
-  );
-}
-
-function InnerContent({ height, index }: { height: number; index: number }) {
-  // const { ref } = useTest();
-  const { ref, inView } = useIntersectionObserverContext({ id: index.toString() });
-
-  return (
-    <div ref={ref} className="w-full p-3 card">
-      {inView && <div className="size-full bg-red-200" style={{ height }}></div>}
-    </div>
   );
 }

@@ -6,10 +6,8 @@ import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/Ap
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NewsletterDialog } from '../NewsletterDialog/NewsletterDialog';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;

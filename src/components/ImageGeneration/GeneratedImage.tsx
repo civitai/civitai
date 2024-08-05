@@ -1,17 +1,4 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Card,
-  Center,
-  Checkbox,
-  createStyles,
-  Group,
-  Loader,
-  Menu,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Group, Loader, Menu, Text } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -19,7 +6,6 @@ import {
   IconCheck,
   IconDotsVertical,
   IconExternalLink,
-  IconHourglass,
   IconInfoCircle,
   IconInfoHexagon,
   IconPlayerTrackNextFilled,
@@ -37,7 +23,7 @@ import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedIm
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { InViewDiv } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { constants } from '~/server/common/constants';
@@ -67,6 +53,7 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
+  const [ref, inView] = useInViewDynamic({ id: image.id });
   // const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
   // const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = orchestratorImageSelect.useIsSelected({
@@ -211,13 +198,12 @@ export function GeneratedImage({
   const { params } = step;
 
   return (
-    <InViewDiv
-      id={image.id}
-      className="shadow-inner card"
+    <div
+      ref={ref}
+      className="size-full shadow-inner card"
       style={{ aspectRatio: params.width / params.height }}
-      // style={sizeMapping?.height ? { height: sizeMapping?.height } : undefined}
     >
-      {true && (
+      {inView && (
         <>
           <div
             className={`flex flex-1 cursor-pointer flex-col items-center justify-center`}
@@ -406,7 +392,7 @@ export function GeneratedImage({
           </Group>
         </>
       )}
-    </InViewDiv>
+    </div>
   );
 }
 
