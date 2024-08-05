@@ -1539,7 +1539,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     logToAxiom(
       { type: 'search-result', metrics, input: removeEmpty(input), request },
       'temp-search'
-    );
+    ).catch();
 
     const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
 
@@ -1578,7 +1578,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         request,
       },
       'temp-search'
-    );
+    ).catch();
     return { data: [], total: 0 };
   }
 }
