@@ -38,7 +38,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   showRemoveAds?: boolean;
 } & PaperProps) {
   const { classes, cx } = useStyles();
-  const [ref, inView] = useInView({ rootMargin: '200%' });
+  const { ref, inView } = useInView({ rootMargin: '200%' });
   const { isCurrentStack } = useStackingContext();
   const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent, username } =
     useAdsContext();

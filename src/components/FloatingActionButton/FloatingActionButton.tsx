@@ -7,7 +7,7 @@ import {
   TransitionProps,
   createStyles,
 } from '@mantine/core';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 type Props = Omit<ButtonProps, 'style' | 'onClick'> &
   Pick<TransitionProps, 'transition' | 'mounted' | 'duration'> & {
     onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
