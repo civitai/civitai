@@ -33,12 +33,14 @@ import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
+import { logToAxiom } from '~/server/logging/client';
 
 type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
   return withRetries(
     async () => {
+      logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing');
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );

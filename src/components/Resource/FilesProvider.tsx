@@ -463,57 +463,67 @@ type DropzoneOptions = {
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml', '.onnx'],
+    acceptedFileTypes: [
+      '.ckpt',
+      '.pt',
+      '.safetensors',
+      '.sft',
+      '.bin',
+      '.zip',
+      '.yaml',
+      '.yml',
+      '.onnx',
+    ],
     acceptedModelFiles: ['Model', 'Config', 'Training Data'],
     maxFiles: 11,
   },
   MotionModule: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.onnx'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.onnx'],
     acceptedModelFiles: ['Model'],
     maxFiles: 2,
   },
   LORA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
   DoRA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
   LoCon: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
   TextualInversion: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
     acceptedModelFiles: ['Model', 'Negative', 'Training Data'],
     maxFiles: 3,
   },
   Hypernetwork: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
     acceptedModelFiles: ['Model', 'Training Data'],
     maxFiles: 2,
   },
   AestheticGradient: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.zip'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.zip'],
     acceptedModelFiles: ['Model', 'Training Data'],
     maxFiles: 2,
   },
   Controlnet: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin', '.yaml', '.yml'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.yaml', '.yml'],
     acceptedModelFiles: ['Model', 'Config'],
     maxFiles: 3,
   },
   Upscaler: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'],
     acceptedModelFiles: ['Model'],
     maxFiles: 1,
   },
   VAE: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.bin'],
+    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'],
     acceptedModelFiles: ['Model'],
     maxFiles: 1,
   },

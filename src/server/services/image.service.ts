@@ -1028,6 +1028,7 @@ export const getAllImages = async (
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
   const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
