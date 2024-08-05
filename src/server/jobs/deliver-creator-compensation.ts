@@ -72,7 +72,10 @@ export const updateCreatorResourceCompensation = createJob(
     await clickhouse.$query('OPTIMIZE TABLE buzz_resource_compensation;');
 
     // If it's a new day, we need to run the compensation payout job
-    let [lastPayout, setLastPayout] = await getJobDate('run-daily-compensation-payout', new Date());
+    const [lastPayout, setLastPayout] = await getJobDate(
+      'run-daily-compensation-payout',
+      new Date()
+    );
     const shouldPayout = dayjs(lastPayout).isBefore(dayjs().startOf('day'));
     if (shouldPayout) {
       await runPayout(lastPayout);
@@ -90,7 +93,7 @@ async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
   if (lastUpdate < COMP_START_DATE) return;
 
-  const date = dayjs(lastUpdate).utc().subtract(1, 'day').startOf('day');
+  const date = dayjs.utc(lastUpdate).startOf('day');
   const compensations = await clickhouse.$query<Compensation>(`
     SELECT
       modelVersionId,
