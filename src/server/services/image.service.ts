@@ -1201,7 +1201,7 @@ export const getAllImagesPost = async (
     include,
     types,
     fromPlatform,
-    baseModels,
+    // baseModels, // doesn't make sense to do this here
     tools,
     techniques,
     tags,
@@ -1245,7 +1245,7 @@ export const getAllImagesPost = async (
     browsingLevel,
     fromPlatform,
     hasMeta,
-    baseModels,
+    // baseModels,
     postIds,
     period,
     tools,

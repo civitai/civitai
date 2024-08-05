@@ -221,7 +221,7 @@ export default function ImagesAsPostsInfinite({
                 )}
                 <Group ml="auto" spacing={8}>
                   <SortFilter type="modelImages" variant="button" />
-                  <ImageFiltersDropdown size="sm" filterType="modelImages" compact />
+                  <ImageFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
                   {/* <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                     <ActionIcon
                       radius="xl"
