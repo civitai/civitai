@@ -25,6 +25,7 @@ type Props = {
   onRemove?: (id: number) => void;
   onSwap?: VoidFunction;
   disabled?: boolean;
+  hideVersion?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -46,7 +47,7 @@ export const ResourceSelectCard = (props: Props) => {
   );
 };
 
-function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
+function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }: Props) {
   const unavailable = isTraining ? false : resource.covered === false;
 
   return (
@@ -81,9 +82,11 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap }: Props) {
           >
             {resource.modelName}
           </Text>
-          <Text size="sm" color="dimmed">
-            {resource.name}
-          </Text>
+          {!hideVersion && (
+            <Text size="sm" color="dimmed">
+              {resource.name}
+            </Text>
+          )}
         </Stack>
       </Group>
       {onRemove ? (

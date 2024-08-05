@@ -5,3 +5,5 @@ export type ComfyNode = {
   _meta?: Record<string, string>;
   _children?: { node: ComfyNode; inputKey: string }[];
 };
+
+export type GenerationInputConfig = Record<string, { enabled?: boolean } & Record<string, any>>;

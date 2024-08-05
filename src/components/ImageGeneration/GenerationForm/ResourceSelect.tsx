@@ -16,6 +16,7 @@ export const ResourceSelect = ({
   allowRemove = true,
   isTraining = false,
   disabled,
+  hideVersion,
   ...inputWrapperProps
 }: {
   value?: Generation.Resource;
@@ -25,6 +26,7 @@ export const ResourceSelect = ({
   options?: ResourceSelectOptions;
   allowRemove?: boolean;
   isTraining?: boolean;
+  hideVersion?: boolean;
 } & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.modelType) ? undefined : value;
@@ -77,6 +79,7 @@ export const ResourceSelect = ({
           onUpdate={handleUpdate}
           onRemove={allowRemove ? handleRemove : undefined}
           onSwap={handleOpenResourceSearch}
+          hideVersion={hideVersion}
         />
       )}
     </Input.Wrapper>

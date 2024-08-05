@@ -32,6 +32,7 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
+import { fluxModeOptions } from '~/shared/constants/generation.constants';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -148,28 +149,12 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(
-  data: GenerationData,
-  baseResource?: GenerationResource
-): PartialFormData {
+function formatGenerationData(data: GenerationData): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
   const baseModel = getBaseModelFromResources(data.resources);
-
-  // if (baseResource && checkpoint) {
-  //   if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
-  //   else {
-  //     const possibleBaseModelSetTypes = getBaseModelSetTypes({
-  //       modelType: baseResource.modelType,
-  //       baseModel: baseResource.baseModel,
-  //     });
-  //     if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
-  //       baseModel = possibleBaseModelSetTypes[0];
-  //     }
-  //   }
-  // }
 
   const config = getGenerationConfig(baseModel);
 
@@ -268,11 +253,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
 
       let resources: GenerationResource[];
-      let baseResource: GenerationResource | undefined;
       if (runType === 'remix') {
         resources = responseData.resources;
       } else {
-        baseResource = responseData.resources[0];
         resources = uniqBy(
           [
             ...responseData.resources,
@@ -284,7 +267,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         );
       }
 
-      const formatted = formatGenerationData({ ...responseData, resources }, baseResource);
+      const formatted = formatGenerationData({ ...responseData, resources });
 
       const data = { ...formatted, workflow };
       if (resources.length && resources.some((x) => !x.available)) {
@@ -312,6 +295,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
       ) {
         form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+      }
+
+      if (name === 'baseModel' && watchedValues.baseModel === 'Flux1') {
+        form.setValue('cfgScale', 3.5);
       }
 
       // handle selected `workflow` based on presence of `image` value
@@ -344,6 +331,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
+        fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',

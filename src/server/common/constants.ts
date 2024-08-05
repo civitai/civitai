@@ -404,6 +404,7 @@ export const baseModelSetTypes = [
   'Kolors',
   'HyDit1',
   'ODOR',
+  'Flux1',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -715,6 +716,29 @@ export const generationConfig = {
       modelName: 'Pony Diffusion V6 XL',
       modelType: 'Checkpoint',
       baseModel: 'Pony',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
+  Flux1: {
+    additionalResourceTypes: [] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 691639,
+      name: '',
+      trainedWords: [],
+      modelId: 618692,
+      modelName: 'FLUX',
+      modelType: 'Checkpoint',
+      baseModel: 'Flux.1 D',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
