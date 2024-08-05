@@ -218,8 +218,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
-    console.log(data.earlyAccessConfig);
-
     if (
       isDirty ||
       !version?.id ||
@@ -285,7 +283,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // TODO: Update to model scores.
     .map(([score, days]) => ((currentUser?.meta?.scores?.total ?? 0) >= score ? days : null))
     .filter(isDefined);
-  console.log(earlyAccessUnlockedDays);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
   const showEarlyAccessInput =
