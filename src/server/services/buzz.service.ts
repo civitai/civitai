@@ -11,6 +11,7 @@ import {
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetBuzzTransactionResponse,
+  GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
@@ -27,15 +28,19 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { stripTime } from '~/utils/date-helpers';
+import { maxDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
+import dayjs from 'dayjs';
+import { logToAxiom } from '~/server/logging/client';
 
 type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
   return withRetries(
     async () => {
+      logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing');
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );
@@ -746,3 +751,70 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
 
   return potential;
 }
+
+export const getDailyCompensationRewardByUser = async ({
+  userId,
+  date = new Date(),
+}: GetDailyBuzzCompensationInput) => {
+  const db = await getDbWithoutLag('modelVersion');
+  const modelVersions = await db.modelVersion.findMany({
+    where: { model: { userId }, status: 'Published' },
+    select: {
+      id: true,
+      name: true,
+      model: { select: { name: true } },
+    },
+  });
+
+  if (!clickhouse || !modelVersions.length) return [];
+
+  const minDate = dayjs(date).startOf('day').startOf('month').toISOString();
+  const maxDate = dayjs(date).endOf('day').endOf('month').toISOString();
+
+  const generationData = await clickhouse
+    .query({
+      query: `
+        WITH user_resources AS (
+          SELECT
+            mv.id as id
+          FROM civitai_pg.Model m
+          JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
+          WHERE m.userId = ${userId}
+        )
+        SELECT
+          date,
+          modelVersionId,
+          comp,
+          tip,
+          total
+        FROM buzz_resource_compensation
+        WHERE modelVersionId IN (SELECT id FROM user_resources)
+        AND date BETWEEN parseDateTimeBestEffort('${minDate}') AND parseDateTimeBestEffort('${maxDate}')
+        ORDER BY date DESC, total DESC;
+      `,
+      format: 'JSONEachRow',
+    })
+    .then((x) =>
+      x.json<{ modelVersionId: number; date: Date; comp: number; tip: number; total: number }[]>()
+    );
+
+  if (!generationData.length) return [];
+
+  return (
+    modelVersions
+      .map(({ model, ...version }) => {
+        const resourceData = generationData
+          .filter((x) => x.modelVersionId === version.id)
+          .map((resource) => ({
+            createdAt: dayjs(resource.date).format('YYYY-MM-DD'),
+            total: resource.total,
+          }));
+
+        const totalSum = resourceData.reduce((acc, x) => acc + x.total, 0);
+        return { ...version, modelName: model.name, data: resourceData, totalSum };
+      })
+      .filter((v) => v.data.length > 0)
+      // Pre-sort by most buzz
+      .sort((a, b) => b.totalSum - a.totalSum)
+  );
+};

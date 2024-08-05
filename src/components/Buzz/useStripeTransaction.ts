@@ -70,10 +70,10 @@ export const useStripeTransaction = ({
           } catch {
             // Safeguard in case anything fails after payment is successful
             setErrorMessage(
-              'Payment was successful but there was an error performing requested actions after completion. Please contact support.'
+              'Payment was successful but there was an error performing requested actions after completion. Please contact support. Do not attempt to pay again.'
             );
             setProcessingPayment(false);
-            setPaymentIntentStatus('error');
+            setPaymentIntentStatus('success_with_error');
           }
           break;
         case 'processing':

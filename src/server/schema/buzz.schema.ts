@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { stringDate } from '~/utils/zod-helpers';
 
 export enum TransactionType {
   Tip = 0,
@@ -22,6 +23,8 @@ export enum TransactionType {
   Withdrawal = 17,
   Redeemable = 18,
   Sell = 19,
+  AuthorizedPurchase = 20,
+  Compensation = 21,
 }
 
 const buzzAccountTypes = ['User', 'Club', 'Other'] as const;
@@ -167,3 +170,9 @@ export const clubTransactionSchema = z.object({
 });
 
 export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
+
+export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
+export const getDailyBuzzCompensationInput = z.object({
+  userId: z.number().optional(),
+  date: stringDate(),
+});

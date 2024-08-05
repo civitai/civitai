@@ -67,7 +67,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { endOfDay, startOfDay } from '~/utils/date-helpers';
+import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -212,9 +212,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       entryLimit: bounty?.entryLimit ?? 1,
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
-        ? dayjs(endOfDay(bounty.expiresAt)).toDate()
+        ? dateWithoutTimezone(bounty.expiresAt)
         : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? dayjs(startOfDay(bounty.startsAt)).toDate() : startOfDay(new Date()),
+      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : startOfDay(new Date()),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&

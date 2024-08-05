@@ -126,3 +126,6 @@ export type ModelVersionDonationGoal = Exclude<
   undefined
 >[number];
 export type PostContestCollectionItem = RouterOutput['post']['getContestCollectionDetails'][number];
+
+type BuzzRouter = RouterOutput['buzz'];
+export type GetDailyBuzzCompensation = BuzzRouter['getDailyBuzzCompensation'];

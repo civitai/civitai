@@ -62,6 +62,8 @@ export const constants = {
     'SDXL 1.0',
     'SD 3',
     'Pony',
+    'Flux.1 S',
+    'Flux.1 D',
     'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -303,14 +305,14 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
+  supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
   memberships: {
     tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
-      founder: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
-      bronze: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
-      silver: '392d474d-8745-416e-9aac-26ff5273974c',
-      gold: 'd47d01b6-fceb-495a-8e26-08eb062c040f',
+      founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+      bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+      silver: '9f174f9f-e823-44af-b969-cd1a1d7efb08',
+      gold: '758f52cb-29f7-4c40-b0fd-1a45b904bd51',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -409,6 +411,7 @@ export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
+  Flux1: ['Flux.1 S', 'Flux.1 D'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
   PixArtA: ['PixArt a'],
@@ -485,6 +488,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
     name: 'Apache 2.0',
   },
+  flux1D: {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -516,6 +527,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
+  'Flux.1 S': baseLicenses['apache 2.0'],
+  'Flux.1 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
 };
@@ -579,6 +592,8 @@ export const generation = {
     baseModel: 'SD1',
     denoise: 0.4,
     upscale: 1.5,
+    civitaiTip: 0,
+    creatorTip: 0.25,
     model: {
       id: 128713,
       name: '8',
