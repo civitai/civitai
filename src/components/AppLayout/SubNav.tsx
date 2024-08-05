@@ -9,7 +9,7 @@ import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilter
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 const useStyles = createStyles((theme) => ({
   subNav: {

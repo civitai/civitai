@@ -14,10 +14,7 @@ import {
   downloadGeneratedImagesByDate,
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
-import {
-  InViewDiv,
-  IntersectionObserverProvider,
-} from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -96,50 +93,44 @@ export function Queue() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'queue' }} className="px-3">
-      <IntersectionObserverProvider
-        id="generator-queue"
-        className="flex flex-col gap-3"
-        options={{ rootMargin: '200% 0px' }}
-      >
-        {canDownload && (
-          <Text size="xs" color="dimmed" my={-10}>
-            <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-            Images are kept in the generator for 30 days.{' '}
-            {/* <Text span td="underline">
+    <ScrollArea scrollRestore={{ key: 'queue' }} className="gap-2 px-3" id="generator-queue">
+      {canDownload && (
+        <Text size="xs" color="dimmed" my={-10}>
+          <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
+          Images are kept in the generator for 30 days.{' '}
+          {/* <Text span td="underline">
               {`You'll be able to download older images soon.`}
             </Text> */}
-            <Text
-              variant="link"
-              td="underline"
-              component="a"
-              href="/api/generation/history"
-              onClick={handleSetDownloading}
-            >
-              Download images created before {formatDate(orchestratorIntegrationDate)}
-            </Text>
+          <Text
+            variant="link"
+            td="underline"
+            component="a"
+            href="/api/generation/history"
+            onClick={handleSetDownloading}
+          >
+            Download images created before {formatDate(orchestratorIntegrationDate)}
           </Text>
-        )}
-        {/* {data.map((request) =>
+        </Text>
+      )}
+      {/* {data.map((request) =>
           request.steps.map((step) => createRenderElement(QueueItem, request, step))
         )} */}
+      <div className="flex flex-col gap-2">
         {data.map((request) =>
           request.steps.map((step) => (
-            <InViewDiv key={request.id} id={request.id.toString()}>
-              <QueueItem id={request.id.toString()} request={request} step={step} />
-            </InViewDiv>
+            <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} />
           ))
         )}
-        {hasNextPage ? (
-          <InViewLoader loadFn={fetchNextPage} loadCondition={!!data.length && !isRefetching}>
-            <Center sx={{ height: 60 }}>
-              <Loader />
-            </Center>
-          </InViewLoader>
-        ) : (
-          <div className="p-6">{RetentionPolicyUpdate}</div>
-        )}
-      </IntersectionObserverProvider>
+      </div>
+      {hasNextPage ? (
+        <InViewLoader loadFn={fetchNextPage} loadCondition={!!data.length && !isRefetching}>
+          <Center sx={{ height: 60 }}>
+            <Loader />
+          </Center>
+        </InViewLoader>
+      ) : (
+        <div className="p-6">{RetentionPolicyUpdate}</div>
+      )}
     </ScrollArea>
   );
 }
