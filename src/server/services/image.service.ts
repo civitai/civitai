@@ -1263,8 +1263,8 @@ export const getAllImagesPost = async (
   console.timeEnd('SEARCH IDS');
   console.log(searchResults[0]?.id, searchResults.length);
 
-  const imageIds = searchResults.map((sr) => sr.id);
-  const userIds = searchResults.map((sr) => sr.userId);
+  const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
+  const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
   // TODO may need to check for image existence in db
 
