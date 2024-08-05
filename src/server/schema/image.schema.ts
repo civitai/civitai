@@ -259,6 +259,7 @@ const imageInclude = z.enum([
   'meta',
   'tagIds',
   'profilePictures',
+  'metaSelect',
 ]);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;
@@ -319,6 +320,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     if (value.withMeta) {
       if (!value.include) value.include = [];
       value.include.push('meta');
+      value.include.push('metaSelect');
     }
     return value;
   });

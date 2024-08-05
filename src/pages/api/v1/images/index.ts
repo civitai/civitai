@@ -65,6 +65,7 @@ const imagesEndpointSchema = z.object({
     .optional(),
   type: z.nativeEnum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
+  withMeta: booleanString().optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -73,7 +74,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, ...data } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -88,6 +89,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    const include = withMeta ? (['meta', 'metaSelect'] as const) : (['metaSelect'] as const);
 
     const { items, nextCursor } = await getAllImages({
       ...data,
@@ -95,8 +97,8 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       limit,
       skip,
       cursor,
+      include,
       periodMode: 'published',
-      include: ['count', 'meta'],
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,
     });
