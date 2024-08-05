@@ -26,6 +26,7 @@ type VersionRow = {
   earlyAccessEndsAt?: Date;
   checkPermission: boolean;
   covered?: boolean;
+  freeTrialLimit?: number;
 };
 type FileRow = {
   id: number;
@@ -122,6 +123,7 @@ export default MixedAuthEndpoint(async function handler(
     earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
     checkPermission: modelVersion.checkPermission,
     canGenerate,
+    freeTrialLimit: modelVersion.freeTrialLimit,
   };
   res.status(200).json(data);
 });
