@@ -9,7 +9,9 @@ import {
   Text,
   createStyles,
 } from '@mantine/core';
+import { IconAlertCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -17,6 +19,7 @@ import {
   useModelVersionPermission,
   useMutateModelVersion,
 } from '~/components/Model/ModelVersions/model-version.utils';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -87,7 +90,7 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
             </Text>
           </Text>
           <Stack>
-            {supportsDownloadPurchase && (
+            {supportsDownloadPurchase ? (
               <Stack spacing={0}>
                 <BuzzTransactionButton
                   type="submit"
@@ -98,13 +101,17 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   disabled={canDownload}
                 />
                 <Text size="xs" color="dimmed">
-                  Download access also grants generation access, this does not contribute to the
-                  donation goal
+                  Download access also grants generation access.
                 </Text>
               </Stack>
+            ) : (
+              <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
+                The creator of this {resourceLabel} has not made download access available during
+                the early access period.
+              </AlertWithIcon>
             )}
 
-            {supportsGenerationPurchase && (
+            {supportsGenerationPurchase ? (
               <Stack spacing={0}>
                 <BuzzTransactionButton
                   type="submit"
@@ -116,12 +123,25 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                 />
                 <Text size="xs" color="dimmed">
                   The creator of the {resourceLabel} has enabled trials, test this {resourceLabel}{' '}
-                  <Anchor href="/test">here</Anchor>. You will not be able to download this
-                  resource, but you can make unlimited generations with it, this does not contribute
-                  to the donation goal.
+                  <GenerateButton
+                    modelVersionId={modelVersionId}
+                    data-activity="create:version-stat"
+                    onClick={() => {
+                      dialog.onClose();
+                    }}
+                  >
+                    <Anchor>here</Anchor>
+                  </GenerateButton>
+                  . By purchasing generation access, you will not be able to download this resource,
+                  but you can make unlimited generations with it
                 </Text>
               </Stack>
-            )}
+            ) : supportsGeneration ? (
+              <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
+                The creator of this {resourceLabel} has not made generation available during the
+                early access period.
+              </AlertWithIcon>
+            ) : null}
 
             <Button onClick={handleClose} variant="light" color="gray" compact>
               Cancel

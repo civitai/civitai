@@ -106,7 +106,8 @@ export function createAuthOptions(): NextAuthOptions {
           account?.provider === 'email' &&
           !user.emailVerified &&
           email?.verificationRequest &&
-          user.email?.includes('+')
+          user.email?.includes('+') &&
+          !isDev
         ) {
           const alreadyExists = await dbWrite.user.findFirst({
             where: { email: user.email },

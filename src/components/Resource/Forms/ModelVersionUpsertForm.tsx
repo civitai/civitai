@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Input,
+  Popover,
   SegmentedControl,
   Stack,
   Switch,
@@ -57,6 +58,10 @@ import {
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -217,8 +222,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     const templateId = schemaResult.success ? schemaResult.data.templateId : undefined;
     const bountyId = schemaResult.success ? schemaResult.data.bountyId : undefined;
 
-    console.log(data.earlyAccessConfig);
-
     if (
       isDirty ||
       !version?.id ||
@@ -280,14 +283,20 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
+  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta });
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
-    .map(([score, days]) => ((currentUser?.meta?.scores?.total ?? 0) >= score ? days : null))
+    // TODO: Update to model scores.
+    .map(([score, days]) =>
+      days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta }) ? days : null
+    )
     .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
+  const isPublished = version?.status === 'Published';
   const showEarlyAccessInput =
+    maxEarlyAccessModels > 0 &&
     features.earlyAccessModel &&
     earlyAccessUnlockedDays.length > 0 &&
-    (version?.status !== 'Published' || atEarlyAccess);
+    (!isPublished || atEarlyAccess);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -317,27 +326,34 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 title={
                   <Group spacing="xs">
                     <Text>Earn Buzz with early access! </Text>
-                    <Tooltip
-                      label={
-                        <Text>
-                          Early Access helps creators monetize,{' '}
-                          <Anchor href="/articles/6341">learn more here</Anchor>
-                        </Text>
-                      }
-                    >
-                      <IconInfoCircle size={16} />
-                    </Tooltip>
+                    <Popover width={300} withArrow withinPortal shadow="sm">
+                      <Popover.Target>
+                        <IconInfoCircle size={16} />
+                      </Popover.Target>
+                      <Popover.Dropdown>
+                        <Stack spacing="xs">
+                          <Text size="sm">
+                            Early Access helps creators monetize, learn more{' '}
+                            <Anchor href="/articles/6341">here</Anchor>
+                          </Text>
+                        </Stack>
+                      </Popover.Dropdown>
+                    </Popover>
                   </Group>
                 }
                 content={
-                  <>
+                  <Stack>
                     <Text size="xs">
                       Early access allows you to charge a fee for early access to your model. This
                       fee is paid by users who want to access your model before it is available to
                       the public. Once the early access period ends, your model will be available to
                       the public for free.
                     </Text>
-                  </>
+                    <Text size="xs">
+                      You can have up to {maxEarlyAccessModels} models in early access at a time.
+                      This will increase as you post more models on the site.
+                    </Text>
+                  </Stack>
                 }
                 mb="xs"
               />
@@ -358,12 +374,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                       ? {
                           timeframe: constants.earlyAccess.timeframeValues[0],
                           chargeForDownload: true,
-                          downloadPrice: 500,
+                          downloadPrice: 5000,
                           chargeForGeneration: false,
-                          generationPrice: 100,
+                          generationPrice: 2500,
                           generationTrialLimit: 10,
                           donationGoalEnabled: false,
-                          donationGoal: 1000,
+                          donationGoal: 50000,
                         }
                       : null
                   )
@@ -376,9 +392,21 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     label={
                       <Group spacing="xs">
                         <Text weight="bold">Early Access Time Frame</Text>
-                        <Tooltip label="The amount of resources you can have in early access and for how long is determined by actions you've taken on the site. increase your limits by posting more free models that people want, being kind, and generally doing good within the community.">
-                          <IconInfoCircle size={16} />
-                        </Tooltip>
+                        <Popover width={300} withArrow withinPortal shadow="sm">
+                          <Popover.Target>
+                            <IconInfoCircle size={16} />
+                          </Popover.Target>
+                          <Popover.Dropdown>
+                            <Stack spacing="xs">
+                              <Text size="sm">
+                                The amount of resources you can have in early access and for how
+                                long is determined by actions you&rsquo;ve taken on the site.
+                                Increase your limits by posting more free models that people want,
+                                being kind, and generally doing good within the community.
+                              </Text>
+                            </Stack>
+                          </Popover.Dropdown>
+                        </Popover>
                       </Group>
                     }
                     description="How long would you like to offer early access to your version from the date of publishing?"
@@ -416,9 +444,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     {earlyAccessUnlockedDays.length !==
                       constants.earlyAccess.timeframeValues.length && (
                       <Group noWrap>
-                        <Text size="xs" color="dimmed">
-                          You will unlock more early access day over time by posting models, images,
-                          reactions and more to the site.
+                        <Text size="xs" color="yellow">
+                          You will unlock more early access day over time by posting models to the
+                          site.
                         </Text>
                       </Group>
                     )}
@@ -429,81 +457,134 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                   </Input.Wrapper>
                   <Stack mt="sm">
-                    <InputSwitch
-                      name="earlyAccessConfig.chargeForDownload"
-                      label="Allow users to pay for download (Includes ability to generate)"
-                      description={`This will require users to pay buzz to download  your ${resourceLabel} during the early access period`}
-                      disabled={isEarlyAccessOver}
-                    />
-                    {earlyAccessConfig?.chargeForDownload && (
-                      <InputNumber
-                        name="earlyAccessConfig.downloadPrice"
-                        label="Download price"
-                        description=" How much buzz would you like to charge for your version download?"
-                        min={500}
-                        step={100}
-                        icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                        withAsterisk
-                        disabled={isEarlyAccessOver}
-                      />
-                    )}
-                    <InputSwitch
-                      name="earlyAccessConfig.chargeForGeneration"
-                      label="Allow users to pay for generation only - no download."
-                      description={`This will require users to pay buzz to generate with your ${resourceLabel} during the early access period`}
-                      disabled={isEarlyAccessOver}
-                    />
-                    {earlyAccessConfig?.chargeForGeneration && (
-                      <Stack>
-                        <InputNumber
-                          name="earlyAccessConfig.generationPrice"
-                          label="Generation price"
-                          description="How much would you like to charge to generate with your version?"
-                          min={100}
-                          max={earlyAccessConfig?.downloadPrice}
-                          step={100}
-                          icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                          disabled={isEarlyAccessOver}
-                        />
-                        <InputNumber
-                          name="earlyAccessConfig.generationTrialLimit"
-                          label="Free Trial Limit"
-                          description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
-                          min={10}
-                          disabled={isEarlyAccessOver}
-                        />
-                      </Stack>
-                    )}
+                    <Card withBorder>
+                      <Card.Section withBorder>
+                        <Group py="sm" px="md" position="apart" noWrap>
+                          <div>
+                            <Text weight={500} size="sm">
+                              Allow users to pay for download (Includes ability to generate)
+                            </Text>
+                            <Text size="xs">
+                              This will require users to pay buzz to download your {resourceLabel}{' '}
+                              during the early access period
+                            </Text>
+                          </div>
+                          <InputSwitch
+                            name="earlyAccessConfig.chargeForDownload"
+                            disabled={isEarlyAccessOver}
+                          />
+                        </Group>
+                      </Card.Section>
+                      {earlyAccessConfig?.chargeForDownload && (
+                        <Card.Section py="sm" px="md">
+                          <InputNumber
+                            name="earlyAccessConfig.downloadPrice"
+                            label="Download price"
+                            description=" How much buzz would you like to charge for your version download?"
+                            min={100}
+                            max={
+                              isPublished ? version?.earlyAccessConfig?.downloadPrice : undefined
+                            }
+                            step={100}
+                            icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                            withAsterisk
+                            disabled={isEarlyAccessOver}
+                          />
+                        </Card.Section>
+                      )}
+                    </Card>
+                    <Card withBorder>
+                      <Card.Section withBorder>
+                        <Group py="sm" px="md" position="apart" noWrap>
+                          <div>
+                            <Text weight={500} size="sm">
+                              Allow users to pay for generation only - no download.
+                            </Text>
+                            <Text size="xs">
+                              This will require users to pay buzz to generate with your{' '}
+                              {resourceLabel} during the early access period
+                            </Text>
+                          </div>
+                          <InputSwitch
+                            name="earlyAccessConfig.chargeForGeneration"
+                            disabled={isEarlyAccessOver}
+                          />
+                        </Group>
+                      </Card.Section>
+                      {earlyAccessConfig?.chargeForGeneration && (
+                        <Card.Section py="sm" px="md">
+                          <Stack>
+                            <InputNumber
+                              name="earlyAccessConfig.generationPrice"
+                              label="Generation price"
+                              description="How much would you like to charge to generate with your version?"
+                              min={50}
+                              max={earlyAccessConfig?.downloadPrice}
+                              step={100}
+                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              disabled={isEarlyAccessOver}
+                              withAsterisk
+                            />
+                            <InputNumber
+                              name="earlyAccessConfig.generationTrialLimit"
+                              label="Free Trial Limit"
+                              description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
+                              min={10}
+                              disabled={isEarlyAccessOver}
+                              withAsterisk
+                            />
+                          </Stack>
+                        </Card.Section>
+                      )}
+                    </Card>
+
                     {(version?.status !== 'Published' ||
                       version?.earlyAccessConfig?.donationGoalId) &&
                       features.donationGoals && (
-                        <>
-                          <InputSwitch
-                            name="earlyAccessConfig.donationGoalEnabled"
-                            label="Enable donation goal"
-                            description={
-                              'You can use this feature to remove early access once a certain amount of buzz is met. This will allow you to set a goal for your model and remove early access once that goal is met. Please note that after the model is published, you cannot change this value.'
-                            }
-                            disabled={
-                              !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
-                            }
-                          />
-                          {earlyAccessConfig?.donationGoalEnabled && (
-                            <Stack>
-                              <InputNumber
-                                name="earlyAccessConfig.donationGoal"
-                                label="Donation Goal Amount"
-                                description="How much BUZZ would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
-                                min={1000}
-                                step={100}
-                                icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                        <Card withBorder>
+                          <Card.Section withBorder>
+                            <Group py="sm" px="md" position="apart" noWrap>
+                              <div>
+                                <Text weight={500} size="sm">
+                                  Enable donation goal
+                                </Text>
+                                <Text size="xs">
+                                  You can use this feature to remove early access once a certain
+                                  amount of buzz is met. This will allow you to set a goal for your
+                                  model and remove early access once that goal is met.
+                                </Text>
+                                <Text size="xs">
+                                  Please note that after the model is published, you cannot change
+                                  this value.
+                                </Text>
+                              </div>
+                              <InputSwitch
+                                name="earlyAccessConfig.donationGoalEnabled"
                                 disabled={
                                   !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
                                 }
                               />
-                            </Stack>
+                            </Group>
+                          </Card.Section>
+                          {earlyAccessConfig?.donationGoalEnabled && (
+                            <Card.Section py="sm" px="md">
+                              <Stack>
+                                <InputNumber
+                                  name="earlyAccessConfig.donationGoal"
+                                  label="Donation Goal Amount"
+                                  description="How much Buzz would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
+                                  min={1000}
+                                  step={100}
+                                  icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                                  disabled={
+                                    !!version?.earlyAccessConfig?.donationGoalId ||
+                                    isEarlyAccessOver
+                                  }
+                                />
+                              </Stack>
+                            </Card.Section>
                           )}
-                        </>
+                        </Card>
                       )}
                   </Stack>
                 </Stack>
