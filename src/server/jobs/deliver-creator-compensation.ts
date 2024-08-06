@@ -89,7 +89,7 @@ type Compensation = { modelVersionId: number; comp: number; tip: number };
 
 const BATCH_SIZE = 100;
 const COMP_START_DATE = new Date('2024-08-01');
-async function runPayout(lastUpdate: Date) {
+export async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
   if (lastUpdate < COMP_START_DATE) return;
 
