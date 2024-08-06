@@ -93,7 +93,11 @@ export function Queue() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'queue' }} className="gap-2 px-3" id="generator-queue">
+    <ScrollArea
+      scrollRestore={{ key: 'queue' }}
+      className="flex flex-col gap-2 px-3"
+      id="generator-queue"
+    >
       {canDownload && (
         <Text size="xs" color="dimmed" mt="xs">
           <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
