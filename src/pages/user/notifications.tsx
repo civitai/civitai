@@ -14,6 +14,7 @@ import {
 import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { Meta } from '~/components/Meta/Meta';
 
@@ -81,22 +82,24 @@ export default function Notifications() {
             </Center>
           ) : notifications && notifications.length > 0 ? (
             <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
-              <NotificationList
-                items={notifications}
-                onItemClick={(notification) => {
-                  readNotificationMutation.mutate({
-                    id: notification.id,
-                    category: notification.category,
-                  });
-                }}
-              />
-              {hasNextPage && (
-                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
-                    <Loader />
-                  </Center>
-                </InViewLoader>
-              )}
+              <IntersectionObserverProvider>
+                <NotificationList
+                  items={notifications}
+                  onItemClick={(notification) => {
+                    readNotificationMutation.mutate({
+                      id: notification.id,
+                      category: notification.category,
+                    });
+                  }}
+                />
+                {hasNextPage && (
+                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
+                )}
+              </IntersectionObserverProvider>
             </Paper>
           ) : (
             <Center p="sm">
