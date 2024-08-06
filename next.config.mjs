@@ -14,7 +14,64 @@ function defineNextConfig(config) {
   return config;
 }
 
+
 export default defineNextConfig(withAxiom({
+  webpack: (
+    config,
+    { buildId, dev, isServer, defaultLoaders, nextRuntime, webpack }
+  ) => {
+    // Important: return the modified config
+
+    config.module.rules = [...config.module.rules,
+       //  // This is only needed if you use Svelte 5+ with TypeScript
+      {
+        test: /\.svelte\.ts$/,
+        use: ['ts-loader', 'svelte-loader']
+      },
+      {
+        // Svelte 5+:
+        test: /\.(svelte|svelte\.js)$/,
+        // Svelte 3 or 4:
+        // test: /\.svelte$/,
+        // In case you write Svelte in HTML (not recommended since Svelte 3):
+        // test: /\.(html|svelte)$/,
+        use: 'svelte-loader'
+      },
+      {
+        // required to prevent errors from Svelte on Webpack 5+, omit on Webpack 4
+        test: /node_modules\/svelte\/.*\.mjs$/,
+        resolve: {
+          fullySpecified: false
+        }
+      }
+    ]
+
+    //  // This is only needed if you use Svelte 5+ with TypeScript
+    // config.modules.rules.push( {
+    //   test: /\.svelte\.ts$/,
+    //   use: ['ts-loader', 'svelte-loader']
+    // })
+
+    // config.modules.rules.push({
+    //   // Svelte 5+:
+    //   test: /\.(svelte|svelte\.js)$/,
+    //   // Svelte 3 or 4:
+    //   // test: /\.svelte$/,
+    //   // In case you write Svelte in HTML (not recommended since Svelte 3):
+    //   // test: /\.(html|svelte)$/,
+    //   use: 'svelte-loader'
+    // })
+
+    // config.modules.rules.push({
+    //   // required to prevent errors from Svelte on Webpack 5+, omit on Webpack 4
+    //   test: /node_modules\/svelte\/.*\.mjs$/,
+    //   resolve: {
+    //     fullySpecified: false
+    //   }
+    // })
+
+    return config
+  },
   env: {
     version: packageJson.version,
   },
