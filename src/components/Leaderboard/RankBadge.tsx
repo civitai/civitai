@@ -71,12 +71,15 @@ export const RankBadge = ({
 };
 
 type Props = {
-  rank: {
-    leaderboardRank: number | null;
-    leaderboardId: string | null;
-    leaderboardTitle: string | null;
-    leaderboardCosmetic?: string | null;
-  } | null;
+  rank:
+    | {
+        leaderboardRank: number | null;
+        leaderboardId: string | null;
+        leaderboardTitle: string | null;
+        leaderboardCosmetic?: string | null;
+      }
+    | null
+    | undefined;
   textSize?: MantineSize;
   iconSize?: number;
   withTitle?: boolean;

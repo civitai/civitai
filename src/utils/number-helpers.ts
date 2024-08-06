@@ -56,6 +56,7 @@ export function abbreviateNumber(
   opts?: { decimals?: number; floor?: boolean }
 ): string {
   if (!value) return '0';
+  if (typeof value !== 'number') value = Number(value);
 
   const { decimals, floor } = opts ?? { decimals: 1 };
   const suffixes = ['', 'k', 'm', 'b', 't'];
