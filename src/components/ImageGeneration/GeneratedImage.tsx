@@ -17,7 +17,7 @@ import {
   IconTag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
+import { useState, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
@@ -147,11 +147,14 @@ export function GeneratedImage({
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
+  const [tagPanelVisible, handleToggleTagPanel] = useState<boolean>();
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
   const badFeedbackSelected = feedback === 'disliked';
   const goodFeedbackSelected = feedback === 'liked';
-  const favoriteSelected = step.metadata?.images?.[image.id]?.favorite === true;
+  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+  // const hasUserTags = step.metadata?.images?.[image.id]?.userTags === true;
+  const hasUserTags = false;
   const available = image.status === 'succeeded';
 
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
@@ -334,15 +337,20 @@ export function GeneratedImage({
               </ActionIcon>
 
               <ActionIcon size="md"
-                variant={favoriteSelected ? 'light' : undefined}
-                color={favoriteSelected ? 'red' : undefined}
+                variant={isFavorite ? 'light' : undefined}
+                color={isFavorite ? 'red' : undefined}
                 disabled={isLoading}
-                onClick={() => handleToggleFavorite(!favoriteSelected)}
+                onClick={() => handleToggleFavorite(!isFavorite)}
               >
                 <IconHeart size={16} />
               </ActionIcon>
 
-              <ActionIcon size="md">
+              <ActionIcon size="md"
+                variant={hasUserTags ? 'light' : undefined}
+                color={hasUserTags ? 'orange' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleTagPanel(!tagPanelVisible)}
+              >
                 <IconTag size={16} />
               </ActionIcon>
 
@@ -391,6 +399,10 @@ export function GeneratedImage({
                 />
               </ActionIcon>
             </ImageMetaPopover>
+
+            {tagPanelVisible && (
+              <div>tagPanelVisible</div>
+            )}
           </Group>
         </>
       )}

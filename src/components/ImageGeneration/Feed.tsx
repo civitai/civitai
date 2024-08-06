@@ -7,6 +7,8 @@ import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { MarkerType } from '~/server/common/enums';
 
 export function Feed() {
   const { classes } = useStyles();
@@ -16,10 +18,18 @@ export function Feed() {
     setFilters: state.setMarkerFilters,
   }));
 
+  let workflowTagsFilter = undefined;
+
+  if (filters.marker === MarkerType.Favorited) {
+    workflowTagsFilter = [WORKFLOW_TAGS.FAVORITES];
+  }
+
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages({
-      tags: filters.marker ? [filters.marker] : undefined
+      tags: workflowTagsFilter
     });
+
+  console.log('steps', { steps, filters });
 
   if (isError)
     return (
@@ -78,14 +88,20 @@ export function Feed() {
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
 
-              if (filters.marker !== undefined) {
-                if (typeof step.metadata.images === 'undefined') return null;
+              const { marker } = filters;
 
-                if (!(image.id in step.metadata.images)) return null;
+              console.log('M1', image.id, { marker });
 
-                const imageMetadata = step.metadata.images[image.id];
-                const { feedback } = imageMetadata;
-                if (feedback !== filters.marker) return null;
+
+              if (marker) {
+                const feedback = step.metadata?.images?.[image.id]?.feedback;
+                const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+
+                console.log('M2', image.id, { marker, feedback, isFavorite });
+
+                if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
+
+                else if (marker === MarkerType.Favorited && !isFavorite) return null;
               }
 
               return (

@@ -15,19 +15,29 @@ import {
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { MarkerType } from '~/server/common/enums';
 
 export function Queue() {
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequests();
-
-  const { downloading } = useSchedulerDownloadingStore();
-  const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
-  const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
-
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state.markers,
     setFilters: state.setMarkerFilters,
   }));
+
+  let workflowTagsFilter;
+
+  if (filters.marker === MarkerType.Favorited) {
+    workflowTagsFilter = [WORKFLOW_TAGS.FAVORITES];
+  }
+
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+    useGetTextToImageRequests({
+      tags: workflowTagsFilter
+    });
+
+  const { downloading } = useSchedulerDownloadingStore();
+  const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
+  const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
 
   if (isError)
     return (
@@ -126,9 +136,27 @@ export function Queue() {
         )} */}
       <div className="flex flex-col gap-2">
         {data.map((request) =>
-          request.steps.map((step) => (
-            <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} />
-          ))
+          request.steps.map((step) => {
+            const { marker } = filters;
+            let filteredStep = step;
+
+            if (marker) {
+              filteredStep.images = step.images.filter((image) => {
+                const feedback = step.metadata?.images?.[image.id]?.feedback;
+                const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+
+                if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
+
+                else if (marker === MarkerType.Favorited && !isFavorite) return null;
+              });
+
+              if (!filteredStep.images.length) return null;
+            }
+
+            return (
+              <QueueItem key={request.id} id={request.id.toString()} request={request} step={filteredStep} />
+            );
+          })
         )}
       </div>
       {hasNextPage ? (
