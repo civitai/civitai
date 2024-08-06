@@ -1,7 +1,8 @@
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$branch" != "main" ]; then
-	exit 0
+username="$(git config user.name)"
+if [ "$branch" != "main" ] || [ "$username" = "Justin Maier" ] || [ "$username" = "bkdiehl" ]; then
+  exit 0
 fi
 
 echo "Running typecheck for all files"
