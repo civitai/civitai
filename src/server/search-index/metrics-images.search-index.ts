@@ -9,7 +9,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getTagIdsForImages } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 
-const READ_BATCH_SIZE = 10000;
+const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
@@ -148,9 +148,12 @@ type ImageTags = Awaited<ReturnType<typeof tagIdsForImagesCache.fetch>>;
 
 export type ImageForMetricSearchIndex = {
   sortAtUnix: number;
-  tags: string[];
-  tools: string[];
-  techniques: string[];
+  tagIds: number[];
+  tagNames: string[];
+  toolIds: number[];
+  toolNames: string[];
+  techniqueIds: number[];
+  techniqueNames: string[];
 } & SearchBaseImage &
   Metrics &
   ModelVersions;
@@ -165,7 +168,7 @@ const transformData = async ({
   modelVersions,
 }: {
   images: SearchBaseImage[];
-  tags: ImageTags;
+  imageTags: ImageTags;
   metrics: Metrics[];
   tools: ImageTool[];
   techniques: ImageTechnique[];
@@ -202,8 +205,8 @@ const transformData = async ({
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
-        tagNames: imageTags[imageRecord.id]?.tagNames ?? [],
-        tagIds: imageTags[imageRecord.id]?.tagIds ?? [],
+        tagNames: imageTags[imageRecord.id]?.tags?.map((t) => t.id) ?? [],
+        tagIds: imageTags[imageRecord.id]?.tags?.map((t) => t.name) ?? [],
       };
     })
     .filter(isDefined);
@@ -271,12 +274,13 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
+    console.log(batch);
     const where = [
       batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
-        ? Prisma.sql`i.id BETWEEN ${batch.startId} AND ${batch.endId}`
+        ? Prisma.raw(`i.id BETWEEN ${batch.startId} AND ${batch.endId}`)
         : undefined,
-    ];
+    ].filter(isDefined);
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
