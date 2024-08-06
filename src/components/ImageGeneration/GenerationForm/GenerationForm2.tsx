@@ -402,7 +402,6 @@ export function GenerationFormContent() {
                         withBorder
                         p="sm"
                         radius="sm"
-                        pb={0}
                       >
                         <InputResourceSelect
                           name="model"
@@ -418,7 +417,12 @@ export function GenerationFormContent() {
                             ],
                           }}
                           hideVersion={!hasAdditionalResources}
-                          pb={!hasAdditionalResources ? 'sm' : undefined}
+                          pb={
+                            !hasAdditionalResources &&
+                            (unstableResources.length || minorFlaggedResources.length)
+                              ? 'sm'
+                              : undefined
+                          }
                         />
                         {hasAdditionalResources && (
                           <Card.Section
