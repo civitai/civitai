@@ -332,7 +332,7 @@ export function DumbModelFiltersDropdown({
 
   if (mobile)
     return (
-      <>
+      <IsClient>
         {target}
         <Drawer
           opened={opened}
@@ -351,7 +351,7 @@ export function DumbModelFiltersDropdown({
         >
           {dropdown}
         </Drawer>
-      </>
+      </IsClient>
     );
 
   return (
