@@ -58,6 +58,10 @@ import {
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
 import { ModelUpsertInput } from '~/server/schema/model.schema';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -279,13 +283,17 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [acceptsTrainedWords, isTextualInversion, model?.id, version]);
 
+  const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta });
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
     // TODO: Update to model scores.
-    .map(([score, days]) => ((currentUser?.meta?.scores?.total ?? 0) >= score ? days : null))
+    .map(([score, days]) =>
+      days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta }) ? days : null
+    )
     .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
   const showEarlyAccessInput =
+    maxEarlyAccessModels > 0 &&
     features.earlyAccessModel &&
     earlyAccessUnlockedDays.length > 0 &&
     (!isPublished || atEarlyAccess);
@@ -334,14 +342,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   </Group>
                 }
                 content={
-                  <>
+                  <Stack>
                     <Text size="xs">
                       Early access allows you to charge a fee for early access to your model. This
                       fee is paid by users who want to access your model before it is available to
                       the public. Once the early access period ends, your model will be available to
                       the public for free.
                     </Text>
-                  </>
+                    <Text size="xs">
+                      You can have up to {maxEarlyAccessModels} models in early access at a time.
+                      This will increase as you post more models on the site.
+                    </Text>
+                  </Stack>
                 }
                 mb="xs"
               />

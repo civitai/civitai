@@ -223,7 +223,9 @@ export const upsertModelVersionHandler = async ({
         activeEarlyAccess.length > getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
         (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
       ) {
-        throw throwBadRequestError('User has too many active early access models');
+        throw throwBadRequestError(
+          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
+        );
       }
     }
 
