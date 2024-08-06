@@ -152,7 +152,10 @@ const DonationGoalItem = ({
                   placeholder="Amount to donate"
                   disabled={donating}
                 />
-                <Tooltip label="Purchasing the model for generation or download does not contribute to the donation goal.">
+                <Tooltip
+                  label="Purchasing the model for generation or download will contribute to the donation goal."
+                  maw={250}
+                >
                   <IconInfoCircle />
                 </Tooltip>
               </Group>

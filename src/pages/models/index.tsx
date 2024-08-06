@@ -6,19 +6,13 @@ import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { EarlyAccessHighlight } from '~/components/Model/EarlyAccessHighlight/EarlyAccessHighlight';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client.mjs';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 
 export default function ModelsPage() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
-  const { setFilters, earlyAccess } = useFiltersContext((state) => ({
-    setFilters: state.setModelFilters,
-    earlyAccess: state.models.earlyAccess,
-  }));
   const { username, query } = queryFilters;
   const periodMode = query ? ('stats' as PeriodMode) : undefined;
   if (periodMode) queryFilters.periodMode = periodMode;
@@ -36,7 +30,8 @@ export default function ModelsPage() {
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         <Stack spacing="xs">
           <IsClient>
-            <EarlyAccessHighlight />
+            {/* TODO: Bring back something similar in the future once we start selling spots. */}
+            {/* <EarlyAccessHighlight /> */}
             <CategoryTags />
             <ModelsInfinite filters={queryFilters} showEof showAds />
           </IsClient>
