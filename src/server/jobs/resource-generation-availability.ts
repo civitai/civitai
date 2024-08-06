@@ -26,9 +26,9 @@ export const resourceGenerationAvailability = createJob(
                   1 AS failed
                 FROM orchestration.failedTextToImageJobs
                 WHERE createdAt > current_date() - interval '24 hours'
-        
+
                 UNION ALL
-        
+
                 SELECT
                   arrayJoin(resourcesUsed) as modelVersionId,
                   0 AS failed
@@ -38,6 +38,7 @@ export const resourceGenerationAvailability = createJob(
               GROUP BY modelVersionId
             ) s
             WHERE failed > CAST(requested AS FLOAT) / 2
+            AND requested > 10;
           `,
         })
         .then((res) => res.json<Array<{ modelVersionId: number }>>())
