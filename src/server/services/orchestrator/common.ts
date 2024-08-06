@@ -216,15 +216,17 @@ export async function parseGenerateImageInput({
   params.nsfw ??= isPromptNsfw !== false;
 
   const injectable: InjectableResource[] = [];
-  if (params.draft && injectableResources.draft) {
-    injectable.push(injectableResources.draft);
-  }
-  if (isPromptNsfw && status.minorFallback) {
-    injectable.push(injectableResources.safe_pos);
-    injectable.push(injectableResources.safe_neg);
-  }
-  if (!params.nsfw && status.sfwEmbed) {
-    injectable.push(injectableResources.civit_nsfw);
+  if (!isFlux) {
+    if (params.draft && injectableResources.draft) {
+      injectable.push(injectableResources.draft);
+    }
+    if (isPromptNsfw && status.minorFallback) {
+      injectable.push(injectableResources.safe_pos);
+      injectable.push(injectableResources.safe_neg);
+    }
+    if (!params.nsfw && status.sfwEmbed) {
+      injectable.push(injectableResources.civit_nsfw);
+    }
   }
 
   const positivePrompts = [params.prompt];
