@@ -179,9 +179,9 @@ export const modelNotifications = createNotificationProcessor({
     displayName: 'New models from followed users',
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `${details.username} released a new ${getDisplayName(
-        details.modelType
-      ).toLowerCase()}: ${details.modelName}`,
+      message: `${details.username} released a new ${getDisplayName(details.modelType)}: ${
+        details.modelName
+      }`,
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: ({ lastSent }) => `
