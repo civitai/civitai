@@ -47,8 +47,6 @@ export function ModelsInfinite({
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
-    console.log('cancel debounced filters');
-    console.log({ filters, debouncedFilters, condition: isEqual(filters, debouncedFilters) });
     if (isEqual(filters, debouncedFilters)) cancel();
   }, [debouncedFilters, filters]);
   //#endregion
