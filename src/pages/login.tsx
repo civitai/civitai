@@ -9,13 +9,12 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { useDidUpdate } from '@mantine/hooks';
 import { Currency } from '@prisma/client';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
@@ -73,7 +72,7 @@ export default function Login({ providers }: Props) {
     }
   }, [reason, setLoginRedirectReason]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!adRef.current) return;
 
     console.log('pushing to queue');
@@ -83,7 +82,7 @@ export default function Login({ providers }: Props) {
         console.log('requesting rewarded ad');
         window.pgHB?.requestWebRewardedAd?.({
           slotId: 'rewarded-ad',
-          callback: (success: any, errors: any) => {
+          callback: (success: unknown, errors: unknown) => {
             console.log('rewarded ad callback');
             console.log(success);
             console.log(errors);

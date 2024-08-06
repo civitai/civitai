@@ -102,52 +102,33 @@ function LoadProviderScript({ provider, onError }: { provider: AdProvider; onErr
       );
     case 'pubgalaxy':
       return (
-        <>
-          {/* <Script src="https://cmp.uniconsent.com/v2/stub.min.js" />
-          <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
-          <Script
-            id="ads-start"
-            type="text/javascript"
-            dangerouslySetInnerHTML={{
-              __html: `
-                window.googletag = window.googletag || {};
-                window.googletag.cmd = window.googletag.cmd || [];
-                window.googletag.cmd.push(function () {
-                  window.googletag.pubads().enableAsyncRendering();
-                  window.googletag.pubads().disableInitialLoad();
-                });
-                (adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1;
-              `,
-            }}
-          /> */}
-          {/* <Script
-            id="ads-init"
-            type="text/javascript"
-            dangerouslySetInnerHTML={{
-              __html: `
-                if (typeof __tcfapi !== 'undefined') {
-                  __tcfapi("addEventListener", 2, function(tcData, success) {
-                    if (success && tcData.unicLoad  === true) {
-                      if(!window._initAds) {
-                        window._initAds = true;
-                          
-                        var script = document.createElement('script');
-                        script.async = true;
-                        script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
-                        document.head.appendChild(script);
-                  
-                        var script = document.createElement('script');
-                        script.async = true;
-                        script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
-                        document.head.appendChild(script);
-                      }
+        <Script
+          id="ads-init"
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html: `
+              if (typeof __tcfapi !== 'undefined') {
+                __tcfapi("addEventListener", 2, function(tcData, success) {
+                  if (success && tcData.unicLoad  === true) {
+                    if(!window._initAds) {
+                      window._initAds = true;
+                        
+                      var script = document.createElement('script');
+                      script.async = true;
+                      script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
+                      document.head.appendChild(script);
+                
+                      var script = document.createElement('script');
+                      script.async = true;
+                      script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
+                      document.head.appendChild(script);
                     }
-                  });
-                }
-              `,
-            }}
-          /> */}
-        </>
+                  }
+                });
+              }
+            `,
+          }}
+        />
       );
     case 'exoclick':
     default:
