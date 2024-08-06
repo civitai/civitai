@@ -126,6 +126,18 @@ export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
 };
 
+export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: number }) => {
+  return await dbRead.modelVersion.findMany({
+    where: {
+      earlyAccessEndsAt: { gt: new Date() },
+      model: {
+        userId,
+      },
+    },
+    select: { id: true },
+  });
+};
+
 export const upsertModelVersion = async ({
   id,
   monetization,
