@@ -82,24 +82,22 @@ export default function Notifications() {
             </Center>
           ) : notifications && notifications.length > 0 ? (
             <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
-              <IntersectionObserverProvider>
-                <NotificationList
-                  items={notifications}
-                  onItemClick={(notification) => {
-                    readNotificationMutation.mutate({
-                      id: notification.id,
-                      category: notification.category,
-                    });
-                  }}
-                />
-                {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
-                      <Loader />
-                    </Center>
-                  </InViewLoader>
-                )}
-              </IntersectionObserverProvider>
+              <NotificationList
+                items={notifications}
+                onItemClick={(notification) => {
+                  readNotificationMutation.mutate({
+                    id: notification.id,
+                    category: notification.category,
+                  });
+                }}
+              />
+              {hasNextPage && (
+                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                  <Center p="xl" sx={{ height: 36 }} mt="md">
+                    <Loader />
+                  </Center>
+                </InViewLoader>
+              )}
             </Paper>
           ) : (
             <Center p="sm">
