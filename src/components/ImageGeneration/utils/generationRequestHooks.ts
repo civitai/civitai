@@ -52,6 +52,8 @@ export function useGetTextToImageRequests(
     enabled: !!currentUser,
     ...options,
   });
+
+  console.log('useGetTextToImageRequests', { input, data, rest });
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
@@ -487,4 +489,4 @@ function updateFromEvents() {
       }
     }
   });
-}
+}   

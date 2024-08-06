@@ -38,7 +38,7 @@ const ICONS = {
   default: IconFilter,
   liked: IconThumbUpFilled,
   disliked: IconThumbDownFilled,
-  faved: IconHeartFilled,
+  favorited: IconHeartFilled,
   tagged: IconTagFilled
 };
 
