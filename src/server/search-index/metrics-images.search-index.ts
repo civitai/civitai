@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -12,6 +11,37 @@ import { isDefined } from '~/utils/type-guards';
 const READ_BATCH_SIZE = 1000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
+
+const searchableAttributes = ['prompt'] as const;
+
+const sortableAttributes = ['sortAt', 'reactionCount', 'commentCount', 'collectedCount'] as const;
+
+const filterableAttributes = [
+  'id',
+  'sortAtUnix',
+  'modelVersionIds',
+  'postedToId',
+  'baseModel',
+  'type',
+  'hasMeta',
+  'onSite',
+  'toolNames',
+  'toolIds',
+  'techniqueNames',
+  'techniqueIds',
+  'tagNames',
+  'tagIds',
+  'userId',
+  'nsfwLevel',
+  'postId',
+  'published',
+  'id',
+] as const;
+
+export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
+export type MetricsImageSortableAttribute = (typeof sortableAttributes)[number];
+export type MetricsImageFilterableAttribute = (typeof filterableAttributes)[number];
+
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -26,40 +56,15 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const settings = await index.getSettings();
 
-  const searchableAttributes: SearchableAttributes = ['prompt'];
+  const searchableAttributesSorted = searchableAttributes.toSorted();
+  const sortableAttributesSorted = sortableAttributes.toSorted();
+  const filterableAttributesSorted = filterableAttributes.toSorted();
 
-  const sortableAttributes: SortableAttributes = [
-    'sortAt',
-    'reactionCount',
-    'commentCount',
-    'collectedCount',
-  ];
-
-  const filterableAttributes: FilterableAttributes = [
-    'id',
-    'sortAtUnix',
-    'modelVersionIds',
-    'postedToId',
-    'baseModel',
-    'type',
-    'hasMeta',
-    'onSite',
-    'toolNames',
-    'toolIds',
-    'techniqueNames',
-    'techniqueIds',
-    'tagNames',
-    'tagIds',
-    'userId',
-    'nsfwLevel',
-    'postId',
-    'published',
-    'id',
-  ];
-
-  if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
+  if (
+    JSON.stringify(searchableAttributesSorted) !== JSON.stringify(settings.searchableAttributes)
+  ) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
-      searchableAttributes
+      searchableAttributesSorted
     );
 
     console.log(
@@ -68,8 +73,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  if (JSON.stringify(sortableAttributes.sort()) !== JSON.stringify(settings.sortableAttributes)) {
-    const sortableFieldsAttributesTask = await index.updateSortableAttributes(sortableAttributes);
+  if (JSON.stringify(sortableAttributesSorted) !== JSON.stringify(settings.sortableAttributes)) {
+    const sortableFieldsAttributesTask = await index.updateSortableAttributes(
+      sortableAttributesSorted
+    );
 
     console.log(
       'onIndexSetup :: sortableFieldsAttributesTask created',
@@ -78,10 +85,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   if (
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(filterableAttributesSorted) !== JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      filterableAttributesSorted
     );
 
     console.log(
