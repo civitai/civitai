@@ -1263,6 +1263,13 @@ export const getAllImagesPost = async (
   console.timeEnd('SEARCH IDS');
   console.log(searchResults[0]?.id, searchResults.length);
 
+  if (!searchResults.length) {
+    return {
+      nextCursor: undefined,
+      items: [],
+    };
+  }
+
   const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
   const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
@@ -1439,12 +1446,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
-  if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
+  // TODO is this right? some videos are missing the modelVersionIds field. also why is that an array?
+  if (modelVersionId)
+    filters.push(`(modelVersionIds IN [${modelVersionId}] OR postedToId = ${modelVersionId})`);
+  // if (modelVersionId) filters.push(`postedToId = ${modelVersionId}`);
+  // if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
   if (hasMeta) filters.push(`hasMeta = true`);
   if (fromPlatform) filters.push(`madeOnSite = true`);
   if (notPublished && isModerator) filters.push(`published = false`);
 
-  if (types?.length) filters.push(`mediaType IN [${types.join(',')}]`);
+  if (types?.length) filters.push(`type IN [${types.join(',')}]`);
   if (tags?.length) filters.push(`tags IN [${tags.join(',')}]`);
   if (tools?.length) filters.push(`tools IN [${tools.join(',')}]`);
   if (techniques?.length) filters.push(`techniques IN [${techniques.join(',')}]`);
