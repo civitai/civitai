@@ -364,21 +364,21 @@ export const constants = {
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
       // The maximum amount of days that can be set based off of score.
-      [900, 3],
-      [1800, 5],
-      [2200, 7],
-      [8500, 9],
-      [18000, 12],
-      [40000, 15],
+      [40000, 3],
+      [65000, 5],
+      [90000, 7],
+      [125000, 9],
+      [200000, 12],
+      [250000, 15],
     ],
     scoreQuantityUnlock: [
       // How many items can be marked EA at the same time based off of score.
-      [900, 1],
-      [1800, 2],
-      [2200, 4],
-      [8500, 6],
-      [18000, 8],
-      [40000, 10],
+      [40000, 1],
+      [65000, 2],
+      [90000, 4],
+      [125000, 6],
+      [200000, 8],
+      [250000, 10],
     ],
   },
 } as const;
