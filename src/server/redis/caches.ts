@@ -8,8 +8,7 @@ import {
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -24,6 +23,7 @@ import {
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
@@ -244,8 +244,10 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   key: REDIS_KEYS.CACHES.BASIC_USERS,
   idKey: 'id',
   lookupFn: async (ids) => {
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
     const userBasicData = await dbRead.user.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: goodIds } },
       select: {
         id: true,
         username: true,

@@ -1028,6 +1028,7 @@ export const getAllImages = async (
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
   const { rows: rawImages } = await pgDbRead.query<GetAllImagesRaw>(query);
+  // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1186,13 +1187,12 @@ export const getAllImages = async (
 
 export const getAllImagesPost = async (
   input: GetInfiniteImagesOutput & {
-    userId?: number;
     user?: SessionUser;
     headers?: Record<string, string>;
   }
 ) => {
   const {
-    userId,
+    user,
     limit,
     cursor,
     postIds,
@@ -1201,41 +1201,42 @@ export const getAllImagesPost = async (
     include,
     types,
     fromPlatform,
-    baseModels,
+    // baseModels, // doesn't make sense to do this here
     tools,
     techniques,
     tags,
     notPublished,
     withMeta: hasMeta,
+    excludedUserIds,
+    //
+    modelId, // TODO fix
+    reviewId, // TODO - remove, not in use...true?
+    username, // TODO - query by `userId` instead
+    collectionId, // TODO - call this from separate method?
+    ids,
     skip,
     postId,
-    collectionId, // TODO - call this from separate method?
-    modelId,
-    imageId, // TODO - remove, not in use
-    username, // TODO - query by `userId` instead
     periodMode,
     generation,
-    reviewId, // TODO - remove, not in use
     prioritizedUserIds,
     excludeCrossPosts,
-    reactions, // TODO - remove, not in use
-    ids,
     includeBaseModel,
     hidden,
     followed,
-    user,
     pending,
     collectionTagId,
-    excludedUserIds,
     headers,
     excludedTagIds,
     withTags,
+    imageId, // TODO - remove, not in use
+    reactions, // TODO - remove, not in use
   } = input;
   const { sort, browsingLevel } = input;
 
   // include: [ 'cosmetics', 'tagIds', 'profilePictures' ]
 
   const offset = cursor as number | undefined;
+  const currentUserId = user?.id;
 
   console.time('SEARCH IDS');
   const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
@@ -1244,7 +1245,7 @@ export const getAllImagesPost = async (
     browsingLevel,
     fromPlatform,
     hasMeta,
-    baseModels,
+    // baseModels,
     postIds,
     period,
     tools,
@@ -1254,14 +1255,23 @@ export const getAllImagesPost = async (
     sort,
     limit,
     offset,
-    currentUserId: user?.id,
+    excludedUserIds,
+    // userIds: userIds,
+    currentUserId,
     isModerator: user?.isModerator,
   });
   console.timeEnd('SEARCH IDS');
   console.log(searchResults[0]?.id, searchResults.length);
 
-  const imageIds = searchResults.map((sr) => sr.id);
-  const userIds = searchResults.map((sr) => sr.userId);
+  if (!searchResults.length) {
+    return {
+      nextCursor: undefined,
+      items: [],
+    };
+  }
+
+  const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
+  const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
   // TODO may need to check for image existence in db
 
@@ -1292,9 +1302,9 @@ export const getAllImagesPost = async (
 
   console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (userId) {
+  if (currentUserId) {
     const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId },
+      where: { imageId: { in: imageIds }, userId: currentUserId },
       select: { imageId: true, reaction: true },
     });
     userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
@@ -1319,7 +1329,7 @@ export const getAllImagesPost = async (
   const mergedData = searchResults.map((sr) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
-      userReactions?.[sr.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [];
+      userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
 
     return {
       ...sr,
@@ -1388,36 +1398,18 @@ type ImageSearchInput = {
   userIds?: number | number[];
   modelId?: number;
   reviewId?: number;
-  excludeUserIds?: number[];
+  excludedUserIds?: number[];
   currentUserId?: number;
   isModerator?: boolean;
 };
 
-function strArray(arr: any[]) {
+function strArray(arr: (string | number)[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return { data: [], total: 0 };
-  /*
-  modelVersionId,
-      types,
-      browsingLevel,
-      fromPlatform,
-      hasMeta,
-      baseModels,
-      postIds,
-      period,
-      tools,
-      techniques,
-      tags,
-      notPublished,
-      sort,
-      limit,
-      offset,
-      currentUserId: user?.id,
-      isModerator: user?.isModerator,
-   */
+
   const {
     sort,
     modelVersionId,
@@ -1433,15 +1425,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     isModerator,
     postIds,
     currentUserId,
-    userIds, // missing
     reviewId, // missing
     modelId, // missing
-    excludeUserIds, // missing
+    excludedUserIds,
     limit,
     offset,
     page,
   } = input;
-  let { browsingLevel } = input;
+  let { userIds, browsingLevel } = input;
 
   // Filter
   //------------------------
@@ -1455,27 +1446,31 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
-  if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
+  // TODO is this right? some videos are missing the modelVersionIds field. also why is that an array?
+  if (modelVersionId)
+    filters.push(`(modelVersionIds IN [${modelVersionId}] OR postedToId = ${modelVersionId})`);
+  // if (modelVersionId) filters.push(`postedToId = ${modelVersionId}`);
+  // if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
   if (hasMeta) filters.push(`hasMeta = true`);
   if (fromPlatform) filters.push(`madeOnSite = true`);
   if (notPublished && isModerator) filters.push(`published = false`);
 
-  if (types?.length) filters.push(`mediaType IN [${types.join(',')}]`);
+  if (types?.length) filters.push(`type IN [${types.join(',')}]`);
   if (tags?.length) filters.push(`tags IN [${tags.join(',')}]`);
   if (tools?.length) filters.push(`tools IN [${tools.join(',')}]`);
   if (techniques?.length) filters.push(`techniques IN [${techniques.join(',')}]`);
   if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
   if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
 
-  // TODO.metricSearch remove hash
-  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
-  // if (reviewId) {}
-
-  // TODO.metricSearch add userId
+  // TODO what are we doing with this? userIds are not passed in, only a single username is
   // if (userIds) {
   //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(`userId IN [${userIds.join(',')}]`)
+  //   filters.push(`userId IN [${userIds.join(',')}]`);
   // }
+  if (excludedUserIds) filters.push(`userId NOT IN [${excludedUserIds.join(',')}]`);
+
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  // if (reviewId) {}
 
   // Handle period filter
   let afterDate: Date | undefined;
@@ -1486,18 +1481,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
 
   // TODO remove, this is for 6/21 dev
-  filters.push(`sortAtUnix <= 1719002520000`);
+  if (!isProd) {
+    filters.push(`sortAtUnix <= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`);
+  }
 
   // Log properties we don't support yet
   const cantProcess: Record<string, any> = {
     reviewId,
     modelId,
     userIds,
-    excludeUserIds,
   };
-  if (reviewId || modelId || userIds || excludeUserIds) {
+  if (reviewId || modelId || userIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) }, 'temp-search');
+    logToAxiom(
+      { type: 'cant-use-search', input: JSON.stringify(missingKeys) },
+      'temp-search'
+    ).catch();
   }
 
   // Sort
@@ -1538,7 +1537,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     logToAxiom(
       { type: 'search-result', metrics, input: removeEmpty(input), request },
       'temp-search'
-    );
+    ).catch();
 
     const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
 
@@ -1577,7 +1576,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         request,
       },
       'temp-search'
-    );
+    ).catch();
     return { data: [], total: 0 };
   }
 }
@@ -1718,17 +1717,17 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      COALESCE(im."cryCount", 0) "cryCount",
-      COALESCE(im."laughCount", 0) "laughCount",
-      COALESCE(im."likeCount", 0) "likeCount",
-      COALESCE(im."dislikeCount", 0) "dislikeCount",
-      COALESCE(im."heartCount", 0) "heartCount",
-      COALESCE(im."commentCount", 0) "commentCount",
-      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
-      COALESCE(im."viewCount", 0) "viewCount",
-      u.id "userId",
+      COALESCE(im."cryCount", 0) as "cryCount",
+      COALESCE(im."laughCount", 0) as "laughCount",
+      COALESCE(im."likeCount", 0) as "likeCount",
+      COALESCE(im."dislikeCount", 0) as "dislikeCount",
+      COALESCE(im."heartCount", 0) as "heartCount",
+      COALESCE(im."commentCount", 0) as "commentCount",
+      COALESCE(im."tippedAmountCount", 0) as "tippedAmountCount",
+      COALESCE(im."viewCount", 0) as "viewCount",
+      u.id as "userId",
       u.username,
-      u.image "userImage",
+      u.image as "userImage",
       u."deletedAt",
       u."profilePictureId",
       ${

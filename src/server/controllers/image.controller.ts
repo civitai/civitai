@@ -29,6 +29,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { isDefined } from '~/utils/type-guards';
 import {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -293,7 +294,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         followed: false,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
-        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
+        limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
         user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
@@ -319,7 +320,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const mergedPosts = Object.values({ ...pinned, ...posts });
 
     // Get reviews from the users who created the posts
-    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id))];
+    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
     const reviews = await dbRead.resourceReview.findMany({
       where: {
         userId: { in: userIds },

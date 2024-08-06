@@ -36,6 +36,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ];
 
   const filterableAttributes: FilterableAttributes = [
+    'id',
     'sortAtUnix',
     'modelVersionIds',
     'postedToId',
@@ -309,7 +310,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) as "onSite",
-        p."modelVersionId" as "postedToId",
+        p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

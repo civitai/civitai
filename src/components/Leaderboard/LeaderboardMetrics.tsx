@@ -172,6 +172,10 @@ const metricTypes: Record<
     tooltip: 'Entries',
     icon: <IconBox {...iconProps} />,
   }),
+  cosmetics: () => ({
+    tooltip: 'Cosmetics',
+    icon: <IconHexagonFilled {...iconProps} />,
+  }),
   diamond: () => ({
     tooltip: 'Diamond Days',
     icon: (
