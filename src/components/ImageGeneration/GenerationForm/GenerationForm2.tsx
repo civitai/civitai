@@ -205,7 +205,7 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     const { cost = 0 } = useCostStore.getState();
 
-    const {
+    let {
       model,
       resources: additionalResources,
       vae,
@@ -220,6 +220,8 @@ export function GenerationFormContent() {
     const resources = [model, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.available !== false);
+    const isFlux = getIsFlux(params.baseModel);
+    if (isFlux) creatorTip = 0;
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
