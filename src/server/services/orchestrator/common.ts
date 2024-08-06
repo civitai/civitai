@@ -117,6 +117,7 @@ export async function parseGenerateImageInput({
     originalResources = [{ id: version, strength: 1 }];
     originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
+    originalParams.negativePrompt = '';
     if (originalParams.fluxMode === fluxModeOptions[0].value) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
@@ -253,7 +254,7 @@ export async function parseGenerateImageInput({
 
   let quantity = params.quantity;
   let batchSize = 1;
-  if (isFlux ? params.fluxMode === fluxModeOptions[0].value : params.draft) {
+  if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
   }
