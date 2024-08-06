@@ -52,7 +52,7 @@ function DragLoader() {
   const theme = useMantineTheme();
 
   useEffect(() => {
-    const node = scrollRef.current;
+    const node = scrollRef?.current;
     const loader = loaderRef.current;
     if (!node || !loader) return;
 
