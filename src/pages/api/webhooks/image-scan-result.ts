@@ -128,12 +128,18 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 async function isBlocked(hash: number) {
   // TODO.blockedImages check against "blockedImages" table using hamming distance
   // https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
-  return false;
+  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+    SELECT hash
+    FROM "BlockedImage"
+    WHERE BIT_COUNT(${hash}::bigint ^ "hash") < 5
+  `;
+
+  return matches.length > 0;
 }
 
 async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
   if (hash && (await isBlocked(hash))) {
-    await dbWrite.image.updateMany({
+    await dbWrite.image.update({
       where: { id },
       data: {
         pHash: hash,
