@@ -14,7 +14,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
-import { SearchResponse } from 'meilisearch';
+import { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
@@ -57,7 +57,11 @@ import {
 } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
-import { ImageMetricsSearchIndexRecord } from '~/server/search-index/metrics-images.search-index';
+import {
+  ImageMetricsSearchIndexRecord,
+  MetricsImageFilterableAttribute,
+  MetricsImageSortableAttribute,
+} from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
@@ -1407,6 +1411,14 @@ function strArray(arr: (string | number)[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
 
+type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
+const makeMeiliImageSearchFilter = (
+  field: MetricsImageFilterableAttribute,
+  criteria: string
+): MeiliImageFilter => {
+  return `${field} ${criteria}`;
+};
+
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return { data: [], total: 0 };
 
@@ -1443,31 +1455,39 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   else browsingLevel = onlySelectableLevels(browsingLevel);
   const browsingLevels = Flags.instanceToArray(browsingLevel);
   if (isModerator) browsingLevels.push(0);
-  filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
+  filters.push(makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`));
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
-  // TODO is this right? some videos are missing the modelVersionIds field. also why is that an array?
-  if (modelVersionId)
-    filters.push(`(modelVersionIds IN [${modelVersionId}] OR postedToId = ${modelVersionId})`);
-  // if (modelVersionId) filters.push(`postedToId = ${modelVersionId}`);
-  // if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
-  if (hasMeta) filters.push(`hasMeta = true`);
-  if (fromPlatform) filters.push(`madeOnSite = true`);
-  if (notPublished && isModerator) filters.push(`published = false`);
+  if (modelVersionId) {
+    filters.push(
+      `(${makeMeiliImageSearchFilter(
+        'modelVersionIds',
+        `IN [${modelVersionId}]`
+      )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
+    );
+  }
 
-  if (types?.length) filters.push(`type IN [${types.join(',')}]`);
-  if (tags?.length) filters.push(`tags IN [${tags.join(',')}]`);
-  if (tools?.length) filters.push(`tools IN [${tools.join(',')}]`);
-  if (techniques?.length) filters.push(`techniques IN [${techniques.join(',')}]`);
-  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
-  if (postIds?.length) filters.push(`postId IN [${strArray(postIds)}]`);
+  if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
+  if (notPublished && isModerator) filters.push(makeMeiliImageSearchFilter('published', '= false'));
+
+  if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
+  if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
+  if (tools?.length) filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
+  if (techniques?.length)
+    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
+  if (postIds?.length)
+    filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
+  if (baseModels?.length)
+    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
   // TODO what are we doing with this? userIds are not passed in, only a single username is
   // if (userIds) {
   //   userIds = Array.isArray(userIds) ? userIds : [userIds];
   //   filters.push(`userId IN [${userIds.join(',')}]`);
   // }
-  if (excludedUserIds) filters.push(`userId NOT IN [${excludedUserIds.join(',')}]`);
+  if (excludedUserIds)
+    filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
   // if (reviewId) {}
@@ -1478,11 +1498,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const now = dayjs();
     afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
   }
-  if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
+  if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
   // TODO remove, this is for 6/21 dev
   if (!isProd) {
-    filters.push(`sortAtUnix <= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`);
+    filters.push(
+      makeMeiliImageSearchFilter(
+        'sortAtUnix',
+        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+      )
+    );
   }
 
   // Log properties we don't support yet
@@ -1501,13 +1526,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   // Sort
   //------------------------
-  let searchSort = 'sortAt:desc';
+  let searchSort: `${MetricsImageSortableAttribute}:${'asc' | 'desc'}` = 'sortAt:desc';
   if (sort === ImageSort.MostComments) searchSort = 'commentCount:desc';
   else if (sort === ImageSort.MostReactions) searchSort = 'reactionCount:desc';
   else if (sort === ImageSort.MostCollected) searchSort = 'collectedCount:desc';
   else if (sort === ImageSort.Oldest) searchSort = 'sortAt:asc';
 
-  const request = {
+  const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: [searchSort],
     limit: limit ?? 100,
@@ -1599,6 +1624,7 @@ const getImageMetrics = async (ids: number[]) => {
 
   const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
 
+  // TODO fix this
   // // if no data in postgres, get latest from clickhouse
   // if (clickhouse) {
   //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
