@@ -41,6 +41,7 @@ export default function Login({ providers }: Props) {
     returnUrl: string;
     reason: LoginRedirectReason;
   };
+  const adRef = useRef<HTMLDivElement>(null);
   const { code, setLoginRedirectReason } = useReferralsContext();
   const { data: referrer } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code as string },
@@ -73,6 +74,8 @@ export default function Login({ providers }: Props) {
   }, [reason, setLoginRedirectReason]);
 
   useEffect(() => {
+    if (!adRef.current) return;
+
     console.log('pushing to queue');
     window.pgHB = window.pgHB || { que: [] };
     window.pgHB.que.push(() => {
@@ -102,7 +105,7 @@ export default function Login({ providers }: Props) {
       <Container size="xs">
         <Stack>
           <div id="civitaicom47459" />
-          <div id="rewarded-ad" />
+          <div id="rewarded-ad" ref={adRef} />
           {!!redirectReason && (
             <Alert color="yellow">
               <Group position="center" spacing="xs" noWrap align="flex-start">
