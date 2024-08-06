@@ -3,6 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -40,13 +41,14 @@ export function ModelsInfinite({
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
+  const browsingLevel = useBrowsingLevelDebounced();
   const { models, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryModels(debouncedFilters);
+    useQueryModels({ ...debouncedFilters, browsingLevel });
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
     if (isEqual(filters, debouncedFilters)) cancel();
-  }, [cancel, debouncedFilters, filters]);
+  }, [debouncedFilters, filters]);
   //#endregion
 
   return (

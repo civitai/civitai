@@ -62,6 +62,8 @@ export const constants = {
     'SDXL 1.0',
     'SD 3',
     'Pony',
+    'Flux.1 S',
+    'Flux.1 D',
     'AuraFlow',
     'SDXL 1.0 LCM',
     'SDXL Distilled',
@@ -303,14 +305,14 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
+  supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
   memberships: {
     tierOrder: ['founder', 'bronze', 'silver', 'gold'],
     badges: {
-      founder: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
-      bronze: 'fea8a5fe-4cc9-4fb4-a86c-25f03db09d28',
-      silver: '392d474d-8745-416e-9aac-26ff5273974c',
-      gold: 'd47d01b6-fceb-495a-8e26-08eb062c040f',
+      founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+      bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+      silver: '9f174f9f-e823-44af-b969-cd1a1d7efb08',
+      gold: '758f52cb-29f7-4c40-b0fd-1a45b904bd51',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -360,12 +362,22 @@ export const constants = {
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
+      // The maximum amount of days that can be set based off of score.
       [900, 3],
       [1800, 5],
       [2200, 7],
       [8500, 9],
       [18000, 12],
       [40000, 15],
+    ],
+    scoreQuantityUnlock: [
+      // How many items can be marked EA at the same time based off of score.
+      [900, 1],
+      [1800, 2],
+      [2200, 4],
+      [8500, 6],
+      [18000, 8],
+      [40000, 10],
     ],
   },
 } as const;
@@ -402,6 +414,7 @@ export const baseModelSetTypes = [
   'Kolors',
   'HyDit1',
   'ODOR',
+  'Flux1',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -409,6 +422,7 @@ export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
   SD3: ['SD 3'],
+  Flux1: ['Flux.1 S', 'Flux.1 D'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
   PixArtA: ['PixArt a'],
@@ -485,6 +499,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/apache-2.0.md',
     name: 'Apache 2.0',
   },
+  flux1D: {
+    url: 'https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md',
+    name: 'FLUX.1 [dev] Non-Commercial License',
+    notice:
+      'The FLUX.1 [dev] Model is licensed by Black Forest Labs. Inc. under the FLUX.1 [dev] Non-Commercial License. Copyright Black Forest Labs. Inc.',
+    poweredBy:
+      'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -516,6 +538,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Stable Cascade': baseLicenses['SAI NC RC'],
   Pony: baseLicenses['openrail++'],
   AuraFlow: baseLicenses['apache 2.0'],
+  'Flux.1 S': baseLicenses['apache 2.0'],
+  'Flux.1 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
 };
@@ -558,6 +582,7 @@ export const samplerOffsets = {
   'DPM++ 2M Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
+  undefined: 4,
 } as const;
 
 export const generation = {
@@ -702,6 +727,29 @@ export const generationConfig = {
       modelName: 'Pony Diffusion V6 XL',
       modelType: 'Checkpoint',
       baseModel: 'Pony',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
+  Flux1: {
+    additionalResourceTypes: [] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 691639,
+      name: '',
+      trainedWords: [],
+      modelId: 618692,
+      modelName: 'FLUX',
+      modelType: 'Checkpoint',
+      baseModel: 'Flux.1 D',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,

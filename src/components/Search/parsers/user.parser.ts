@@ -8,7 +8,7 @@ import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 export const UsersSearchIndexSortBy = [
   USERS_SEARCH_INDEX,
   `${USERS_SEARCH_INDEX}:metrics.followerCount:desc`,
-  `${USERS_SEARCH_INDEX}:stats.weightedRating:desc`,
+  `${USERS_SEARCH_INDEX}:metrics.thumbsUpCount:desc`,
   `${USERS_SEARCH_INDEX}:metrics.uploadCount:desc`,
   `${USERS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;

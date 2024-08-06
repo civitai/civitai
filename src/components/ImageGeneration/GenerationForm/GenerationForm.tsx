@@ -71,7 +71,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';

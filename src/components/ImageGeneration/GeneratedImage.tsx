@@ -1,17 +1,4 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Card,
-  Center,
-  Checkbox,
-  createStyles,
-  Group,
-  Loader,
-  Menu,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Group, Loader, Menu, Text } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -19,7 +6,6 @@ import {
   IconCheck,
   IconDotsVertical,
   IconExternalLink,
-  IconHourglass,
   IconInfoCircle,
   IconInfoHexagon,
   IconPlayerTrackNextFilled,
@@ -28,15 +14,16 @@ import {
   IconTrash,
   IconWand,
 } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
-import { useInView } from '~/hooks/useInView';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -44,9 +31,16 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { generationStore } from '~/store/generation.store';
+import { getIsFlux } from '~/shared/constants/generation.constants';
+import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+
+export type GeneratedImageProps = {
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
+  step: NormalizedGeneratedImageStep;
+};
 
 export function GeneratedImage({
   image,
@@ -58,12 +52,16 @@ export function GeneratedImage({
   step: NormalizedGeneratedImageStep;
 }) {
   const { classes } = useStyles();
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const [ref, inView] = useInViewDynamic({ id: image.id });
+  // const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
+  // const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
     imageId: image.id,
   });
+  const { pathname } = useRouter();
+  const view = useGenerationStore((state) => state.view);
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
@@ -102,6 +100,7 @@ export function GeneratedImage({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
+      view: !pathname.includes('/generate') ? 'generate' : view,
     });
   };
 
@@ -174,108 +173,159 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
-  const canRemix = step.params.workflow !== 'img2img-upscale';
+  const isFlux = getIsFlux(step.params.baseModel);
+  const canRemix = !isFlux && step.params.workflow !== 'img2img-upscale';
+  const { params } = step;
 
   return (
-    <AspectRatio ratio={step.params.width / step.params.height} ref={ref}>
+    <div
+      ref={ref}
+      className={`size-full shadow-inner card ${classes.imageWrapper}`}
+      style={{ aspectRatio: params.width / params.height }}
+    >
       {inView && (
         <>
-          <Card
-            p={0}
-            className={classes.imageWrapper}
-            style={available ? { cursor: 'pointer' } : undefined}
+          <div
+            className={`flex flex-1 cursor-pointer flex-col items-center justify-center`}
+            onClick={handleImageClick}
+            onMouseDown={(e) => {
+              if (e.button === 1) return handleAuxClick();
+            }}
           >
-            <Box
-              onClick={handleImageClick}
-              onMouseDown={(e) => {
-                if (e.button === 1) return handleAuxClick();
+            <div className={classes.innerGlow} />
+            {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
+            <img
+              ref={imageRef}
+              alt=""
+              src={image.url}
+              style={{ zIndex: 2, width: '100%' }}
+              onDragStart={(e) => {
+                if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               }}
-            >
-              <Box className={classes.innerGlow} />
-              {!available ? (
-                <Center className={classes.centeredAbsolute} p="xs">
-                  {image.status === 'processing' ? (
-                    <Stack align="center">
-                      <Loader size={24} />
-                      <Text color="dimmed" size="xs" align="center">
-                        Generating
-                      </Text>
-                    </Stack>
-                  ) : image.status === 'failed' ? (
-                    <Text color="dimmed" size="xs" align="center">
-                      Could not load image
-                    </Text>
-                  ) : (
-                    <Stack align="center">
-                      <IconHourglass />
-                      <Text color="dimmed" size="xs">
-                        Queued
-                      </Text>
-                    </Stack>
-                  )}
-                </Center>
-              ) : (
-                // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-                <img
-                  ref={imageRef}
-                  alt=""
-                  src={image.url}
-                  style={{ zIndex: 2, width: '100%' }}
-                  onDragStart={(e) => {
-                    if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-                  }}
-                />
+            />
+          </div>
+          <label className="absolute left-3 top-3 z-10">
+            <Checkbox
+              className={classes.checkbox}
+              checked={selected}
+              onChange={(e) => {
+                toggleSelect(e.target.checked);
+              }}
+            />
+          </label>
+          <Menu zIndex={400} withinPortal>
+            <Menu.Target>
+              <div className="absolute right-3 top-3 z-10">
+                <ActionIcon variant="transparent">
+                  <IconDotsVertical
+                    size={26}
+                    color="#fff"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  />
+                </ActionIcon>
+              </div>
+            </Menu.Target>
+            <Menu.Dropdown>
+              {canRemix && (
+                <>
+                  <Menu.Item
+                    onClick={() => handleGenerate()}
+                    icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+                  >
+                    Remix
+                  </Menu.Item>
+                  <Menu.Item
+                    onClick={() => handleGenerate({ seed: image.seed })}
+                    icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+                  >
+                    Remix (with seed)
+                  </Menu.Item>
+                </>
               )}
-            </Box>
-            <label className={classes.checkboxLabel}>
-              <Checkbox
-                className={classes.checkbox}
-                checked={selected}
-                onChange={(e) => {
-                  toggleSelect(e.target.checked);
-                }}
-              />
-            </label>
-            <Menu zIndex={400} withinPortal>
-              <Menu.Target>
-                <div className={classes.menuTarget}>
-                  <ActionIcon variant="transparent">
-                    <IconDotsVertical
-                      size={26}
-                      color="#fff"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    />
-                  </ActionIcon>
-                </div>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {canRemix && (
-                  <>
+              <Menu.Item
+                color="red"
+                onClick={handleDeleteImage}
+                icon={<IconTrash size={14} stroke={1.5} />}
+              >
+                Delete
+              </Menu.Item>
+              {!!img2imgWorkflows?.length && canRemix && (
+                <>
+                  <Menu.Divider />
+                  <Menu.Label>Image-to-image workflows</Menu.Label>
+                  {img2imgWorkflows?.map((workflow) => (
                     <Menu.Item
-                      onClick={() => handleGenerate()}
-                      icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+                      key={workflow.key}
+                      onClick={() => {
+                        if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                        else handleSelectWorkflow(workflow.key);
+                      }}
                     >
-                      Remix
+                      {workflow.name}
                     </Menu.Item>
-                    <Menu.Item
-                      onClick={() => handleGenerate({ seed: image.seed })}
-                      icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-                    >
-                      Remix (with seed)
-                    </Menu.Item>
-                  </>
-                )}
-                <Menu.Item
-                  color="red"
-                  onClick={handleDeleteImage}
-                  icon={<IconTrash size={14} stroke={1.5} />}
+                  ))}
+                </>
+              )}
+              <Menu.Divider />
+              <Menu.Label>System</Menu.Label>
+              <Menu.Item
+                icon={
+                  copied ? (
+                    <IconCheck size={14} stroke={1.5} />
+                  ) : (
+                    <IconInfoHexagon size={14} stroke={1.5} />
+                  )
+                }
+                onClick={() => copy(image.jobId)}
+              >
+                Copy Job ID
+              </Menu.Item>
+              <Menu.Item
+                icon={<IconExternalLink size={14} stroke={1.5} />}
+                onClick={handleAuxClick}
+              >
+                Open in New Tab
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+
+          <Group className={classes.info} w="100%" position="apart">
+            <Group spacing={4} className={classes.actionsWrapper}>
+              <ActionIcon
+                size="md"
+                variant={goodFeedbackSelected ? 'light' : undefined}
+                color={goodFeedbackSelected ? 'green' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </ActionIcon>
+
+              <ActionIcon
+                size="md"
+                variant={badFeedbackSelected ? 'light' : undefined}
+                color={badFeedbackSelected ? 'red' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </ActionIcon>
+
+              {!!img2imgWorkflows?.length && canRemix && (
+                <Menu
+                  zIndex={400}
+                  trigger="hover"
+                  openDelay={100}
+                  closeDelay={100}
+                  transition="fade"
+                  transitionDuration={150}
                 >
-                  Delete
-                </Menu.Item>
-                {!!img2imgWorkflows?.length && canRemix && (
-                  <>
-                    <Menu.Divider />
-                    <Menu.Label>Image-to-image workflows</Menu.Label>
+                  <Menu.Target>
+                    <ActionIcon size="md">
+                      <IconWand size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown className={classes.improveMenu}>
                     {img2imgWorkflows?.map((workflow) => (
                       <Menu.Item
                         key={workflow.key}
@@ -287,124 +337,43 @@ export function GeneratedImage({
                         {workflow.name}
                       </Menu.Item>
                     ))}
-                  </>
-                )}
-                <Menu.Divider />
-                <Menu.Label>System</Menu.Label>
-                <Menu.Item
-                  icon={
-                    copied ? (
-                      <IconCheck size={14} stroke={1.5} />
-                    ) : (
-                      <IconInfoHexagon size={14} stroke={1.5} />
-                    )
-                  }
-                  onClick={() => copy(image.jobId)}
-                >
-                  Copy Job ID
-                </Menu.Item>
-                <Menu.Item
-                  icon={<IconExternalLink size={14} stroke={1.5} />}
-                  onClick={handleAuxClick}
-                >
-                  Open in New Tab
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
-            {available && (
-              <Group className={classes.info} w="100%" position="apart">
-                <Group spacing={4} className={classes.actionsWrapper}>
-                  <ActionIcon
-                    size="md"
-                    variant={goodFeedbackSelected ? 'light' : undefined}
-                    color={goodFeedbackSelected ? 'green' : undefined}
-                    disabled={isLoading}
-                    onClick={() => handleToggleFeedback('liked')}
-                  >
-                    <IconThumbUp size={16} />
-                  </ActionIcon>
-
-                  <ActionIcon
-                    size="md"
-                    variant={badFeedbackSelected ? 'light' : undefined}
-                    color={badFeedbackSelected ? 'red' : undefined}
-                    disabled={isLoading}
-                    onClick={() => handleToggleFeedback('disliked')}
-                  >
-                    <IconThumbDown size={16} />
-                  </ActionIcon>
-
-                  {!!img2imgWorkflows?.length && canRemix && (
-                    <Menu
-                      zIndex={400}
-                      trigger="hover"
-                      openDelay={100}
-                      closeDelay={100}
-                      transition="fade"
-                      transitionDuration={150}
-                    >
-                      <Menu.Target>
-                        <ActionIcon size="md">
-                          <IconWand size={16} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown className={classes.improveMenu}>
-                        {img2imgWorkflows?.map((workflow) => (
-                          <Menu.Item
-                            key={workflow.key}
-                            onClick={() => {
-                              if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
-                              else handleSelectWorkflow(workflow.key);
-                            }}
-                          >
-                            {workflow.name}
-                          </Menu.Item>
-                        ))}
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
-                </Group>
-                <ImageMetaPopover
-                  meta={step.params}
-                  zIndex={constants.imageGeneration.drawerZIndex + 1}
-                  hideSoftware
-                >
-                  <ActionIcon variant="transparent" size="md">
-                    <IconInfoCircle
-                      color="white"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                      opacity={0.8}
-                      strokeWidth={2.5}
-                      size={26}
-                    />
-                  </ActionIcon>
-                </ImageMetaPopover>
-              </Group>
-            )}
-          </Card>
+                  </Menu.Dropdown>
+                </Menu>
+              )}
+            </Group>
+            <ImageMetaPopover
+              meta={step.params}
+              zIndex={constants.imageGeneration.drawerZIndex + 1}
+              hideSoftware
+            >
+              <ActionIcon variant="transparent" size="md">
+                <IconInfoCircle
+                  color="white"
+                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                  opacity={0.8}
+                  strokeWidth={2.5}
+                  size={26}
+                />
+              </ActionIcon>
+            </ImageMetaPopover>
+          </Group>
         </>
       )}
-    </AspectRatio>
+    </div>
   );
 }
 
 export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
-  const { classes } = useStyles();
-
   return (
-    <AspectRatio ratio={width / height}>
-      <Card p={0} className={classes.imageWrapper}>
-        <Box className={classes.innerGlow} />
-        <Center className={classes.centeredAbsolute} p="xs">
-          <Stack align="center">
-            <Loader size={24} />
-            <Text color="dimmed" size="xs" align="center">
-              Generating
-            </Text>
-          </Stack>
-        </Center>
-      </Card>
-    </AspectRatio>
+    <div
+      className="flex flex-col items-center justify-center border card"
+      style={{ aspectRatio: width / height }}
+    >
+      <Loader size={24} />
+      <Text color="dimmed" size="xs" align="center">
+        Generating
+      </Text>
+    </div>
   );
 }
 
@@ -437,6 +406,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       padding: theme.spacing.xs,
       position: 'absolute',
       cursor: 'pointer',
+      zIndex: 2,
     },
     iconBlocked: {
       [containerQuery.smallerThan(380)]: {
@@ -454,11 +424,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
       justifyContent: 'center',
     },
     imageWrapper: {
-      position: 'relative',
-      boxShadow:
-        '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-      width: '100%',
-      height: '100%',
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
         opacity: 1,
@@ -482,6 +447,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
       borderRadius: theme.radius.sm,
       pointerEvents: 'none',
+      zIndex: 10,
     },
     actionsWrapper: {
       ref: thumbActionRef,
@@ -504,7 +470,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       borderRadius: theme.radius.sm,
       background: theme.fn.rgba(
         theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
+        0.8
       ),
       border: 'none',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',

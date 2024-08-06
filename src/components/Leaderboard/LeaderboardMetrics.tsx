@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowsHorizontal,
+  IconBolt,
   IconBookmark,
   IconBox,
   IconBrush,
@@ -143,6 +144,10 @@ const metricTypes: Record<
     tooltip: 'Bookmarks',
     icon: <IconBookmark {...iconProps} />,
   }),
+  lifetime: () => ({
+    tooltip: 'Lifetime Buzz',
+    icon: <IconBolt {...iconProps} />,
+  }),
   reactionCount: () => ({
     tooltip: 'Reactions',
     icon: <IconMoodSmile {...iconProps} />,
@@ -166,6 +171,10 @@ const metricTypes: Record<
   entries: () => ({
     tooltip: 'Entries',
     icon: <IconBox {...iconProps} />,
+  }),
+  cosmetics: () => ({
+    tooltip: 'Cosmetics',
+    icon: <IconHexagonFilled {...iconProps} />,
   }),
   diamond: () => ({
     tooltip: 'Diamond Days',

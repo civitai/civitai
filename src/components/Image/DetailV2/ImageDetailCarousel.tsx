@@ -183,7 +183,7 @@ function ImageContent({
                 className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
-              width={!isVideo || isClient ? image.width : 450}
+              width={!isVideo || isClient ? undefined : 450} // Leave as undefined to get original size
               anim={isClient}
               controls
               quality={90}

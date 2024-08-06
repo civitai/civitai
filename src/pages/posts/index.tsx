@@ -10,7 +10,6 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export default function PostsPage() {
   const currentUser = useCurrentUser();
@@ -26,16 +25,9 @@ export default function PostsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>
+        <Announcements />
         <Stack spacing="xs">
           <IsClient>
-            <Announcements
-              sx={(theme) => ({
-                marginBottom: -35,
-                [containerQuery.smallerThan('md')]: {
-                  marginBottom: -5,
-                },
-              })}
-            />
             <PostCategories />
             <PostsInfinite filters={query} showEof showAds />
           </IsClient>

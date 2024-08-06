@@ -259,6 +259,7 @@ const imageInclude = z.enum([
   'meta',
   'tagIds',
   'profilePictures',
+  'metaSelect',
 ]);
 export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;

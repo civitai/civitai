@@ -106,12 +106,19 @@ export function createAuthOptions(): NextAuthOptions {
           account?.provider === 'email' &&
           !user.emailVerified &&
           email?.verificationRequest &&
-          user.email?.includes('+')
+          user.email?.includes('+') &&
+          !isDev
         ) {
+          const alreadyExists = await dbWrite.user.findFirst({
+            where: { email: user.email },
+            select: { id: true },
+          });
+
           // Needs to return false to prevent login,
           // otherwise next-auth fails because of a bug
           // if we return a string and it's set to redirect: false
-          return false;
+          if (alreadyExists) return true;
+          else return false;
         }
 
         return true;

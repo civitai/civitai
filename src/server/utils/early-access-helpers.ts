@@ -40,7 +40,17 @@ export function isEarlyAccess({
 
 export function getMaxEarlyAccessDays({ userMeta }: { userMeta?: UserMeta }) {
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
-    .map(([score, days]) => ((userMeta?.scores?.total ?? 0) >= score ? days : null))
+    .map(([score, days]) => ((userMeta?.scores?.models ?? 0) >= score ? days : null))
+    .filter(isDefined);
+
+  return earlyAccessUnlockedDays.length > 0
+    ? earlyAccessUnlockedDays[earlyAccessUnlockedDays.length - 1]
+    : 0;
+}
+
+export function getMaxEarlyAccessModels({ userMeta }: { userMeta?: UserMeta }) {
+  const earlyAccessUnlockedDays = constants.earlyAccess.scoreQuantityUnlock
+    .map(([score, days]) => ((userMeta?.scores?.models ?? 0) >= score ? days : null))
     .filter(isDefined);
 
   return earlyAccessUnlockedDays.length > 0

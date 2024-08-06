@@ -1,4 +1,5 @@
 import {
+  Blob,
   ComfyStep,
   ImageJobNetworkParams,
   TextToImageInput,
@@ -15,9 +16,11 @@ import {
   InjectableResource,
   WORKFLOW_TAGS,
   allInjectableResourceIds,
+  fluxModeOptions,
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
+  getIsFlux,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -106,6 +109,23 @@ export async function parseGenerateImageInput({
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
 
+  // Handle Flux Mode
+  const isFlux = getIsFlux(originalParams.baseModel);
+  if (isFlux && originalParams.fluxMode) {
+    const { version } = parseAIR(originalParams.fluxMode);
+    originalParams.sampler = 'undefined';
+    originalResources = [{ id: version, strength: 1 }];
+    originalParams.nsfw = true; // No nsfw helpers in flux mode
+    originalParams.draft = false;
+    originalParams.negativePrompt = '';
+    if (originalParams.fluxMode === fluxModeOptions[0].value) {
+      originalParams.steps = 4;
+      originalParams.cfgScale = 1;
+    }
+  } else {
+    originalParams.fluxMode = undefined;
+  }
+
   let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
@@ -132,6 +152,7 @@ export async function parseGenerateImageInput({
   const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
+  console.log(getBaseModelSetType(checkpoint.baseModel));
   if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
@@ -195,15 +216,17 @@ export async function parseGenerateImageInput({
   params.nsfw ??= isPromptNsfw !== false;
 
   const injectable: InjectableResource[] = [];
-  if (params.draft && injectableResources.draft) {
-    injectable.push(injectableResources.draft);
-  }
-  if (isPromptNsfw && status.minorFallback) {
-    injectable.push(injectableResources.safe_pos);
-    injectable.push(injectableResources.safe_neg);
-  }
-  if (!params.nsfw && status.sfwEmbed) {
-    injectable.push(injectableResources.civit_nsfw);
+  if (!isFlux) {
+    if (params.draft && injectableResources.draft) {
+      injectable.push(injectableResources.draft);
+    }
+    if (isPromptNsfw && status.minorFallback) {
+      injectable.push(injectableResources.safe_pos);
+      injectable.push(injectableResources.safe_neg);
+    }
+    if (!params.nsfw && status.sfwEmbed) {
+      injectable.push(injectableResources.civit_nsfw);
+    }
   }
 
   const positivePrompts = [params.prompt];
@@ -394,24 +417,27 @@ export function formatTextToImageStep({
       ([sampler, scheduler]) => scheduler.toLowerCase() === input.scheduler?.toLowerCase()
     )?.[0] ?? generation.defaultValues.sampler;
 
-  const images: NormalizedGeneratedImage[] =
-    output?.images
-      ?.map((image, i) => {
-        const seed = input.seed;
-        const job = jobs?.find((x) => x.id === image.jobId);
-        if (!job) return null;
-        return {
-          workflowId,
-          stepName: step.name ?? '$0',
-          jobId: job.id,
-          id: image.id,
-          status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-          seed: seed ? seed + i : undefined,
-          completed: job.completedAt ? new Date(job.completedAt) : undefined,
-          url: image.url as string,
-        };
-      })
-      .filter(isDefined) ?? [];
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.images
+          ?.filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            workflowId,
+            stepName: step.name ?? '$0',
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: input.seed ? input.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
 
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)
@@ -461,23 +487,27 @@ export function formatComfyStep({
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
-  const images: NormalizedGeneratedImage[] =
-    output?.blobs
-      ?.map((image, i) => {
-        const job = jobs?.find((x) => x.id === image.jobId);
-        if (!job) return null;
-        return {
-          workflowId,
-          stepName: step.name,
-          jobId: job.id,
-          id: image.id,
-          status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-          seed: params?.seed ? params.seed + i : undefined,
-          completed: job.completedAt ? new Date(job.completedAt) : undefined,
-          url: image.url as string,
-        };
-      })
-      .filter(isDefined) ?? [];
+  const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        output?.blobs
+          ?.filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            workflowId,
+            stepName: step.name ?? '$0',
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: params?.seed ? params.seed + i : undefined,
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+          })) ?? [],
+    }),
+    {}
+  );
+
+  const images = Object.values(groupedImages).flat();
 
   if (params?.aspectRatio) {
     const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);

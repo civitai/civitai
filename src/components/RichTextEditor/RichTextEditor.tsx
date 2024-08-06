@@ -9,7 +9,7 @@ import {
 } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { Link, RichTextEditorProps, RichTextEditor as RTE } from '@mantine/tiptap';
+import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { Color } from '@tiptap/extension-color';
 import Heading from '@tiptap/extension-heading';
@@ -29,7 +29,7 @@ import {
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useImperativeHandle, useRef } from 'react';
-
+import slugify from 'slugify';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -37,12 +37,11 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import slugify from 'slugify';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -260,11 +259,6 @@ export function RichTextEditor({
             },
           }),
           Youtube.configure({
-            // Casting width as any to be able to use `100%`
-            // since the tiptap extension API doesn't allow
-            // strings for its value
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            width: '100%' as any,
             addPasteHandler: false,
             modestBranding: false,
           }).extend({

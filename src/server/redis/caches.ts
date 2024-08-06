@@ -31,12 +31,11 @@ export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: 
   ttl: CacheTTL.day,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
-    const db = fromWrite ? pgDbWrite : pgDbRead;
-    const { rows: tags } = await db.query<{ imageId: number; tagId: number }>(`
-    SELECT "imageId", "tagId"
-    FROM "TagsOnImage"
-    WHERE "imageId" IN (${imageIds.join(',')});
-    `);
+    const db = fromWrite ? dbWrite : dbRead;
+    const tags = await db.tagsOnImage.findMany({
+      where: { imageId: { in: imageIds }, disabled: false },
+      select: { tagId: true, imageId: true },
+    });
 
     const result = tags.reduce((acc, { tagId, imageId }) => {
       acc[imageId.toString()] ??= { imageId, tags: [] };

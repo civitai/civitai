@@ -6,6 +6,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Feed() {
   const { classes } = useStyles();
@@ -53,11 +54,16 @@ export function Feed() {
     );
 
   return (
-    <ScrollArea scrollRestore={{ key: 'feed' }} className="flex flex-col gap-2 px-3">
+    <ScrollArea
+      scrollRestore={{ key: 'feed' }}
+      className="flex flex-col gap-2 px-3"
+      id="feed-queue"
+    >
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid}>
         {steps.map((step) =>
           step.images
+            .filter((x) => x.status === 'succeeded')
             .map((image) => {
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
@@ -74,6 +80,7 @@ export function Feed() {
             .filter(isDefined)
         )}
       </div>
+
       {hasNextPage && (
         <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
           <Center sx={{ height: 60 }}>

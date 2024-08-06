@@ -43,7 +43,7 @@ export const rewardsAbusePrevention = createJob(
         UPDATE "User" u
         SET "rewardsEligibility" = 'Ineligible'::"RewardsEligibility",
             "eligibilityChangedAt" = NOW()
-        WHERE "id" IN (${usersToDisable.join(',')})
+        WHERE "id" IN (${chunk.join(',')})
         AND "rewardsEligibility" != 'Protected'::"RewardsEligibility"
         AND "rewardsEligibility" != 'Ineligible'::"RewardsEligibility"
         ${abuseLimits.user_conditions ? `AND ${abuseLimits.user_conditions.join(' AND ')}` : ''}

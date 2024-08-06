@@ -91,19 +91,19 @@ export function ImageDetailProvider({
     images.unshift(prefetchedImage as any);
   }
 
-  useEffect(() => {
-    if (prefetchedImage && shouldFetchImage) {
-      browserRouter.replace(
-        {
-          query: removeEmpty({
-            ...browserRouter.query,
-            postId: prefetchedImage.postId || undefined,
-          }),
-        },
-        `/images/${imageId}`
-      );
-    }
-  }, [prefetchedImage]); // eslint-disable-line
+  // useEffect(() => {
+  //   if (prefetchedImage && shouldFetchImage) {
+  //     browserRouter.replace(
+  //       {
+  //         query: removeEmpty({
+  //           ...browserRouter.query,
+  //           postId: prefetchedImage.postId || undefined,
+  //         }),
+  //       },
+  //       `/images/${imageId}`
+  //     );
+  //   }
+  // }, [prefetchedImage]); // eslint-disable-line
 
   function findCurrentImageIndex() {
     const index = images.findIndex((x) => x.id === imageId);

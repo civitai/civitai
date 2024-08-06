@@ -543,8 +543,8 @@ export default function ModelDetailsV2({
       {meta}
       <TrackView entityId={model.id} entityType="Model" type="ModelView" />
       <Container size="xl">
+        <Announcements />
         <Stack spacing="xl">
-          <Announcements sx={{ marginBottom: 5 }} />
           <Stack spacing="xs">
             <Stack spacing={4}>
               <Group align="flex-start" sx={{ justifyContent: 'space-between' }} noWrap>

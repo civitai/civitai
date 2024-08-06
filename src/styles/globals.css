@@ -321,12 +321,11 @@ ol {
   }
 
   .card {
-    @apply rounded-md overflow-hidden relative;
-    background-color: #dee2e6;
+    @apply rounded-md overflow-hidden relative bg-gray-0 shadow-md shadow-gray-4 border-gray-3 flex flex-col;
   }
 
   .dark .card {
-    background-color: #25262b;
+    @apply bg-dark-6 shadow-dark-8 border-dark-4;
   }
 
   .vertical-gradient-dark {
@@ -344,7 +343,7 @@ ol {
   }
 }
 
-[data-type="strawPoll"] {
+[data-type='strawPoll'] {
   max-width: 640px;
   width: 100%;
   margin: 0 auto;
@@ -352,8 +351,27 @@ ol {
   flex-direction: column;
   overflow: hidden;
   border-radius: 8px;
-
 }
-[data-type="strawPoll"] iframe {
+
+[data-type='strawPoll'] iframe {
   flex-grow: 1;
+}
+
+div[data-youtube-video] > iframe {
+  aspect-ratio: 16 / 9;
+  height: 100%;
+  width: 100%;
+  max-width: 640px;
+  min-width: 200px;
+}
+
+.scroll-area {
+  height: 100%;
+  width: 100%;
+  flex: 1;
+  overflow-x: hidden;
+  will-change: transform;
+  position: relative;
+  scrollbar-width: thin;
+  padding-top: 0;
 }

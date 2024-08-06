@@ -51,17 +51,17 @@ import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureInt
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
   ModelCreation: {
-    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin', '.onnx'],
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.onnx'],
     'application/zip': ['.zip'],
     'application/x-yaml': ['.yaml', '.yml'],
   },
   LoraCreation: {
-    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin'],
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'],
     'application/zip': ['.zip'],
     'application/x-yaml': ['.yaml', '.yml'],
   },
   EmbedCreation: {
-    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.bin'],
+    'application/octet-stream': ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'],
     'application/zip': ['.zip'],
   },
   DataSetCreation: ZIP_MIME_TYPE,

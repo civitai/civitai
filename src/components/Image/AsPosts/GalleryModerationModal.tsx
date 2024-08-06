@@ -25,6 +25,7 @@ import {
 import { Flags } from '~/shared/utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
+import { TagSort } from '~/server/common/enums';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
@@ -47,9 +48,9 @@ export function HiddenTagsSection({ modelId }: { modelId: number }) {
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data, isLoading } = trpc.tag.getAll.useQuery({
-    entityType: ['Image'],
     query: debouncedSearch.toLowerCase().trim(),
     excludedTagIds: gallerySettings?.hiddenTags.map((x) => x.id),
+    sort: TagSort.MostHidden,
   });
   const options =
     data?.items

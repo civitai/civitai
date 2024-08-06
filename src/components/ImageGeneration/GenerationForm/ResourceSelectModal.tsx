@@ -71,6 +71,7 @@ import {
   getBaseModelSet,
   getIsSdxl,
 } from '~/shared/constants/generation.constants';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -254,16 +255,18 @@ function ResourceHitList() {
       {hiddenCount > 0 && (
         <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
-      <Box className={classes.grid}>
-        {models.map((model, index) => createRenderElement(ResourceSelectCard, index, model))}
-      </Box>
-      {hits.length > 0 && !isLastPage && (
-        <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-          <Center sx={{ height: 36 }} mt="md">
-            <Loader />
-          </Center>
-        </InViewLoader>
-      )}
+      <IntersectionObserverProvider>
+        <Box className={classes.grid}>
+          {models.map((model, index) => createRenderElement(ResourceSelectCard, index, model))}
+        </Box>
+        {hits.length > 0 && !isLastPage && (
+          <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
+            <Center sx={{ height: 36 }} mt="md">
+              <Loader />
+            </Center>
+          </InViewLoader>
+        )}
+      </IntersectionObserverProvider>
     </Stack>
   );
 }
@@ -282,7 +285,7 @@ function ResourceSelectCard({
   data: SearchIndexDataMap['models'][number];
 }) {
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const { ref, inView } = useInView<HTMLAnchorElement>({ rootMargin: '600px' });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
