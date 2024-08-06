@@ -1624,6 +1624,7 @@ const getImageMetrics = async (ids: number[]) => {
 
   const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
 
+  // TODO fix this
   // // if no data in postgres, get latest from clickhouse
   // if (clickhouse) {
   //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
