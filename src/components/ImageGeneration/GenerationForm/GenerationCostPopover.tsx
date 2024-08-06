@@ -50,6 +50,7 @@ export function GenerationCostPopover({
   civitaiTipInputOptions,
   readOnly,
   disabled,
+  hideCreatorTip,
   ...popoverProps
 }: Props) {
   const { classes, cx } = useStyles();
@@ -146,7 +147,7 @@ export function GenerationCostPopover({
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
-      visible: !readOnly,
+      visible: !readOnly && !hideCreatorTip,
       className: classes.tableCell,
     },
     {
@@ -236,7 +237,8 @@ function BreakdownExplanation() {
     <ul className="list-inside list-none text-sm">
       <li className="mb-2">
         <span className="font-semibold">Base Cost:</span> The base cost of generating an image is
-        ⚡1 for 512x512 at 30 steps with a basic sampler.
+        ⚡1 for 512x512 at 30 steps with a basic sampler. Flux's base cost is currently driven by
+        our underlying provider. We'll continue to improve this as we onboard additional providers.
       </li>
       <li className="mb-2">
         <span className="font-semibold">Size Multiplier:</span> Based on the size difference between
@@ -276,4 +278,5 @@ type Props = Omit<PopoverProps, 'children'> & {
   civitaiTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   readOnly?: boolean;
   disabled?: boolean;
+  hideCreatorTip?: boolean;
 };

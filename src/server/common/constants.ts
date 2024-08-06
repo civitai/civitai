@@ -572,6 +572,7 @@ export const samplerOffsets = {
   'DPM++ 2M Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
+  undefined: 4,
 } as const;
 
 export const generation = {

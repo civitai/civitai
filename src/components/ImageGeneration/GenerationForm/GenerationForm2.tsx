@@ -400,7 +400,7 @@ export function GenerationFormContent() {
                         withBorder
                         p="sm"
                         radius="sm"
-                        pb={hasAdditionalResources ? 0 : undefined}
+                        pb={0}
                       >
                         <InputResourceSelect
                           name="model"
@@ -416,6 +416,7 @@ export function GenerationFormContent() {
                             ],
                           }}
                           hideVersion={!hasAdditionalResources}
+                          pb={!hasAdditionalResources ? 'sm' : undefined}
                         />
                         {hasAdditionalResources && (
                           <Card.Section
@@ -547,7 +548,7 @@ export function GenerationFormContent() {
                             </Alert>
                           </Card.Section>
                         )}
-                        <ReadySection />
+                        {!isFlux && <ReadySection />}
                       </Card>
                     );
                   }}
@@ -785,11 +786,15 @@ export function GenerationFormContent() {
                             precision={1}
                             sliderProps={sharedSliderProps}
                             numberProps={sharedNumberProps}
-                            presets={[
-                              { label: 'Creative', value: '4' },
-                              { label: 'Balanced', value: '7' },
-                              { label: 'Precise', value: '10' },
-                            ]}
+                            presets={
+                              isFlux
+                                ? undefined
+                                : [
+                                    { label: 'Creative', value: '4' },
+                                    { label: 'Balanced', value: '7' },
+                                    { label: 'Precise', value: '10' },
+                                  ]
+                            }
                             reverse
                             disabled={cfgDisabled}
                           />
@@ -854,20 +859,24 @@ export function GenerationFormContent() {
                                   max={stepsMax}
                                   sliderProps={sharedSliderProps}
                                   numberProps={sharedNumberProps}
-                                  presets={[
-                                    {
-                                      label: 'Fast',
-                                      value: Number(10 + samplerCfgOffset).toString(),
-                                    },
-                                    {
-                                      label: 'Balanced',
-                                      value: Number(20 + samplerCfgOffset).toString(),
-                                    },
-                                    {
-                                      label: 'High',
-                                      value: Number(30 + samplerCfgOffset).toString(),
-                                    },
-                                  ]}
+                                  presets={
+                                    isFlux
+                                      ? undefined
+                                      : [
+                                          {
+                                            label: 'Fast',
+                                            value: Number(10 + samplerCfgOffset).toString(),
+                                          },
+                                          {
+                                            label: 'Balanced',
+                                            value: Number(20 + samplerCfgOffset).toString(),
+                                          },
+                                          {
+                                            label: 'High',
+                                            value: Number(30 + samplerCfgOffset).toString(),
+                                          },
+                                        ]
+                                  }
                                   reverse
                                 />
                               );
@@ -1077,7 +1086,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip']);
+  const [creatorTip, civitaiTip, baseModel] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
+  const isFlux = getIsFlux(baseModel);
+  const hasCreatorTip = !isFlux;
 
   useEffect(() => {
     if (data) {
@@ -1086,7 +1097,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   const cost = data?.cost?.base ?? 0;
-  const totalTip = Math.ceil(cost * (creatorTip ?? 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+  const totalTip =
+    Math.ceil(cost * (hasCreatorTip ? creatorTip ?? 0 : 0)) + Math.ceil(cost * (civitaiTip ?? 0));
   const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
@@ -1122,6 +1134,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
             value: (civitaiTip ?? 0) * 100,
             onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
           }}
+          hideCreatorTip={!hasCreatorTip}
         >
           <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
             <IconInfoCircle stroke={2.5} />

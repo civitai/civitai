@@ -115,7 +115,7 @@ export async function parseGenerateImageInput({
     const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
     originalResources = [{ id: version, strength: 1 }];
-    originalParams.nsfw = false;
+    originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
     if (originalParams.fluxMode === fluxModeOptions[0].value) {
       originalParams.steps = 4;
@@ -163,7 +163,7 @@ export async function parseGenerateImageInput({
   if (params.draft && !injectableResources.draft)
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
-  handle missing coverage
+  // handle missing coverage
   if (!resourceData.resources.every((x) => x.available))
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
