@@ -58,8 +58,6 @@ export async function submitWorkflow({
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
-  console.dir({ ...body, tags: ['civitai', ...(body.tags ?? [])] }, { depth: null });
-
   const { data, error } = await clientSubmitWorkflow({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
