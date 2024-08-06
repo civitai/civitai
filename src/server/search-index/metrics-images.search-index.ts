@@ -6,6 +6,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getTagIdsForImages } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 10000;
@@ -42,13 +43,17 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'hasMeta',
     'onSite',
-    'tools', // Ids?
-    'techniques',
-    'tags',
+    'toolNames',
+    'toolIds',
+    'techniqueNames',
+    'techniqueIds',
+    'tagNames',
+    'tagIds',
     'userId',
     'nsfwLevel',
     'postId',
     'published',
+    'id',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -124,6 +129,7 @@ type ModelVersions = {
 type ImageTool = {
   imageId: number;
   tool: {
+    id: number;
     name: string;
   };
 };
@@ -131,6 +137,7 @@ type ImageTool = {
 type ImageTechnique = {
   imageId: number;
   technique: {
+    id: number;
     name: string;
   };
 };
@@ -149,7 +156,7 @@ export type ImageForMetricSearchIndex = {
 
 const transformData = async ({
   images,
-  tags,
+  imageTags,
   metrics,
   tools,
   techniques,
@@ -166,10 +173,10 @@ const transformData = async ({
 }) => {
   const records = images
     .map((imageRecord) => {
-      const imageTools = tools.filter((t) => t.imageId === imageRecord.id).map((t) => t.tool.name);
+      const imageTools = tools.filter((t) => t.imageId === imageRecord.id).map((t) => t.tool);
       const imageTechniques = techniques
         .filter((t) => t.imageId === imageRecord.id)
-        .map((t) => t.technique.name);
+        .map((t) => t.technique);
 
       const { modelVersionIds, baseModel } = modelVersions.find(
         (mv) => mv.id === imageRecord.id
@@ -187,12 +194,15 @@ const transformData = async ({
         ...imageMetrics,
         baseModel,
         modelVersionIds,
-        tools: imageTools,
-        techniques: imageTechniques,
+        toolNames: imageTools.map((t) => t.name),
+        toolIds: imageTools.map((t) => t.id),
+        techniqueNames: imageTechniques.map((t) => t.name),
+        techniqueIds: imageTechniques.map((t) => t.id),
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
-        tags: (tags[imageRecord.id] ?? { tags: [], imageId: -1 }).tags,
+        tagNames: imageTags[imageRecord.id]?.tagNames ?? [],
+        tagIds: imageTags[imageRecord.id]?.tagIds ?? [],
       };
     })
     .filter(isDefined);
@@ -260,7 +270,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
-    const isReset = indexName.includes('_NEW');
     const where = [
       batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
@@ -341,37 +350,20 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       // Pull tags:
       const { images, metrics } = prevData as { images: SearchBaseImage[]; metrics: Metrics[] };
 
-      let tags: ImageTags;
+      const imageIds = images.map((i) => i.id);
+      const cacheImageTags = await getTagIdsForImages(imageIds);
 
-      // TODO.imageMetrics - use cache if not reseting
-      if (isReset) {
-        const rawTags = await db.$queryRaw<{ imageId: number; tagId: number; tagName: string }[]>`
-        SELECT
-          "imageId",
-          "tagId",
-          t."name" as "tagName"
-        FROM "tagsOnImage"
-        JOIN "Tag" t ON "tagId" = t."id"
-        WHERE "imageId" IN (${Prisma.join(images.map((i) => i.id))})
-      `;
-
-        tags = rawTags.reduce((acc, { imageId, tagId, tagName }) => {
-          if (!acc[imageId.toString()]) {
-            acc[imageId.toString()] = {
-              imageId,
-              tags: [],
-            };
-          }
-          acc[imageId].tags.push({ id: tagId, name: tagName });
-          return acc;
-        }, {} as ImageTags);
-      } else {
-        tags = await tagIdsForImagesCache.fetch(images.map((i) => i.id));
+      const imageTags = {} as Record<number, { tagNames: string[]; tagIds: number[] }>;
+      for (const [imageId, { tags }] of Object.entries(cacheImageTags)) {
+        imageTags[+imageId] = {
+          tagNames: tags.map((t) => t.name),
+          tagIds: tags.map((t) => t.id),
+        };
       }
 
       return {
         images,
-        tags,
+        imageTags,
         metrics,
       };
     }
