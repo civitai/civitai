@@ -31,6 +31,7 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
+import { getIsFlux } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
@@ -172,13 +173,14 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
-  const canRemix = step.params.workflow !== 'img2img-upscale';
+  const isFlux = getIsFlux(step.params.baseModel);
+  const canRemix = !isFlux && step.params.workflow !== 'img2img-upscale';
   const { params } = step;
 
   return (
     <div
       ref={ref}
-      className="size-full shadow-inner card"
+      className={`size-full shadow-inner card ${classes.imageWrapper}`}
       style={{ aspectRatio: params.width / params.height }}
     >
       {inView && (
@@ -404,6 +406,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       padding: theme.spacing.xs,
       position: 'absolute',
       cursor: 'pointer',
+      zIndex: 2,
     },
     iconBlocked: {
       [containerQuery.smallerThan(380)]: {
@@ -421,11 +424,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
       justifyContent: 'center',
     },
     imageWrapper: {
-      position: 'relative',
-      boxShadow:
-        '0 1px 3px rgba(0, 0, 0, .5), 0px 20px 25px -5px rgba(0, 0, 0, 0.2), 0px 10px 10px -5px rgba(0, 0, 0, 0.04)',
-      width: '100%',
-      height: '100%',
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
         opacity: 1,
@@ -472,7 +470,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
       borderRadius: theme.radius.sm,
       background: theme.fn.rgba(
         theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
+        0.8
       ),
       border: 'none',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
