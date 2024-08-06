@@ -1,5 +1,5 @@
-import { Button, ButtonProps, Group, Text, Tooltip } from '@mantine/core';
-import { IconBrush } from '@tabler/icons-react';
+import { Button, ButtonProps, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
+import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 
@@ -8,15 +8,39 @@ export function GenerateButton({
   modelVersionId,
   mode = 'replace',
   children,
+  generationRequiresPurchase,
+  onPurchase,
+  onClick,
   ...buttonProps
 }: Props) {
+  const purchaseIcon = (
+    <ThemeIcon
+      radius="xl"
+      size="sm"
+      color="yellow.7"
+      style={{
+        position: 'absolute',
+        top: '-8px',
+        right: '-8px',
+      }}
+    >
+      <IconBolt size={16} />
+    </ThemeIcon>
+  );
+
   const opened = useGenerationStore((state) => state.opened);
   const onClickHandler = () => {
+    if (generationRequiresPurchase) {
+      onPurchase?.();
+      return;
+    }
     if (mode === 'toggle' && opened) return generationPanel.close();
 
     modelVersionId
       ? generationPanel.open({ type: 'modelVersion', id: modelVersionId })
       : generationPanel.open();
+
+    onClick?.();
   };
 
   if (children)
@@ -33,6 +57,7 @@ export function GenerateButton({
       onClick={onClickHandler}
       {...buttonProps}
     >
+      {generationRequiresPurchase && <>{purchaseIcon}</>}
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
@@ -59,4 +84,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   modelVersionId?: number;
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
+  generationRequiresPurchase?: boolean;
+  onPurchase?: () => void;
+  onClick?: () => void;
 };

@@ -41,6 +41,7 @@ const transactionTypes = [
   TransactionType[TransactionType.Purchase],
   TransactionType[TransactionType.Bounty],
   TransactionType[TransactionType.Sell],
+  TransactionType[TransactionType.Compensation],
 ];
 
 const defaultFilters = {
@@ -127,8 +128,8 @@ export default function UserTransactions() {
           </Center>
         ) : transactions.length ? (
           <Stack spacing="md">
-            {transactions.map((transaction) => {
-              const { amount, date, fromUser, toUser, details } = transaction;
+            {transactions.map((transaction, index) => {
+              const { amount, date, fromUser, toUser, details, type } = transaction;
               let { description } = transaction;
               const isDebit = amount < 0;
               const isImage = details?.entityType === 'Image';
@@ -140,12 +141,12 @@ export default function UserTransactions() {
               }
 
               return (
-                <Card key={date.toISOString()} withBorder>
+                <Card key={`${index}-${date.toISOString()}`} withBorder>
                   <Stack spacing={4}>
                     <Group position="apart">
                       <Group spacing={8}>
                         <Text weight="500">{formatDate(date)}</Text>
-                        <Badge>{TransactionType[transaction.type]}</Badge>
+                        <Badge>{TransactionType[type]}</Badge>
                       </Group>
                       <Text color={isDebit ? 'red' : 'green'}>
                         <Group spacing={4}>

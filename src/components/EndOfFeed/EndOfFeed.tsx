@@ -1,6 +1,6 @@
 import { Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 export function EndOfFeed() {
   const node = useScrollAreaRef();

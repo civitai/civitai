@@ -362,12 +362,22 @@ export const constants = {
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
+      // The maximum amount of days that can be set based off of score.
       [900, 3],
       [1800, 5],
       [2200, 7],
       [8500, 9],
       [18000, 12],
       [40000, 15],
+    ],
+    scoreQuantityUnlock: [
+      // How many items can be marked EA at the same time based off of score.
+      [900, 1],
+      [1800, 2],
+      [2200, 4],
+      [8500, 6],
+      [18000, 8],
+      [40000, 10],
     ],
   },
 } as const;
@@ -404,6 +414,7 @@ export const baseModelSetTypes = [
   'Kolors',
   'HyDit1',
   'ODOR',
+  'Flux1',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -571,6 +582,7 @@ export const samplerOffsets = {
   'DPM++ 2M Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
+  undefined: 4,
 } as const;
 
 export const generation = {
@@ -715,6 +727,29 @@ export const generationConfig = {
       modelName: 'Pony Diffusion V6 XL',
       modelType: 'Checkpoint',
       baseModel: 'Pony',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
+  Flux1: {
+    additionalResourceTypes: [] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 691639,
+      name: '',
+      trainedWords: [],
+      modelId: 618692,
+      modelName: 'FLUX',
+      modelType: 'Checkpoint',
+      baseModel: 'Flux.1 D',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,

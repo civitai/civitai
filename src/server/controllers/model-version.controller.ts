@@ -28,6 +28,7 @@ import {
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
   getModelVersionRunStrategies,
+  getUserEarlyAccessModelVersions,
   getVersionById,
   modelVersionDonationGoals,
   modelVersionGeneratedImagesOnTimeframe,
@@ -51,7 +52,10 @@ import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
-import { getMaxEarlyAccessDays } from '~/server/utils/early-access-helpers';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -98,7 +102,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
           },
         },
         files: withFiles ? { select: modelFileSelect } : false,
-        posts: withFiles ? { select: { id: true } } : false,
+        posts: withFiles ? { select: { id: true, userId: true } } : false,
         requireAuth: true,
         settings: true,
         recommendedResources: {
@@ -208,6 +212,20 @@ export const upsertModelVersionHandler = async ({
 
       if (input.earlyAccessConfig?.timeframe > maxDays) {
         throw throwBadRequestError('Early access days exceeds user limit');
+      }
+    }
+
+    if (input?.earlyAccessConfig?.timeframe) {
+      // Confirm the user doesn't have any other early access models that are still active.
+      const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
+
+      if (
+        activeEarlyAccess.length > getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
+        (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
+      ) {
+        throw throwBadRequestError(
+          'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
+        );
       }
     }
 

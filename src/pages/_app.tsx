@@ -60,6 +60,7 @@ import '~/styles/globals.css';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -164,16 +165,18 @@ function MyApp(props: CustomAppProps) {
                                           <BrowserRouterProvider>
                                             <RecaptchaWidgetProvider>
                                               <GenerationProvider>
-                                                <BaseLayout>
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
+                                                <IntersectionObserverProvider>
+                                                  <BaseLayout>
+                                                    <ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        <StripeSetupSuccessProvider />
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </ChatContextProvider>
+                                                  </BaseLayout>
+                                                </IntersectionObserverProvider>
                                               </GenerationProvider>
                                             </RecaptchaWidgetProvider>
                                           </BrowserRouterProvider>
