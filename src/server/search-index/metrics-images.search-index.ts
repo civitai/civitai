@@ -274,7 +274,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
-    console.log(batch);
     const where = [
       batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
