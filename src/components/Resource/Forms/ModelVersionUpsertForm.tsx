@@ -301,7 +301,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
-  const resourceLabel = getDisplayName(model?.type ?? '').toLowerCase();
+  const resourceLabel = getDisplayName(model?.type ?? '');
 
   return (
     <>
@@ -628,7 +628,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   td="underline"
                   component="a"
                   target="_blank"
-                  href="/articles/6221"
+                  href={`/articles/${constants.earlyAccess.article}`}
                 >
                   Learn more
                 </Text>

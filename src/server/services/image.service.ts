@@ -12,10 +12,11 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
-
 import { TRPCError } from '@trpc/server';
+import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
 import { SessionUser } from 'next-auth';
+import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { VotableTagModel } from '~/libs/tags';
@@ -25,16 +26,21 @@ import {
   BlockedReason,
   ImageScanType,
   ImageSort,
+  NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { logToAxiom } from '~/server/logging/client';
+import { metricsClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
@@ -51,13 +57,18 @@ import {
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
+import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import {
@@ -93,15 +104,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { collectionSelect } from '~/server/selectors/collection.selector';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { redis } from '~/server/redis/client';
-import { metricsClient } from '~/server/meilisearch/client';
-import { logToAxiom } from '~/server/logging/client';
-import dayjs, { ManipulateType } from 'dayjs';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -171,9 +173,9 @@ export const moderateImages = async ({
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
     const affected = await dbWrite.$queryRaw<
-      { id: number; userId: number; nsfwLevel: number; pHash: bigint }[]
+      { id: number; userId: number; nsfwLevel: number; pHash: bigint; postId: number | undefined }[]
     >`
-      SELECT id, "userId", "nsfwLevel", "pHash" FROM "Image"
+      SELECT id, "userId", "nsfwLevel", "pHash", "postId" FROM "Image"
       WHERE id IN (${Prisma.join(ids)});
     `;
 
@@ -191,9 +193,24 @@ export const moderateImages = async ({
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
+
+    for (const img of affected) {
+      await createNotification({
+        userId: img.userId,
+        type: 'tos-violation',
+        category: NotificationCategory.System,
+        key: `tos-violation:image:${uuid()}`,
+        details: {
+          modelName: img.postId ? `post #${img.postId}` : 'a post',
+          entity: 'image',
+          url: `/posts/${img.postId ?? ''}`,
+        },
+      }).catch();
+    }
+
     return affected;
   } else if (reviewAction === 'removeName') {
-    removeNameReference(ids);
+    await removeNameReference(ids);
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({
@@ -1220,9 +1237,11 @@ type ImageSearchInput = {
   currentUserId?: number;
   isModerator?: boolean;
 };
+
 function strArray(arr: any[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
+
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsClient) return [];
 
@@ -1360,9 +1379,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);
 }
+
 export async function clearImageTagIdsCache(imageId: number | number[]) {
   await tagIdsForImagesCache.bust(imageId);
 }
+
 export async function updateImageTagIdsForImages(imageId: number | number[]) {
   await tagIdsForImagesCache.refresh(imageId);
 }
@@ -1792,6 +1813,7 @@ export async function getImagesForModelVersionCache(modelVersionIds: number[]) {
     images
   );
 }
+
 export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
@@ -2884,6 +2906,7 @@ type POITag = {
   name: string;
   count: number;
 };
+
 export async function getModeratorPOITags() {
   const tags = await dbRead.$queryRaw<POITag[]>`
     WITH real_person_tags AS MATERIALIZED (
@@ -2913,6 +2936,7 @@ type NameReference = {
   tagId: number;
   name: string;
 };
+
 async function removeNameReference(images: number[]) {
   const tasks = chunk(images, 500).map((images) => async () => {
     // Get images to de-reference
@@ -3216,6 +3240,7 @@ export async function updateImageTools({
     purgeImageGenerationDataCache(imageId);
   }
 }
+
 // #endregion
 
 // #region [image techniques]
@@ -3284,12 +3309,15 @@ export async function updateImageTechniques({
     purgeImageGenerationDataCache(imageId);
   }
 }
+
 // #endregion
 
 export function purgeImageGenerationDataCache(id: number) {
   purgeCache({ tags: [`image-generation-data-${id}`] });
 }
+
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
+
 export async function getImageGenerationData({ id }: { id: number }) {
   const image = await dbRead.image.findUnique({
     where: { id },
@@ -3407,6 +3435,7 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
 
 // this method should hopefully not be a lasting addition
 export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
+
 export async function getImagesByUserIdForModeration(userId: number) {
   return await dbRead.image.findMany({
     where: { userId },
