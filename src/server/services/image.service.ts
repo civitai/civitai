@@ -850,12 +850,22 @@ export const getAllImages = async (
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else if (sort === ImageSort.Oldest) {
-      orderBy = 'i."sortAt" ASC';
-      AND.push(Prisma.sql`i."sortAt" <= now()`);
-    } else {
-      orderBy = 'i."sortAt" DESC';
-      AND.push(Prisma.sql`i."sortAt" <= now()`);
+    // TODO this causes the app to spike
+    // else if (sort === ImageSort.Oldest) {
+    //   orderBy = 'i."sortAt" ASC';
+    //   AND.push(Prisma.sql`i."sortAt" <= now()`);
+    // } else {
+    //   orderBy = 'i."sortAt" DESC';
+    //   AND.push(Prisma.sql`i."sortAt" <= now()`);
+    // }
+    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
+    else {
+      if (from.indexOf(`irr`) !== -1) {
+        // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
+        orderBy = `irr."imageId" DESC`;
+      } else {
+        orderBy = `i."id" DESC`;
+      }
     }
   }
 
