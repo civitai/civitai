@@ -344,10 +344,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 content={
                   <Stack>
                     <Text size="xs">
-                      Early access allows you to charge a fee for early access to your model. This
-                      fee is paid by users who want to access your model before it is available to
-                      the public. Once the early access period ends, your model will be available to
-                      the public for free.
+                      Early access allows you to charge a fee for early access to your model. Once
+                      the early access period ends, your model will be available to everyone for
+                      free.
                     </Text>
                     <Text size="xs">
                       You can have up to {maxEarlyAccessModels} models in early access at a time.

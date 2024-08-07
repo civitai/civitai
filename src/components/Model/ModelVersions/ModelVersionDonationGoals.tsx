@@ -91,7 +91,7 @@ const DonationGoalItem = ({
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
           <Text color="yellow" size="xs" weight={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
-            resource available to everyone or just wait until it becomes public.
+            resource available to everyone before the end of Early Access.
           </Text>
         )}
         <Group position="apart" noWrap align="start">
