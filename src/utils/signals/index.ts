@@ -1,7 +1,7 @@
-import { Deferred, EventEmitter } from './utils';
-import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import SharedWorker from '@okikio/sharedworker';
 import { createStore } from 'zustand/vanilla';
+import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
+import { Deferred, EventEmitter } from './utils';
 
 // Debugging
 const logs: Record<string, boolean> = {};
@@ -96,6 +96,7 @@ export const createSignalWorker = ({
           if (result) console.log(result);
         } else console.log(args);
       }
+
       if (!logs[target]) {
         logs[target] = true;
         on(target, logFn);

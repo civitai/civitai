@@ -29,6 +29,7 @@ import { getEntityCollaborators } from '~/server/services/entity-collaborator.se
 import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { userContributingClubs } from '../services/club.service';
 import {
@@ -238,6 +239,16 @@ export async function createBuzzTipTransactionHandler({
           },
         });
       }
+    }
+
+    if (entityType === 'Image' && !!entityId) {
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Image',
+        entityId,
+        metricType: 'Buzz',
+        amount: finalAmount,
+      });
     }
 
     return data;

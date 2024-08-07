@@ -1,4 +1,4 @@
-import { client, updateDocs } from '~/server/meilisearch/client';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { Availability, Prisma } from '@prisma/client';

@@ -9,6 +9,8 @@ type BaseTask = {
   currentData?: any;
   currentStep?: number;
   steps?: number;
+  index?: number;
+  total?: number;
   start?: number;
 };
 

@@ -212,8 +212,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
       tagCache[tag.name] = { id: tag.id };
       if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
     }
+
     for (const tag of tags) {
       const cachedTag = tagCache[tag.tag];
+      if (!cachedTag) continue;
       tag.id = cachedTag.id;
       if (cachedTag.blocked) hasBlockedTag = true;
     }
