@@ -419,8 +419,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         earlyAccessConfig?.timeframe?.toString() ??
                         constants.earlyAccess.timeframeValues[0]
                       }
-                      data={[0, ...earlyAccessUnlockedDays].map((v) => ({
-                        label: v === 0 ? 'None' : `${v} days`,
+                      data={earlyAccessUnlockedDays.map((v) => ({
+                        label: `${v} days`,
                         value: v.toString(),
                         disabled: maxEarlyAccessValue < v,
                       }))}
