@@ -1,25 +1,17 @@
-import {
-  CosmeticSource,
-  CosmeticType,
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-  Prisma,
-} from '@prisma/client';
+import { ImageGenerationProcess, ImageIngestionStatus, MediaType, Prisma } from '@prisma/client';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { userBasicCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { tagCache, userBasicCache } from '~/server/redis/caches';
 import { getTagIdsForImages } from '~/server/services/image.service';
-import { dbRead } from '~/server/db/client';
-import { pgDbRead } from '~/server/db/pgDb';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
 
@@ -297,14 +289,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."postId",
         i."needsReview",
         i."hideMeta",
-<<<<<<< HEAD
-        i."generationProcess",
-        i."createdAt",
-        i."sortAt",
-        i."mimeType",
-=======
         i."index",
->>>>>>> main
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",

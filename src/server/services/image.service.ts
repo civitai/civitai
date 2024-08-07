@@ -523,6 +523,7 @@ type GetAllImagesRaw = {
   onSite: boolean;
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
+  sortAt: Date;
   mimeType: string | null;
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
@@ -1000,6 +1001,7 @@ export const getAllImages = async (
       ) as "onSite",
       i."generationProcess",
       i."createdAt",
+      i."sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -2904,6 +2906,7 @@ type GetImageModerationReviewQueueRaw = {
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
+  sortAt: Date;
   mimeType: string;
   scannedAt: Date;
   ingestion: ImageIngestionStatus;
@@ -3013,6 +3016,7 @@ export const getImageModerationReviewQueue = async ({
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
+      i."sortAt",
       i."mimeType",
       i.type,
       i.metadata,

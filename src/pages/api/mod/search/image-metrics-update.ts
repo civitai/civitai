@@ -1,12 +1,12 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { dbRead } from '~/server/db/client';
-import { z } from 'zod';
-import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { METRICS_IMAGES_SEARCH_INDEX } from '../../../../server/common/constants';
-import { updateDocs, metricsClient } from '../../../../server/meilisearch/client';
 import { Prisma } from '@prisma/client';
-import { withRetries } from '../../../../server/utils/errorHandling';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { z } from 'zod';
+import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
+import { metricsClient, updateDocs } from '~/server/meilisearch/client';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;

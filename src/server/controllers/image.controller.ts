@@ -13,11 +13,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesSearchIndex } from '~/server/search-index';
-import {
-  deleteImageById,
-  getAllImagesPost,
-  updateImageReportStatusByReason,
-} from '~/server/services/image.service';
+import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -253,8 +249,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    // TODO.searchUpdate restore
+    // const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    // const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     const modelGallerySettings = input.modelId
@@ -266,7 +265,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await getAllImagesPost({
+      // TODO.searchUpdate restore
+      // const { items: pinnedPostsImages } = await getAllImagesPost({
+      const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         limit: limit * 3,
         followed: false,
@@ -285,7 +286,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
     while (true) {
       // TODO handle/remove all these (headers, include, ids)
-      const { nextCursor, items } = await getAllImagesPost({
+      // TODO.searchUpdate restore
+      // const { nextCursor, items } = await getAllImagesPost({
+      const { nextCursor, items } = await getAllImages({
         ...input,
         followed: false,
         cursor,
@@ -339,7 +342,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      // TODO maybe something wrong with return here, str -> Date. also for createdAt?
+      // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
@@ -355,7 +358,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt: image.sortAt,
+        publishedAt: image.publishedAt,
         createdAt,
         user,
         images,
