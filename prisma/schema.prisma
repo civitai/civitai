@@ -1194,6 +1194,7 @@ enum MediaType {
 
 model Image {
   id                Int                     @id @default(autoincrement())
+  pHash             BigInt?
   name              String?
   url               String
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1259,6 +1260,18 @@ model Image {
   @@index([postId], type: Hash)
   @@index([userId, postId])
   @@index([sortAt])
+}
+
+enum BlockImageReason {
+  Ownership
+  CSAM
+  TOS
+}
+
+model BlockedImage {
+  hash      BigInt           @id
+  reason    BlockImageReason @default(Ownership)
+  createdAt DateTime         @default(now())
 }
 
 model ImageConnection {

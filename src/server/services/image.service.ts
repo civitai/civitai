@@ -1,5 +1,6 @@
 import {
   Availability,
+  BlockImageReason,
   CollectionMode,
   ImageGenerationProcess,
   ImageIngestionStatus,
@@ -174,6 +175,14 @@ export const deleteImageById = async ({
   }
 };
 
+type AffectedImage = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  pHash: bigint;
+  postId: number | undefined;
+};
+
 export const moderateImages = async ({
   ids,
   needsReview,
@@ -181,10 +190,9 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
-    const affected = await dbWrite.$queryRaw<
-      { id: number; userId: number; nsfwLevel: number; postId: number | undefined }[]
-    >`
-      SELECT id, "userId", "nsfwLevel", "postId" FROM "Image"
+    const affected = await dbWrite.$queryRaw<AffectedImage[]>`
+      SELECT id, "userId", "nsfwLevel", "pHash", "postId"
+      FROM "Image"
       WHERE id IN (${Prisma.join(ids)});
     `;
 
@@ -3748,4 +3756,41 @@ export async function getImagesByUserIdForModeration(userId: number) {
     where: { userId },
     select: { ...imageSelect, user: { select: simpleUserSelect } },
   });
+}
+
+export function addBlockedImage({
+  hash,
+  reason,
+}: {
+  hash: bigint | number;
+  reason: BlockImageReason;
+}) {
+  return dbWrite.blockedImage.create({ data: { hash, reason } });
+}
+
+export function bulkAddBlockedImages({
+  data,
+}: {
+  data: { hash: bigint | number; reason: BlockImageReason }[];
+}) {
+  return dbWrite.blockedImage.createMany({ data });
+}
+
+export async function bulkRemoveBlockedImages({
+  ids,
+  hashes,
+}: {
+  hashes?: bigint[] | number[];
+  ids?: number[];
+}) {
+  if (ids) {
+    const images = await dbWrite.image.findMany({
+      where: { id: { in: ids } },
+      select: { pHash: true },
+    });
+
+    hashes = images.map((i) => i.pHash as bigint);
+  }
+
+  return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 }

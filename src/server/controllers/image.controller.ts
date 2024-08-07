@@ -1,4 +1,4 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { BlockImageReason, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import {
@@ -13,7 +13,13 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesSearchIndex } from '~/server/search-index';
-import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
+import {
+  addBlockedImage,
+  bulkAddBlockedImages,
+  bulkRemoveBlockedImages,
+  deleteImageById,
+  updateImageReportStatusByReason,
+} from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -45,6 +51,16 @@ import {
   moderateImages,
 } from './../services/image.service';
 
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+};
+
 export const moderateImageHandler = async ({
   input,
   ctx,
@@ -67,6 +83,7 @@ export const moderateImageHandler = async ({
         const tags = imageTags[id] ?? [];
         tags.push(input.reviewType ?? 'other');
         const resources = imageResources[id] ?? [];
+
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
@@ -77,6 +94,15 @@ export const moderateImageHandler = async ({
           ownerId: userId,
         });
       }
+
+      await bulkAddBlockedImages({
+        data: affected.map((x) => ({
+          hash: x.pHash,
+          reason: reviewTypeToBlockedReason[input.reviewType],
+        })),
+      });
+    } else {
+      await bulkRemoveBlockedImages({ ids: input.ids });
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -185,6 +211,8 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+
+    await addBlockedImage({ hash: id, reason: BlockImageReason.TOS });
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
