@@ -1139,6 +1139,9 @@ export const earlyAccessPurchase = async ({
       });
     }
 
+    // Ensures user gets access to the resource after purchasing.
+    await bustOrchestratorModelCache(modelVersionId, userId);
+
     return true;
   } catch (error) {
     if (buzzTransactionId) {
