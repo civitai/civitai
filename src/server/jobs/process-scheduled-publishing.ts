@@ -146,9 +146,12 @@ export const processScheduledPublishing = createJob(
       });
     }
 
-    const processedModelIds = scheduledModelVersions
-      .map((entity) => entity.extras?.modelId)
-      .filter(isDefined);
+    const processedModelIds = [
+      ...new Set([
+        ...scheduledModels.map((entity) => entity.id),
+        ...scheduledModelVersions.map((entity) => entity.extras?.modelId),
+      ]),
+    ].filter(isDefined);
     if (processedModelIds.length) await dataForModelsCache.bust(processedModelIds);
 
     await setLastRun();
