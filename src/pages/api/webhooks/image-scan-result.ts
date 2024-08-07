@@ -125,16 +125,18 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
+// @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
 async function isBlocked(hash: number) {
-  // TODO.blockedImages check against "blockedImages" table using hamming distance
-  // https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
-  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
-    SELECT hash
-    FROM "BlockedImage"
-    WHERE BIT_COUNT(${hash}::bigint ^ "hash") < 5
-  `;
+  // const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+  //   SELECT hash
+  //   FROM "BlockedImage"
+  //   WHERE BIT_COUNT(${hash}::bigint ^ "hash") < 5
+  // `;
 
-  return matches.length > 0;
+  // return matches.length > 0;
+
+  // Uncomment above code once we have the blocked image hash table
+  return false;
 }
 
 async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
