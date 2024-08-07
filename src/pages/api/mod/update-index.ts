@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   ARTICLES_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
+  METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
@@ -13,6 +14,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
+  imagesMetricsSearchIndex,
 } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -25,6 +27,7 @@ export const schema = z.object({
     USERS_SEARCH_INDEX,
     IMAGES_SEARCH_INDEX,
     ARTICLES_SEARCH_INDEX,
+    METRICS_IMAGES_SEARCH_INDEX,
   ]),
 });
 export default ModEndpoint(async function updateIndexSync(
@@ -56,6 +59,9 @@ export default ModEndpoint(async function updateIndexSync(
           break;
         case ARTICLES_SEARCH_INDEX:
           await articlesSearchIndex.updateSync(data, jobContext);
+          break;
+        case METRICS_IMAGES_SEARCH_INDEX:
+          await imagesMetricsSearchIndex.updateSync(data, jobContext);
           break;
         default:
           break;

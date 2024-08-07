@@ -1,10 +1,7 @@
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { EnqueuedTask } from 'meilisearch';
-import {
-  createSearchIndexUpdateProcessor,
-  SearchIndexRunContext,
-} from '~/server/search-index/base.search-index';
+import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import {
   BountyType,
   CosmeticSource,

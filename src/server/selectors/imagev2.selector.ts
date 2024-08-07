@@ -1,8 +1,6 @@
-import { imageTagSelect } from './tag.selector';
 import { Prisma } from '@prisma/client';
-import { userWithCosmeticsSelect, simpleUserSelect } from '~/server/selectors/user.selector';
-import { getReactionsSelect } from '~/server/selectors/reaction.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { imageTagSelect } from './tag.selector';
 
 export const imageResourceSelect = Prisma.validator<Prisma.ImageResourceSelect>()({
   id: true,
@@ -41,6 +39,7 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     hideMeta: true,
     generationProcess: true,
     createdAt: true,
+    sortAt: true,
     mimeType: true,
     scannedAt: true,
     ingestion: true,

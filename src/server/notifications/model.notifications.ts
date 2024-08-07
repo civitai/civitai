@@ -141,7 +141,7 @@ export const modelNotifications = createNotificationProcessor({
           AND mv."publishedAt" - m."publishedAt" > INTERVAL '12 hour'
           AND (
             -- handle scheduled posts - these can take a little while to update via another job
-            (mv."publishedAt" BETWEEN '${lastSent}' - interval '59 second' AND now() AND mv.status = 'Published')
+            (mv."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND now() AND mv.status = 'Published')
             OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
           )
       ), followers AS (

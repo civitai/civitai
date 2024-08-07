@@ -1,31 +1,31 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
   Divider,
+  Drawer,
   Group,
   Indicator,
   Popover,
-  Stack,
-  Drawer,
   PopoverProps,
   ScrollArea,
-  ButtonProps,
+  Stack,
 } from '@mantine/core';
-import { CheckpointType, ModelStatus, ModelType, MetricTimeframe } from '@prisma/client';
+import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { BaseModel, constants, activeBaseModels } from '~/server/common/constants';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { activeBaseModels, BaseModel, constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -49,6 +49,7 @@ export function ModelFiltersDropdown(props: Props) {
   }));
 
   const jointFilters = { ...filters, ...queryFilters };
+
   function setFiltersAndQuery(filters: Partial<ModelFilterSchema>) {
     const newQueryFilters: Record<string, any> = { ...queryFilters };
     for (const key in filters) {

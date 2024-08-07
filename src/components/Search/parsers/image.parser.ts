@@ -1,9 +1,9 @@
 import { IndexUiState, UiState } from 'instantsearch.js';
 import { z } from 'zod';
+import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
 import { InstantSearchRoutingParser, searchParamsSchema } from './base';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 
 export const ImagesSearchIndexSortBy = [
   IMAGES_SEARCH_INDEX,
@@ -11,7 +11,7 @@ export const ImagesSearchIndexSortBy = [
   `${IMAGES_SEARCH_INDEX}:stats.commentCountAllTime:desc`,
   `${IMAGES_SEARCH_INDEX}:stats.collectedCountAllTime:desc`,
   `${IMAGES_SEARCH_INDEX}:stats.tippedAmountCountAllTime:desc`,
-  `${IMAGES_SEARCH_INDEX}:createdAt:desc`,
+  `${IMAGES_SEARCH_INDEX}:sortAt:desc`,
 ] as const;
 
 const defaultSortBy = ImagesSearchIndexSortBy[0];

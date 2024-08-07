@@ -1,9 +1,9 @@
-import { createClient, commandOptions } from 'redis';
+import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
+import { commandOptions, createClient } from 'redis';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
-import { isProd } from '~/env/other';
-import { pack, unpack } from 'msgpackr';
 
 export interface PackedRedisClient extends RedisClientType {
   packed: {
@@ -28,6 +28,7 @@ declare global {
 }
 
 const log = createLogger('redis', 'green');
+
 function getCache(legacyMode = false) {
   log('Creating Redis client');
   const baseClient: RedisClientType = createClient({

@@ -152,7 +152,6 @@ export async function parseGenerateImageInput({
   const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
-  console.log(getBaseModelSetType(checkpoint.baseModel));
   if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`

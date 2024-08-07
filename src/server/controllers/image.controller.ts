@@ -25,6 +25,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { isDefined } from '~/utils/type-guards';
 import {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -248,6 +249,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // TODO.searchUpdate restore
+    // const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    // const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
@@ -261,6 +265,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
+      // TODO.searchUpdate restore
+      // const { items: pinnedPostsImages } = await getAllImagesPost({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         limit: limit * 3,
@@ -279,12 +285,15 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     while (true) {
+      // TODO handle/remove all these (headers, include, ids)
+      // TODO.searchUpdate restore
+      // const { nextCursor, items } = await getAllImagesPost({
       const { nextCursor, items } = await getAllImages({
         ...input,
         followed: false,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
-        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
+        limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
         user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
@@ -310,7 +319,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const mergedPosts = Object.values({ ...pinned, ...posts });
 
     // Get reviews from the users who created the posts
-    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id))];
+    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
     const reviews = await dbRead.resourceReview.findMany({
       where: {
         userId: { in: userIds },
@@ -333,7 +342,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      const createdAt = images.map((image) => image.createdAt).sort()[0];
+      // TODO meili has sortAt as a string, not a date
+      const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -344,8 +354,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
       return {
         postId: image.postId as number,
-        postTitle: image.postTitle,
-        pinned: image.postId && pinned[image.postId] ? true : false,
+        // postTitle: image.postTitle,
+        pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,
