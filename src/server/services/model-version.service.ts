@@ -394,6 +394,24 @@ export const upsertModelVersion = async ({
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
   const version = await dbWrite.$transaction(async (tx) => {
+    const data = await tx.modelVersion.findFirstOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        modelId: true,
+        status: true,
+        earlyAccessConfig: true,
+        meta: true,
+      },
+    });
+
+    const meta = data.meta as ModelVersionMeta;
+    if (meta?.hadEarlyAccessPurchase) {
+      throw throwBadRequestError(
+        'Cannot delete a model version that has had early access purchases.'
+      );
+    }
+
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);

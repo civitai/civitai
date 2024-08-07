@@ -59,6 +59,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -83,6 +84,7 @@ import {
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { logToAxiom } from '~/server/logging/client';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1104,9 +1106,31 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
 export const deleteModelById = async ({
   id,
   userId,
+  isModerator,
 }: GetByIdInput & {
   userId: number;
+  isModerator?: boolean;
 }) => {
+  if (!isModerator) {
+    const versions = await dbRead.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true, meta: true },
+    });
+
+    if (
+      versions.some((v) => {
+        const meta = v.meta as ModelVersionMeta | null;
+        if (meta?.hadEarlyAccessPurchase) {
+          return true;
+        }
+      })
+    ) {
+      throw throwBadRequestError(
+        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
+      );
+    }
+  }
+
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.update({
       where: { id },
@@ -1446,6 +1470,26 @@ export const unpublishModelById = async ({
   meta?: ModelMeta;
   user: SessionUser;
 }) => {
+  if (!user.isModerator) {
+    const versions = await dbRead.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true, meta: true },
+    });
+
+    if (
+      versions.some((v) => {
+        const meta = v.meta as ModelVersionMeta | null;
+        if (meta?.hadEarlyAccessPurchase) {
+          return true;
+        }
+      })
+    ) {
+      throw throwBadRequestError(
+        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
+      );
+    }
+  }
+
   const model = await dbWrite.$transaction(
     async (tx) => {
       const unpublishedAt = new Date().toISOString();
