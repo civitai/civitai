@@ -165,6 +165,14 @@ export const deleteImageById = async ({
   }
 };
 
+type AffectedImage = {
+  id: number;
+  userId: number;
+  nsfwLevel: number;
+  pHash: bigint;
+  postId: number | undefined;
+};
+
 export const moderateImages = async ({
   ids,
   needsReview,
@@ -172,10 +180,9 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
-    const affected = await dbWrite.$queryRaw<
-      { id: number; userId: number; nsfwLevel: number; pHash: bigint; postId: number | undefined }[]
-    >`
-      SELECT id, "userId", "nsfwLevel", "pHash", "postId" FROM "Image"
+    const affected = await dbWrite.$queryRaw<AffectedImage[]>`
+      SELECT id, "userId", "nsfwLevel", "pHash", "postId"
+      FROM "Image"
       WHERE id IN (${Prisma.join(ids)});
     `;
 
