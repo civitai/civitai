@@ -38,10 +38,10 @@ export default function ModelsPage() {
           <IsClient>
             {/* TODO: Bring back something similar in the future once we start selling spots. */}
             {/* <EarlyAccessHighlight /> */}
-            <Group spacing="xs">
+            <Group spacing="xs" noWrap>
               <Button
                 variant={earlyAccess ? 'filled' : 'outline'}
-                color="teal"
+                color="success.5"
                 onClick={() => setFilters({ earlyAccess: !earlyAccess })}
                 compact
                 leftIcon={<IconClock size={16} />}
