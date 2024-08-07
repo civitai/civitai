@@ -16,6 +16,7 @@ import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
+import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { VotableTagModel } from '~/libs/tags';
@@ -25,6 +26,7 @@ import {
   BlockedReason,
   ImageScanType,
   ImageSort,
+  NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
@@ -71,6 +73,7 @@ import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import {
@@ -178,8 +181,10 @@ export const moderateImages = async ({
   reviewAction,
 }: ImageModerationSchema) => {
   if (reviewAction === 'delete') {
-    const affected = await dbWrite.$queryRaw<{ id: number; userId: number; nsfwLevel: number }[]>`
-      SELECT id, "userId", "nsfwLevel" FROM "Image"
+    const affected = await dbWrite.$queryRaw<
+      { id: number; userId: number; nsfwLevel: number; postId: number | undefined }[]
+    >`
+      SELECT id, "userId", "nsfwLevel", "postId" FROM "Image"
       WHERE id IN (${Prisma.join(ids)});
     `;
 
@@ -197,9 +202,24 @@ export const moderateImages = async ({
     await imagesSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
+
+    for (const img of affected) {
+      await createNotification({
+        userId: img.userId,
+        type: 'tos-violation',
+        category: NotificationCategory.System,
+        key: `tos-violation:image:${uuid()}`,
+        details: {
+          modelName: img.postId ? `post #${img.postId}` : 'a post',
+          entity: 'image',
+          url: `/posts/${img.postId ?? ''}`,
+        },
+      }).catch();
+    }
+
     return affected;
   } else if (reviewAction === 'removeName') {
-    removeNameReference(ids);
+    await removeNameReference(ids);
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({

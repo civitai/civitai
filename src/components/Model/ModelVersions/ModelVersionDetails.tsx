@@ -181,7 +181,7 @@ export function ModelVersionDetails({
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
-  const onPurchase = () => {
+  const onPurchase = (reason?: 'generation' | 'download') => {
     if (!features.earlyAccessModel) {
       showErrorNotification({
         error: new Error('Unauthorized'),
@@ -194,7 +194,7 @@ export function ModelVersionDetails({
 
     dialogStore.trigger({
       component: ModelVersionEarlyAccessPurchase,
-      props: { modelVersionId: version.id },
+      props: { modelVersionId: version.id, reason },
     });
   };
   const getDownloadProps = useCallback(
@@ -221,7 +221,7 @@ export function ModelVersionDetails({
       } else {
         return {
           onClick: () => {
-            onPurchase();
+            onPurchase('download');
           },
         };
       }
@@ -333,8 +333,12 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               data-activity="create:version-stat"
               disabled={isLoadingAccess}
-              generationRequiresPurchase={!hasGeneratePermissions}
-              onPurchase={onPurchase}
+              generationPrice={
+                !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                  ? earlyAccessConfig?.generationPrice
+                  : undefined
+              }
+              onPurchase={() => onPurchase('generation')}
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />}>
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
@@ -662,8 +666,12 @@ export function ModelVersionDetails({
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess}
-                      generationRequiresPurchase={!hasGeneratePermissions}
-                      onPurchase={onPurchase}
+                      generationPrice={
+                        !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                          ? earlyAccessConfig?.generationPrice
+                          : undefined
+                      }
+                      onPurchase={() => onPurchase('generation')}
                     />
                   )}
 
@@ -712,7 +720,11 @@ export function ModelVersionDetails({
                     filesCount === 1 ? (
                       <DownloadButton
                         canDownload={version.canDownload}
-                        downloadRequiresPurchase={!hasDownloadPermissions}
+                        downloadPrice={
+                          !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                            ? earlyAccessConfig?.downloadPrice
+                            : undefined
+                        }
                         component="a"
                         {...getDownloadProps(primaryFile)}
                         tooltip="Download"
@@ -725,7 +737,11 @@ export function ModelVersionDetails({
                         <Menu.Target>
                           <DownloadButton
                             canDownload={version.canDownload}
-                            downloadRequiresPurchase={!hasDownloadPermissions}
+                            downloadPrice={
+                              !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                                ? earlyAccessConfig?.downloadPrice
+                                : undefined
+                            }
                             disabled={!primaryFile || archived || isLoadingAccess}
                             sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
@@ -739,7 +755,11 @@ export function ModelVersionDetails({
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={version.canDownload}
-                      downloadRequiresPurchase={!hasDownloadPermissions}
+                      downloadPrice={
+                        !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                          ? earlyAccessConfig?.downloadPrice
+                          : undefined
+                      }
                       disabled={!primaryFile || archived || isLoadingAccess}
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >

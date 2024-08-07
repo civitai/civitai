@@ -164,7 +164,6 @@ export const setTosViolationHandler = async ({
       reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
     }
 
-    // Create notifications in the background
     await createNotification({
       userId: image.userId,
       type: 'tos-violation',
@@ -175,10 +174,7 @@ export const setTosViolationHandler = async ({
         entity: 'image',
         url: `/posts/${image.postId}`,
       },
-    }).catch((error) => {
-      // Print out any errors
-      console.error(error);
-    });
+    }).catch();
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later

@@ -24,7 +24,13 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 
-export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersionId: number }) => {
+export const ModelVersionEarlyAccessPurchase = ({
+  modelVersionId,
+  reason,
+}: {
+  modelVersionId: number;
+  reason?: 'download' | 'generation';
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const features = useFeatureFlags();
@@ -68,10 +74,13 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
     earlyAccessConfig?.chargeForGeneration &&
     earlyAccessConfig?.generationPrice;
 
-  const userCanDoLabel = [canDownload && 'download', canGenerate && 'generate']
+  const userCanDoLabel = [
+    supportsDownloadPurchase && 'download',
+    supportsGenerationPurchase && 'generate',
+  ]
     .filter(Boolean)
     .join(' or ');
-  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '').toLowerCase();
+  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '');
 
   return (
     <Modal {...dialog} title="Get access to this Model Version!" size="sm" withCloseButton>
@@ -81,17 +90,29 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
         </Center>
       ) : (
         <Stack>
+          {reason === 'generation' && supportsGeneration && !supportsGenerationPurchase && (
+            <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
+              The creator of this {resourceLabel} has not made generation available during the early
+              access period.
+            </AlertWithIcon>
+          )}
+          {reason === 'download' && !supportsDownloadPurchase && (
+            <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
+              The creator of this {resourceLabel} has not made download access available during the
+              early access period.
+            </AlertWithIcon>
+          )}
           <Text size="sm">
             The creator of this {resourceLabel} has set this version to early access, You can{' '}
             {userCanDoLabel} with this {resourceLabel} by purchasing it during the early access
-            period or just waiting untill it becomes public. The remaining time for early access is{' '}
+            period or just waiting until it becomes public. The remaining time for early access is{' '}
             <Text component="span" weight="bold">
               <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
             </Text>
           </Text>
           <Stack>
-            {supportsDownloadPurchase ? (
-              <Stack spacing={0}>
+            {supportsDownloadPurchase && (
+              <Stack spacing="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Download Access"
@@ -104,15 +125,10 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   Download access also grants generation access.
                 </Text>
               </Stack>
-            ) : (
-              <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-                The creator of this {resourceLabel} has not made download access available during
-                the early access period.
-              </AlertWithIcon>
             )}
 
-            {supportsGenerationPurchase ? (
-              <Stack spacing={0}>
+            {supportsGenerationPurchase && (
+              <Stack spacing="xs">
                 <BuzzTransactionButton
                   type="submit"
                   label="Get Generation Access"
@@ -122,7 +138,9 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   disabled={canGenerate}
                 />
                 <Text size="xs" color="dimmed">
-                  The creator of the {resourceLabel} has enabled trials, test this {resourceLabel}{' '}
+                  The creator of the {resourceLabel} has enabled{' '}
+                  {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
+                  {resourceLabel}{' '}
                   <GenerateButton
                     modelVersionId={modelVersionId}
                     data-activity="create:version-stat"
@@ -136,12 +154,7 @@ export const ModelVersionEarlyAccessPurchase = ({ modelVersionId }: { modelVersi
                   but you can make unlimited generations with it
                 </Text>
               </Stack>
-            ) : supportsGeneration ? (
-              <AlertWithIcon icon={<IconAlertCircle />} size="xs" color="yellow" iconColor="yellow">
-                The creator of this {resourceLabel} has not made generation available during the
-                early access period.
-              </AlertWithIcon>
-            ) : null}
+            )}
 
             <Button onClick={handleClose} variant="light" color="gray" compact>
               Cancel
