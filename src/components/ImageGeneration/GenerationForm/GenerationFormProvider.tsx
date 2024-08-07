@@ -1,11 +1,17 @@
 import { DeepPartial } from 'react-hook-form';
 import { ModelType } from '@prisma/client';
-import React, { createContext, useCallback, useContext, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { BaseModel, constants, generation, getGenerationConfig } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  constants,
+  generation,
+  getGenerationConfig,
+} from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
@@ -228,6 +234,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     [currentUser, status] // eslint-disable-line
   );
 
+  const prevBaseModelRef = useRef<BaseModelSetType | null>();
+
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
     version: 1,
@@ -289,25 +297,32 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       // handle model change to update baseModel value
-      if (
-        name !== 'baseModel' &&
-        watchedValues.model &&
-        getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
-      ) {
-        form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+
+      if (name !== 'baseModel') {
+        if (
+          watchedValues.model &&
+          getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
+        ) {
+          form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+        }
       }
 
-      if (name === 'baseModel' && watchedValues.baseModel === 'Flux1') {
-        form.setValue('cfgScale', 3.5);
+      if (name === 'baseModel') {
+        if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
+          form.setValue('cfgScale', 3.5);
+        }
+
+        if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
+          form.setValue('sampler', 'Euler a');
+        }
+        prevBaseModelRef.current = watchedValues.baseModel;
       }
 
       // handle selected `workflow` based on presence of `image` value
-      if (
-        name === 'image' &&
-        !watchedValues.image &&
-        watchedValues.workflow?.startsWith('img2img')
-      ) {
-        form.setValue('workflow', 'txt2img');
+      if (name === 'image') {
+        if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
+          form.setValue('workflow', 'txt2img');
+        }
       }
     });
     return () => {
@@ -327,7 +342,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
-    // TODO.briant this is reseting things when people navigate back to the generation form after remix
+    prevBaseModelRef.current = defaultValues.baseModel;
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
