@@ -359,7 +359,7 @@ export const constants = {
     maxCollaborators: 15,
   },
   earlyAccess: {
-    article: 6221,
+    article: 6341,
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [

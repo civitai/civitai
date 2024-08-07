@@ -8,7 +8,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 // --------------------------
 const featureAvailability = ['dev', 'mod', 'public', 'user', 'member', 'granted'] as const;
 const featureFlags = createFeatureFlags({
-  earlyAccessModel: ['mod', 'granted'],
+  earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod', 'member'],
