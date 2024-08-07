@@ -53,7 +53,6 @@ export function useGetTextToImageRequests(
     ...options,
   });
 
-  console.log('useGetTextToImageRequests', { input, data, rest });
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>

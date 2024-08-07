@@ -29,8 +29,6 @@ export function Feed() {
       tags: workflowTagsFilter
     });
 
-  console.log('steps', { steps, filters });
-
   if (isError)
     return (
       <Alert color="red">
@@ -90,14 +88,9 @@ export function Feed() {
 
               const { marker } = filters;
 
-              console.log('M1', image.id, { marker });
-
-
               if (marker) {
                 const feedback = step.metadata?.images?.[image.id]?.feedback;
                 const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-
-                console.log('M2', image.id, { marker, feedback, isFavorite });
 
                 if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
 
