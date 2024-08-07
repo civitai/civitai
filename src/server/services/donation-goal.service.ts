@@ -4,6 +4,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { updateModelEarlyAccessDeadline } from '~/server/services/model.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 
 export const donationGoalById = async ({
   id,
@@ -125,6 +126,9 @@ export const donateToGoal = async ({
           console.error('Unable to update model early access deadline');
           console.error(e);
         });
+
+        // Ensures user gets access to the resource after purchasing.
+        await bustOrchestratorModelCache(goal.modelVersionId);
       }
     }
 
