@@ -1479,8 +1479,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit,
     offset,
     page,
+    userIds,
   } = input;
-  let { userIds, browsingLevel } = input;
+  let { browsingLevel } = input;
 
   // Filter
   //------------------------
