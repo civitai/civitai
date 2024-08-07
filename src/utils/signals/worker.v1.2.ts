@@ -88,7 +88,7 @@ const getConnection = async ({ token }: { token: string }) => {
       if (pingTimeout) clearTimeout(pingTimeout);
     });
   } catch (e) {
-    emitter.emit('connectionError', { message: JSON.stringify(e) });
+    emitter.emit('connectionError', { message: (e as Error).message ?? '' });
     connection = null;
   }
 

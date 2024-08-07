@@ -1,9 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
+
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 15000;

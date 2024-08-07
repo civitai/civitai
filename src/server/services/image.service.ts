@@ -14,6 +14,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, truncate } from 'lodash-es';
+import { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
@@ -58,6 +59,11 @@ import {
 } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  ImageMetricsSearchIndexRecord,
+  MetricsImageFilterableAttribute,
+  MetricsImageSortableAttribute,
+} from '~/server/search-index/metrics-images.search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
@@ -76,7 +82,11 @@ import {
   getTagsNeedingReview,
 } from '~/server/services/system-cache';
 import { getVotableTags2 } from '~/server/services/tag.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  getBasicDataForUsers,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import {
@@ -513,6 +523,7 @@ type GetAllImagesRaw = {
   onSite: boolean;
   generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
+  sortAt: Date;
   mimeType: string | null;
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
@@ -566,7 +577,7 @@ export const getAllImages = async (
     periodMode,
     tags,
     generation,
-    reviewId, // TODO - remove, not in use
+    reviewId,
     prioritizedUserIds,
     include,
     excludeCrossPosts,
@@ -839,14 +850,12 @@ export const getAllImages = async (
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
     else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
-    else {
-      if (from.indexOf(`irr`) !== -1) {
-        // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
-        orderBy = `irr."imageId" DESC`;
-      } else {
-        orderBy = `i."id" DESC`;
-      }
+    else if (sort === ImageSort.Oldest) {
+      orderBy = 'i."sortAt" ASC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
+    } else {
+      orderBy = 'i."sortAt" DESC';
+      AND.push(Prisma.sql`i."sortAt" <= now()`);
     }
   }
 
@@ -942,24 +951,16 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (isModerator) {
+      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
+    } else {
+      AND.push(
+        browsingLevel
+          ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+          : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+      );
+    }
   }
-
-  // TODO.metricSearch add missing props
-  // getImagesFromSearch({
-  //   modelVersionId,
-  //   types,
-  //   browsingLevel,
-  //   fromPlatform,
-  //   hasMeta: include.includes('meta'),
-  //   baseModels,
-  //   period,
-  //   sort,
-  // }).catch();
 
   // TODO: Adjust ImageMetric
   const queryFrom = Prisma.sql`
@@ -1000,6 +1001,7 @@ export const getAllImages = async (
       ) as "onSite",
       i."generationProcess",
       i."createdAt",
+      i."sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -1078,7 +1080,9 @@ export const getAllImages = async (
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
+  let tagIdsVar:
+    | Record<string, { tags: { id: number; name: string }[]; imageId: number }>
+    | undefined;
   if (include?.includes('tagIds')) {
     tagIdsVar = await getTagIdsForImages(imageIds);
   }
@@ -1200,7 +1204,7 @@ export const getAllImages = async (
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
-        tagIds: tagIdsVar?.[i.id]?.tags,
+        tagIds: tagIdsVar?.[i.id]?.tags.map((t) => t.id),
         cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
@@ -1208,6 +1212,197 @@ export const getAllImages = async (
   return {
     nextCursor,
     items: images,
+  };
+};
+
+export const getAllImagesPost = async (
+  input: GetInfiniteImagesOutput & {
+    user?: SessionUser;
+    headers?: Record<string, string>;
+  }
+) => {
+  const {
+    user,
+    limit,
+    cursor,
+    postIds,
+    modelVersionId,
+    period,
+    include,
+    types,
+    fromPlatform,
+    // baseModels, // doesn't make sense to do this here
+    tools,
+    techniques,
+    tags,
+    notPublished,
+    withMeta: hasMeta,
+    excludedUserIds,
+    //
+    modelId, // TODO fix
+    reviewId, // TODO - remove, not in use...true?
+    username, // TODO - query by `userId` instead
+    collectionId, // TODO - call this from separate method?
+    ids,
+    skip,
+    postId,
+    periodMode,
+    generation,
+    prioritizedUserIds,
+    excludeCrossPosts,
+    includeBaseModel,
+    hidden,
+    followed,
+    pending,
+    collectionTagId,
+    headers,
+    excludedTagIds,
+    withTags,
+    imageId, // TODO - remove, not in use
+    reactions, // TODO - remove, not in use
+  } = input;
+  const { sort, browsingLevel } = input;
+
+  // include: [ 'cosmetics', 'tagIds', 'profilePictures' ]
+
+  const offset = cursor as number | undefined;
+  const currentUserId = user?.id;
+
+  console.time('SEARCH IDS');
+  const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
+    modelVersionId,
+    types,
+    browsingLevel,
+    fromPlatform,
+    hasMeta,
+    // baseModels,
+    postIds,
+    period,
+    tools,
+    techniques,
+    tags,
+    notPublished,
+    sort,
+    limit,
+    offset,
+    excludedUserIds,
+    // userIds: userIds,
+    currentUserId,
+    isModerator: user?.isModerator,
+  });
+  console.timeEnd('SEARCH IDS');
+  console.log(searchResults[0]?.id, searchResults.length);
+
+  if (!searchResults.length) {
+    return {
+      nextCursor: undefined,
+      items: [],
+    };
+  }
+
+  const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
+  const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
+
+  // TODO may need to check for image existence in db
+
+  // console.time('ADDITIONAL');
+  // const additionalData = await dbRead.image.findMany({
+  //   where: { id: { in: searchIds } },
+  //   select: {
+  //     id: true,
+  //     name: true,
+  //     type: true,
+  //     width: true,
+  //     height: true,
+  //     nsfwLevel: true,
+  //     createdAt: true,
+  //     index: true,
+  //     user: { select: { id: true, image: true, username: true, deletedAt: true } },
+  //     post: { select: { publishedAt: true, title: true, modelVersionId: true } },
+  //   },
+  // });
+  // console.timeEnd('ADDITIONAL');
+
+  // await dbRead.user.findMany({
+  //   where: { id: { in: userIds } },
+  //   select: {
+  //     username: true,
+  //   },
+  // });
+
+  console.time('REACTION');
+  let userReactions: Record<number, ReviewReactions[]> | undefined;
+  if (currentUserId) {
+    const reactionsRaw = await dbRead.imageReaction.findMany({
+      where: { imageId: { in: imageIds }, userId: currentUserId },
+      select: { imageId: true, reaction: true },
+    });
+    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
+      acc[imageId] ??= [] as ReviewReactions[];
+      acc[imageId].push(reaction);
+      return acc;
+    }, {} as Record<number, ReviewReactions[]>);
+  }
+  console.timeEnd('REACTION');
+
+  console.time('CACHE');
+  const [userDatas, userCosmetics, profilePictures, tagIdsData] = await Promise.all([
+    await getBasicDataForUsers(userIds),
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    include?.includes('tagIds') ? await getTagIdsForImages(imageIds) : undefined,
+  ]);
+  console.timeEnd('CACHE');
+
+  // TODO tags? we have strings...
+
+  const mergedData = searchResults.map((sr) => {
+    const thisUser = userDatas[sr.userId] ?? {};
+    const reactions =
+      userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
+
+    return {
+      ...sr,
+      modelVersionId: sr.postedToId,
+      type: sr.type as MediaType,
+      createdAt: sr.sortAt,
+      metadata: { width: sr.width, height: sr.height },
+      //
+      user: {
+        id: sr.userId,
+        username: thisUser.username,
+        image: thisUser.image,
+        deletedAt: thisUser.deletedAt,
+        cosmetics: userCosmetics?.[sr.userId] ?? [],
+        profilePicture: profilePictures?.[sr.userId] ?? null,
+      },
+      reactions,
+      tagIds: tagIdsData?.[sr.id]?.tags.map((t) => t.id),
+      // tags: tagsVar?.filter((x) => x.imageId === i.id),
+      // TODO fix below
+      tags: [],
+      name: null, // leave
+      generationProcess: null, // deprecated
+      scannedAt: null, // remove
+      mimeType: null, // need?
+      ingestion:
+        sr.nsfwLevel === NsfwLevel.Blocked
+          ? ImageIngestionStatus.Blocked
+          : sr.nsfwLevel === 0
+          ? ImageIngestionStatus.NotFound
+          : ImageIngestionStatus.Scanned, // add? maybe remove
+      postTitle: null, // remove
+    };
+  });
+
+  let nextCursor: number | undefined;
+  if (searchTotal) {
+    nextCursor = (offset ?? 0) + limit;
+  }
+
+  return {
+    nextCursor,
+    items: mergedData,
   };
 };
 
@@ -1219,6 +1414,7 @@ type ImageSearchInput = {
   fromPlatform?: boolean;
   notPublished?: boolean;
   baseModels?: string[];
+  postIds?: number[];
   period?: MetricTimeframe;
   browsingLevel?: NsfwLevel;
   sort?: ImageSort;
@@ -1232,17 +1428,25 @@ type ImageSearchInput = {
   userIds?: number | number[];
   modelId?: number;
   reviewId?: number;
-  excludeUserIds?: number[];
+  excludedUserIds?: number[];
   currentUserId?: number;
   isModerator?: boolean;
 };
 
-function strArray(arr: any[]) {
+function strArray(arr: (string | number)[]) {
   return arr.map((x) => `'${x}'`).join(',');
 }
 
+type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
+const makeMeiliImageSearchFilter = (
+  field: MetricsImageFilterableAttribute,
+  criteria: string
+): MeiliImageFilter => {
+  return `${field} ${criteria}`;
+};
+
 async function getImagesFromSearch(input: ImageSearchInput) {
-  if (!metricsClient) return [];
+  if (!metricsClient) return { data: [], total: 0 };
 
   const {
     sort,
@@ -1251,22 +1455,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     hasMeta,
     fromPlatform,
     notPublished,
-    userIds,
-    reviewId,
-    modelId,
     tags,
     tools,
     techniques,
     baseModels,
-    excludeUserIds,
     period,
-    currentUserId,
     isModerator,
+    postIds,
+    currentUserId,
+    reviewId, // missing
+    modelId, // missing
+    excludedUserIds,
+    limit,
+    offset,
+    page,
   } = input;
-  let { browsingLevel } = input;
-
-  // TODO.metricSearch remove hash, cosmetic
-  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  let { userIds, browsingLevel } = input;
 
   // Filter
   //------------------------
@@ -1277,33 +1481,42 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   else browsingLevel = onlySelectableLevels(browsingLevel);
   const browsingLevels = Flags.instanceToArray(browsingLevel);
   if (isModerator) browsingLevels.push(0);
-  filters.push(`nsfwLevel IN [${browsingLevels.join(',')}]`);
+  filters.push(makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`));
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
-  if (modelVersionId) filters.push(`modelVersionIds IN [${modelVersionId}]`);
-  if (types && types.length) filters.push(`mediaType IN [${types.join(',')}]`);
-  if (hasMeta) filters.push(`hasMeta = true`);
-  if (fromPlatform) filters.push(`madeOnSite = true`);
+  if (modelVersionId) {
+    filters.push(
+      `(${makeMeiliImageSearchFilter(
+        'modelVersionIds',
+        `IN [${modelVersionId}]`
+      )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
+    );
+  }
 
-  // TODO.metricSearch add userId
+  if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
+  if (notPublished && isModerator) filters.push(makeMeiliImageSearchFilter('published', '= false'));
+
+  if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
+  if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
+  if (tools?.length) filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
+  if (techniques?.length)
+    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
+  if (postIds?.length)
+    filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
+  if (baseModels?.length)
+    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
+
+  // TODO what are we doing with this? userIds are not passed in, only a single username is
   // if (userIds) {
   //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(`userId IN [${userIds.join(',')}]`)
+  //   filters.push(`userId IN [${userIds.join(',')}]`);
   // }
+  if (excludedUserIds)
+    filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
-  // TODO.metricSearch add published filter
-  // if (notPublished && isModerator) filters.push(`published = false`);
-
-  // TODO.metricSearch replace tags with tagIds
-  // if (tags && tags.length) filters.push(`tagIds IN [${tags.join(',')}]`);
-
-  // TODO.metricSearch add tools by id
-  // if (!!tools?.length) filters.push(`toolIds IN [${tools.join(',')}]`);
-
-  // TODO.metricSearch add techniques by id
-  // if (!!techniques?.length) filters.push(`techniqueIds IN [${techniques.join(',')}]`);
-
-  if (baseModels?.length) filters.push(`baseModel IN [${strArray(baseModels)}]`);
+  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  // if (reviewId) {}
 
   // Handle period filter
   let afterDate: Date | undefined;
@@ -1311,54 +1524,98 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const now = dayjs();
     afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
   }
-  if (afterDate) filters.push(`sortAtUnix > ${afterDate.getTime()}`);
+  if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
+
+  // TODO remove, this is for 6/21 dev
+  if (!isProd) {
+    filters.push(
+      makeMeiliImageSearchFilter(
+        'sortAtUnix',
+        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+      )
+    );
+  }
 
   // Log properties we don't support yet
   const cantProcess: Record<string, any> = {
     reviewId,
     modelId,
     userIds,
-    notPublished,
-    tags,
-    tools,
-    techniques,
-    excludeUserIds,
   };
-  if (input.reviewId || input.modelId) {
+  if (reviewId || modelId || userIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom({ type: 'cant-use-search', input: JSON.stringify(missingKeys) }, 'temp-search');
+    logToAxiom(
+      { type: 'cant-use-search', input: JSON.stringify(missingKeys) },
+      'temp-search'
+    ).catch();
   }
 
   // Sort
   //------------------------
-  let searchSort = 'sortAt:desc';
+  let searchSort: `${MetricsImageSortableAttribute}:${'asc' | 'desc'}` = 'sortAt:desc';
   if (sort === ImageSort.MostComments) searchSort = 'commentCount:desc';
   else if (sort === ImageSort.MostReactions) searchSort = 'reactionCount:desc';
   else if (sort === ImageSort.MostCollected) searchSort = 'collectedCount:desc';
   else if (sort === ImageSort.Oldest) searchSort = 'sortAt:asc';
 
-  const request = {
+  const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: [searchSort],
-    limit: input.limit ?? 100,
-    offset: input.offset,
-    page: input.page,
+    limit: limit ?? 100,
+    offset,
+    page,
   };
 
   try {
-    const results = await metricsClient.index(METRICS_SEARCH_INDEX).search(null, request);
+    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsClient
+      .index(METRICS_SEARCH_INDEX)
+      .search(null, request);
+
+    const filtered = results.hits.filter((hit) => {
+      // filter out non-scanned unless it's the owner or moderator
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel)) return true;
+      return hit.userId === currentUserId || isModerator;
+    });
+
+    // TODO maybe grab more if the number is now too low?
 
     const metrics = {
       hits: results.hits.length,
+      filtered: filtered.length,
       total: results.estimatedTotalHits,
       processingTimeMs: results.processingTimeMs,
     };
     logToAxiom(
       { type: 'search-result', metrics, input: removeEmpty(input), request },
       'temp-search'
-    );
+    ).catch();
 
-    return results.hits;
+    const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
+
+    const fullData = filtered.map((h) => {
+      const match = imageMetrics.find((im) => im.id === h.id);
+      return {
+        ...h,
+        stats: {
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
+        },
+      };
+    });
+
+    return {
+      data: fullData,
+      total: results.estimatedTotalHits,
+    };
   } catch (error) {
     const err = error as Error;
     logToAxiom(
@@ -1370,10 +1627,49 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         request,
       },
       'temp-search'
-    );
-    return [];
+    ).catch();
+    return { data: [], total: 0 };
   }
 }
+
+const getImageMetrics = async (ids: number[]) => {
+  const pgData = await dbRead.entityMetricImage.findMany({
+    where: { imageId: { in: ids } },
+    select: {
+      imageId: true,
+      reactionLike: true,
+      reactionHeart: true,
+      reactionLaugh: true,
+      reactionCry: true,
+      reactionTotal: true,
+      comment: true,
+      collection: true,
+      buzz: true,
+    },
+  });
+
+  const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
+
+  // TODO fix this
+  // // if no data in postgres, get latest from clickhouse
+  // if (clickhouse) {
+  //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
+  //   if (missing.length > 0) {
+  //     // TODO fix this query
+  //     const clickData = await clickhouse?.$query<typeof pgData[number]>(`
+  //         SELECT entityId, metricType, sum(metricValue)
+  //         FROM entityMetricEvents
+  //         WHERE entityType = 'Image'
+  //           AND entityId in (${missing.join(',')})
+  //         GROUP BY entityId, metricType
+  //       `
+  //     )
+  //     return pgData.concat(clickData);
+  //   }
+  // }
+
+  return finalData;
+};
 
 export async function getTagIdsForImages(imageIds: number[]) {
   return await tagIdsForImagesCache.fetch(imageIds);
@@ -1473,17 +1769,17 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      COALESCE(im."cryCount", 0) "cryCount",
-      COALESCE(im."laughCount", 0) "laughCount",
-      COALESCE(im."likeCount", 0) "likeCount",
-      COALESCE(im."dislikeCount", 0) "dislikeCount",
-      COALESCE(im."heartCount", 0) "heartCount",
-      COALESCE(im."commentCount", 0) "commentCount",
-      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
-      COALESCE(im."viewCount", 0) "viewCount",
-      u.id "userId",
+      COALESCE(im."cryCount", 0) as "cryCount",
+      COALESCE(im."laughCount", 0) as "laughCount",
+      COALESCE(im."likeCount", 0) as "likeCount",
+      COALESCE(im."dislikeCount", 0) as "dislikeCount",
+      COALESCE(im."heartCount", 0) as "heartCount",
+      COALESCE(im."commentCount", 0) as "commentCount",
+      COALESCE(im."tippedAmountCount", 0) as "tippedAmountCount",
+      COALESCE(im."viewCount", 0) as "viewCount",
+      u.id as "userId",
       u.username,
-      u.image "userImage",
+      u.image as "userImage",
       u."deletedAt",
       u."profilePictureId",
       ${
@@ -1791,7 +2087,7 @@ export const getImagesForModelVersion = async ({
     const imageIds = images.map((i) => i.id);
     const tagIdsVar = await getTagIdsForImages(imageIds);
     for (const image of images) {
-      image.tags = tagIdsVar?.[image.id]?.tags;
+      image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id);
     }
   }
 
@@ -2610,6 +2906,7 @@ type GetImageModerationReviewQueueRaw = {
   hideMeta: boolean;
   generationProcess: ImageGenerationProcess;
   createdAt: Date;
+  sortAt: Date;
   mimeType: string;
   scannedAt: Date;
   ingestion: ImageIngestionStatus;
@@ -2719,6 +3016,7 @@ export const getImageModerationReviewQueue = async ({
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
+      i."sortAt",
       i."mimeType",
       i.type,
       i.metadata,
