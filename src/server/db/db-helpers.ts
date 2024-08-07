@@ -184,6 +184,7 @@ export async function dataProcessor({
     const start = cursor;
     cursor += batchSize;
     const end = cursor;
+    cursor++; // To avoid batch overlap
 
     return async () => {
       await processor({ ...context, start, end });
