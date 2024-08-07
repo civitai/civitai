@@ -14,7 +14,6 @@ import {
   IconTrash,
   IconWand,
   IconHeart,
-  IconTag,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState, useRef } from 'react';
@@ -343,15 +342,6 @@ export function GeneratedImage({
                 onClick={() => handleToggleFavorite(!isFavorite)}
               >
                 <IconHeart size={16} />
-              </ActionIcon>
-
-              <ActionIcon size="md"
-                variant={hasUserTags ? 'light' : undefined}
-                color={hasUserTags ? 'orange' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleTagPanel(!tagPanelVisible)}
-              >
-                <IconTag size={16} />
               </ActionIcon>
 
               {!!img2imgWorkflows?.length && canRemix && (
