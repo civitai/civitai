@@ -10,19 +10,21 @@ const schema = z.object({
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const { pattern } = schema.parse(req.query);
   let cursor: number | undefined;
-  const clearedKeys = new Set<string>();
+  let cleared = 0;
+  const clearedKeys: string[] = [];
   let noNewKeysOccurances = 0;
   while (cursor !== 0) {
     const reply = await redis.scan(cursor ?? 0, {
       MATCH: pattern,
-      COUNT: 100000000,
+      COUNT: 10000000,
     });
 
     cursor = reply.cursor;
 
     const keys = reply.keys;
-    const newKeys = keys.filter((key) => !clearedKeys.has(key));
-    for (const key of keys) clearedKeys.add(key);
+    const newKeys = keys.filter((key) => !clearedKeys.includes(key));
+    clearedKeys.push(...newKeys);
+    cleared += newKeys.length;
 
     // Delete the keys found (if any)
     if (newKeys.length > 0) await redis.del(newKeys);
@@ -32,7 +34,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
     console.log(
       'cleared:',
-      clearedKeys.size,
+      cleared,
       'new:',
       newKeys.length,
       'noNewKeysOccurances:',
@@ -42,6 +44,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   return res.status(200).json({
     ok: true,
-    cleared: clearedKeys.size,
+    cleared: cleared,
   });
 });

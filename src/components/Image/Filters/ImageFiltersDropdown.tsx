@@ -14,20 +14,20 @@ import {
 } from '@mantine/core';
 import { MediaType, MetricTimeframe } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
+import { useImageQueryParams } from '~/components/Image/image.utils';
+import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
+import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { getDisplayName } from '~/utils/string-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ToolMultiSelect, ToolSelect } from '~/components/Tool/ToolMultiSelect';
-import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
-import { useRouter } from 'next/router';
-import { useImageQueryParams } from '~/components/Image/image.utils';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -71,6 +71,7 @@ export function ImageFiltersDropdown({
   onChange,
   isFeed,
   filterType = 'images',
+  hideBaseModels = false,
   ...buttonProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
@@ -115,12 +116,12 @@ export function ImageFiltersDropdown({
       types: undefined,
       withMeta: false,
       hidden: false,
-      followed: false,
       fromPlatform: false,
       notPublished: false,
       tools: [],
+      techniques: [],
       period: MetricTimeframe.AllTime,
-      baseModels: undefined,
+      baseModels: [],
     };
 
     if (onChange) onChange(reset);
@@ -169,7 +170,7 @@ export function ImageFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg">
+    <Stack spacing="lg" p="md">
       <Stack spacing="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
@@ -183,22 +184,24 @@ export function ImageFiltersDropdown({
           <PeriodFilter type={filterType} variant="chips" />
         )}
       </Stack>
-      <Stack spacing="md">
-        <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Chip.Group
-          spacing={8}
-          value={mergedFilters.baseModels ?? []}
-          onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
-          multiple
-          my={4}
-        >
-          {activeBaseModels.map((baseModel, index) => (
-            <Chip key={index} value={baseModel} {...chipProps}>
-              {baseModel}
-            </Chip>
-          ))}
-        </Chip.Group>
-      </Stack>
+      {!hideBaseModels && (
+        <Stack spacing="md">
+          <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
+          <Chip.Group
+            spacing={8}
+            value={mergedFilters.baseModels ?? []}
+            onChange={(baseModels: BaseModel[]) => handleChange({ baseModels })}
+            multiple
+            my={4}
+          >
+            {activeBaseModels.map((baseModel, index) => (
+              <Chip key={index} value={baseModel} {...chipProps}>
+                {baseModel}
+              </Chip>
+            ))}
+          </Chip.Group>
+        </Stack>
+      )}
       <Stack spacing="md">
         <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
@@ -293,7 +296,7 @@ export function ImageFiltersDropdown({
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
               overflowY: 'auto',
             },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
             closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
@@ -314,7 +317,7 @@ export function ImageFiltersDropdown({
       withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} w="100%">
+      <Popover.Dropdown maw={468} p={0} w="100%">
         <ScrollArea.Autosize
           type="hover"
           maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
@@ -331,4 +334,5 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
   isFeed?: boolean;
   filterType?: 'images' | 'modelImages';
+  hideBaseModels?: boolean;
 };

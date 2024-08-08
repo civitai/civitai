@@ -13,6 +13,9 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { removeEmpty } from '../../../utils/object-helpers';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -91,20 +94,6 @@ export function ImageDetailProvider({
     images.unshift(prefetchedImage as any);
   }
 
-  // useEffect(() => {
-  //   if (prefetchedImage && shouldFetchImage) {
-  //     browserRouter.replace(
-  //       {
-  //         query: removeEmpty({
-  //           ...browserRouter.query,
-  //           postId: prefetchedImage.postId || undefined,
-  //         }),
-  //       },
-  //       `/images/${imageId}`
-  //     );
-  //   }
-  // }, [prefetchedImage]); // eslint-disable-line
-
   function findCurrentImageIndex() {
     const index = images.findIndex((x) => x.id === imageId);
     return index > -1 ? index : 0;
@@ -167,6 +156,13 @@ export function ImageDetailProvider({
     : username
     ? { connectType: 'user', connectId: username }
     : {};
+
+  const image = images[index];
+  const { blockedUsers } = useHiddenPreferencesData();
+  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
+
+  if (imagesLoading || imageLoading) return <PageLoader />;
+  if (!image || isBlocked) return <NotFound />;
 
   return (
     <ImageDetailContext.Provider

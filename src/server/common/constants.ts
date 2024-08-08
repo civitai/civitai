@@ -359,15 +359,26 @@ export const constants = {
     maxCollaborators: 15,
   },
   earlyAccess: {
+    article: 6341,
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
-      [900, 3],
-      [1800, 5],
-      [2200, 7],
-      [8500, 9],
-      [18000, 12],
-      [40000, 15],
+      // The maximum amount of days that can be set based off of score.
+      [40000, 3],
+      [65000, 5],
+      [90000, 7],
+      [125000, 9],
+      [200000, 12],
+      [250000, 15],
+    ],
+    scoreQuantityUnlock: [
+      // How many items can be marked EA at the same time based off of score.
+      [40000, 1],
+      [65000, 2],
+      [90000, 4],
+      [125000, 6],
+      [200000, 8],
+      [250000, 10],
     ],
   },
 } as const;
@@ -764,6 +775,9 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
+
+// Metrics:
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v2';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',

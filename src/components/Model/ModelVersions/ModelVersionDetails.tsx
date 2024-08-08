@@ -171,12 +171,32 @@ export function ModelVersionDetails({
   const displayCivitaiLink = civitaiLinked && !!version.hashes && version.hashes?.length > 0;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
-  const canGenerate = features.imageGeneration && version.canGenerate && hasGeneratePermissions;
+  const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
+  const earlyAccessConfig = version?.earlyAccessConfig;
+  const canGenerate =
+    features.imageGeneration &&
+    version.canGenerate &&
+    (!isEarlyAccess || !!earlyAccessConfig?.chargeForGeneration || hasGeneratePermissions);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const onPurchase = (reason?: 'generation' | 'download') => {
+    if (!features.earlyAccessModel) {
+      showErrorNotification({
+        error: new Error('Unauthorized'),
+        title: 'Unauthorized',
+        reason:
+          'This model will be available for download once early access is enabled to the public. Please check back later.',
+      });
+      return;
+    }
 
+    dialogStore.trigger({
+      component: ModelVersionEarlyAccessPurchase,
+      props: { modelVersionId: version.id, reason },
+    });
+  };
   const getDownloadProps = useCallback(
     (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
       if (isLoadingAccess) {
@@ -201,20 +221,7 @@ export function ModelVersionDetails({
       } else {
         return {
           onClick: () => {
-            if (!features.earlyAccessModel) {
-              showErrorNotification({
-                error: new Error('Unauthorized'),
-                title: 'Unauthorized',
-                reason:
-                  'This model will be available for download once early access is enabled to the public. Please check back later.',
-              });
-              return;
-            }
-
-            dialogStore.trigger({
-              component: ModelVersionEarlyAccessPurchase,
-              props: { modelVersionId: version.id },
-            });
+            onPurchase('download');
           },
         };
       }
@@ -322,7 +329,17 @@ export function ModelVersionDetails({
             <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
           </IconBadge>
           {version.canGenerate && (
-            <GenerateButton modelVersionId={version.id} data-activity="create:version-stat">
+            <GenerateButton
+              modelVersionId={version.id}
+              data-activity="create:version-stat"
+              disabled={isLoadingAccess}
+              generationPrice={
+                !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                  ? earlyAccessConfig?.generationPrice
+                  : undefined
+              }
+              onPurchase={() => onPurchase('generation')}
+            >
               <IconBadge radius="xs" icon={<IconBrush size={14} />}>
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
@@ -648,6 +665,13 @@ export function ModelVersionDetails({
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
+                      disabled={isLoadingAccess}
+                      generationPrice={
+                        !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                          ? earlyAccessConfig?.generationPrice
+                          : undefined
+                      }
+                      onPurchase={() => onPurchase('generation')}
                     />
                   )}
 
@@ -696,7 +720,11 @@ export function ModelVersionDetails({
                     filesCount === 1 ? (
                       <DownloadButton
                         canDownload={version.canDownload}
-                        downloadRequiresPurchase={!hasDownloadPermissions}
+                        downloadPrice={
+                          !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                            ? earlyAccessConfig?.downloadPrice
+                            : undefined
+                        }
                         component="a"
                         {...getDownloadProps(primaryFile)}
                         tooltip="Download"
@@ -709,7 +737,11 @@ export function ModelVersionDetails({
                         <Menu.Target>
                           <DownloadButton
                             canDownload={version.canDownload}
-                            downloadRequiresPurchase={!hasDownloadPermissions}
+                            downloadPrice={
+                              !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                                ? earlyAccessConfig?.downloadPrice
+                                : undefined
+                            }
                             disabled={!primaryFile || archived || isLoadingAccess}
                             sx={{ flex: 1, paddingLeft: 8, paddingRight: 8 }}
                             iconOnly
@@ -723,7 +755,11 @@ export function ModelVersionDetails({
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={version.canDownload}
-                      downloadRequiresPurchase={!hasDownloadPermissions}
+                      downloadPrice={
+                        !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                          ? earlyAccessConfig?.downloadPrice
+                          : undefined
+                      }
                       disabled={!primaryFile || archived || isLoadingAccess}
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                     >
@@ -740,7 +776,9 @@ export function ModelVersionDetails({
                   )}
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {!displayCivitaiLink && <RunButton variant="light" modelVersionId={version.id} />}
+                  {!displayCivitaiLink && !isEarlyAccess && (
+                    <RunButton variant="light" modelVersionId={version.id} />
+                  )}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton

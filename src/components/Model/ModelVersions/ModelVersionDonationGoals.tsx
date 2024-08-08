@@ -28,6 +28,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelVersionDonationGoal } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
@@ -75,7 +76,7 @@ const DonationGoalItem = ({
     });
   };
 
-  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '').toLowerCase();
+  const resourceLabel = getDisplayName(modelVersion?.model.type ?? '');
 
   return (
     <Paper
@@ -90,11 +91,7 @@ const DonationGoalItem = ({
         {donationGoal.isEarlyAccess && progress < 100 && modelVersionIsEarlyAccess && (
           <Text color="yellow" size="xs" weight={500}>
             The creator of this {resourceLabel} has set a donation goal! You can donate to make this
-            resource available to everyone or just wait untill it becomes public. The remaining time
-            for early access is{' '}
-            <Text component="span" weight="bold">
-              <Countdown endTime={earlyAccessEndsAt ?? new Date()} />
-            </Text>
+            resource available to everyone before the end of Early Access.
           </Text>
         )}
         <Group position="apart" noWrap align="start">
@@ -107,7 +104,7 @@ const DonationGoalItem = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              {donationGoal.total} / {donationGoal.goalAmount}
+              {numberWithCommas(donationGoal.total)} / {numberWithCommas(donationGoal.goalAmount)}
             </Text>
           </Group>
         </Group>
@@ -152,7 +149,10 @@ const DonationGoalItem = ({
                   placeholder="Amount to donate"
                   disabled={donating}
                 />
-                <Tooltip label="Purchasing the model for generation or download does not contribute to the donation goal.">
+                <Tooltip
+                  label="Purchasing the model for generation or download will contribute to the donation goal."
+                  maw={250}
+                >
                   <IconInfoCircle />
                 </Tooltip>
               </Group>

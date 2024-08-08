@@ -1,5 +1,14 @@
-import { RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  RefObject,
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 
 type SizeMapping = { height: number; width: number };
 const sizeMappings = new Map<string, SizeMapping>();
@@ -91,6 +100,14 @@ export function useInViewDynamic<T extends HTMLElement = HTMLDivElement>({
       }
     },
   });
+
+  useIsomorphicLayoutEffect(() => {
+    const sizeMapping = sizeMappingRef.current;
+    const target = ref.current;
+    if (target && sizeMapping) {
+      target.style.height = `${sizeMapping.height}px`;
+    }
+  }, []);
 
   useEffect(() => {
     const target = ref.current;

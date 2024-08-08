@@ -523,7 +523,7 @@ export const deleteModelHandler = async ({
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
-    const model = await deleteModel({ id, userId: ctx.user.id });
+    const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     await ctx.track.modelEvent({

@@ -51,6 +51,7 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().nullish(),
+  hash: z.number().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
@@ -124,7 +125,34 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
-async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
+// @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
+async function isBlocked(hash: number) {
+  // const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+  //   SELECT hash
+  //   FROM "BlockedImage"
+  //   WHERE BIT_COUNT(${hash}::bigint ^ "hash") < 5
+  // `;
+
+  // return matches.length > 0;
+
+  // Uncomment above code once we have the blocked image hash table
+  return false;
+}
+
+async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
+  if (hash && (await isBlocked(hash))) {
+    await dbWrite.image.update({
+      where: { id },
+      data: {
+        pHash: hash,
+        ingestion: ImageIngestionStatus.Blocked,
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: 'Similar to blocked content',
+      },
+    });
+    return;
+  }
+
   if (!incomingTags) return;
 
   const image = await dbWrite.image.findUnique({
@@ -212,8 +240,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
       tagCache[tag.name] = { id: tag.id };
       if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
     }
+
     for (const tag of tags) {
       const cachedTag = tagCache[tag.tag];
+      if (!cachedTag) continue;
       tag.id = cachedTag.id;
       if (cachedTag.blocked) hasBlockedTag = true;
     }
@@ -354,6 +384,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
         data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
       }
     }
+
+    if (hash) data.pHash = hash;
 
     if (Object.keys(data).length > 0) {
       data.updatedAt = new Date();

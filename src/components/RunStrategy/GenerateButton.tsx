@@ -1,22 +1,64 @@
-import { Button, ButtonProps, Group, Text, Tooltip } from '@mantine/core';
-import { IconBrush } from '@tabler/icons-react';
+import {
+  Badge,
+  Button,
+  ButtonProps,
+  Group,
+  Text,
+  ThemeIcon,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
+import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function GenerateButton({
   iconOnly,
   modelVersionId,
   mode = 'replace',
   children,
+  generationPrice,
+  onPurchase,
+  onClick,
   ...buttonProps
 }: Props) {
+  const theme = useMantineTheme();
+  const purchaseIcon = (
+    <Badge
+      radius="sm"
+      size="sm"
+      variant="filled"
+      color="yellow.7"
+      style={{
+        position: 'absolute',
+        top: '-8px',
+        right: '-8px',
+        boxShadow: theme.shadows.sm,
+        padding: '4px 2px',
+        paddingRight: '6px',
+      }}
+    >
+      <Group spacing={0}>
+        <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />{' '}
+        <Text color="dark.9">{abbreviateNumber(generationPrice ?? 0, { decimals: 0 })}</Text>
+      </Group>
+    </Badge>
+  );
+
   const opened = useGenerationStore((state) => state.opened);
   const onClickHandler = () => {
+    if (generationPrice) {
+      onPurchase?.();
+      return;
+    }
     if (mode === 'toggle' && opened) return generationPanel.close();
 
     modelVersionId
       ? generationPanel.open({ type: 'modelVersion', id: modelVersionId })
       : generationPanel.open();
+
+    onClick?.();
   };
 
   if (children)
@@ -33,6 +75,7 @@ export function GenerateButton({
       onClick={onClickHandler}
       {...buttonProps}
     >
+      {generationPrice && <>{purchaseIcon}</>}
       {iconOnly ? (
         <IconBrush size={24} />
       ) : (
@@ -59,4 +102,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   modelVersionId?: number;
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
+  generationPrice?: number;
+  onPurchase?: () => void;
+  onClick?: () => void;
 };

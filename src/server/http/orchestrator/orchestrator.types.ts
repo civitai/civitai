@@ -173,7 +173,8 @@ export namespace Orchestrator {
       providers: string[];
     };
     export type BustModelCache = {
-      modelVersionId: number;
+      air: string;
+      userId?: number;
     };
     export type PrepareModelResponse = Orchestrator.JobResponse<PrepareModelJob>;
   }

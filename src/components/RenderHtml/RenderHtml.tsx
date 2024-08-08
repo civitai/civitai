@@ -5,9 +5,8 @@ import {
 } from '@mantine/core';
 import { useMemo } from 'react';
 
-import { needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
+import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   htmlRenderer: {
@@ -92,6 +91,7 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
       sanitizeHtml(html, {
         parseStyleAttributes: true,
         allowedAttributes: {
+          ...DEFAULT_ALLOWED_ATTRIBUTES,
           div: ['data-youtube-video', 'data-type', 'style'],
         },
         allowedStyles: {
