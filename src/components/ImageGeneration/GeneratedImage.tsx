@@ -146,14 +146,11 @@ export function GeneratedImage({
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
-  const [tagPanelVisible, handleToggleTagPanel] = useState<boolean>();
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
   const badFeedbackSelected = feedback === 'disliked';
   const goodFeedbackSelected = feedback === 'liked';
   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-  // const hasUserTags = step.metadata?.images?.[image.id]?.userTags === true;
-  const hasUserTags = false;
   const available = image.status === 'succeeded';
 
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
@@ -389,10 +386,6 @@ export function GeneratedImage({
                 />
               </ActionIcon>
             </ImageMetaPopover>
-
-            {tagPanelVisible && (
-              <div>tagPanelVisible</div>
-            )}
           </Group>
         </>
       )}
