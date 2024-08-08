@@ -103,7 +103,7 @@ type Metrics = {
   laughCount: number;
 };
 
-type ModelVersion = {
+type ModelVersions = {
   id: number;
   baseModel: string;
   modelVersionIds: number[];
@@ -166,7 +166,7 @@ const transformData = async ({
   metrics: Metrics[];
   tools: { imageId: number; tool: string }[];
   techs: { imageId: number; tech: string }[];
-  modelVersions: ModelVersion[];
+  modelVersions: ModelVersions[];
 }) => {
   const records = images
     .map(({ userId, id, ...imageRecord }) => {
@@ -181,7 +181,7 @@ const transformData = async ({
       const imageMetrics = metrics.find((m) => m.id === id);
       const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
       const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
-      const baseModel = modelVersions.find((m) => m.id === imageRecord.modelVersionId)?.baseModel;
+      const baseModel = modelVersions.find((m) => m.id === id)?.baseModel;
 
       return {
         ...imageRecord,
@@ -369,7 +369,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         images: BaseImage[];
       };
 
-      const { rows: modelVersions } = await pgDbRead.query<ModelVersion>(`
+      const { rows: modelVersions } = await pgDbRead.query<ModelVersions>(`
         SELECT
           ir."imageId" as id,
           string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
