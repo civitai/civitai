@@ -103,7 +103,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, isLoading, active, close, toggleInfo, shareUrl, connect, navigate, index } =
+  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index } =
     useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
@@ -121,16 +121,12 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { blockedUsers } = useHiddenPreferencesData();
-  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
-
   const { collectionItems = [] } = useImageContestCollectionDetails(
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
 
-  if (isLoading) return <PageLoader />;
-  if (!image || isBlocked) return <NotFound />;
+  if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 

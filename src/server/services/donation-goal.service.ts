@@ -111,7 +111,7 @@ export const donateToGoal = async ({
           SET "earlyAccessConfig" = 
             COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
               'timeframe', 0,
-              'originalPublishAt', "publishedAt",
+              'originalPublishedAt', "publishedAt",
               'originalTimeframe', "earlyAccessConfig"->>'timeframe'
             ),
           "earlyAccessEndsAt" = NULL,
