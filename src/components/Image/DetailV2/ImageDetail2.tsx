@@ -25,7 +25,6 @@ import {
   IconChevronUp,
   IconDotsVertical,
   IconDownload,
-  IconEye,
   IconFlag,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
@@ -71,7 +70,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
-import { abbreviateNumber } from '~/utils/number-helpers';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -234,12 +232,13 @@ export function ImageDetail2() {
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
                       />
-                      <Badge {...sharedBadgeProps}>
-                        <IconEye {...sharedIconProps} />
-                        <Text color="white" size="xs" align="center" weight={500}>
-                          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
-                        </Text>
-                      </Badge>
+                      {/* TODO show this again with different metrics */}
+                      {/*<Badge {...sharedBadgeProps}>*/}
+                      {/*  <IconEye {...sharedIconProps} />*/}
+                      {/*  <Text color="white" size="xs" align="center" weight={500}>*/}
+                      {/*    {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}*/}
+                      {/*  </Text>*/}
+                      {/*</Badge>*/}
                       <DownloadImage src={image.url} type={image.type} name={image.name}>
                         {({ onClick, isLoading, progress }) => (
                           <ActionIcon

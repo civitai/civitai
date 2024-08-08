@@ -5,6 +5,8 @@
   "scripts": {
     "start": "next start",
     "dev": "next dev",
+    "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
+    "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
     "release:major": "npm version major && git push --follow-tags && npm run release:base",
@@ -230,6 +232,7 @@
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
     "autoprefixer": "^10.4.19",
+    "cross-env": "^7.0.3",
     "cssnano": "^7.0.1",
     "eslint": "8.22.0",
     "eslint-config-airbnb": "^19.0.4",
