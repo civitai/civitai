@@ -104,7 +104,7 @@ const DonationGoalItem = ({
                 whiteSpace: 'nowrap',
               }}
             >
-              {donationGoal.total} / {numberWithCommas(donationGoal.goalAmount)}
+              {numberWithCommas(donationGoal.total)} / {numberWithCommas(donationGoal.goalAmount)}
             </Text>
           </Group>
         </Group>

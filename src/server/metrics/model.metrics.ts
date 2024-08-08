@@ -309,12 +309,13 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
     log('getRatingTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- update version rating metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount")
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount", "updatedAt")
       SELECT
         dg."modelVersionId",
         tf.timeframe,
         ${snippets.timeframeCount('d."createdAt"', 'amount')} "tippedCount",
-        ${snippets.timeframeSum('d."createdAt"', 'amount')} "tippedAmountCount"
+        ${snippets.timeframeSum('d."createdAt"', 'amount')} "tippedAmountCount",
+        now() "updatedAt"
       FROM "Donation" d
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf

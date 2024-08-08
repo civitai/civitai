@@ -220,7 +220,7 @@ export const upsertModelVersionHandler = async ({
       const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
 
       if (
-        activeEarlyAccess.length > getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
+        activeEarlyAccess.length >= getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
         (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
       ) {
         throw throwBadRequestError(

@@ -82,8 +82,8 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
         <Text weight="bold" component="span">
           Early Access
         </Text>{' '}
-        and as such it is only availble for people who purchase it. This {getDisplayName(modelType)}{' '}
-        will be available for free in{' '}
+        and as such it is only available for people who purchase it. This{' '}
+        {getDisplayName(modelType)} will be available for free in{' '}
         <Text weight="bold" component="span">
           <Countdown endTime={deadline} />
         </Text>{' '}
