@@ -116,12 +116,12 @@ export function ImageFiltersDropdown({
       types: undefined,
       withMeta: false,
       hidden: false,
-      followed: false,
       fromPlatform: false,
       notPublished: false,
       tools: [],
+      techniques: [],
       period: MetricTimeframe.AllTime,
-      baseModels: undefined,
+      baseModels: [],
     };
 
     if (onChange) onChange(reset);
@@ -170,7 +170,7 @@ export function ImageFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing="lg">
+    <Stack spacing="lg" p="md">
       <Stack spacing="md">
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} />
         {query?.period && onChange ? (
@@ -296,7 +296,7 @@ export function ImageFiltersDropdown({
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
               overflowY: 'auto',
             },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
             closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
@@ -317,7 +317,7 @@ export function ImageFiltersDropdown({
       withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} w="100%">
+      <Popover.Dropdown maw={468} p={0} w="100%">
         <ScrollArea.Autosize
           type="hover"
           maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}

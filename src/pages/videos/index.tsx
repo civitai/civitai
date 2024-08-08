@@ -2,6 +2,7 @@ import { Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -24,9 +25,13 @@ export default function VideosPage() {
         {hidden && <Title>Your Hidden Videos</Title>}
         <Stack spacing="xs">
           <IsClient>
-            {/* TODO.imageTags: Bring back once we support tags again.  */}
-            {/* <ImageCategories /> */}
-            <ImagesInfinite filters={{ ...filters, types: ['video'] }} showEof showAds />
+            <ImageCategories />
+            <ImagesInfinite
+              filterType="videos"
+              filters={{ ...filters, types: ['video'] }}
+              showEof
+              showAds
+            />
           </IsClient>
         </Stack>
       </MasonryContainer>
