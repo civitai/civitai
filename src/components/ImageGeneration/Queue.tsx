@@ -142,12 +142,15 @@ export function Queue() {
 
             if (marker) {
               filteredStep.images = step.images.filter((image) => {
-                const feedback = step.metadata?.images?.[image.id]?.feedback;
-                const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+                if (marker === MarkerType.Favorited) {
+                  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+                  return isFavorite;
+                }
 
-                if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
-
-                else if (marker === MarkerType.Favorited && !isFavorite) return null;
+                if (marker === MarkerType.Liked || marker === MarkerType.Disliked) {
+                  const feedback = step.metadata?.images?.[image.id]?.feedback;
+                  return feedback === marker;
+                }
               });
 
               if (!filteredStep.images.length) return null;
