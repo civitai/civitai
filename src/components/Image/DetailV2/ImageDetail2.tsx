@@ -232,13 +232,13 @@ export function ImageDetail2() {
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
                       />
-                      {/* TODO show this again with different metrics */}
-                      {/*<Badge {...sharedBadgeProps}>*/}
-                      {/*  <IconEye {...sharedIconProps} />*/}
-                      {/*  <Text color="white" size="xs" align="center" weight={500}>*/}
-                      {/*    {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}*/}
-                      {/*  </Text>*/}
-                      {/*</Badge>*/}
+                      {/* Disable view count  */}
+                      {/* <Badge {...sharedBadgeProps}>
+                        <IconEye {...sharedIconProps} />
+                        <Text color="white" size="xs" align="center" weight={500}>
+                          {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
+                        </Text>
+                      </Badge> */}
                       <DownloadImage src={image.url} type={image.type} name={image.name}>
                         {({ onClick, isLoading, progress }) => (
                           <ActionIcon
