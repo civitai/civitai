@@ -14,7 +14,7 @@ import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
@@ -40,7 +40,6 @@ export default function Login({ providers }: Props) {
     returnUrl: string;
     reason: LoginRedirectReason;
   };
-  const adRef = useRef<HTMLDivElement>(null);
   const { code, setLoginRedirectReason } = useReferralsContext();
   const { data: referrer } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code as string },
@@ -72,29 +71,6 @@ export default function Login({ providers }: Props) {
     }
   }, [reason, setLoginRedirectReason]);
 
-  useLayoutEffect(() => {
-    if (!adRef.current) return;
-
-    console.log('pushing to queue');
-    window.pgHB = window.pgHB || { que: [] };
-    window.pgHB.que.push(() => {
-      try {
-        console.log('requesting rewarded ad');
-        window.pgHB?.requestWebRewardedAd?.({
-          slotId: 'rewarded-ad',
-          callback: (success: unknown, errors: unknown) => {
-            console.log('rewarded ad callback');
-            console.log(success);
-            console.log(errors);
-          },
-        });
-      } catch (e) {
-        // Handle uncaught errors
-        console.log('BOOOM', e);
-      }
-    });
-  }, []);
-
   return (
     <>
       <Meta
@@ -103,8 +79,6 @@ export default function Login({ providers }: Props) {
       />
       <Container size="xs">
         <Stack>
-          <div id="civitaicom47459" />
-          <div id="rewarded-ad" ref={adRef} />
           {!!redirectReason && (
             <Alert color="yellow">
               <Group position="center" spacing="xs" noWrap align="flex-start">

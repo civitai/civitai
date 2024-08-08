@@ -101,35 +101,6 @@ function LoadProviderScript({ provider, onError }: { provider: AdProvider; onErr
         />
       );
     case 'pubgalaxy':
-      return (
-        <Script
-          id="ads-init"
-          type="text/javascript"
-          dangerouslySetInnerHTML={{
-            __html: `
-              if (typeof __tcfapi !== 'undefined') {
-                __tcfapi("addEventListener", 2, function(tcData, success) {
-                  if (success && tcData.unicLoad  === true) {
-                    if(!window._initAds) {
-                      window._initAds = true;
-                        
-                      var script = document.createElement('script');
-                      script.async = true;
-                      script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
-                      document.head.appendChild(script);
-                
-                      var script = document.createElement('script');
-                      script.async = true;
-                      script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
-                      document.head.appendChild(script);
-                    }
-                  }
-                });
-              }
-            `,
-          }}
-        />
-      );
     case 'exoclick':
     default:
       return null;
