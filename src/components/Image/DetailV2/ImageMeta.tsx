@@ -20,7 +20,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   const { meta, generationProcess } = data ?? {};
 
   if (!meta) return null;
-  const { comfy } = meta;
+  const { comfy, remixedFromImageId } = meta;
 
   const onSite = 'civitaiResources' in meta;
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
@@ -81,8 +81,8 @@ export function ImageMeta({ imageId }: { imageId: number }) {
                 {meta.comfy
                   ? 'Comfy'
                   : generationProcess === 'txt2imgHiRes'
-                  ? 'txt2img + Hi-Res'
-                  : generationProcess}
+                    ? 'txt2img + Hi-Res'
+                    : generationProcess}
                 {hasControlNet && ' + ControlNet'}
               </Badge>
             </div>
@@ -135,6 +135,13 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
           </div>
         </>
+      )}
+      {/* TODO: trying out few render ux   */}
+      {remixedFromImageId && (
+        <div className="flex flex-col">
+          <Text className="font-semibold">Remixed From Image ID</Text>
+          <Text className="leading-snug">{remixedFromImageId}</Text>
+        </div>
       )}
     </>
   );
