@@ -9,17 +9,21 @@ export function WatchAdButton({ children, ...props }: Props) {
     onSuccess: async () => {
       await queryUtils.user.userRewardDetails.invalidate();
     },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to claim reward',
+        error,
+      });
+    },
   });
 
   const handleLoadAd = async () => {
     try {
       const adToken = await requestAdTokenMutation.mutateAsync();
 
-      console.log('pushing to queue');
       window.pgHB = window.pgHB || { que: [] };
       window.pgHB.que.push(() => {
         try {
-          console.log('requesting rewarded ad');
           window.pgHB?.requestWebRewardedAd?.({
             slotId: 'rewarded-ad',
             callback: (success: boolean) => {
@@ -28,7 +32,7 @@ export function WatchAdButton({ children, ...props }: Props) {
           });
         } catch (e) {
           // Handle uncaught errors
-          console.log('BOOOM', e);
+          console.error('BOOOM', e);
         }
       });
     } catch {

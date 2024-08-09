@@ -15,6 +15,7 @@ export default class _Document extends Document {
           <Main />
           <NextScript />
 
+          {/* Load pubGalaxy scripts in the <head> */}
           <Script
             id="ads-start"
             type="text/javascript"
