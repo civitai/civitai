@@ -34,6 +34,7 @@ export const textToImageParamsSchema = z.object({
   upscale: z.number().max(3).optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
+  experimental: z.boolean().optional(),
 });
 // #endregion
 

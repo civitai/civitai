@@ -378,6 +378,11 @@ export const ingestImage = async ({
 
     return true;
   }
+
+  const { prompt } = await dbClient.$queryRaw<{ prompt: string | null }>`
+    SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
+  `;
+
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -387,8 +392,14 @@ export const ingestImage = async ({
       type,
       width,
       height,
+      prompt,
       // wait: true,
-      scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+      scans: [
+        ImageScanType.Label,
+        ImageScanType.Moderation,
+        ImageScanType.WD14,
+        ImageScanType.Hash,
+      ],
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -429,6 +440,8 @@ export const ingestImageBulk = async ({
   const imageIds = images.map(({ id }) => id);
   const dbClient = tx ?? dbWrite;
 
+  if (!imageIds.length) return false;
+
   if (!isProd || !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.updateMany({
@@ -442,6 +455,10 @@ export const ingestImageBulk = async ({
     return true;
   }
 
+  const prompts = await dbClient.$queryRaw<{ id: number; prompt: string | null }[]>`
+    SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+  `;
+
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
     {
@@ -454,7 +471,13 @@ export const ingestImageBulk = async ({
           type: image.type,
           width: image.width,
           height: image.height,
-          scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+          prompt: prompts.find((x) => x.id === image.id)?.prompt,
+          scans: [
+            ImageScanType.Label,
+            ImageScanType.Moderation,
+            ImageScanType.WD14,
+            ImageScanType.Hash,
+          ],
           callbackUrl,
         }))
       ),
