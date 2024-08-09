@@ -7,6 +7,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { useDumbImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import {
   ProfileSection,
   ProfileSectionNoResults,
@@ -21,10 +22,7 @@ import { ImageSort } from '~/server/common/enums';
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
 
 export const MyImagesSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView({
-    delay: 100,
-    triggerOnce: true,
-  });
+  const [ref, inView] = useInViewDynamic({ id: 'profile-images-section' });
   const { filters } = useDumbImageFilters({
     sort: ImageSort.Newest,
     period: MetricTimeframe.AllTime,
@@ -59,52 +57,53 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !images.length;
 
-  if (isNullState && inView) {
+  if (isNullState) {
     return null;
   }
 
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isLoading || !inView ? (
-        <ProfileSectionPreview rowCount={2} />
-      ) : (
-        <ProfileSection
-          title="Images"
-          icon={<IconPhoto />}
-          action={
-            !isRefetching && (
-              <Link href={`/user/${user.username}/images?sort=${ImageSort.Newest}`} passHref>
-                <Button
-                  h={34}
-                  component="a"
-                  variant="subtle"
-                  rightIcon={<IconArrowRight size={16} />}
-                >
-                  <Text inherit> View all images</Text>
-                </Button>
-              </Link>
-            )
-          }
-        >
-          <ShowcaseGrid
-            itemCount={images.length}
-            rows={2}
-            className={cx({
-              [classes.nullState]: !images.length,
-              [classes.loading]: isRefetching,
-            })}
+      {inView &&
+        (isLoading ? (
+          <ProfileSectionPreview rowCount={2} />
+        ) : (
+          <ProfileSection
+            title="Images"
+            icon={<IconPhoto />}
+            action={
+              !isRefetching && (
+                <Link href={`/user/${user.username}/images?sort=${ImageSort.Newest}`} passHref>
+                  <Button
+                    h={34}
+                    component="a"
+                    variant="subtle"
+                    rightIcon={<IconArrowRight size={16} />}
+                  >
+                    <Text inherit> View all images</Text>
+                  </Button>
+                </Link>
+              )
+            }
           >
-            {!images.length && <ProfileSectionNoResults />}
+            <ShowcaseGrid
+              itemCount={images.length}
+              rows={2}
+              className={cx({
+                [classes.nullState]: !images.length,
+                [classes.loading]: isRefetching,
+              })}
+            >
+              {!images.length && <ProfileSectionNoResults />}
 
-            <ImagesProvider images={images}>
-              {images.map((image) => (
-                <ImageCard data={image} key={image.id} />
-              ))}
-            </ImagesProvider>
-            {isRefetching && <Loader className={classes.loader} />}
-          </ShowcaseGrid>
-        </ProfileSection>
-      )}
+              <ImagesProvider images={images}>
+                {images.map((image) => (
+                  <ImageCard data={image} key={image.id} />
+                ))}
+              </ImagesProvider>
+              {isRefetching && <Loader className={classes.loader} />}
+            </ShowcaseGrid>
+          </ProfileSection>
+        ))}
     </div>
   );
 };

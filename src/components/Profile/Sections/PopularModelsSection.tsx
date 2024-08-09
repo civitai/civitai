@@ -13,14 +13,12 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import Link from 'next/link';
 import { Button, Text } from '@mantine/core';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 const POPULAR_MODELS_DISPLAY = 32;
 
 export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView({
-    delay: 100,
-    triggerOnce: true,
-  });
+  const [ref, inView] = useInViewDynamic({ id: 'profile-popular-models-section' });
   const { models, isLoading } = useQueryModels(
     {
       limit: POPULAR_MODELS_DISPLAY,
@@ -38,38 +36,39 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !models.length;
 
-  if (isNullState && inView) {
+  if (isNullState) {
     return null;
   }
 
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isLoading || !inView ? (
-        <ProfileSectionPreview rowCount={2} />
-      ) : (
-        <ProfileSection
-          title="Most popular models"
-          icon={<IconTrendingUp />}
-          action={
-            <Link href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
-              <Button
-                h={34}
-                component="a"
-                variant="subtle"
-                rightIcon={<IconArrowRight size={16} />}
-              >
-                <Text inherit> View all models</Text>
-              </Button>
-            </Link>
-          }
-        >
-          <ShowcaseGrid itemCount={models.length} rows={2}>
-            {models.map((model) => (
-              <ModelCard data={model} key={model.id} />
-            ))}
-          </ShowcaseGrid>
-        </ProfileSection>
-      )}
+      {inView &&
+        (isLoading ? (
+          <ProfileSectionPreview rowCount={2} />
+        ) : (
+          <ProfileSection
+            title="Most popular models"
+            icon={<IconTrendingUp />}
+            action={
+              <Link href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
+                <Button
+                  h={34}
+                  component="a"
+                  variant="subtle"
+                  rightIcon={<IconArrowRight size={16} />}
+                >
+                  <Text inherit> View all models</Text>
+                </Button>
+              </Link>
+            }
+          >
+            <ShowcaseGrid itemCount={models.length} rows={2}>
+              {models.map((model) => (
+                <ModelCard data={model} key={model.id} />
+              ))}
+            </ShowcaseGrid>
+          </ProfileSection>
+        ))}
     </div>
   );
 };

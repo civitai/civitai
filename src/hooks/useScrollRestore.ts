@@ -108,5 +108,5 @@ export const useScrollRestore = <T extends HTMLElement = any>(args?: UseScrollRe
     { observeChildren: true }
   );
 
-  return ref;
+  return { ref, key: _key };
 };
