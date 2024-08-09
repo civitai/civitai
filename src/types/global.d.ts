@@ -116,5 +116,6 @@ declare global {
     Twitch: any;
     isAuthed?: boolean;
     authChecked?: boolean;
+    pgHB?: { que: Array<() => void>; requestWebRewardedAd?: (args: unknown) => void };
   }
 }

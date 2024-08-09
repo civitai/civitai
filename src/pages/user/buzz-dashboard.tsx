@@ -36,6 +36,7 @@ import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
+import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -154,6 +155,9 @@ export default function UserBuzzDashboard() {
                             <Tooltip label={reward.tooltip} maw={250} multiline withArrow>
                               <IconInfoCircle size={20} style={{ flexShrink: 0 }} />
                             </Tooltip>
+                          )}
+                          {reward.type === 'adWatched' && (
+                            <WatchAdButton size="xs" disabled={awardedAmountPercent >= 1} compact />
                           )}
                         </Group>
                         {reward.cap && (

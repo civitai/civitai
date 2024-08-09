@@ -73,6 +73,7 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarkedArticle,
   updateUserById,
+  requestAdToken,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -182,4 +183,5 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  requestAdToken: protectedProcedure.mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),
 });

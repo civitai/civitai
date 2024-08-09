@@ -65,6 +65,8 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import dayjs from 'dayjs';
+import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1398,4 +1400,15 @@ export async function amIBlockedByUser({
   });
 
   return !!engagement;
+}
+
+export async function requestAdToken({ userId }: { userId: number }) {
+  const expiresAt = dayjs.utc().add(1, 'day').toDate();
+
+  const key = generateKey();
+  const token = generateSecretHash(key);
+
+  await dbWrite.adToken.create({ data: { userId, expiresAt, token } });
+
+  return key;
 }

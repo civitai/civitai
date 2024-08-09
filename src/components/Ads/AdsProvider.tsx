@@ -9,8 +9,8 @@ import Script from 'next/script';
 import { useConsentManager } from '~/components/Ads/ads.utils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
-type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
-const adProviders: AdProvider[] = ['ascendeum'];
+type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
+const adProviders: AdProvider[] = ['pubgalaxy'];
 const AscendeumAdsContext = createContext<{
   adsBlocked: boolean;
   nsfw: boolean;
@@ -25,7 +25,7 @@ const AscendeumAdsContext = createContext<{
 
 export function useAdsContext() {
   const context = useContext(AscendeumAdsContext);
-  if (!context) throw new Error('missing AscendumAdsProvider');
+  if (!context) throw new Error('missing AdsProvider');
   return context;
 }
 
@@ -65,7 +65,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       value={{
         adsBlocked,
         nsfw,
-        adsEnabled: adsEnabled,
+        adsEnabled,
         username: currentUser?.username,
         nsfwOverride,
         isMember,
@@ -84,6 +84,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           />
         ))}
       {children}
+      {adProviders.includes('pubgalaxy') && <div id="uniconsent-config" />}
     </AscendeumAdsContext.Provider>
   );
 }
@@ -99,6 +100,7 @@ function LoadProviderScript({ provider, onError }: { provider: AdProvider; onErr
           onError={onError}
         />
       );
+    case 'pubgalaxy':
     case 'exoclick':
     default:
       return null;
