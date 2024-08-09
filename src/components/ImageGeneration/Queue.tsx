@@ -14,7 +14,6 @@ import {
   downloadGeneratedImagesByDate,
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export function Queue() {
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =

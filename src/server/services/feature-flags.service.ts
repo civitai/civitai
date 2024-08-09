@@ -74,6 +74,7 @@ const featureFlags = createFeatureFlags({
   impersonation: ['granted'],
   donationGoals: ['public'],
   creatorComp: ['user'],
+  experimentalGen: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

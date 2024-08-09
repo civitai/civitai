@@ -12,12 +12,10 @@ import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView({
-    delay: 100,
-    triggerOnce: true,
-  });
+  const [ref, inView] = useInViewDynamic({ id: 'profile-showcase-section' });
   const showcaseItems = user.profile.showcaseItems as ShowcaseItemSchema[];
   const {
     data: _coverImages,
@@ -55,35 +53,36 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = showcaseItems.length === 0 || (!isLoading && !coverImages.length);
 
-  if (isNullState && inView) {
+  if (isNullState) {
     return null;
   }
 
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isLoading || !inView ? (
-        <ProfileSectionPreview rowCount={2} />
-      ) : (
-        <ProfileSection title="Showcase" icon={<IconHeart />}>
-          <ShowcaseGrid
-            itemCount={showcaseItems.length}
-            rows={2}
-            className={cx({
-              [classes.nullState]: !coverImages.length,
-              [classes.loading]: isRefetching,
-            })}
-          >
-            {coverImages.map((image) => (
-              <GenericImageCard
-                image={image}
-                entityId={image.entityId}
-                entityType={image.entityType}
-                key={`${image.entityType}-${image.entityId}`}
-              />
-            ))}
-          </ShowcaseGrid>
-        </ProfileSection>
-      )}
+      {inView &&
+        (isLoading ? (
+          <ProfileSectionPreview rowCount={2} />
+        ) : (
+          <ProfileSection title="Showcase" icon={<IconHeart />}>
+            <ShowcaseGrid
+              itemCount={showcaseItems.length}
+              rows={2}
+              className={cx({
+                [classes.nullState]: !coverImages.length,
+                [classes.loading]: isRefetching,
+              })}
+            >
+              {coverImages.map((image) => (
+                <GenericImageCard
+                  image={image}
+                  entityId={image.entityId}
+                  entityType={image.entityType}
+                  key={`${image.entityType}-${image.entityId}`}
+                />
+              ))}
+            </ShowcaseGrid>
+          </ProfileSection>
+        ))}
     </div>
   );
 };
