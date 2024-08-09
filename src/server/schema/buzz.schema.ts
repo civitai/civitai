@@ -178,4 +178,4 @@ export const getDailyBuzzCompensationInput = z.object({
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
-export const claimWatchedAdRewardSchema = z.object({ token: z.string() });
+export const claimWatchedAdRewardSchema = z.object({ key: z.string() });

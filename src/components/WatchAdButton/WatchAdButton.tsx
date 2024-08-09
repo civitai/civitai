@@ -23,7 +23,7 @@ export function WatchAdButton({ children, ...props }: Props) {
           window.pgHB?.requestWebRewardedAd?.({
             slotId: 'rewarded-ad',
             callback: (success: boolean) => {
-              if (success) claimWatchedAdRewardMutation.mutate({ token: adToken });
+              if (success) claimWatchedAdRewardMutation.mutate({ key: adToken });
             },
           });
         } catch (e) {

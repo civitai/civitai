@@ -4,7 +4,6 @@ export const adWatchedReward = createBuzzEvent({
   type: 'adWatched',
   description: 'For watching ads',
   triggerDescription: 'By watching short ads',
-  tooltip: 'Click the button to watch an ad and earn buzz!',
   awardAmount: 50,
   cap: 5,
   onDemand: true,

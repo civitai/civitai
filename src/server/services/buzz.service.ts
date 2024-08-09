@@ -35,6 +35,7 @@ import { getUserByUsername, getUsers } from './user.service';
 import dayjs from 'dayjs';
 import { logToAxiom } from '~/server/logging/client';
 import { adWatchedReward } from '~/server/rewards';
+import { generateSecretHash } from '~/server/utils/key-generator';
 
 type AccountType = 'User';
 
@@ -820,11 +821,21 @@ export const getDailyCompensationRewardByUser = async ({
 };
 
 export async function claimWatchedAdReward({
-  token,
+  key,
   userId,
   ip,
 }: ClaimWatchedAdRewardInput & { userId: number; ip?: string }) {
-  const match = await dbRead.adToken.findUnique({
+  const rewardDetails = await adWatchedReward.getUserRewardDetails(userId);
+  if (!rewardDetails) return false;
+
+  const awardedPercent =
+    rewardDetails.cap && rewardDetails.awarded !== -1
+      ? rewardDetails.awarded / rewardDetails.cap
+      : 0;
+  if (awardedPercent >= 1) return false;
+
+  const token = generateSecretHash(key);
+  const match = await dbRead.adToken.findFirst({
     where: { token, userId },
     select: { expiresAt: true, createdAt: true },
   });
