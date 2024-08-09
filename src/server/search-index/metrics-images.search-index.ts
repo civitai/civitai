@@ -372,6 +372,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         };
       }
 
+      // TODO should this be named "imageTags" or "tags"?
       return {
         images,
         imageTags,
@@ -387,25 +388,27 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         metrics: Metrics[];
       };
 
-      const tools = await db.imageTool.findMany({
+      const tools: ImageTool[] = await db.imageTool.findMany({
         select: {
           imageId: true,
           tool: {
             select: {
               name: true,
+              id: true,
             },
           },
         },
         where: { imageId: { in: images.map((i) => i.id) } },
       });
 
-      const techniques = await db.imageTechnique.findMany({
+      const techniques: ImageTechnique[] = await db.imageTechnique.findMany({
         where: { imageId: { in: images.map((i) => i.id) } },
         select: {
           imageId: true,
           technique: {
             select: {
               name: true,
+              id: true,
             },
           },
         },
