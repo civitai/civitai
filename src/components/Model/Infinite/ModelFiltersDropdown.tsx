@@ -163,7 +163,7 @@ export function DumbModelFiltersDropdown({
   );
 
   const dropdown = (
-    <Stack spacing={8}>
+    <Stack spacing={8} p="md">
       <Stack spacing={0}>
         <Divider label="Time period" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {!localMode ? (
@@ -345,7 +345,7 @@ export function DumbModelFiltersDropdown({
               height: 'auto',
               maxHeight: 'calc(100dvh - var(--mantine-header-height))',
             },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+            body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
             closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
           }}
@@ -367,7 +367,7 @@ export function DumbModelFiltersDropdown({
         withArrow
       >
         <Popover.Target>{target}</Popover.Target>
-        <Popover.Dropdown maw={576} w="100%">
+        <Popover.Dropdown maw={576} p={0} w="100%">
           <ScrollArea.Autosize
             maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
             type="hover"

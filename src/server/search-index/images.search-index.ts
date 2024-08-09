@@ -155,6 +155,7 @@ const transformData = async ({
   metrics,
   tools,
   techs,
+  modelVersions,
 }: {
   images: BaseImage[];
   imageTags: ImageTags;
@@ -165,6 +166,7 @@ const transformData = async ({
   metrics: Metrics[];
   tools: { imageId: number; tool: string }[];
   techs: { imageId: number; tech: string }[];
+  modelVersions: ModelVersions[];
 }) => {
   const records = images
     .map(({ userId, id, ...imageRecord }) => {
@@ -179,6 +181,7 @@ const transformData = async ({
       const imageMetrics = metrics.find((m) => m.id === id);
       const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
       const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
+      const baseModel = modelVersions.find((m) => m.id === id)?.baseModel;
 
       return {
         ...imageRecord,
@@ -202,6 +205,7 @@ const transformData = async ({
         tagIds: imageTags[id]?.tagIds ?? [],
         toolNames,
         techniqueNames,
+        baseModel,
         reactions: [],
         cosmetic: imageCosmetics[id] ?? null,
         stats: {

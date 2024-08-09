@@ -10,7 +10,7 @@ import { isDefined } from '~/utils/type-guards';
 type ScheduledEntity = {
   id: number;
   userId: number;
-  extras?: { modelId: number } & MixedObject;
+  extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
 export const processScheduledPublishing = createJob(
@@ -34,7 +34,8 @@ export const processScheduledPublishing = createJob(
         m."userId",
         JSON_BUILD_OBJECT(
           'modelId', m.id,
-          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL
+          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL AND (mv."earlyAccessConfig"->>'timeframe')::int > 0,
+          'earlyAccessEndsAt', mv."earlyAccessEndsAt"
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
@@ -96,11 +97,11 @@ export const processScheduledPublishing = createJob(
             .map(({ id }) => id);
 
           await tx.$executeRaw`
-        -- Update scheduled versions published
-        UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
-          AND status = 'Scheduled' AND "publishedAt" <= ${now};
-      `;
+            -- Update scheduled versions published
+            UPDATE "ModelVersion" SET status = 'Published'
+            WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
+              AND status = 'Scheduled' AND "publishedAt" <= ${now};
+          `;
 
           if (earlyAccess.length) {
             // The only downside to this failing is that the model version will be published with no early access.
@@ -110,6 +111,19 @@ export const processScheduledPublishing = createJob(
               continueOnError: true,
               tx,
             });
+
+            // Attempt to update the model early access deadline:
+            await tx.$executeRaw`
+              UPDATE "Model" mo
+              SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
+              FROM (
+                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline" 
+                FROM "ModelVersion" mv
+                JOIN "Model" m on m.id = mv."modelId"
+                WHERE mv.id IN (${Prisma.join(earlyAccess)})
+              ) as mea 
+              WHERE mo."id" = mea."id"
+            `;
           }
         }
       },
