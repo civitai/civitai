@@ -47,7 +47,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
         SELECT
           i.id FROM "Image" i
         WHERE i."postId" IS NOT NULL 
-        ${lastUpdatedAt ? ` AND i."createdAt" >= ${lastUpdatedAt}` : ``}
+        ${lastUpdatedAt ? ` AND i."createdAt" >= '${lastUpdatedAt}'` : ``}
         ORDER BY "createdAt" LIMIT 1
       ) as "startId", (	
         SELECT MAX (id) FROM "Image" i
@@ -61,14 +61,17 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
     const updateIds: number[] = [];
 
     if (lastUpdatedAt) {
-      let offset = 0;
+      let lastId = 0;
 
       while (true) {
         const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-        FROM "Image"
-        WHERE "updatedAt" > ${lastUpdatedAt}
-          AND i."postId" IS NOT NULL
-        OFFSET ${offset} LIMIT ${READ_BATCH_SIZE};
+          SELECT id
+          FROM "Image"
+          WHERE "updatedAt" > '${lastUpdatedAt}'
+            AND "postId" IS NOT NULL
+            AND id > ${lastId}
+          ORDER BY id
+          LIMIT ${READ_BATCH_SIZE};
         `);
 
         jobContext.on('cancel', updatedIdItemsQuery.cancel);
@@ -78,7 +81,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
           break;
         }
 
-        offset += READ_BATCH_SIZE;
+        lastId = ids[ids.length - 1].id;
         updateIds.push(...ids.map((x) => x.id));
       }
     }
