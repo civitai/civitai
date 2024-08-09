@@ -212,8 +212,8 @@ const transformData = async ({
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
-        tagNames: imageTags[imageRecord.id]?.tags?.map((t) => t.id) ?? [],
-        tagIds: imageTags[imageRecord.id]?.tags?.map((t) => t.name) ?? [],
+        tagNames: imageTags[imageRecord.id]?.tags?.map((t) => t.name) ?? [],
+        tagIds: imageTags[imageRecord.id]?.tags?.map((t) => t.id) ?? [],
       };
     })
     .filter(isDefined);

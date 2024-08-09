@@ -2,6 +2,8 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -14,15 +16,16 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
-import { chunk, truncate } from 'lodash-es';
+import { chunk, lowerFirst, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { VotableTagModel } from '~/libs/tags';
+import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL, constants, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -1256,6 +1259,7 @@ export const getAllImagesPost = async (
     notPublished,
     withMeta: hasMeta,
     excludedUserIds,
+    excludeCrossPosts,
     //
     modelId, // TODO fix
     reviewId, // TODO - remove, not in use...true?
@@ -1267,7 +1271,6 @@ export const getAllImagesPost = async (
     periodMode,
     generation,
     prioritizedUserIds,
-    excludeCrossPosts,
     includeBaseModel,
     hidden,
     followed,
@@ -1286,7 +1289,6 @@ export const getAllImagesPost = async (
   const offset = cursor as number | undefined;
   const currentUserId = user?.id;
 
-  console.time('SEARCH IDS');
   const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
     modelVersionId,
     types,
@@ -1304,12 +1306,11 @@ export const getAllImagesPost = async (
     limit,
     offset,
     excludedUserIds,
+    excludeCrossPosts,
     // userIds: userIds,
     currentUserId,
     isModerator: user?.isModerator,
   });
-  console.timeEnd('SEARCH IDS');
-  console.log(searchResults[0]?.id, searchResults.length);
 
   if (!searchResults.length) {
     return {
@@ -1323,32 +1324,6 @@ export const getAllImagesPost = async (
 
   // TODO may need to check for image existence in db
 
-  // console.time('ADDITIONAL');
-  // const additionalData = await dbRead.image.findMany({
-  //   where: { id: { in: searchIds } },
-  //   select: {
-  //     id: true,
-  //     name: true,
-  //     type: true,
-  //     width: true,
-  //     height: true,
-  //     nsfwLevel: true,
-  //     createdAt: true,
-  //     index: true,
-  //     user: { select: { id: true, image: true, username: true, deletedAt: true } },
-  //     post: { select: { publishedAt: true, title: true, modelVersionId: true } },
-  //   },
-  // });
-  // console.timeEnd('ADDITIONAL');
-
-  // await dbRead.user.findMany({
-  //   where: { id: { in: userIds } },
-  //   select: {
-  //     username: true,
-  //   },
-  // });
-
-  console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (currentUserId) {
     const reactionsRaw = await dbRead.imageReaction.findMany({
@@ -1361,16 +1336,13 @@ export const getAllImagesPost = async (
       return acc;
     }, {} as Record<number, ReviewReactions[]>);
   }
-  console.timeEnd('REACTION');
 
-  console.time('CACHE');
   const [userDatas, userCosmetics, profilePictures, tagIdsData] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
     include?.includes('tagIds') ? await getTagIdsForImages(imageIds) : undefined,
   ]);
-  console.timeEnd('CACHE');
 
   // TODO tags? we have strings...
 
@@ -1414,8 +1386,10 @@ export const getAllImagesPost = async (
   });
 
   let nextCursor: number | undefined;
-  if (searchTotal) {
-    nextCursor = (offset ?? 0) + limit;
+  const lastImg = (offset ?? 0) + limit;
+  // - using >= just in case the total estimate is rounding
+  if (searchTotal && searchTotal >= lastImg) {
+    nextCursor = lastImg;
   }
 
   return {
@@ -1424,7 +1398,7 @@ export const getAllImagesPost = async (
   };
 };
 
-const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
+const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
 type ImageSearchInput = {
   modelVersionId?: number;
   types?: MediaType[];
@@ -1447,6 +1421,7 @@ type ImageSearchInput = {
   modelId?: number;
   reviewId?: number;
   excludedUserIds?: number[];
+  excludeCrossPosts?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
 };
@@ -1484,6 +1459,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId, // missing
     modelId, // missing
     excludedUserIds,
+    excludeCrossPosts,
     limit,
     offset,
     page,
@@ -1504,12 +1480,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
   if (modelVersionId) {
-    filters.push(
-      `(${makeMeiliImageSearchFilter(
-        'modelVersionIds',
-        `IN [${modelVersionId}]`
-      )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
-    );
+    if (excludeCrossPosts) {
+      filters.push(makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`));
+    } else {
+      filters.push(
+        `(${makeMeiliImageSearchFilter(
+          'modelVersionIds',
+          `IN [${modelVersionId}]`
+        )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
+      );
+    }
   }
 
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
@@ -1604,15 +1584,27 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       total: results.estimatedTotalHits,
       processingTimeMs: results.processingTimeMs,
     };
-    logToAxiom(
-      { type: 'search-result', metrics, input: removeEmpty(input), request },
-      'temp-search'
-    ).catch();
+    // console.log({ input: removeEmpty(input), request });
 
-    const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
+    let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
+    try {
+      imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to getImageMetrics',
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
 
     const fullData = filtered.map((h) => {
-      const match = imageMetrics.find((im) => im.id === h.id);
+      const match = imageMetrics[h.id];
       return {
         ...h,
         stats: {
@@ -1652,6 +1644,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 const getImageMetrics = async (ids: number[]) => {
+  if (!ids.length) return {};
+
   const pgData = await dbRead.entityMetricImage.findMany({
     where: { imageId: { in: ids } },
     select: {
@@ -1660,34 +1654,134 @@ const getImageMetrics = async (ids: number[]) => {
       reactionHeart: true,
       reactionLaugh: true,
       reactionCry: true,
-      reactionTotal: true,
+      // reactionTotal: true,
       comment: true,
       collection: true,
       buzz: true,
     },
   });
 
-  const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
+  type PgDataType = (typeof pgData)[number];
 
-  // TODO fix this
-  // // if no data in postgres, get latest from clickhouse
-  // if (clickhouse) {
-  //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
-  //   if (missing.length > 0) {
-  //     // TODO fix this query
-  //     const clickData = await clickhouse?.$query<typeof pgData[number]>(`
-  //         SELECT entityId, metricType, sum(metricValue)
-  //         FROM entityMetricEvents
-  //         WHERE entityType = 'Image'
-  //           AND entityId in (${missing.join(',')})
-  //         GROUP BY entityId, metricType
-  //       `
-  //     )
-  //     return pgData.concat(clickData);
-  //   }
-  // }
+  // - If missing data in postgres, get latest from clickhouse
 
-  return finalData;
+  // - get images with no data at all
+  const missingIds = ids.filter((i) => !pgData.map((d) => d.imageId).includes(i));
+  // - get images where some of the properties are null
+  const missingData = pgData
+    .filter((d) => Object.values(d).some((v) => !isDefined(v)))
+    .map((x) => x.imageId);
+  const missing = [...new Set([...missingIds, ...missingData])];
+
+  let clickData: DeepNonNullable<PgDataType>[] = [];
+  if (missing.length > 0) {
+    if (clickhouse) {
+      // - find the missing IDs' data in clickhouse
+      clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
+          SELECT entityId                                              as "imageId",
+                 SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
+                 SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
+                 SUM(if(metricType = 'ReactionLaugh', metricValue, 0)) as "reactionLaugh",
+                 SUM(if(metricType = 'ReactionCry', metricValue, 0))   as "reactionCry",
+                 -- SUM(if(
+                 --         metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
+                 --     ))                                                as "reactionTotal",
+                 SUM(if(metricType = 'Comment', metricValue, 0))       as "comment",
+                 SUM(if(metricType = 'Collection', metricValue, 0))    as "collection",
+                 SUM(if(metricType = 'Buzz', metricValue, 0))          as "buzz"
+          FROM entityMetricEvents
+          WHERE entityType = 'Image'
+            AND entityId IN (${missing.join(',')})
+          GROUP BY imageId
+        `);
+
+      // - if there is nothing at all in clickhouse, fill this with zeroes
+      const missingClickIds = missingIds.filter(
+        (i) => !clickData.map((c) => c.imageId).includes(i)
+      );
+      for (const mci of missingClickIds) {
+        clickData.push({
+          imageId: mci,
+          reactionLike: 0,
+          reactionHeart: 0,
+          reactionLaugh: 0,
+          reactionCry: 0,
+          comment: 0,
+          collection: 0,
+          buzz: 0,
+        });
+      }
+
+      // TODO if we somehow have some data in PG but none at all in CH, these datapoints won't get resolved
+      const missingClickData = missingData.filter(
+        (i) => !clickData.map((c) => c.imageId).includes(i)
+      );
+      if (missingClickData.length) {
+        logToAxiom(
+          {
+            type: 'info',
+            name: 'Missing datapoints in clickhouse',
+            details: {
+              ids: missingClickData,
+            },
+          },
+          'clickhouse'
+        ).catch();
+      }
+
+      const dataToInsert = clickData
+        .map((cd) =>
+          [
+            EntityMetric_MetricType_Type.ReactionLike,
+            EntityMetric_MetricType_Type.ReactionHeart,
+            EntityMetric_MetricType_Type.ReactionLaugh,
+            EntityMetric_MetricType_Type.ReactionCry,
+            EntityMetric_MetricType_Type.Comment,
+            EntityMetric_MetricType_Type.Collection,
+            EntityMetric_MetricType_Type.Buzz,
+          ].map((mt) => ({
+            entityType: EntityMetric_EntityType_Type.Image,
+            entityId: cd.imageId,
+            metricType: mt,
+            metricValue: cd[lowerFirst(mt) as keyof typeof cd],
+          }))
+        )
+        .flat();
+
+      try {
+        await dbWrite.entityMetric.createMany({
+          data: dataToInsert,
+          skipDuplicates: true,
+        });
+      } catch (e) {
+        const error = e as Error;
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'Failed to insert EntityMetric cache',
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
+          },
+          'clickhouse'
+        ).catch();
+      }
+    } else {
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'No clickhouse client - fetch',
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
+
+  return [...pgData, ...clickData].reduce((acc, row) => {
+    const { imageId, ...rest } = row;
+    acc[imageId] = rest;
+    return acc;
+  }, {} as { [p: number]: Omit<PgDataType, 'imageId'> });
 };
 
 export async function getTagIdsForImages(imageIds: number[]) {

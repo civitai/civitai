@@ -18,6 +18,7 @@ import {
   bulkAddBlockedImages,
   bulkRemoveBlockedImages,
   deleteImageById,
+  getAllImagesPost,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -279,11 +280,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    // TODO.searchUpdate restore
-    // const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    // const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
-    const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     const modelGallerySettings = input.modelId
@@ -295,9 +293,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      // TODO.searchUpdate restore
-      // const { items: pinnedPostsImages } = await getAllImagesPost({
-      const { items: pinnedPostsImages } = await getAllImages({
+      const { items: pinnedPostsImages } = await getAllImagesPost({
         ...input,
         limit: limit * 3,
         followed: false,
@@ -316,9 +312,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
     while (true) {
       // TODO handle/remove all these (headers, include, ids)
-      // TODO.searchUpdate restore
-      // const { nextCursor, items } = await getAllImagesPost({
-      const { nextCursor, items } = await getAllImages({
+      const { nextCursor, items } = await getAllImagesPost({
         ...input,
         followed: false,
         cursor,
@@ -388,7 +382,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt: image.publishedAt,
+        published: image.published,
+        publishedAt: image.sortAt,
         createdAt,
         user,
         images,

@@ -4196,13 +4196,13 @@ model EntityMetric {
 
 /// @view
 model EntityMetricImage {
-  imageId       Int @id
-  reactionLike  Int
-  reactionHeart Int
-  reactionLaugh Int
-  reactionCry   Int
-  reactionTotal Int // computed
-  comment       Int
-  collection    Int
-  buzz          Int
+  imageId       Int  @id
+  reactionLike  Int?
+  reactionHeart Int?
+  reactionLaugh Int?
+  reactionCry   Int?
+  reactionTotal Int? // computed
+  comment       Int?
+  collection    Int?
+  buzz          Int?
 }

@@ -19,25 +19,39 @@ export const updateEntityMetric = async ({
 }) => {
   try {
     // Inc postgres EntityMetric
-    const dbData = await dbWrite.$queryRaw<{ entityId: number }[]>`
+    const dbData = await dbWrite.$executeRaw`
       UPDATE "EntityMetric"
       SET "metricValue" = "metricValue" + ${amount}
       WHERE "entityType" = ${entityType}::"EntityMetric_EntityType_Type" AND "entityId" = ${entityId} AND "metricType" = ${metricType}::"EntityMetric_MetricType_Type"
-      RETURNING "entityId"
     `;
-    if (!dbData.length) {
-      const cData = await clickhouse?.$query<{ total: number }>(`
-        SELECT sum(metricValue) as total
-        FROM entityMetricEvents
-        WHERE entityType = '${entityType}' AND entityId = ${entityId} AND metricType = '${metricType}'
-      `);
-      const existingVal = cData?.[0]?.total ?? 0;
-      const newVal = existingVal + amount;
+    if (dbData === 0) {
+      if (clickhouse) {
+        const cData = await clickhouse.$query<{ total: number }>(`
+          SELECT sum(metricValue) as total
+          FROM entityMetricEvents
+          WHERE entityType = '${entityType}' AND entityId = ${entityId} AND metricType = '${metricType}'
+        `);
+        const existingVal = cData?.[0]?.total ?? 0;
+        const newVal = existingVal + amount;
 
-      await dbWrite.$queryRaw<{ entityId: number }[]>`
-        INSERT INTO "EntityMetric" ("entityType", "entityId", "metricType", "metricValue")
-        VALUES (${entityType}::"EntityMetric_EntityType_Type", ${entityId}, ${metricType}::"EntityMetric_MetricType_Type", ${newVal})
-      `;
+        await dbWrite.$executeRaw`
+          INSERT INTO "EntityMetric" ("entityType", "entityId", "metricType", "metricValue")
+          VALUES (${entityType}::"EntityMetric_EntityType_Type", ${entityId}, ${metricType}::"EntityMetric_MetricType_Type", ${newVal})
+          ON CONFLICT DO UPDATE
+          SET "metricValue" = "metricValue" + ${amount}
+        `;
+      } else {
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'No clickhouse client - update',
+            details: {
+              data: JSON.stringify({ entityType, entityId, metricType, metricValue: amount }),
+            },
+          },
+          'clickhouse'
+        ).catch();
+      }
     }
 
     // Queue with clickhouse tracker
