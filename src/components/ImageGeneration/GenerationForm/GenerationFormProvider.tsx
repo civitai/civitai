@@ -351,6 +351,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
         creatorTip: overrides.creatorTip ?? 0.25,
+        experimental: overrides.experimental ?? false,
       },
       status.limits
     );
