@@ -205,16 +205,17 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     const { cost = 0 } = useCostStore.getState();
 
-    let {
+    const {
       model,
       resources: additionalResources,
       vae,
       remix,
       aspectRatio,
       civitaiTip = 0,
-      creatorTip = 0.25,
+      creatorTip: _creatorTip,
       ...params
     } = data;
+    let { creatorTip = 0.25 } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
 
     const resources = [model, ...additionalResources, vae]
@@ -707,7 +708,7 @@ export function GenerationFormContent() {
                 </div>
 
                 {!isFlux && (
-                  <div className="my-2 flex justify-between gap-3">
+                  <div className="my-2 flex flex-wrap justify-between gap-3">
                     <InputSwitch
                       name="nsfw"
                       label="Mature content"
@@ -732,6 +733,9 @@ export function GenerationFormContent() {
                           </div>
                         }
                       />
+                    )}
+                    {featureFlags.experimentalGen && (
+                      <InputSwitch name="experimental" label="Experimental" labelPosition="left" />
                     )}
                   </div>
                 )}
