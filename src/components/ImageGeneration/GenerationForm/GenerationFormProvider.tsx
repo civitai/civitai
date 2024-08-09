@@ -318,10 +318,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         prevBaseModelRef.current = watchedValues.baseModel;
       }
 
-      if (name === 'baseModel' && watchedValues.baseModel === 'Flux1') {
-        form.setValue('cfgScale', 3.5);
-      }
-
       // handle selected `workflow` based on presence of `image` value
       if (name === 'image') {
         if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
