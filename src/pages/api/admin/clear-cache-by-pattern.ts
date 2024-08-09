@@ -1,3 +1,4 @@
+import { chunk } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { redis } from '~/server/redis/client';
@@ -10,9 +11,7 @@ const schema = z.object({
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const { pattern } = schema.parse(req.query);
   let cursor: number | undefined;
-  let cleared = 0;
-  const clearedKeys: string[] = [];
-  let noNewKeysOccurances = 0;
+  let cleared: string[] = [];
   while (cursor !== 0) {
     const reply = await redis.scan(cursor ?? 0, {
       MATCH: pattern,
@@ -20,30 +19,23 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     });
 
     cursor = reply.cursor;
-
     const keys = reply.keys;
-    const newKeys = keys.filter((key) => !clearedKeys.includes(key));
-    clearedKeys.push(...newKeys);
-    cleared += newKeys.length;
+    const newKeys = keys.filter((key) => !cleared.includes(key));
+    console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
+    if (newKeys.length === 0) continue;
 
-    // Delete the keys found (if any)
-    if (newKeys.length > 0) await redis.del(newKeys);
-    else {
-      noNewKeysOccurances++;
-      if (noNewKeysOccurances > 10) break;
+    const batches = chunk(newKeys, 10000);
+    for (let i = 0; i < batches.length; i++) {
+      console.log('Clearing:', i, 'Of', batches.length);
+      await redis.del(batches[i]);
+      cleared.push(...batches[i]);
+      console.log('Cleared:', i, 'Of', batches.length);
     }
-    console.log(
-      'cleared:',
-      cleared,
-      'new:',
-      newKeys.length,
-      'noNewKeysOccurances:',
-      noNewKeysOccurances
-    );
+    console.log('Cleared:', cleared.length);
   }
 
   return res.status(200).json({
     ok: true,
-    cleared: cleared,
+    cleared: cleared.length,
   });
 });
