@@ -1,65 +1,56 @@
-import { GetByIdInput } from './../schema/base.schema';
-import {
-  PostUpdateInput,
-  AddPostImageInput,
-  ReorderPostImagesInput,
-  AddPostTagInput,
-  RemovePostTagInput,
-  UpdatePostImageInput,
-  GetPostTagsInput,
-  PostsQueryInput,
-  UpdatePostCollectionTagIdInput,
-} from './../schema/post.schema';
-import {
-  createPost,
-  getPostDetail,
-  updatePost,
-  addPostImage,
-  reorderPostImages,
-  deletePost,
-  addPostTag,
-  removePostTag,
-  getPostEditDetail,
-  updatePostImage,
-  getPostTags,
-  getPostsInfinite,
-  getPostResources,
-  getPostContestCollectionDetails,
-  updatePostCollectionTagId,
-} from './../services/post.service';
+import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { PostCreateInput } from '~/server/schema/post.schema';
-import {
-  throwDbError,
-  throwNotFoundError,
-  throwAuthorizationError,
-  throwBadRequestError,
-} from '~/server/utils/errorHandling';
-import { Context } from '~/server/createContext';
-import { dbRead, dbWrite } from '../db/client';
-import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
-import { eventEngine } from '~/server/events';
 import dayjs from 'dayjs';
-import { hasEntityAccess } from '../services/common.service';
-import {
-  getIsSafeBrowsingLevel,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import {
-  CollectionMetadataSchema,
-  getCollectionPermissionDetails,
-} from '~/server/schema/collection.schema';
+import { Context } from '~/server/createContext';
+import { eventEngine } from '~/server/events';
+import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { PostCreateInput } from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
   getCollectionById,
   getUserCollectionPermissionsById,
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
-import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
-import { NsfwLevel } from '~/server/common/enums';
-import { Flags } from '~/shared/utils';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { dbRead, dbWrite } from '../db/client';
+import { GetByIdInput } from './../schema/base.schema';
+import {
+  AddPostImageInput,
+  AddPostTagInput,
+  GetPostTagsInput,
+  PostsQueryInput,
+  PostUpdateInput,
+  RemovePostTagInput,
+  ReorderPostImagesInput,
+  UpdatePostCollectionTagIdInput,
+  UpdatePostImageInput,
+} from './../schema/post.schema';
+import {
+  addPostImage,
+  addPostTag,
+  createPost,
+  deletePost,
+  getPostContestCollectionDetails,
+  getPostDetail,
+  getPostResources,
+  getPostsInfinite,
+  getPostTags,
+  removePostTag,
+  reorderPostImages,
+  updatePost,
+  updatePostCollectionTagId,
+  updatePostImage,
+} from './../services/post.service';
 
 export const getPostsInfiniteHandler = async ({
   input,
@@ -279,7 +270,7 @@ export const updatePostHandler = async ({
             throw throwBadRequestError('No images found for this post');
           }
 
-          await bulkSaveItems({
+          const resp = await bulkSaveItems({
             input: {
               collectionId: updatedPost.collectionId,
               imageIds: images.map((i) => i.id),
@@ -288,6 +279,16 @@ export const updatePostHandler = async ({
             },
             permissions,
           });
+
+          for (const imgId of resp.imageIds) {
+            await updateEntityMetric({
+              ctx,
+              entityType: 'Image',
+              entityId: imgId,
+              metricType: 'Collection',
+              amount: 1,
+            });
+          }
         }
       }
 

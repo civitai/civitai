@@ -219,6 +219,7 @@ export const saveItemHandler = async ({
       }
     }
 
+    // nb: this will count in review / rejected additions
     if (input.type === 'Image' && !!input.imageId) {
       await updateEntityMetric({
         ctx,
@@ -248,7 +249,19 @@ export const bulkSaveItemsHandler = async ({
       isModerator,
     });
 
-    return await bulkSaveItems({ input: { ...input, userId }, permissions });
+    const resp = await bulkSaveItems({ input: { ...input, userId }, permissions });
+
+    for (const imgId of resp.imageIds) {
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Image',
+        entityId: imgId,
+        metricType: 'Collection',
+        amount: 1,
+      });
+    }
+
+    return { count: resp.count };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

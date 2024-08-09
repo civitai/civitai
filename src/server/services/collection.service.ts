@@ -1754,7 +1754,13 @@ export const bulkSaveItems = async ({
 
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
 
-  return dbWrite.collectionItem.createMany({ data });
+  const { count } = await dbWrite.collectionItem.createMany({ data });
+
+  // return imageIds for use in controller updateEntityMetrics
+  return {
+    count,
+    imageIds: data.map((d) => d.imageId).filter(isDefined),
+  };
 };
 
 type ImageProps = {
