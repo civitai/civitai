@@ -37,8 +37,8 @@ export const updateEntityMetric = async ({
         await dbWrite.$executeRaw`
           INSERT INTO "EntityMetric" ("entityType", "entityId", "metricType", "metricValue")
           VALUES (${entityType}::"EntityMetric_EntityType_Type", ${entityId}, ${metricType}::"EntityMetric_MetricType_Type", ${newVal})
-          ON CONFLICT DO UPDATE
-          SET "metricValue" = "metricValue" + ${amount}
+          ON CONFLICT ("entityType", "entityId", "metricType") DO UPDATE
+          SET "metricValue" = "EntityMetric"."metricValue" + ${amount}
         `;
       } else {
         logToAxiom(
