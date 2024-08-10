@@ -1,4 +1,5 @@
 import {
+  ApiKeyType,
   ArticleEngagementType,
   BountyEngagementType,
   CollectionMode,
@@ -587,12 +588,18 @@ export const updateAccountScope = async ({
 
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
-  const where: Prisma.UserWhereInput = { deletedAt: null };
+  const where: Prisma.UserWhereInput = {
+    deletedAt: null,
+  };
   if (userId) where.id = userId;
   else if (token) {
     const now = new Date();
     where.keys = {
-      some: { key: token, OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
+      some: {
+        key: token,
+        type: { in: [ApiKeyType.Access, ApiKeyType.System, ApiKeyType.User] },
+        OR: [{ expiresAt: null }, { expiresAt: { gte: now } }],
+      },
     };
   }
 
