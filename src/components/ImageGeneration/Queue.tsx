@@ -24,10 +24,20 @@ export function Queue() {
     setFilters: state.setMarkerFilters,
   }));
 
-  let workflowTagsFilter;
+  let workflowTagsFilter = undefined;
 
-  if (filters.marker === MarkerType.Favorited) {
-    workflowTagsFilter = [WORKFLOW_TAGS.FAVORITES];
+  switch (filters.marker) {
+    case MarkerType.Favorited:
+      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
+      break;
+
+    case MarkerType.Liked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
+      break;
+
+    case MarkerType.Disliked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
+      break;
   }
 
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -138,26 +148,26 @@ export function Queue() {
         {data.map((request) =>
           request.steps.map((step) => {
             const { marker } = filters;
-            let filteredStep = step;
+            // let filteredStep = step;
 
-            if (marker) {
-              filteredStep.images = step.images.filter((image) => {
-                if (marker === MarkerType.Favorited) {
-                  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-                  return isFavorite;
-                }
+            // if (marker) {
+            //   filteredStep.images = step.images.filter((image) => {
+            //     if (marker === MarkerType.Favorited) {
+            //       const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+            //       return isFavorite;
+            //     }
 
-                if (marker === MarkerType.Liked || marker === MarkerType.Disliked) {
-                  const feedback = step.metadata?.images?.[image.id]?.feedback;
-                  return feedback === marker;
-                }
-              });
+            //     if (marker === MarkerType.Liked || marker === MarkerType.Disliked) {
+            //       const feedback = step.metadata?.images?.[image.id]?.feedback;
+            //       return feedback === marker;
+            //     }
+            //   });
 
-              if (!filteredStep.images.length) return null;
-            }
+            //   if (!filteredStep.images.length) return null;
+            // }
 
             return (
-              <QueueItem key={request.id} id={request.id.toString()} request={request} step={filteredStep} />
+              <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} filter={{ marker }} />
             );
           })
         )}

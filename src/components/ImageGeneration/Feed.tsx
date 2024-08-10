@@ -20,8 +20,18 @@ export function Feed() {
 
   let workflowTagsFilter = undefined;
 
-  if (filters.marker === MarkerType.Favorited) {
-    workflowTagsFilter = [WORKFLOW_TAGS.FAVORITES];
+  switch (filters.marker) {
+    case MarkerType.Favorited:
+      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
+      break;
+
+    case MarkerType.Liked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
+      break;
+
+    case MarkerType.Disliked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
+      break;
   }
 
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
@@ -86,16 +96,16 @@ export function Feed() {
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
 
-              const { marker } = filters;
+              // const { marker } = filters;
 
-              if (marker) {
-                const feedback = step.metadata?.images?.[image.id]?.feedback;
-                const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+              // if (marker) {
+              //   const feedback = step.metadata?.images?.[image.id]?.feedback;
+              //   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
 
-                if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
+              //   if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
 
-                else if (marker === MarkerType.Favorited && !isFavorite) return null;
-              }
+              //   else if (marker === MarkerType.Favorited && !isFavorite) return null;
+              // }
 
               return (
                 <GeneratedImage

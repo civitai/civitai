@@ -56,10 +56,20 @@ export function useGetTextToImageRequests(
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? []).map((response) => {
+        (x.items ?? []).filter((workflow) => {
+          if (!!input?.tags?.length && workflow.tags.every(tag => !input?.tags?.includes(tag))) return false
+          return true;
+        }).map((response) => {
           const steps = response.steps.map((step) => {
             const images = step.images
-              .filter((image) => !step.metadata?.images?.[image.id]?.hidden)
+              .filter(({ id }) => {
+                const imageMeta = step.metadata?.images?.[id]
+                if (imageMeta?.hidden) return false
+                if (input?.tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
+                if (input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked') return false;
+                if (input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked') return false;
+                return true;
+              })
               .sort((a, b) => {
                 if (!b.completed) return 1;
                 if (!a.completed) return -1;
@@ -250,12 +260,13 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
               path: `images/${imageId}/postId`,
               value: postId,
             });
-          if (favorite)
+          if (favorite !== undefined) {
             jsonPatch.addOperation({
-              op: current.favorite !== favorite ? 'add' : 'remove',
+              op: favorite ? 'add' : 'remove',
               path: `images/${imageId}/favorite`,
               value: true,
             });
+          }
         }
 
         const clone = cloneDeep(metadata);
@@ -271,14 +282,37 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           // return transformed data
           updated.push({ workflowId, stepName, images });
 
-          // determine if we need to toggle favorites tag
-          if (
-            workflow.tags.includes(WORKFLOW_TAGS.FAVORITES) &&
-            Object.values(images).every((x) => !x.favorite)
-          )
-            tags.push({ workflowId, tag: 'favorites', op: 'remove' });
-          else if (Object.values(images).some((x) => x.favorite))
-            tags.push({ workflowId, tag: 'favorites', op: 'add' });
+          const hasTagFavorite = workflow.tags.includes(WORKFLOW_TAGS.FAVORITE);
+          const hasTagLike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED);
+          const hasTagDislike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED);
+
+          const hasFavoriteImages = Object.values(images).some((x) => x.favorite);
+          const hasLikedImages = Object.values(images).some((x) => x.feedback === 'liked');
+          const hasDislikedImages = Object.values(images).some((x) => x.feedback === 'disliked');
+
+          if (hasTagFavorite && !hasFavoriteImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'remove' });
+          }
+
+          else if (!hasTagFavorite && hasFavoriteImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'add' });
+          }
+
+          if (hasTagLike && !hasLikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'remove' });
+          }
+
+          else if (!hasTagLike && hasLikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'add' });
+          }
+
+          if (hasTagLike && !hasLikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'remove' });
+          }
+
+          else if (!hasTagDislike && hasDislikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'add' });
+          }
 
           // if (Object.values(images).every((x) => !x.favorite)) favorites = false;
           // else if (Object.values(images).some((x) => x.favorite)) favorites = true;
@@ -290,6 +324,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           //     path: `/steps/${stepName}/metadata${operation.path}`,
           //   })),
           // });
+
           stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
         }
 
@@ -298,10 +333,10 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
         //   tagPatches.addOperation({
         //     op: 'add',
         //     path: 'tags/-',
-        //     value: WORKFLOW_TAGS.FAVORITES,
+        //     value: WORKFLOW_TAGS.FAVORITE,
         //   });
         // } else if (favorites === false) {
-        //   const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITES);
+        //   const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITE);
         //   if (favoritesIndex > -1)
         //     tagPatches.addOperation({ op: 'remove', path: `tags/${favoritesIndex}` });
         // }
@@ -345,8 +380,16 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
               }
             }
           });
+
+          const tagNames = [...new Set(tags.filter(x => x.op === 'add').map(x => x.tag))]
+          // ['favorite' 'feedback:liked', 'feedback:'disliked']
+          for (const tag of tagNames) {
+            const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] })
+            queryClient.invalidateQueries(key, { exact: false })
+          }
+
           options?.onSuccess?.();
-        },
+        }
       }
     );
   }

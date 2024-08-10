@@ -15,11 +15,11 @@ import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
   IMAGE: 'img',
-  FAVORITES: 'favorites',
+  FAVORITE: 'favorite',
   FOLDER: 'folder',
   FEEDBACK: {
-    LIKED: 'feedback-liked',
-    DISLIKED: 'feedback-disliked',
+    LIKED: 'feedback:liked',
+    DISLIKED: 'feedback:disliked',
   },
 };
 
