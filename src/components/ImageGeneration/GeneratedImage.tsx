@@ -312,27 +312,8 @@ export function GeneratedImage({
 
           <Group className={classes.info} w="100%" position="apart">
             <Group spacing={4} className={classes.actionsWrapper}>
-              <ActionIcon
-                size="md"
-                variant={goodFeedbackSelected ? 'light' : undefined}
-                color={goodFeedbackSelected ? 'green' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleFeedback('liked')}
-              >
-                <IconThumbUp size={16} />
-              </ActionIcon>
-
-              <ActionIcon
-                size="md"
-                variant={badFeedbackSelected ? 'light' : undefined}
-                color={badFeedbackSelected ? 'red' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleFeedback('disliked')}
-              >
-                <IconThumbDown size={16} />
-              </ActionIcon>
-
               <ActionIcon size="md"
+                className={isFavorite ? 'favoriteButton' : undefined}
                 variant={isFavorite ? 'light' : undefined}
                 color={isFavorite ? 'red' : undefined}
                 disabled={isLoading}
@@ -370,6 +351,26 @@ export function GeneratedImage({
                   </Menu.Dropdown>
                 </Menu>
               )}
+
+              <ActionIcon
+                size="md"
+                variant={goodFeedbackSelected ? 'light' : undefined}
+                color={goodFeedbackSelected ? 'green' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </ActionIcon>
+
+              <ActionIcon
+                size="md"
+                variant={badFeedbackSelected ? 'light' : undefined}
+                color={badFeedbackSelected ? 'red' : undefined}
+                disabled={isLoading}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </ActionIcon>
             </Group>
             <ImageMetaPopover
               meta={step.params}
@@ -456,6 +457,12 @@ const useStyles = createStyles((theme, _params, getRef) => {
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
+        background: theme.fn.rgba(
+          theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+          0.6
+        ),
+      },
+      [`&:hover .${thumbActionRef} button`]: {
         opacity: 1,
         transition: 'opacity .3s',
       },
@@ -482,20 +489,24 @@ const useStyles = createStyles((theme, _params, getRef) => {
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
-      ),
       // backdropFilter: 'blur(5px) saturate(160%)',
       boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,
-      opacity: 0,
       transition: 'opacity .3s',
 
-      [theme.fn.smallerThan('sm')]: {
-        opacity: 0.7,
+      ['button']: {
+        opacity: 0,
+        [theme.fn.smallerThan('sm')]: {
+          opacity: 0.7,
+        },
+      },
+
+      ['.favoriteButton']: {
+        opacity: 1,
+        background: 'rgba(240, 62, 62, 0.5)',
       },
     },
+
     improveMenu: {
       borderRadius: theme.radius.sm,
       background: theme.fn.rgba(
