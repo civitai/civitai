@@ -178,6 +178,7 @@ model User {
   excludeFromLeaderboards Boolean               @default(false)
   rewardsEligibility      RewardsEligibility    @default(Eligible)
   eligibilityChangedAt    DateTime?
+  paddleCustomerId        String?               @unique
 
   profile          UserProfile?
   profilePictureId Int?               @unique

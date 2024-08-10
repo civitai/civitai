@@ -27,7 +27,6 @@ import {
   getMultipliersForUser,
 } from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
-import { stripeRouter } from '~/server/routers/stripe.router';
 import { sleep } from '~/server/utils/concurrency-helpers';
 
 const baseUrl = getBaseUrl();

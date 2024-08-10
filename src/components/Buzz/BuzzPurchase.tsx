@@ -10,20 +10,10 @@ import {
   Input,
   Accordion,
   ThemeIcon,
-  Divider,
-  Anchor,
-  Alert,
   Grid,
 } from '@mantine/core';
 import { Currency, Price } from '@prisma/client';
-import {
-  IconArrowsExchange,
-  IconBolt,
-  IconBrandStripe,
-  IconCreditCard,
-  IconInfoCircle,
-  IconMoodDollar,
-} from '@tabler/icons-react';
+import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
@@ -32,22 +22,15 @@ import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import {
-  formatCurrencyForDisplay,
-  formatPriceForDisplay,
-  numberWithCommas,
-} from '~/utils/number-helpers';
+import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BuzzPaypalButton } from './BuzzPaypalButton';
-import { closeAllModals, openConfirmModal, openModal } from '@mantine/modals';
 import { dialogStore } from '../Dialog/dialogStore';
 import { AlertDialog } from '../Dialog/Common/AlertDialog';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Stripe/SubscriptionFeature';
 import { useCanUpgrade } from '~/components/Stripe/memberships.util';
@@ -228,7 +211,7 @@ export const BuzzPurchase = ({
     onPurchaseSuccess?.();
   }, [buzzAmount, successMessage]);
 
-  const handleSubmit = async () => {
+  const handleStripeSubmit = async () => {
     if (!onValidate()) {
       return;
     }
@@ -447,8 +430,14 @@ export const BuzzPurchase = ({
           <Stack spacing="md" mt="md">
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
             <Group spacing="xs" mt="md" noWrap>
-              <Button disabled={!ctaEnabled} onClick={handleSubmit} radius="xl" fullWidth>
-                Pay Now{' '}
+              <Button disabled={!ctaEnabled} onClick={handleStripeSubmit} radius="xl" fullWidth>
+                Pay Now With Stripe{' '}
+                {!!unitAmount
+                  ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+                  : ''}
+              </Button>
+              <Button disabled={!ctaEnabled} onClick={handleStripeSubmit} radius="xl" fullWidth>
+                Pay Now With Paddle{' '}
                 {!!unitAmount
                   ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
                   : ''}
