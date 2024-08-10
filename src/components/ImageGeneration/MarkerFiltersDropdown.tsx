@@ -119,7 +119,6 @@ export function DumbMarkerFiltersDropdown({
   const dropdown = (
     <Stack spacing={8}>
       <Stack spacing={0}>
-        <Divider label="Markers" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         <Group spacing={8} mb={4}>
           {Object.values(MarkerType).map((marker) => {
             const Icon = getIcon(marker);
