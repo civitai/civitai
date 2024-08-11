@@ -9,7 +9,7 @@ export const usePaddle = () => {
   return context;
 };
 
-export function PaypalProvider({ children }: { children: React.ReactNode }) {
+export function PaddleProvider({ children }: { children: React.ReactNode }) {
   const [paddle, setPaddle] = useState<Paddle>();
 
   // Download and initialize Paddle instance from CDN

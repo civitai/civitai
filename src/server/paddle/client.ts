@@ -1,7 +1,13 @@
-import { CurrencyCode, Paddle } from '@paddle/paddle-node-sdk';
+import { CurrencyCode, Environment, Paddle } from '@paddle/paddle-node-sdk';
+import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 
-const paddle = env.PADDLE_SECRET_KEY ? new Paddle(env.PADDLE_SECRET_KEY) : undefined;
+const paddle = env.PADDLE_SECRET_KEY
+  ? new Paddle(env.PADDLE_SECRET_KEY, {
+      environment: isDev ? Environment.sandbox : Environment.production,
+    })
+  : undefined;
 
 export const getPaddle = () => {
   if (!paddle) {
@@ -30,31 +36,50 @@ export const getOrCreateCustomer = async ({ email, userId }: { email: string; us
 export const createBuzzTransaction = async ({
   customerId,
   unitAmount,
+  buzzAmount,
   currency = 'USD',
+  metadata,
 }: {
   customerId: string;
   unitAmount: number;
+  buzzAmount: number;
   currency: string;
+  metadata?: TransactionMetadataSchema;
 }) => {
   const paddle = getPaddle();
   return paddle.transactions.create({
+    customData: metadata,
     customerId: customerId,
     items: [
       {
-        quantity: unitAmount,
+        quantity: 1,
         price: {
           product: {
-            name: 'Buzz',
-            taxCategory: 'digital-goods',
+            name: `${buzzAmount} Buzz`,
+            // TODO: This must be requested onto Paddle as digital-goods
+            taxCategory: 'standard',
           },
           taxMode: 'account_setting',
           unitPrice: {
-            amount: '0.1',
+            amount: unitAmount.toString(),
             currencyCode: currency as CurrencyCode,
           },
-          description: 'Buzz',
+          description: `Purchase of ${buzzAmount} Buzz`,
         },
       },
     ],
+  });
+};
+
+export const updateTransaction = ({
+  transactionId,
+  metadata,
+}: {
+  transactionId: string;
+  metadata: TransactionMetadataSchema;
+}) => {
+  const paddle = getPaddle();
+  return paddle.transactions.update(transactionId, {
+    customData: metadata,
   });
 };

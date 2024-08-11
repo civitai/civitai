@@ -61,6 +61,7 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { PaddleProvider } from '~/providers/PaddleProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -155,7 +156,7 @@ function MyApp(props: CustomAppProps) {
                             <ReferralsProvider>
                               <FiltersProvider>
                                 <AdsProvider>
-                                  <PaypalProvider>
+                                  <PaddleProvider>
                                     <HiddenPreferencesProvider>
                                       <CivitaiLinkProvider>
                                         <NotificationsProvider
@@ -183,7 +184,7 @@ function MyApp(props: CustomAppProps) {
                                         </NotificationsProvider>
                                       </CivitaiLinkProvider>
                                     </HiddenPreferencesProvider>
-                                  </PaypalProvider>
+                                  </PaddleProvider>
                                 </AdsProvider>
                               </FiltersProvider>
                             </ReferralsProvider>

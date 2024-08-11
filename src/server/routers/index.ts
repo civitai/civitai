@@ -67,6 +67,7 @@ import { modRouter } from '~/server/routers/moderator';
 import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
 import { gamesRouter } from '~/server/routers/games.router';
 import { recommendersRouter } from './recommenders.router';
+import { paddleRouter } from '~/server/routers/paddle.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -136,6 +137,7 @@ export const appRouter = router({
   moderator: modRouter,
   entityCollaborator: entityCollaboratorRouter,
   games: gamesRouter,
+  paddle: paddleRouter,
 });
 
 // export type definition of API

@@ -163,6 +163,7 @@ export const serverSchema = z.object({
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
   PADDLE_SECRET_KEY: z.string(),
+  PADDLE_WEBHOOK_SECRET: z.string(),
 });
 
 /**
@@ -239,4 +240,5 @@ export const clientEnv = {
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
+  NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
 };

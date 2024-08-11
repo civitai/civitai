@@ -29,11 +29,12 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BuzzPaypalButton } from './BuzzPaypalButton';
-import { dialogStore } from '../Dialog/dialogStore';
+import { dialogStore, useDialogStore } from '../Dialog/dialogStore';
 import { AlertDialog } from '../Dialog/Common/AlertDialog';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Stripe/SubscriptionFeature';
 import { useCanUpgrade } from '~/components/Stripe/memberships.util';
+import { PaddleTransacionModal } from '~/components/Paddle/PaddleTransacionModal';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -135,6 +136,7 @@ export const BuzzPurchase = ({
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
+  const openDialog = useDialogStore();
 
   const {
     packages = [],
@@ -254,6 +256,37 @@ export const BuzzPurchase = ({
       },
       { fullScreen: isMobile }
     );
+  };
+
+  const handlePaddleSubmit = async () => {
+    if (!onValidate()) {
+      return;
+    }
+
+    if (!currentUser) {
+      return;
+    }
+
+    dialogStore.trigger({
+      component: PaddleTransacionModal,
+      props: {
+        unitAmount,
+        currency: 'USD',
+        message: (
+          <Stack>
+            <Text>
+              You are about to purchase{' '}
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+            </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
+          </Stack>
+        ),
+        successMessage,
+        onSuccess: async () => {
+          // Do nothing atm.
+        },
+      },
+    });
   };
 
   useEffect(() => {
@@ -436,7 +469,7 @@ export const BuzzPurchase = ({
                   ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
                   : ''}
               </Button>
-              <Button disabled={!ctaEnabled} onClick={handleStripeSubmit} radius="xl" fullWidth>
+              <Button disabled={!ctaEnabled} onClick={handlePaddleSubmit} radius="xl" fullWidth>
                 Pay Now With Paddle{' '}
                 {!!unitAmount
                   ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
