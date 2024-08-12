@@ -265,7 +265,7 @@ export default function ModelDetailsV2({
       showErrorNotification({
         error: new Error(error.message),
         title: 'Could not delete model',
-        reason: 'An unexpected error occurred, please try again',
+        reason: error.message ?? 'An unexpected error occurred, please try again',
       });
     },
   });
@@ -347,7 +347,7 @@ export default function ModelDetailsV2({
       showErrorNotification({
         error: new Error(error.message),
         title: 'Unable to delete version',
-        reason: 'An unexpected error occurred, please try again',
+        reason: error.message ?? 'An unexpected error occurred, please try again',
       });
       if (context?.previousData?.id)
         queryUtils.model.getById.setData({ id: context?.previousData?.id }, context?.previousData);

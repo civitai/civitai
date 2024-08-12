@@ -14,7 +14,7 @@ import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Searc
 // #region [transformers]
 function handleOldImageTags(tags?: number[] | { id: number }[]) {
   if (!tags) return [];
-  return tags.map((tag) => (typeof tag === 'number' ? tag : tag.id));
+  return tags.map((tag) => (typeof tag === 'number' ? tag : tag?.id));
 }
 
 type ModelsTransformed = ReturnType<typeof modelsTransform>;

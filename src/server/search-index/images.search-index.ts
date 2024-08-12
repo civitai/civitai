@@ -1,29 +1,19 @@
-import { client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { ImageGenerationProcess, ImageIngestionStatus, MediaType, Prisma } from '@prisma/client';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
-import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import {
-  CosmeticSource,
-  CosmeticType,
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-  Prisma,
-} from '@prisma/client';
-import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { modelsSearchIndex } from '~/server/search-index/models.search-index';
-import { ImageModelWithIngestion, profileImageSelect } from '../selectors/image.selector';
-import { isDefined } from '~/utils/type-guards';
-import { NsfwLevel } from '~/server/common/enums';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { tagCache, userBasicCache } from '~/server/redis/caches';
-import { getTagIdsForImages } from '~/server/services/image.service';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { userBasicCache } from '~/server/redis/caches';
+import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { modelsSearchIndex } from '~/server/search-index/models.search-index';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getTagIdsForImages } from '~/server/services/image.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000; // Do not increase - might break Redis from what we've been able to tell.
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -46,7 +36,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
   const sortableAttributes: SortableAttributes = [
-    'createdAt',
+    'sortAt',
     'stats.commentCountAllTime',
     'stats.reactionCountAllTime',
     'stats.collectedCountAllTime',
@@ -165,6 +155,7 @@ const transformData = async ({
   metrics,
   tools,
   techs,
+  modelVersions,
 }: {
   images: BaseImage[];
   imageTags: ImageTags;
@@ -175,6 +166,7 @@ const transformData = async ({
   metrics: Metrics[];
   tools: { imageId: number; tool: string }[];
   techs: { imageId: number; tech: string }[];
+  modelVersions: ModelVersions[];
 }) => {
   const records = images
     .map(({ userId, id, ...imageRecord }) => {
@@ -189,6 +181,7 @@ const transformData = async ({
       const imageMetrics = metrics.find((m) => m.id === id);
       const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
       const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
+      const baseModel = modelVersions.find((m) => m.id === id)?.baseModel;
 
       return {
         ...imageRecord,
@@ -212,6 +205,7 @@ const transformData = async ({
         tagIds: imageTags[id]?.tagIds ?? [],
         toolNames,
         techniqueNames,
+        baseModel,
         reactions: [],
         cosmetic: imageCosmetics[id] ?? null,
         stats: {
@@ -399,15 +393,13 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const { images } = prevData as { images: BaseImage[] };
 
       const imageIds = images.map((i) => i.id);
-      const imageTagIds = await getTagIdsForImages(imageIds);
-      const tagIds = [...new Set(Object.values(imageTagIds).flatMap((x) => x.tags))];
-      const tags = await tagCache.fetch(tagIds);
+      const cacheImageTags = await getTagIdsForImages(imageIds);
 
       const imageTags = {} as Record<number, { tagNames: string[]; tagIds: number[] }>;
-      for (const [imageId, { tags: tagIds }] of Object.entries(imageTagIds)) {
+      for (const [imageId, { tags }] of Object.entries(cacheImageTags)) {
         imageTags[+imageId] = {
-          tagNames: tagIds.map((tagId) => tags[tagId].name).filter(isDefined),
-          tagIds,
+          tagNames: tags.map((t) => t.name),
+          tagIds: tags.map((t) => t.id),
         };
       }
 

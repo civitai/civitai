@@ -8,8 +8,7 @@ import {
 } from '@prisma/client';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
-import { dbWrite, dbRead } from '~/server/db/client';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -24,8 +23,12 @@ import {
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 
-export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: number[] }>({
+export const tagIdsForImagesCache = createCachedObject<{
+  imageId: number;
+  tags: { id: number; name: string }[];
+}>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
   ttl: CacheTTL.day,
@@ -34,14 +37,14 @@ export const tagIdsForImagesCache = createCachedObject<{ imageId: number; tags: 
     const db = fromWrite ? dbWrite : dbRead;
     const tags = await db.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
-      select: { tagId: true, imageId: true },
+      select: { imageId: true, tag: { select: { id: true, name: true } } },
     });
 
-    const result = tags.reduce((acc, { tagId, imageId }) => {
+    const result = tags.reduce((acc, { tag, imageId }) => {
       acc[imageId.toString()] ??= { imageId, tags: [] };
-      acc[imageId.toString()].tags.push(tagId);
+      acc[imageId.toString()].tags.push(tag);
       return acc;
-    }, {} as Record<string, { imageId: number; tags: number[] }>);
+    }, {} as Record<string, { imageId: number; tags: { id: number; name: string }[] }>);
     return result;
   },
 });
@@ -78,7 +81,7 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
     }, {} as Record<number, UserCosmeticLookup>);
     return results;
   },
-  ttl: 60 * 60 * 24, // 24 hours
+  ttl: CacheTTL.day,
 });
 
 export const profilePictureCache = createCachedObject<ProfileImage>({
@@ -104,7 +107,7 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
     `;
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
-  ttl: 60 * 60 * 24, // 24 hours
+  ttl: CacheTTL.day,
 });
 
 type CacheFilesForModelVersions = {
@@ -163,7 +166,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
     const tagIdsVar = await getTagIdsForImages(imageIds);
     for (const entry of records) {
       for (const image of entry.images) {
-        image.tags = tagIdsVar?.[image.id]?.tags;
+        image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id) ?? [];
       }
     }
   },
@@ -187,7 +190,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
         `;
         return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
       },
-      ttl: 60 * 60 * 24, // 24 hours
+      ttl: CacheTTL.day,
     }),
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
@@ -241,8 +244,10 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   key: REDIS_KEYS.CACHES.BASIC_USERS,
   idKey: 'id',
   lookupFn: async (ids) => {
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
     const userBasicData = await dbRead.user.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: goodIds } },
       select: {
         id: true,
         username: true,

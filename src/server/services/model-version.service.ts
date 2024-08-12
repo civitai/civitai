@@ -43,6 +43,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { resourceDataCache } from '~/server/redis/caches';
+import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -124,6 +125,18 @@ export const toggleModelVersionEngagement = async ({
 
 export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
+};
+
+export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: number }) => {
+  return await dbRead.modelVersion.findMany({
+    where: {
+      earlyAccessEndsAt: { gt: new Date() },
+      model: {
+        userId,
+      },
+    },
+    select: { id: true },
+  });
 };
 
 export const upsertModelVersion = async ({
@@ -382,6 +395,24 @@ export const upsertModelVersion = async ({
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
   const version = await dbWrite.$transaction(async (tx) => {
+    const data = await tx.modelVersion.findFirstOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        modelId: true,
+        status: true,
+        earlyAccessConfig: true,
+        meta: true,
+      },
+    });
+
+    const meta = data.meta as ModelVersionMeta;
+    if (meta?.hadEarlyAccessPurchase) {
+      throw throwBadRequestError(
+        'Cannot delete a model version that has had early access purchases.'
+      );
+    }
+
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
@@ -1058,7 +1089,7 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('You have already purchased early access for this model.');
   }
 
-  let buzzTransactionId;
+  let buzzTransactionId: string | undefined;
   const amount =
     type === 'download'
       ? (earlyAccesConfig.downloadPrice as number)
@@ -1071,61 +1102,82 @@ export const earlyAccessPurchase = async ({
       amount,
       type: TransactionType.Purchase,
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      details: { modelVersionId, type, earlyAccessPurchase: true },
     });
 
     buzzTransactionId = buzzTransaction.transactionId;
 
-    if (access.hasAccess) {
-      // Should only happen if the user purchased Generation but NOT download.
-      // Update entity access:
-      await dbWrite.entityAccess.update({
-        where: {
-          accessToId_accessToType_accessorId_accessorType: {
+    await dbWrite.$transaction(async (tx) => {
+      if (access.hasAccess) {
+        // Should only happen if the user purchased Generation but NOT download.
+        // Update entity access:
+        await tx.entityAccess.update({
+          where: {
+            accessToId_accessToType_accessorId_accessorType: {
+              accessToId: modelVersionId,
+              accessToType: 'ModelVersion',
+              accessorId: userId,
+              accessorType: 'User',
+            },
+          },
+          data: {
+            permissions: Math.max(
+              EntityAccessPermission.EarlyAccessDownload +
+                EntityAccessPermission.EarlyAccessGeneration,
+              access.permissions ?? 0
+            ),
+            meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
+          },
+        });
+      } else {
+        // Grant entity access:
+        await tx.entityAccess.create({
+          data: {
             accessToId: modelVersionId,
             accessToType: 'ModelVersion',
             accessorId: userId,
             accessorType: 'User',
+            permissions:
+              type === 'generation'
+                ? EntityAccessPermission.EarlyAccessGeneration
+                : EntityAccessPermission.EarlyAccessGeneration +
+                  EntityAccessPermission.EarlyAccessDownload,
+            meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
+            addedById: userId, // Since it's a purchase
           },
-        },
-        data: {
-          permissions: Math.max(
-            EntityAccessPermission.EarlyAccessDownload +
-              EntityAccessPermission.EarlyAccessGeneration,
-            access.permissions ?? 0
-          ),
-          meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
-        },
-      });
-    } else {
-      // Grant entity access:
-      await dbWrite.entityAccess.create({
-        data: {
-          accessToId: modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: userId,
-          accessorType: 'User',
-          permissions:
-            type === 'generation'
-              ? EntityAccessPermission.EarlyAccessGeneration
-              : EntityAccessPermission.EarlyAccessGeneration +
-                EntityAccessPermission.EarlyAccessDownload,
-          meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
-          addedById: userId, // Since it's a purchase
-        },
-      });
-    }
+        });
+      }
+
+      if (earlyAccessDonationGoal) {
+        // Create a donation record:
+        await tx.donation.create({
+          data: {
+            amount,
+            donationGoalId: earlyAccessDonationGoal.id,
+            userId,
+            buzzTransactionId: buzzTransactionId as string,
+          },
+        });
+      }
+
+      // Set model version early access purchase as true:
+      await tx.$queryRaw`
+        UPDATE "ModelVersion"
+        SET meta = jsonb_set(
+          COALESCE(meta, '{}'::jsonb),
+          '{hadEarlyAccessPurchase}',
+          to_jsonb(${true})
+        )
+        WHERE "id" = ${modelVersionId}; -- Your conditions here
+      `;
+    });
 
     if (earlyAccessDonationGoal) {
-      // Create a donation record:
-      await dbWrite.donation.create({
-        data: {
-          amount,
-          donationGoalId: earlyAccessDonationGoal.id,
-          userId,
-          buzzTransactionId,
-        },
-      });
+      await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
     }
+
+    // Ensures user gets access to the resource after purchasing.
+    await bustOrchestratorModelCache(modelVersionId, userId);
 
     return true;
   } catch (error) {

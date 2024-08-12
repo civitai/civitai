@@ -33,6 +33,8 @@ export const textToImageParamsSchema = z.object({
   image: z.string().startsWith('https://orchestration.civitai.com').optional(),
   upscale: z.number().max(3).optional(),
   workflow: workflowKeySchema,
+  fluxMode: z.string().optional(),
+  experimental: z.boolean().optional(),
 });
 // #endregion
 

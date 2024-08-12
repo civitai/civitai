@@ -1,13 +1,16 @@
-import { getJobDate, JobContext } from '~/server/jobs/job';
-import { dbWrite, dbRead } from '~/server/db/client';
 import { PrismaClient } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import { MeiliSearch } from 'meilisearch';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { AugmentedPool } from '~/server/db/db-helpers';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { getJobDate, JobContext } from '~/server/jobs/job';
 import {
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
   swapIndex,
 } from '~/server/meilisearch/util';
-import { chunk } from 'lodash-es';
 import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import {
   getTaskQueueWorker,
@@ -24,6 +27,7 @@ const logger = createLogger(`search-index-processor`);
 
 type SearchIndexContext = {
   db: PrismaClient;
+  pg: AugmentedPool;
   indexName: string;
   jobContext: JobContext;
   logger: ReturnType<typeof createLogger>;
@@ -59,6 +63,8 @@ type SearchIndexProcessor = {
   updateInterval?: number;
   workerCount?: number;
   pullSteps?: number;
+  client?: MeiliSearch | null;
+  resetInMainIndex?: boolean;
 };
 
 const processSearchIndexTask = async (
@@ -67,6 +73,10 @@ const processSearchIndexTask = async (
   task: Task
 ) => {
   const { type } = task;
+  let logDetails: any = '';
+  if (task.index !== undefined && task.total) logDetails = `${task.index + 1} of ${task.total}`;
+  if (task.currentStep !== undefined) logDetails += ` - ${task.currentStep + 1} of ${task.steps}`;
+  context.logger(`processSearchIndexTask :: ${type} :: Processing task`, logDetails);
 
   try {
     if (type === 'pull') {
@@ -96,12 +106,6 @@ const processSearchIndexTask = async (
         return 'done';
       }
 
-      context.logger(
-        `processSearchIndexTask :: pull :: Done. ${
-          t.steps ? `Processing step ${activeStep + 1} of ${t.steps}` : ''
-        }`
-      );
-
       if (t?.steps && activeStep + 1 < t.steps) {
         return {
           ...t,
@@ -113,6 +117,8 @@ const processSearchIndexTask = async (
         return {
           start,
           type: 'transform',
+          index: task.index,
+          total: task.total,
           data: pulledData,
         } as TransformTask;
       }
@@ -120,10 +126,11 @@ const processSearchIndexTask = async (
       context.logger('processSearchIndexTask :: transform :: Processing task');
       const { data, start } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
-      context.logger('processSearchIndexTask :: transform :: Done');
       return {
         start,
         type: 'push',
+        index: task.index,
+        total: task.total,
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
@@ -134,7 +141,6 @@ const processSearchIndexTask = async (
         'processSearchIndexTask :: Push :: Done',
         start ? (Date.now() - start) / 1000 : 'unknown duration'
       );
-      // --
 
       return 'done';
     } else if (type === 'onComplete') {
@@ -143,8 +149,10 @@ const processSearchIndexTask = async (
     }
     return 'error';
   } catch (e) {
-    console.error('processSearchIndexTask :: Error', e);
+    console.error(`processSearchIndexTask :: ${type} :: Error`, e);
     return 'error';
+  } finally {
+    context.logger(`processSearchIndexTask :: ${type} :: Done`, logDetails);
   }
 };
 
@@ -159,6 +167,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     primaryKey = 'id',
     maxQueueSize,
     workerCount = 10,
+    resetInMainIndex,
   } = processor;
 
   return {
@@ -167,7 +176,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbRead, lastUpdatedAt, indexName, jobContext, logger };
+      const ctx = { db: dbWrite, pg: pgDbWrite, lastUpdatedAt, indexName, jobContext, logger };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
@@ -211,6 +220,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           mode: 'range',
           steps: processor.pullSteps,
           currentStep: 0,
+          index: i,
+          total: newItemsTasks,
           ...batch,
         });
       }
@@ -230,6 +241,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           mode: 'targeted',
           steps: processor.pullSteps,
           currentStep: 0,
+          index: i,
+          total: updateItemsTasks,
           ...batch,
         });
       }
@@ -245,7 +258,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       await Promise.all(workers);
 
       if (queuedDeletes.content.length > 0) {
-        await onSearchIndexDocumentsCleanup({ indexName, ids: queuedDeletes.content });
+        await onSearchIndexDocumentsCleanup({
+          indexName,
+          ids: queuedDeletes.content,
+          client: processor.client,
+        });
       }
 
       // Commit queues:
@@ -266,11 +283,19 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     async reset(jobContext: JobContext) {
       // First, setup and init both indexes - Swap requires both indexes to be created:
       // In order to swap, the base index must exist. because of this, we need to create or get it.
-      await getOrCreateIndex(indexName, { primaryKey });
+      await getOrCreateIndex(indexName, { primaryKey }, processor.client);
       const swapIndexName = `${indexName}_NEW`;
-      await setup({ indexName: swapIndexName });
+      if (!resetInMainIndex) {
+        await setup({ indexName: swapIndexName });
+      }
 
-      const ctx = { db: dbRead, indexName: swapIndexName, jobContext, logger };
+      const ctx = {
+        db: dbRead,
+        pg: pgDbRead,
+        indexName: resetInMainIndex ? indexName : swapIndexName,
+        jobContext,
+        logger,
+      };
       // Run update
       const queue = new TaskQueue('pull', maxQueueSize);
       const { batchSize, startId = 0, endId } = await prepareBatches(ctx);
@@ -301,10 +326,13 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
-      // Finally, perform the swap:
-      await swapIndex({ indexName, swapIndexName });
+      if (!resetInMainIndex) {
+        // Finally, perform the swap:
+        await swapIndex({ indexName, swapIndexName, client: processor.client });
+      }
       // Clear update queue since our index should be brand new:
       await SearchIndexUpdate.clearQueue(indexName);
+      // console.log({ batchSize, startId, endId });
     },
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
@@ -329,7 +357,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           .map(({ id }) => id);
 
         if (deleteIds.length > 0) {
-          await onSearchIndexDocumentsCleanup({ indexName, ids: deleteIds });
+          await onSearchIndexDocumentsCleanup({
+            indexName,
+            ids: deleteIds,
+            client: processor.client,
+          });
         }
 
         if (updateIds.length > 0) {
@@ -344,7 +376,11 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         return getTaskQueueWorker(
           queue,
           async (task) =>
-            processSearchIndexTask(processor, { db: dbWrite, indexName, jobContext, logger }, task),
+            processSearchIndexTask(
+              processor,
+              { db: dbWrite, pg: pgDbWrite, indexName, jobContext, logger },
+              task
+            ),
           logger
         );
       });
@@ -356,14 +392,6 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     },
   };
 }
-export type SearchIndexRunContext = {
-  db: PrismaClient;
-  indexName: string;
-  jobContext: JobContext;
-  lastUpdatedAt?: Date;
-  updateIds?: number[];
-  deleteIds?: number[];
-};
 
 export type SearchIndexSetupContext = {
   indexName: string;

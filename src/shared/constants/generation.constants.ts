@@ -9,6 +9,7 @@ import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema'
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { AirResourceData } from '~/server/services/orchestrator/common';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { GenerationInputConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -114,7 +115,7 @@ export const whatIfQueryOverrides = {
   cfgScale: generation.defaultValues.cfgScale,
 };
 
-export const samplersToSchedulers: Record<Sampler, string> = {
+export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {
   'Euler a': 'EulerA',
   Euler: 'Euler',
   LMS: 'LMS',
@@ -141,6 +142,7 @@ export const samplersToSchedulers: Record<Sampler, string> = {
   PLMS: 'PLMS',
   UniPC: 'UniPC',
   LCM: 'LCM',
+  undefined: 'undefined',
 };
 
 export const samplersToComfySamplers: Record<
@@ -237,6 +239,11 @@ export function getIsSdxl(baseModel?: string) {
     baseModelSetType === 'Pony' ||
     baseModelSetType === 'SDXLDistilled'
   );
+}
+
+export function getIsFlux(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'Flux1';
 }
 
 export type GenerationResource = MakeUndefinedOptional<
@@ -387,7 +394,64 @@ export const baseModelResourceTypes = {
       baseModels: [...baseModelSets.SDXL],
     },
   ],
+  Flux1: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] }],
 };
+
+export const fluxModeOptions = [
+  { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
+  { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
+  { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
+];
+
+// const generationInputConfig: GenerationInputConfig = {
+//   model: { type: 'resourceSelect' },
+//   resources: { type: 'resourceSelect', multiple: true },
+//   vae: { type: 'resourceSelect' },
+//   prompt: {},
+//   negativePrompt: {},
+//   nsfw: {},
+//   draft: {},
+//   sampler: { defaultValue: 'undefined' },
+//   steps: { min: 20, max: 50, defaultValue: 30 },
+//   cfg: { min: 2, max: 20, defaultValue: 3.5 },
+//   workflow: {},
+//   clipSkip: {},
+//   fluxMode: {
+//     type: 'segmentedControl',
+//     options: [
+//       { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
+//       { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
+//       { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
+//     ],
+//   },
+// };
+
+// function getGenerationConfigSettings(baseModel: SupportedBaseModel) {
+//   const config = {
+//     resources: true,
+//     vae: true,
+//     negativePrompt: true,
+//     nsfw: true,
+//     draft: true,
+//     sampler: true,
+//     workflow: true,
+//     clipSkip: true,
+//   };
+
+//   if (baseModel === 'Flux1') {
+//     for (const key in config) {
+//       config[key as keyof typeof config] = false;
+//     }
+//   }
+
+//   return { config };
+// }
+
+// function getStepConfig(baseModel: SupportedBaseModel, draft: boolean, max?: number) {
+//   if(baseModel === 'Flux1') {
+//     return draft ? { min: 4, max: 4, defaultValue: 4 } : { min: 20, max: 50, defaultValue: 30 };
+//   }
+// }
 
 export function getBaseModelSetTypes({
   modelType,

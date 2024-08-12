@@ -6,11 +6,19 @@ import { JobContext } from '~/server/jobs/job';
 
 const log = createLogger('search', 'green');
 
-const shouldConnect = !!env.SEARCH_HOST && !!env.SEARCH_API_KEY;
-export const client = shouldConnect
+const shouldConnectToSearch = !!env.SEARCH_HOST && !!env.SEARCH_API_KEY;
+export const searchClient = shouldConnectToSearch
   ? new MeiliSearch({
       host: env.SEARCH_HOST as string,
       apiKey: env.SEARCH_API_KEY,
+    })
+  : null;
+
+const shouldConnectToMetricsSearch = !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
+export const metricsSearchClient = shouldConnectToMetricsSearch
+  ? new MeiliSearch({
+      host: env.METRICS_SEARCH_HOST as string,
+      apiKey: env.METRICS_SEARCH_API_KEY,
     })
   : null;
 
@@ -28,11 +36,13 @@ export async function updateDocs({
   documents,
   batchSize = 1000,
   jobContext,
+  client = searchClient,
 }: {
   indexName: string;
   documents: any[];
   batchSize?: number;
   jobContext?: JobContext;
+  client?: MeiliSearch | null;
 }): Promise<EnqueuedTask[]> {
   if (!client) return [];
 

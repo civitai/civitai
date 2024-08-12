@@ -54,7 +54,12 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     if (generationDetails) {
       try {
         const details = JSON.parse(generationDetails);
-        const { extra, ...workflow } = details;
+        const { extra, extraMetadata, ...workflow } = details;
+        if (typeof extraMetadata === 'string') {
+          try {
+            exif.extraMetadata = JSON.parse(extraMetadata);
+          } catch {}
+        }
         if (details.extra) {
           exif.prompt = JSON.stringify(workflow);
           exif.workflow = generationDetails;
@@ -115,12 +120,10 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         controlNets.push(node.inputs.control_net_name as string);
     }
 
-    const initialSamplerNode =
-      samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ?? samplerNodes[0];
-
     const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
     const versionIds: number[] = [];
     const modelIds: number[] = [];
+    let isCivitComfy = workflow?.extra?.airs?.length > 0;
     if (workflow?.extra) {
       // Old AIR parsing
       for (const key of AIR_KEYS) {
@@ -135,21 +138,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       }
     }
 
-    let isCivitComfy = workflow?.extra?.airs?.length > 0;
     const metadata: ImageMetaProps = {
-      prompt: getPromptText(initialSamplerNode.positive, 'positive'),
-      negativePrompt: getPromptText(initialSamplerNode.negative, 'negative'),
-      cfgScale: initialSamplerNode.cfg,
-      steps: initialSamplerNode.steps,
-      seed: getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
-        'Value',
-        'seed',
-      ]),
-      sampler: initialSamplerNode.sampler_name,
-      scheduler: initialSamplerNode.scheduler,
-      denoise: initialSamplerNode.denoise,
-      width: initialSamplerNode.latent_image.inputs.width,
-      height: initialSamplerNode.latent_image.inputs.height,
       models,
       upscalers,
       vaes,
@@ -161,7 +150,51 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       // isCivitComfy to handle old generations when we weren't compliant
       comfy: isCivitComfy ? undefined : `{"prompt": ${exif.prompt}, "workflow": ${exif.workflow}}`,
     };
-    if (exif.extraMetadata) metadata.extra = exif.extraMetadata;
+    if (exif.extraMetadata && typeof exif.extraMetadata === 'object' && exif.extraMetadata.prompt) {
+      const {
+        prompt,
+        negativePrompt,
+        cfgScale,
+        steps,
+        seed,
+        sampler,
+        denoise,
+        workflowId,
+        resources,
+        ...extra
+      } = exif.extraMetadata;
+      metadata.prompt = prompt;
+      metadata.negativePrompt = negativePrompt;
+      metadata.cfgScale = cfgScale;
+      metadata.steps = steps;
+      metadata.seed = seed;
+      metadata.sampler = sampler;
+      metadata.denoise = denoise;
+      metadata.workflow = workflowId;
+      metadata.civitaiResources = resources;
+      if (extra) metadata.extra = extra;
+    } else {
+      const initialSamplerNode =
+        samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ??
+        samplerNodes[0];
+
+      metadata.prompt = getPromptText(initialSamplerNode.positive, 'positive');
+      metadata.negativePrompt = getPromptText(initialSamplerNode.negative, 'negative');
+      metadata.cfgScale = initialSamplerNode.cfg;
+      metadata.steps = initialSamplerNode.steps;
+      metadata.seed = getNumberValue(initialSamplerNode.seed ?? initialSamplerNode.noise_seed, [
+        'Value',
+        'seed',
+      ]);
+      metadata.sampler = initialSamplerNode.sampler_name;
+      metadata.scheduler = initialSamplerNode.scheduler;
+      metadata.denoise = initialSamplerNode.denoise;
+      metadata.width = initialSamplerNode.latent_image.inputs.width;
+      metadata.height = initialSamplerNode.latent_image.inputs.height;
+      if (exif.extraMetadata) {
+        metadata.extra = exif.extraMetadata;
+      }
+    }
 
     // Get airs from parsed resources
     const workflowAirs = [
@@ -176,7 +209,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     }
 
     if (isCivitComfy) {
-      metadata.civitaiResources = [];
+      metadata.civitaiResources ??= [];
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
         const resource: CivitaiResource = {

@@ -16,9 +16,11 @@ import {
   InjectableResource,
   WORKFLOW_TAGS,
   allInjectableResourceIds,
+  fluxModeOptions,
   formatGenerationResources,
   getBaseModelSetType,
   getInjectablResources,
+  getIsFlux,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -106,6 +108,23 @@ export async function parseGenerateImageInput({
 }) {
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
+
+  // Handle Flux Mode
+  const isFlux = getIsFlux(originalParams.baseModel);
+  if (isFlux && originalParams.fluxMode) {
+    const { version } = parseAIR(originalParams.fluxMode);
+    originalParams.sampler = 'undefined';
+    originalResources = [{ id: version, strength: 1 }];
+    originalParams.nsfw = true; // No nsfw helpers in flux mode
+    originalParams.draft = false;
+    originalParams.negativePrompt = '';
+    if (originalParams.fluxMode === fluxModeOptions[0].value) {
+      originalParams.steps = 4;
+      originalParams.cfgScale = 1;
+    }
+  } else {
+    originalParams.fluxMode = undefined;
+  }
 
   let params = { ...originalParams };
   const status = await getGenerationStatus();
@@ -196,15 +215,17 @@ export async function parseGenerateImageInput({
   params.nsfw ??= isPromptNsfw !== false;
 
   const injectable: InjectableResource[] = [];
-  if (params.draft && injectableResources.draft) {
-    injectable.push(injectableResources.draft);
-  }
-  if (isPromptNsfw && status.minorFallback) {
-    injectable.push(injectableResources.safe_pos);
-    injectable.push(injectableResources.safe_neg);
-  }
-  if (!params.nsfw && status.sfwEmbed) {
-    injectable.push(injectableResources.civit_nsfw);
+  if (!isFlux) {
+    if (params.draft && injectableResources.draft) {
+      injectable.push(injectableResources.draft);
+    }
+    if (isPromptNsfw && status.minorFallback) {
+      injectable.push(injectableResources.safe_pos);
+      injectable.push(injectableResources.safe_neg);
+    }
+    if (!params.nsfw && status.sfwEmbed) {
+      injectable.push(injectableResources.civit_nsfw);
+    }
   }
 
   const positivePrompts = [params.prompt];

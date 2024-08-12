@@ -28,10 +28,9 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { maxDate, stripTime } from '~/utils/date-helpers';
+import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { getDbWithoutLag } from '~/server/db/db-helpers';
 import dayjs from 'dayjs';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -756,8 +755,7 @@ export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
 }: GetDailyBuzzCompensationInput) => {
-  const db = await getDbWithoutLag('modelVersion');
-  const modelVersions = await db.modelVersion.findMany({
+  const modelVersions = await dbRead.modelVersion.findMany({
     where: { model: { userId }, status: 'Published' },
     select: {
       id: true,
@@ -768,8 +766,8 @@ export const getDailyCompensationRewardByUser = async ({
 
   if (!clickhouse || !modelVersions.length) return [];
 
-  const minDate = dayjs(date).startOf('day').startOf('month').toISOString();
-  const maxDate = dayjs(date).endOf('day').endOf('month').toISOString();
+  const minDate = dayjs.utc(date).startOf('day').startOf('month').toISOString();
+  const maxDate = dayjs.utc(date).endOf('day').endOf('month').toISOString();
 
   const generationData = await clickhouse
     .query({

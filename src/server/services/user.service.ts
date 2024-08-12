@@ -9,9 +9,10 @@ import {
   Prisma,
 } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-import { constants } from '~/server/common/constants';
+import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { preventReplicationLag } from '~/server/db/db-helpers';
 import {
   articleMetrics,
   imageMetrics,
@@ -20,7 +21,7 @@ import {
   userMetrics,
 } from '~/server/metrics';
 import { playfab } from '~/server/playfab/client';
-import { profilePictureCache, userCosmeticCache } from '~/server/redis/caches';
+import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   DeleteUserInput,
@@ -53,6 +54,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -63,8 +65,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { preventReplicationLag } from '~/server/db/db-helpers';
-import { Flags } from '~/shared/utils';
+import { searchClient } from '~/server/meilisearch/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -151,6 +152,40 @@ export const getUserCreator = async ({
     },
   };
 };
+
+type UserSearchResult = {
+  id: number;
+  username: string;
+  deletedAt?: Date;
+  profilePicture?: { url: string; nsfwLevel: NsfwLevel };
+  image?: string;
+};
+export async function getUsersWithSearch({
+  limit = 10,
+  query,
+  ids,
+  excludedUserIds,
+}: GetAllUsersInput) {
+  if (!searchClient) throw new Error('Search client not available');
+
+  const filters: string[] = [];
+  if (ids?.length) filters.push(`id IN [${ids.join(',')}]`);
+  if (!!excludedUserIds?.length) filters.push(`id NOT IN [${excludedUserIds.join(',')}]`);
+
+  const results = await searchClient.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
+    limit: Math.round(limit * 1.5),
+    filter: filters.join(' AND '),
+    attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+  });
+  return results.hits
+    .filter((x) => !x.deletedAt)
+    .map(({ deletedAt, profilePicture, image, ...user }) => ({
+      ...user,
+      avatarUrl: profilePicture?.url ?? image,
+      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+    }))
+    .slice(0, limit);
+}
 
 type GetUsersRow = {
   id: number;
@@ -259,6 +294,10 @@ export const updateUserById = async ({
   }
 
   const user = await dbWrite.user.update({ where: { id }, data });
+
+  if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
+    await deleteBasicDataForUser(id);
+  }
 
   return user;
 };
@@ -519,6 +558,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   ]);
 
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await deleteBasicDataForUser(id);
 
   // Cancel their subscription
   await cancelSubscription({ userId: user.id });
@@ -762,6 +802,14 @@ export const getUserCosmetics = ({
   });
 };
 
+export async function getBasicDataForUsers(userIds: number[]) {
+  return await userBasicCache.fetch(userIds);
+}
+
+export async function deleteBasicDataForUser(userId: number) {
+  await userBasicCache.bust(userId);
+}
+
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await userCosmeticCache.fetch(userIds);
   return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
@@ -774,6 +822,7 @@ export async function deleteUserCosmeticCache(userId: number) {
 export async function getProfilePicturesForUsers(userIds: number[]) {
   return await profilePictureCache.fetch(userIds);
 }
+
 export async function deleteUserProfilePictureCache(userId: number) {
   await profilePictureCache.bust(userId);
 }

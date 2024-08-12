@@ -1,4 +1,4 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { BlockImageReason, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import {
@@ -13,7 +13,13 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesSearchIndex } from '~/server/search-index';
-import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
+import {
+  addBlockedImage,
+  bulkAddBlockedImages,
+  bulkRemoveBlockedImages,
+  deleteImageById,
+  updateImageReportStatusByReason,
+} from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -25,6 +31,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { isDefined } from '~/utils/type-guards';
 import {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -43,6 +50,16 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+};
 
 export const moderateImageHandler = async ({
   input,
@@ -66,6 +83,7 @@ export const moderateImageHandler = async ({
         const tags = imageTags[id] ?? [];
         tags.push(input.reviewType ?? 'other');
         const resources = imageResources[id] ?? [];
+
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
@@ -76,6 +94,17 @@ export const moderateImageHandler = async ({
           ownerId: userId,
         });
       }
+
+      const imagesToBlock = affected.filter((x) => !!x.pHash);
+      if (imagesToBlock.length)
+        await bulkAddBlockedImages({
+          data: imagesToBlock.map((x) => ({
+            hash: x.pHash,
+            reason: reviewTypeToBlockedReason[input.reviewType],
+          })),
+        });
+    } else {
+      await bulkRemoveBlockedImages({ ids: input.ids });
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -159,7 +188,6 @@ export const setTosViolationHandler = async ({
       reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
     }
 
-    // Create notifications in the background
     await createNotification({
       userId: image.userId,
       type: 'tos-violation',
@@ -170,10 +198,7 @@ export const setTosViolationHandler = async ({
         entity: 'image',
         url: `/posts/${image.postId}`,
       },
-    }).catch((error) => {
-      // Print out any errors
-      console.error(error);
-    });
+    }).catch();
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
@@ -188,6 +213,8 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+
+    await addBlockedImage({ hash: id, reason: BlockImageReason.TOS });
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
@@ -252,6 +279,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
+    // TODO.searchUpdate restore
+    // const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
+    // const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
     const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
     let remaining = limit;
@@ -265,6 +295,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
+      // TODO.searchUpdate restore
+      // const { items: pinnedPostsImages } = await getAllImagesPost({
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         limit: limit * 3,
@@ -283,12 +315,15 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     while (true) {
+      // TODO handle/remove all these (headers, include, ids)
+      // TODO.searchUpdate restore
+      // const { nextCursor, items } = await getAllImagesPost({
       const { nextCursor, items } = await getAllImages({
         ...input,
         followed: false,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
-        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
+        limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
         user: ctx.user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
@@ -314,7 +349,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const mergedPosts = Object.values({ ...pinned, ...posts });
 
     // Get reviews from the users who created the posts
-    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id))];
+    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
     const reviews = await dbRead.resourceReview.findMany({
       where: {
         userId: { in: userIds },
@@ -337,7 +372,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      const createdAt = images.map((image) => image.createdAt).sort()[0];
+      // TODO meili has sortAt as a string, not a date
+      const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -348,8 +384,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
       return {
         postId: image.postId as number,
-        postTitle: image.postTitle,
-        pinned: image.postId && pinned[image.postId] ? true : false,
+        // postTitle: image.postTitle,
+        pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
         publishedAt: image.publishedAt,

@@ -4,8 +4,10 @@ import requestIp from 'request-ip';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
+import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { VaultItemFilesSchema } from '~/server/schema/vault.schema';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
@@ -80,6 +82,20 @@ export default AuthedEndpoint(
     });
 
     if (!vaultItem) return onError(404, 'Vault item not found');
+
+    const [access] = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [vaultItem.modelVersionId],
+      userId: user.id,
+    });
+
+    if (
+      !access ||
+      !access.hasAccess ||
+      (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0
+    ) {
+      return onError(503, 'You do not have permission to download this model.');
+    }
 
     const fileName = `${vaultItem.modelName}-${vaultItem.versionName}`;
 

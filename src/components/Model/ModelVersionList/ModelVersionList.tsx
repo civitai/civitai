@@ -178,12 +178,35 @@ export function ModelVersionList({
           const isEarlyAccess =
             version.earlyAccessEndsAt && new Date(version.earlyAccessEndsAt) > new Date();
           const hasProblem = missingFiles || missingPosts || (!published && !scheduled);
+          const earlyAccessButton = (
+            <ThemeIcon
+              key={`early-access-${version.id}`}
+              radius="sm"
+              size="sm"
+              color="yellow.7"
+              style={{
+                width: 20,
+                height: 26,
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+                ...(showExtraIcons
+                  ? {
+                      borderTopRightRadius: 0,
+                      borderBottomRightRadius: 0,
+                    }
+                  : {}),
+              }}
+            >
+              <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+            </ThemeIcon>
+          );
 
           const versionButton = (
             <Button
               key={version.id}
               miw={40}
               ta="center"
+              className="relative"
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => {
@@ -217,19 +240,17 @@ export function ModelVersionList({
                   >
                     {hasProblem ? <IconAlertTriangle size={14} /> : <IconClock size={14} />}
                   </ThemeIcon>
-                ) : isEarlyAccess ? (
-                  <ThemeIcon
-                    color="yellow"
-                    variant="light"
-                    radius="xl"
-                    size="sm"
-                    sx={{ backgroundColor: 'transparent' }}
-                  >
-                    <CurrencyIcon currency={Currency.BUZZ} size={14} />
-                  </ThemeIcon>
                 ) : undefined
               }
               compact
+              style={
+                isEarlyAccess
+                  ? {
+                      borderTopRightRadius: 0,
+                      borderBottomRightRadius: 0,
+                    }
+                  : undefined
+              }
             >
               <Group spacing={8} noWrap>
                 {features.imageGeneration && version.canGenerate && (
@@ -249,11 +270,17 @@ export function ModelVersionList({
             </Button>
           );
 
-          if (!showExtraIcons) return versionButton;
+          if (!showExtraIcons)
+            return (
+              <Group spacing={0}>
+                {versionButton} {isEarlyAccess && earlyAccessButton}
+              </Group>
+            );
 
           return (
             <Button.Group key={version.id}>
               {versionButton}
+              {isEarlyAccess && earlyAccessButton}
               <Menu withinPortal>
                 <Menu.Target>
                   <Button

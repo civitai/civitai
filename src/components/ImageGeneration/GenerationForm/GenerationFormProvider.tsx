@@ -1,11 +1,17 @@
 import { DeepPartial } from 'react-hook-form';
 import { ModelType } from '@prisma/client';
-import React, { createContext, useCallback, useContext, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { BaseModel, constants, generation, getGenerationConfig } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelSetType,
+  constants,
+  generation,
+  getGenerationConfig,
+} from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   textToImageParamsSchema,
@@ -32,6 +38,7 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
+import { fluxModeOptions } from '~/shared/constants/generation.constants';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -148,28 +155,12 @@ export const blockedRequest = (() => {
 
 // #region [data formatter]
 const defaultValues = generation.defaultValues;
-function formatGenerationData(
-  data: GenerationData,
-  baseResource?: GenerationResource
-): PartialFormData {
+function formatGenerationData(data: GenerationData): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
   const baseModel = getBaseModelFromResources(data.resources);
-
-  // if (baseResource && checkpoint) {
-  //   if (checkpoint.id === baseResource.id) baseModel = getBaseModelSetType(baseResource.baseModel);
-  //   else {
-  //     const possibleBaseModelSetTypes = getBaseModelSetTypes({
-  //       modelType: baseResource.modelType,
-  //       baseModel: baseResource.baseModel,
-  //     });
-  //     if (!(possibleBaseModelSetTypes as string[]).includes(baseModel)) {
-  //       baseModel = possibleBaseModelSetTypes[0];
-  //     }
-  //   }
-  // }
 
   const config = getGenerationConfig(baseModel);
 
@@ -243,6 +234,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     [currentUser, status] // eslint-disable-line
   );
 
+  const prevBaseModelRef = useRef<BaseModelSetType | null>();
+
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
     version: 1,
@@ -268,11 +261,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
 
       let resources: GenerationResource[];
-      let baseResource: GenerationResource | undefined;
       if (runType === 'remix') {
         resources = responseData.resources;
       } else {
-        baseResource = responseData.resources[0];
         resources = uniqBy(
           [
             ...responseData.resources,
@@ -284,7 +275,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         );
       }
 
-      const formatted = formatGenerationData({ ...responseData, resources }, baseResource);
+      const formatted = formatGenerationData({ ...responseData, resources });
 
       const data = { ...formatted, workflow };
       if (resources.length && resources.some((x) => !x.available)) {
@@ -306,21 +297,32 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       // handle model change to update baseModel value
-      if (
-        name !== 'baseModel' &&
-        watchedValues.model &&
-        getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
-      ) {
-        form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+
+      if (name !== 'baseModel') {
+        if (
+          watchedValues.model &&
+          getBaseModelSetType(watchedValues.model.baseModel) !== watchedValues.baseModel
+        ) {
+          form.setValue('baseModel', getBaseModelSetType(watchedValues.model.baseModel));
+        }
+      }
+
+      if (name === 'baseModel') {
+        if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
+          form.setValue('cfgScale', 3.5);
+        }
+
+        if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
+          form.setValue('sampler', 'Euler a');
+        }
+        prevBaseModelRef.current = watchedValues.baseModel;
       }
 
       // handle selected `workflow` based on presence of `image` value
-      if (
-        name === 'image' &&
-        !watchedValues.image &&
-        watchedValues.workflow?.startsWith('img2img')
-      ) {
-        form.setValue('workflow', 'txt2img');
+      if (name === 'image') {
+        if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
+          form.setValue('workflow', 'txt2img');
+        }
       }
     });
     return () => {
@@ -340,14 +342,16 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }
 
   function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
-    // TODO.briant this is reseting things when people navigate back to the generation form after remix
+    prevBaseModelRef.current = defaultValues.baseModel;
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
+        fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
         creatorTip: overrides.creatorTip ?? 0.25,
+        experimental: overrides.experimental ?? false,
       },
       status.limits
     );

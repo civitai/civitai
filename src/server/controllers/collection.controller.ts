@@ -1,54 +1,54 @@
+import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { collectedContentReward } from '~/server/rewards';
+import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import {
+  AddCollectionItemInput,
+  AddSimpleImagePostInput,
+  BulkSaveCollectionItemsInput,
+  CollectionMetadataSchema,
+  FollowCollectionInputSchema,
+  GetAllCollectionItemsSchema,
+  GetAllCollectionsInfiniteSchema,
+  GetAllUserCollectionsInputSchema,
+  GetCollectionPermissionDetails,
+  GetUserCollectionItemsByItemSchema,
+  UpdateCollectionCoverImageInput,
+  UpdateCollectionItemsStatusInput,
+  UpsertCollectionInput,
+} from '~/server/schema/collection.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { imageSelect } from '~/server/selectors/image.selector';
+import {
+  addContributorToCollection,
+  bulkSaveItems,
+  deleteCollectionById,
+  getAllCollections,
+  getCollectionById,
+  getCollectionCoverImages,
+  getCollectionItemCount,
+  getCollectionItemsByCollectionId,
+  getContributorCount,
+  getUserCollectionItemsByItem,
+  getUserCollectionPermissionsById,
+  getUserCollectionsWithPermissions,
+  removeContributorFromCollection,
+  saveItemInCollections,
+  updateCollectionCoverImage,
+  updateCollectionItemsStatus,
+  upsertCollection,
+} from '~/server/services/collection.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import {
-  BulkSaveCollectionItemsInput,
-  AddCollectionItemInput,
-  FollowCollectionInputSchema,
-  GetAllCollectionItemsSchema,
-  GetAllUserCollectionsInputSchema,
-  GetUserCollectionItemsByItemSchema,
-  UpdateCollectionItemsStatusInput,
-  UpsertCollectionInput,
-  AddSimpleImagePostInput,
-  GetAllCollectionsInfiniteSchema,
-  UpdateCollectionCoverImageInput,
-  GetCollectionPermissionDetails,
-  CollectionMetadataSchema,
-} from '~/server/schema/collection.schema';
-import {
-  saveItemInCollections,
-  getUserCollectionsWithPermissions,
-  upsertCollection,
-  deleteCollectionById,
-  getUserCollectionPermissionsById,
-  getCollectionById,
-  addContributorToCollection,
-  removeContributorFromCollection,
-  getUserCollectionItemsByItem,
-  getCollectionItemsByCollectionId,
-  updateCollectionItemsStatus,
-  bulkSaveItems,
-  getAllCollections,
-  CollectionItemExpanded,
-  updateCollectionCoverImage,
-  getCollectionCoverImages,
-  getCollectionItemCount,
-  getContributorCount,
-} from '~/server/services/collection.service';
-import { TRPCError } from '@trpc/server';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { addPostImage, createPost } from '~/server/services/post.service';
-import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
-import { constants } from '~/server/common/constants';
-import { imageSelect } from '~/server/selectors/image.selector';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isDefined } from '~/utils/type-guards';
-import { collectedContentReward } from '~/server/rewards';
 import { dbRead } from '../db/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
@@ -217,6 +217,16 @@ export const saveItemHandler = async ({
           ctx.ip
         );
       }
+    }
+
+    if (input.type === 'Image' && !!input.imageId) {
+      await updateEntityMetric({
+        ctx,
+        entityType: 'Image',
+        entityId: input.imageId,
+        metricType: 'Collection',
+        amount: status === 'added' ? 1 : -1,
+      });
     }
   } catch (error) {
     throw throwDbError(error);

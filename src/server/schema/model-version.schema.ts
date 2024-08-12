@@ -241,6 +241,7 @@ export type ModelVersionMeta = ModelMeta & {
   earlyAccessDownloadData?: { date: string; downloads: number }[];
   generationImagesCount?: { date: string; generations: number }[];
   allowAIRecommendations?: boolean;
+  hadEarlyAccessPurchase?: boolean;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;

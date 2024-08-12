@@ -359,15 +359,26 @@ export const constants = {
     maxCollaborators: 15,
   },
   earlyAccess: {
+    article: 6341,
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
-      [900, 3],
-      [1800, 5],
-      [2200, 7],
-      [8500, 9],
-      [18000, 12],
-      [40000, 15],
+      // The maximum amount of days that can be set based off of score.
+      [40000, 3],
+      [65000, 5],
+      [90000, 7],
+      [125000, 9],
+      [200000, 12],
+      [250000, 15],
+    ],
+    scoreQuantityUnlock: [
+      // How many items can be marked EA at the same time based off of score.
+      [40000, 1],
+      [65000, 2],
+      [90000, 4],
+      [125000, 6],
+      [200000, 8],
+      [250000, 10],
     ],
   },
 } as const;
@@ -404,6 +415,7 @@ export const baseModelSetTypes = [
   'Kolors',
   'HyDit1',
   'ODOR',
+  'Flux1',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -571,6 +583,7 @@ export const samplerOffsets = {
   'DPM++ 2M Karras': 4,
   DPM2: 4,
   'DPM2 a': 4,
+  undefined: 4,
 } as const;
 
 export const generation = {
@@ -723,6 +736,29 @@ export const generationConfig = {
       available: true,
     } as GenerationResource,
   },
+  Flux1: {
+    additionalResourceTypes: [] as ResourceFilter[],
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 691639,
+      name: '',
+      trainedWords: [],
+      modelId: 618692,
+      modelName: 'FLUX',
+      modelType: 'Checkpoint',
+      baseModel: 'Flux.1 D',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
 };
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
@@ -739,6 +775,9 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
+
+// Metrics:
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v2';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',
