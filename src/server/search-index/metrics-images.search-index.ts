@@ -298,7 +298,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         p."publishedAt" is not null as "published",
         (
           CASE
-            WHEN i.meta IS NOT NULL AND NOT i."hideMeta"
+            WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
             THEN TRUE
             ELSE FALSE
           END

@@ -12,6 +12,8 @@ const BATCH_SIZE = 10000;
 const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
 const IMAGE_WHERE: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
 
+// TODO sync this with the search-index code
+
 const schema = z.object({
   update: z.enum(['addFields']),
 });

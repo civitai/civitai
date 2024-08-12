@@ -14,6 +14,8 @@ import { pgDbRead } from '~/server/db/pgDb';
 import { getTagIdsForImages } from '~/server/services/image.service';
 import { getPeriods } from '~/server/utils/enum-helpers';
 
+// TODO do we need this file?
+
 type ImageModel = {
   id: number;
   createdAt: Date;

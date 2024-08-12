@@ -35,10 +35,13 @@ export const tagIdsForImagesCache = createCachedObject<{
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
+
     const tags = await db.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
-      select: { imageId: true, tag: { select: { id: true, name: true } } },
+      select: { imageId: true, source: true, tag: { select: { id: true, name: true } } },
     });
+
+    // TODO replicate getVotableTags logic here to account for Rekognition, tagType, constants.imageTags.styles, etc
 
     const result = tags.reduce((acc, { tag, imageId }) => {
       acc[imageId.toString()] ??= { imageId, tags: [] };
