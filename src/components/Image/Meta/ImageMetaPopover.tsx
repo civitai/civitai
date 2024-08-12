@@ -22,7 +22,7 @@ export function ImageMetaPopover2({
   if (!isClient) return children;
 
   return (
-    <Popover className="relative">
+    <Popover className="relative flex items-center">
       <PopoverButton>{children}</PopoverButton>
       <PopoverPanel
         className="z-10"
