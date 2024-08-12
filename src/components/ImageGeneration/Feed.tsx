@@ -13,7 +13,7 @@ import { MarkerType } from '~/server/common/enums';
 export function Feed() {
   const { classes } = useStyles();
 
-  const { filters, setFilters } = useFiltersContext((state) => ({
+  const { filters } = useFiltersContext((state) => ({
     filters: state.markers,
     setFilters: state.setMarkerFilters,
   }));
@@ -58,25 +58,41 @@ export function Feed() {
       <Center h="100%">
         <Stack spacing="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
-          <Stack spacing={0}>
-            <Text size="md" align="center">
-              The queue is empty
-            </Text>
-            <Text size="sm" color="dimmed">
-              Try{' '}
-              <Text
-                variant="link"
-                onClick={() => generationPanel.setView('generate')}
-                sx={{ cursor: 'pointer' }}
-                span
-              >
-                generating
-              </Text>{' '}
-              new images with our resources
-            </Text>
-          </Stack>
+          {
+            filters.marker && (
+              <Stack spacing={0}>
+                <Text size={32} align="center">
+                  No results found
+                </Text>
+                <Text align="center">
+                  {"Try adjusting your filters"}
+                </Text>
+              </Stack>
+            )
+          }
+          {
+            !filters.marker && (
+              <Stack spacing={0}>
+                <Text size="md" align="center">
+                  The queue is empty
+                </Text>
+                <Text size="sm" color="dimmed">
+                  Try{' '}
+                  <Text
+                    variant="link"
+                    onClick={() => generationPanel.setView('generate')}
+                    sx={{ cursor: 'pointer' }}
+                    span
+                  >
+                    generating
+                  </Text>{' '}
+                  new images with our resources
+                </Text>
+              </Stack>
+            )
+          }
         </Stack>
-      </Center>
+      </Center >
     );
 
   return (
@@ -95,17 +111,6 @@ export function Feed() {
 
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
-
-              // const { marker } = filters;
-
-              // if (marker) {
-              //   const feedback = step.metadata?.images?.[image.id]?.feedback;
-              //   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-
-              //   if ((marker === MarkerType.Liked || marker === MarkerType.Disliked) && marker !== feedback) return null;
-
-              //   else if (marker === MarkerType.Favorited && !isFavorite) return null;
-              // }
 
               return (
                 <GeneratedImage

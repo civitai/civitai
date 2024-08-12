@@ -95,23 +95,39 @@ export function Queue() {
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <Stack spacing="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
-          <Stack spacing={0}>
-            <Text size="md" align="center">
-              The queue is empty
-            </Text>
-            <Text size="sm" color="dimmed">
-              Try{' '}
-              <Text
-                variant="link"
-                onClick={() => generationPanel.setView('generate')}
-                sx={{ cursor: 'pointer' }}
-                span
-              >
-                generating
-              </Text>{' '}
-              new images with our resources
-            </Text>
-          </Stack>
+          {
+            filters.marker && (
+              <Stack spacing={0}>
+                <Text size={32} align="center">
+                  No results found
+                </Text>
+                <Text align="center">
+                  {"Try adjusting your filters"}
+                </Text>
+              </Stack>
+            )
+          }
+          {
+            !filters.marker && (
+              <Stack spacing={0}>
+                <Text size="md" align="center">
+                  The queue is empty
+                </Text>
+                <Text size="sm" color="dimmed">
+                  Try{' '}
+                  <Text
+                    variant="link"
+                    onClick={() => generationPanel.setView('generate')}
+                    sx={{ cursor: 'pointer' }}
+                    span
+                  >
+                    generating
+                  </Text>{' '}
+                  new images with our resources
+                </Text>
+              </Stack>
+            )
+          }
         </Stack>
         {RetentionPolicyUpdate}
       </div>
