@@ -1,7 +1,7 @@
 import { ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
-import { VaultSort } from '~/server/common/enums';
+import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   GetPaginatedVaultItemsSchema,
@@ -11,6 +11,7 @@ import {
   VaultItemsRemoveModelVersionsSchema,
   VaultItemsUpdateNotesSchema,
 } from '~/server/schema/vault.schema';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -443,6 +444,20 @@ export const toggleModelVersionOnVault = async ({
 }: VaultItemsAddModelVersionSchema & {
   userId: number;
 }) => {
+  const [access] = await hasEntityAccess({
+    entityType: 'ModelVersion',
+    entityIds: [modelVersionId],
+    userId,
+  });
+
+  if (
+    !access ||
+    !access.hasAccess ||
+    (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0
+  ) {
+    throwBadRequestError('You do not have permission to add this model version to your vault.');
+  }
+
   const existingVaultItem = await dbRead.vaultItem.findFirst({
     where: {
       vaultId: userId,

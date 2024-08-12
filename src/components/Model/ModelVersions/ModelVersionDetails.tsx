@@ -811,31 +811,33 @@ export function ModelVersionDetails({
                       </div>
                     </Tooltip>
                   )}
-                  <ToggleVaultButton modelVersionId={version.id}>
-                    {({ isLoading, isInVault, toggleVaultItem }) => (
-                      <Tooltip
-                        label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
-                        position="top"
-                        withArrow
-                      >
-                        <Button
-                          sx={{ paddingLeft: 8, paddingRight: 8 }}
-                          color={isInVault ? 'green' : 'gray'}
-                          onClick={toggleVaultItem}
-                          disabled={isLoading}
-                          variant={isInVault ? 'light' : undefined}
+                  {hasDownloadPermissions && (
+                    <ToggleVaultButton modelVersionId={version.id}>
+                      {({ isLoading, isInVault, toggleVaultItem }) => (
+                        <Tooltip
+                          label={isInVault ? 'Remove from Vault' : 'Add To Vault'}
+                          position="top"
+                          withArrow
                         >
-                          {isLoading ? (
-                            <Loader size="xs" />
-                          ) : isInVault ? (
-                            <IconCloudCheck size={24} />
-                          ) : (
-                            <IconCloudLock size={24} />
-                          )}
-                        </Button>
-                      </Tooltip>
-                    )}
-                  </ToggleVaultButton>
+                          <Button
+                            sx={{ paddingLeft: 8, paddingRight: 8 }}
+                            color={isInVault ? 'green' : 'gray'}
+                            onClick={toggleVaultItem}
+                            disabled={isLoading}
+                            variant={isInVault ? 'light' : undefined}
+                          >
+                            {isLoading ? (
+                              <Loader size="xs" />
+                            ) : isInVault ? (
+                              <IconCloudCheck size={24} />
+                            ) : (
+                              <IconCloudLock size={24} />
+                            )}
+                          </Button>
+                        </Tooltip>
+                      )}
+                    </ToggleVaultButton>
+                  )}
                 </Group>
               </Group>
               {primaryFileDetails}

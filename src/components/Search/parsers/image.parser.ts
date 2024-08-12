@@ -11,7 +11,7 @@ export const ImagesSearchIndexSortBy = [
   `${IMAGES_SEARCH_INDEX}:stats.commentCountAllTime:desc`,
   `${IMAGES_SEARCH_INDEX}:stats.collectedCountAllTime:desc`,
   `${IMAGES_SEARCH_INDEX}:stats.tippedAmountCountAllTime:desc`,
-  `${IMAGES_SEARCH_INDEX}:sortAt:desc`,
+  `${IMAGES_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 
 const defaultSortBy = ImagesSearchIndexSortBy[0];
