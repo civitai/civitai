@@ -91,6 +91,7 @@ import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -152,6 +153,11 @@ export function GenerationFormContent() {
   features.draft = features.draft && featureFlags.draftMode;
 
   const { errors } = form.formState;
+
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
 
   function clearWarning() {
     setPromptWarning(null);
@@ -247,6 +253,10 @@ export function GenerationFormContent() {
     setPromptWarning(null);
     const totalCost = cost + creatorTip * cost + civitaiTip * cost;
     conditionalPerformTransaction(totalCost, performTransaction);
+
+    if (filters.marker) {
+      setFilters({ marker: undefined });
+    }
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
@@ -800,10 +810,10 @@ export function GenerationFormContent() {
                               isFlux
                                 ? undefined
                                 : [
-                                    { label: 'Creative', value: '4' },
-                                    { label: 'Balanced', value: '7' },
-                                    { label: 'Precise', value: '10' },
-                                  ]
+                                  { label: 'Creative', value: '4' },
+                                  { label: 'Balanced', value: '7' },
+                                  { label: 'Precise', value: '10' },
+                                ]
                             }
                             reverse
                             disabled={cfgDisabled}
@@ -873,19 +883,19 @@ export function GenerationFormContent() {
                                     isFlux
                                       ? undefined
                                       : [
-                                          {
-                                            label: 'Fast',
-                                            value: Number(10 + samplerCfgOffset).toString(),
-                                          },
-                                          {
-                                            label: 'Balanced',
-                                            value: Number(20 + samplerCfgOffset).toString(),
-                                          },
-                                          {
-                                            label: 'High',
-                                            value: Number(30 + samplerCfgOffset).toString(),
-                                          },
-                                        ]
+                                        {
+                                          label: 'Fast',
+                                          value: Number(10 + samplerCfgOffset).toString(),
+                                        },
+                                        {
+                                          label: 'Balanced',
+                                          value: Number(20 + samplerCfgOffset).toString(),
+                                        },
+                                        {
+                                          label: 'High',
+                                          value: Number(30 + samplerCfgOffset).toString(),
+                                        },
+                                      ]
                                   }
                                   reverse
                                 />
@@ -1208,9 +1218,8 @@ const useStyles = createStyles((theme) => ({
 
     '&[data-active]': {
       borderRadius: '0 !important',
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-      }`,
+      borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
+        }`,
     },
   },
   accordionContent: {

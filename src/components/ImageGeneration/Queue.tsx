@@ -19,7 +19,7 @@ import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { MarkerType } from '~/server/common/enums';
 
 export function Queue() {
-  const { filters, setFilters } = useFiltersContext((state) => ({
+  const { filters } = useFiltersContext((state) => ({
     filters: state.markers,
     setFilters: state.setMarkerFilters,
   }));

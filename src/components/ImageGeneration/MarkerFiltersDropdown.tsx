@@ -14,14 +14,12 @@ import {
   ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter, IconThumbUpFilled, IconThumbDownFilled, IconHeartFilled } from '@tabler/icons-react';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { MarkerType } from '~/server/common/enums';
-import { filter } from 'lodash';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -61,18 +59,13 @@ export function DumbMarkerFiltersDropdown({
 
   const [opened, setOpened] = useState(false);
 
-  const [currentMarker, setMarker] = useState<MarkerType | undefined>();
+  const [currentMarker, setMarker] = useState<MarkerType | undefined>(filters.marker);
 
-  useEffect(() => {
+  if (filters.marker !== currentMarker) {
     setMarker(filters.marker);
-  }, []);
+  }
 
   const filterLength = 0;
-
-  // const clearFilters = useCallback(() => {
-  //   const reset = { marker: undefined, tags: [] };
-  //   setFilters(reset);
-  // }, [localMode, setFilters]);
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -82,7 +75,7 @@ export function DumbMarkerFiltersDropdown({
     tt: 'capitalize',
   };
 
-  const Icon = getIcon(currentMarker);
+  const Icon = getIcon(filters.marker);
 
   const target = (
     <Indicator
@@ -122,7 +115,7 @@ export function DumbMarkerFiltersDropdown({
             return (
               <Chip
                 key={marker}
-                checked={marker === currentMarker}
+                checked={marker === filters.marker}
                 onChange={(checked) => {
                   setMarker(checked ? marker : undefined);
                   setFilters({ marker: checked ? marker : undefined });
