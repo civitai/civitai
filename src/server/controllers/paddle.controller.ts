@@ -4,9 +4,16 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
-import { createTransaction } from '~/server/services/paddle.service';
-import { TransactionCreateInput } from '~/server/schema/paddle.schema';
+import {
+  createTransaction,
+  processCompleteBuzzTransaction,
+} from '~/server/services/paddle.service';
+import { TransactionCreateInput, TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
+import { createRecaptchaAssesment } from '~/server/recaptcha/client';
+import { getTransactionById } from '~/server/paddle/client';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
 
 export const createTransactionHandler = async ({
   ctx,
@@ -20,9 +27,51 @@ export const createTransactionHandler = async ({
       throw throwAuthorizationError('Email is required to create a transaction');
     }
 
+    const { recaptchaToken } = input;
+
+    if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+    const { score, reasons } = await createRecaptchaAssesment({
+      token: recaptchaToken,
+      recaptchaAction: RECAPTCHA_ACTIONS.PADDLE_TRANSACTION,
+    });
+
+    if ((score || 0) < 0.7) {
+      if (reasons.length) {
+        throw throwAuthorizationError(
+          `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
+        );
+      } else {
+        throw throwAuthorizationError('We could not verify the authenticity of your request.');
+      }
+    }
+
     const user = { id: ctx.user.id, email: ctx.user.email as string };
     return await createTransaction({ user, ...input });
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
+};
+
+export const processCompleteBuzzTransactionHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: GetByIdStringInput;
+}) => {
+  // Get the transaction:
+  const transaction = await getTransactionById(input.id);
+  const meta = transaction?.customData as TransactionMetadataSchema;
+
+  if (meta.type !== 'buzzPurchase') {
+    throw throwNotFoundError('Cannot process a non-buzz transaction');
+  }
+
+  if (meta.userId !== ctx.user.id) {
+    throw throwAuthorizationError('You are not authorized to process this transaction');
+  }
+
+  // Process the transaction
+  await processCompleteBuzzTransaction(transaction);
 };

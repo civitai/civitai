@@ -71,6 +71,11 @@ export const createBuzzTransaction = async ({
   });
 };
 
+export const getTransactionById = async (transactionId: string) => {
+  const transaction = await getPaddle().transactions.get(transactionId);
+  return transaction;
+};
+
 export const updateTransaction = ({
   transactionId,
   metadata,

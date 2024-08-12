@@ -9,8 +9,9 @@ import {
   Title,
   Modal,
   CloseButton,
+  ModalProps,
 } from '@mantine/core';
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 
 import { useTrackEvent } from '../TrackView/track.utils';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
@@ -48,76 +49,55 @@ export const PaddleTransacionModal = ({
   successMessage,
 }: Props) => {
   const dialog = useDialogContext();
-  const [success, setSuccess] = useState<boolean>(false);
   const { trackAction } = useTrackEvent();
   const { transactionId, error, isLoading } = usePaddleTransaction({ unitAmount, currency });
 
   usePaddleCheckout({
     transactionId: transactionId ?? undefined,
+    onPaymentSuccess: onSuccess,
   });
 
-  if (success) {
+  const modalProps: Partial<ModalProps> = useMemo(
+    () => ({
+      withCloseButton: false,
+      size: 'lg',
+      radius: 'lg',
+      closeOnEscape: false,
+      closeOnClickOutside: false,
+      zIndex: 400,
+    }),
+    [dialog]
+  );
+
+  if (error && !isLoading) {
     return (
-      <Stack>
-        <Group position="apart" noWrap>
-          <Text size="lg" weight={700}>
-            Complete your transaction
-          </Text>
-        </Group>
-        <Divider mx="-lg" />
-        {successMessage ? <>{successMessage}</> : <Text>Thank you for your purchase!</Text>}
-        <Button
-          onClick={() => {
-            dialog.onClose();
-          }}
-        >
-          Close
-        </Button>
-      </Stack>
+      <Modal {...dialog} {...modalProps}>
+        <Error error={error} onClose={dialog.onClose} />
+      </Modal>
     );
   }
 
   return (
-    <Modal
-      {...dialog}
-      withCloseButton={false}
-      size="lg"
-      radius="lg"
-      closeOnEscape={false}
-      closeOnClickOutside={false}
-      zIndex={400}
-    >
-      <form
-        id="stripe-payment-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          // const paymentIntent = await onConfirmPayment();
-          // if (paymentIntent)
-          //   trackAction({
-          //     type: 'PurchaseFunds_Confirm',
-          //   }).catch(() => undefined);
-        }}
-      >
-        <Stack spacing="md">
-          <Group position="apart" noWrap>
-            <Text size="lg" weight={700}>
-              Complete your transaction
-            </Text>
-            <CloseButton onClick={dialog.onClose} />
-          </Group>
-          <Divider mx="-lg" />
-          {message && <>{message}</>}
+    <Modal {...dialog} {...modalProps}>
+      <Stack spacing="md">
+        <Group position="apart" noWrap>
+          <Text size="lg" weight={700}>
+            Complete your transaction
+          </Text>
+          <CloseButton onClick={dialog.onClose} />
+        </Group>
+        <Divider mx="-lg" />
+        {message && <>{message}</>}
 
-          {isLoading ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : (
-            <div className="checkout-container"></div>
-          )}
-          <RecaptchaNotice />
-        </Stack>
-      </form>
+        {isLoading && (
+          <Center>
+            <Loader />
+          </Center>
+        )}
+
+        <div className="checkout-container"></div>
+        <RecaptchaNotice />
+      </Stack>
     </Modal>
   );
 };

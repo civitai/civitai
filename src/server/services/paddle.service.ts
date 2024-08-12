@@ -10,8 +10,8 @@ import {
   updateTransaction,
 } from '~/server/paddle/client';
 import { TransactionCreateInput, TransactionMetadataSchema } from '~/server/schema/paddle.schema';
-import { TransactionCompletedEvent } from '@paddle/paddle-node-sdk';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { Transaction, TransactionCompletedEvent } from '@paddle/paddle-node-sdk';
+import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 
 const baseUrl = getBaseUrl();
@@ -70,14 +70,12 @@ export const createTransaction = async ({
   };
 };
 
-export const processCompleteBuzzTransaction = async (
-  transactionCompletedEvent: TransactionCompletedEvent
-) => {
-  if (!transactionCompletedEvent.data.customData) {
+export const processCompleteBuzzTransaction = async (transaction: Transaction) => {
+  if (!transaction.customData) {
     throw throwBadRequestError('Custom data is required to complete a buzz transaction.');
   }
 
-  const meta = transactionCompletedEvent.data.customData as TransactionMetadataSchema;
+  const meta = transaction.customData as TransactionMetadataSchema;
 
   if (meta.type !== 'buzzPurchase') {
     throw throwBadRequestError('Only use this method to process buzz purchases.');
@@ -88,23 +86,28 @@ export const processCompleteBuzzTransaction = async (
     return;
   }
 
-  const buzzAmount = meta.buzzAmount;
+  const { purchasesMultiplier } = await getMultipliersForUser(meta.userId);
+  const amount = meta.buzzAmount;
+  const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
   // Pay the user:
   const buzzTransaction = await createBuzzTransaction({
     amount: buzzAmount,
     fromAccountId: 0,
     toAccountId: meta.userId,
-    externalTransactionId: transactionCompletedEvent.data.id,
+    externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
-    description: `Buzz Purchase: ${buzzAmount} Buzz`,
+    description: `Purchase of ${amount} buzz. ${
+      purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
+    }A total of ${buzzAmount} buzz was added to your account.`,
     details: {
-      paddleTransactionId: transactionCompletedEvent.data.id,
+      paddleTransactionId: transaction.id,
     },
   });
 
   // TODO: Ask paddle guys if it's possible to update customData after transaction completed.
   //  await updateTransaction({
-  //   transactionId: transactionCompletedEvent.data.id,
+  //   transactionId: transaction.id,
   //   metadata: { ...meta, buzzTransactionId: buzzTransaction.transactionId },
   // });
 };

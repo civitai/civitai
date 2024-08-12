@@ -35,6 +35,7 @@ import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Stripe/SubscriptionFeature';
 import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { PaddleTransacionModal } from '~/components/Paddle/PaddleTransacionModal';
+import { useMutatePaddle } from '~/components/Paddle/util';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -136,7 +137,6 @@ export const BuzzPurchase = ({
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
   const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
-  const openDialog = useDialogStore();
 
   const {
     packages = [],
@@ -148,6 +148,8 @@ export const BuzzPurchase = ({
       onPurchaseSuccess?.();
     },
   });
+
+  const { processCompleteBuzzTransaction } = useMutatePaddle();
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
@@ -276,14 +278,15 @@ export const BuzzPurchase = ({
           <Stack>
             <Text>
               You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />.
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> for a total of{' '}
+              <CurrencyBadge currency={Currency.USD} unitAmount={unitAmount} />
             </Text>
-            <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
         successMessage,
-        onSuccess: async () => {
+        onSuccess: async (transactionId) => {
           // Do nothing atm.
+          await processCompleteBuzzTransaction({ id: transactionId });
         },
       },
     });
@@ -462,7 +465,7 @@ export const BuzzPurchase = ({
           )}
           <Stack spacing="md" mt="md">
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-            <Group spacing="xs" mt="md" noWrap>
+            <Stack spacing="xs" mt="md">
               <Button disabled={!ctaEnabled} onClick={handleStripeSubmit} radius="xl" fullWidth>
                 Pay Now With Stripe{' '}
                 {!!unitAmount
@@ -487,7 +490,7 @@ export const BuzzPurchase = ({
                   Cancel
                 </Button>
               )}
-            </Group>
+            </Stack>
 
             <Text size="xs" align="center" color="dimmed" mt={-10}>
               Credit card, bank transfer, Google Pay, Apple Pay, and more.

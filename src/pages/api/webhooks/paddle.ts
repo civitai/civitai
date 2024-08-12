@@ -2,7 +2,12 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server.mjs';
 import { Readable } from 'node:stream';
 import { getPaddle } from '~/server/paddle/client';
-import { EventEntity, EventName, TransactionCompletedEvent } from '@paddle/paddle-node-sdk';
+import {
+  EventEntity,
+  EventName,
+  Transaction,
+  TransactionCompletedEvent,
+} from '@paddle/paddle-node-sdk';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { processCompleteBuzzTransaction } from '~/server/services/paddle.service';
 
@@ -59,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const customData = data.customData as TransactionMetadataSchema;
 
             if (customData.type === 'buzzPurchase') {
-              await processCompleteBuzzTransaction(event);
+              await processCompleteBuzzTransaction(event.data as Transaction);
             }
 
             break;
