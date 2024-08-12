@@ -5,6 +5,7 @@ import { env } from '~/env/server.mjs';
 import { generation } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   applyResources,
   getWorkflowDefinition,
@@ -73,16 +74,19 @@ export async function createComfyStep(
 export async function createComfy(
   args: z.infer<typeof generateImageSchema> & { user: SessionUser; token: string }
 ) {
-  const { user, tips } = args;
+  const { user, tips, params } = args;
+  const features = getFeatureFlags({ user });
   const step = await createComfyStep(args);
   // console.log(JSON.stringify(step.input.comfyWorkflow));
   // throw new Error('stop');
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.IMAGE, args.params.workflow, ...args.tags],
+      tags: [WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
+      // @ts-ignore: ignoring until we update the civitai-client package
+      experimental: features.experimentalGen ? params.experimental : undefined,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

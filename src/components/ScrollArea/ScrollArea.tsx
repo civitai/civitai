@@ -14,12 +14,12 @@ export function ScrollArea({
   intersectionObserverOptions,
   ...props
 }: ScrollAreaProps) {
-  const scrollRef = useScrollRestore<HTMLDivElement>(scrollRestore);
+  const { ref: scrollRef, key } = useScrollRestore<HTMLDivElement>(scrollRestore);
   const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
     <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
-      <IntersectionObserverProvider id={props.id} options={intersectionObserverOptions}>
+      <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
         <Box
           ref={scrollRef}
           className={`scroll-area ${className ? className : ''}`}

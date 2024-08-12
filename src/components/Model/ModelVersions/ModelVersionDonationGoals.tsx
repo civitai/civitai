@@ -95,7 +95,9 @@ const DonationGoalItem = ({
           </Text>
         )}
         <Group position="apart" noWrap align="start">
-          <Text size="sm">{donationGoal.title}</Text>
+          <Text size="sm" weight={500}>
+            {donationGoal.title}
+          </Text>
           <Group spacing={0} position="left" align="center" noWrap>
             <CurrencyIcon currency={Currency.BUZZ} size={16} />
             <Text
@@ -115,11 +117,12 @@ const DonationGoalItem = ({
         )}
         <Progress
           size="xl"
+          h={25}
           value={progress}
           label={`${Math.floor(progress)}%`}
           color={progress < 100 ? 'yellow.7' : 'green'}
-          striped
-          animate
+          striped={donationGoal.active}
+          animate={donationGoal.active}
         />
 
         {canDonate && (
@@ -151,6 +154,7 @@ const DonationGoalItem = ({
                 />
                 <Tooltip
                   label="Purchasing the model for generation or download will contribute to the donation goal."
+                  multiline
                   maw={250}
                 >
                   <IconInfoCircle />

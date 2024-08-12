@@ -77,6 +77,7 @@ import {
   getUserPurchasedRewards,
   getUsers,
   getUserSettings,
+  getUsersWithSearch,
   isUsernamePermitted,
   setLeaderboardEligibility,
   setUserSetting,
@@ -131,7 +132,7 @@ export const getAllUsersHandler = async ({
     if (blockedUsers.length)
       input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
 
-    const users = await getUsers({
+    const users = await getUsersWithSearch({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
     });

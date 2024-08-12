@@ -9,7 +9,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-import { constants } from '~/server/common/constants';
+import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
@@ -65,6 +65,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { searchClient } from '~/server/meilisearch/client';
 import dayjs from 'dayjs';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -153,6 +154,40 @@ export const getUserCreator = async ({
     },
   };
 };
+
+type UserSearchResult = {
+  id: number;
+  username: string;
+  deletedAt?: Date;
+  profilePicture?: { url: string; nsfwLevel: NsfwLevel };
+  image?: string;
+};
+export async function getUsersWithSearch({
+  limit = 10,
+  query,
+  ids,
+  excludedUserIds,
+}: GetAllUsersInput) {
+  if (!searchClient) throw new Error('Search client not available');
+
+  const filters: string[] = [];
+  if (ids?.length) filters.push(`id IN [${ids.join(',')}]`);
+  if (!!excludedUserIds?.length) filters.push(`id NOT IN [${excludedUserIds.join(',')}]`);
+
+  const results = await searchClient.index(USERS_SEARCH_INDEX).search<UserSearchResult>(query, {
+    limit: Math.round(limit * 1.5),
+    filter: filters.join(' AND '),
+    attributesToRetrieve: ['id', 'username', 'deletedAt', 'profilePicture', 'image'],
+  });
+  return results.hits
+    .filter((x) => !x.deletedAt)
+    .map(({ deletedAt, profilePicture, image, ...user }) => ({
+      ...user,
+      avatarUrl: profilePicture?.url ?? image,
+      avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+    }))
+    .slice(0, limit);
+}
 
 type GetUsersRow = {
   id: number;

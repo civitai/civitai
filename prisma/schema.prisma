@@ -1481,6 +1481,7 @@ enum TagSource {
   Rekognition
   WD14
   Computed
+  ImageHash
 }
 
 model TagsOnImage {

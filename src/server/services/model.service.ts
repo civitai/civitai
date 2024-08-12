@@ -606,7 +606,6 @@ export const getModelsRaw = async ({
   // Get versions, hash, and tags from cache
   const modelIds = models.map((m) => m.id);
   const modelData = await dataForModelsCache.fetch(modelIds);
-  console.log(modelData);
 
   const cosmetics = includeCosmetics
     ? await getCosmeticsForEntity({ ids: models.map((m) => m.id), entity: 'Model' })

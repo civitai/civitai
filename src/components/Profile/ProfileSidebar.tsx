@@ -190,7 +190,8 @@ export function ProfileSidebar({ username, className }: { username: string; clas
             avatarSize={sizeOpts.avatar}
             user={{ ...user, cosmetics: equippedCosmetics }}
             size={sizeOpts.username}
-            radius="xl"
+            // Oversized radius to make it always a circle
+            radius={1000}
           />
 
           {!isMobile && (

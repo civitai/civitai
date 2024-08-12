@@ -5,6 +5,7 @@ import React from 'react';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import {
   ProfileSection,
   ProfileSectionPreview,
@@ -35,10 +36,7 @@ const useStyles = createStyles(() => ({
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
   const { classes: sectionClasses } = useStyles();
-  const { ref, inView } = useInView({
-    delay: 100,
-    triggerOnce: true,
-  });
+  const [ref, inView] = useInViewDynamic({ id: 'profile-reviews-section' });
   const { classes, theme } = useProfileSectionStyles({});
 
   const { resourceReviews, isLoading } = useQueryResourceReview(
@@ -55,86 +53,89 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
 
   const isNullState = !isLoading && !resourceReviews.length;
 
-  if (isNullState && inView) {
+  if (isNullState) {
     return null;
   }
 
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isLoading || !inView ? (
-        <ProfileSectionPreview />
-      ) : (
-        <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-          <ContainerGrid className={sectionClasses.ContainerGrid}>
-            <ContainerGrid.Col sm={12} md={8}>
-              <Stack>
-                {resourceReviews.map((review) => {
-                  const reviewer = review.user;
-                  const isThumbsUp = review.recommended;
+      {inView &&
+        (isLoading ? (
+          <ProfileSectionPreview />
+        ) : (
+          <ProfileSection title="Recent Reviews" icon={<IconStar />}>
+            <ContainerGrid className={sectionClasses.ContainerGrid}>
+              <ContainerGrid.Col sm={12} md={8}>
+                <Stack>
+                  {resourceReviews.map((review) => {
+                    const reviewer = review.user;
+                    const isThumbsUp = review.recommended;
 
-                  return (
-                    <Paper
-                      key={review.id}
-                      p="md"
-                      radius="sm"
-                      style={{
-                        background:
-                          theme.colorScheme === 'dark'
-                            ? theme.colors.dark[6]
-                            : theme.colors.gray[1],
-                      }}
-                    >
-                      <Stack>
-                        <Group align="flex-start" position="apart" noWrap>
-                          <UserAvatar
-                            user={reviewer}
-                            withUsername
-                            size="lg"
-                            avatarSize={40}
-                            spacing="md"
-                            linkToProfile
-                            subText={
-                              <Text color="dimmed" size="sm">
-                                <DaysFromNow date={review.createdAt} />
-                              </Text>
-                            }
-                          />
-                          <ThemeIcon
-                            size="lg"
-                            radius="md"
-                            variant="light"
-                            color={isThumbsUp ? 'success.5' : 'red'}
-                          >
-                            {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
-                          </ThemeIcon>
-                        </Group>
-                        <Stack w="100%">
-                          {review.details && (
-                            <ContentClamp maxHeight={300}>
-                              <RenderHtml
-                                html={review.details}
-                                style={{ color: theme.colorScheme === 'dark' ? 'white' : 'black' }}
-                              />
-                            </ContentClamp>
-                          )}
-                          <Group spacing="xs">
-                            {review.model && (
-                              <Button
-                                px={4}
-                                py={2}
-                                component="a"
-                                href={`/models/${review.model.id}?modelVersionId=${review.modelVersion.id}`}
-                                color="blue"
-                                size="xs"
-                                style={{ height: '26px' }}
-                              >
-                                <Group spacing={2}>
-                                  <IconCategory size={15} />
-                                  <span>{review.model.name}</span>
-                                </Group>
-                              </Button>
+                    return (
+                      <Paper
+                        key={review.id}
+                        p="md"
+                        radius="sm"
+                        style={{
+                          background:
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[6]
+                              : theme.colors.gray[1],
+                        }}
+                      >
+                        <Stack>
+                          <Group align="flex-start" position="apart" noWrap>
+                            <UserAvatar
+                              user={reviewer}
+                              withUsername
+                              size="lg"
+                              avatarSize={40}
+                              spacing="md"
+                              linkToProfile
+                              subText={
+                                <Text color="dimmed" size="sm">
+                                  <DaysFromNow date={review.createdAt} />
+                                </Text>
+                              }
+                            />
+                            <ThemeIcon
+                              size="lg"
+                              radius="md"
+                              variant="light"
+                              color={isThumbsUp ? 'success.5' : 'red'}
+                            >
+                              {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                            </ThemeIcon>
+                          </Group>
+                          <Stack w="100%">
+                            {review.details && (
+                              <ContentClamp maxHeight={300}>
+                                <RenderHtml
+                                  html={review.details}
+                                  style={{
+                                    color: theme.colorScheme === 'dark' ? 'white' : 'black',
+                                  }}
+                                />
+                              </ContentClamp>
                             )}
-                            {/* {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
+                            <Group spacing="xs">
+                              {review.model && (
+                                <Button
+                                  px={4}
+                                  py={2}
+                                  component="a"
+                                  href={`/models/${review.model.id}?modelVersionId=${review.modelVersion.id}`}
+                                  color="blue"
+                                  size="xs"
+                                  style={{ height: '26px' }}
+                                >
+                                  <Group spacing={2}>
+                                    <IconCategory size={15} />
+                                    <span>{review.model.name}</span>
+                                  </Group>
+                                </Button>
+                              )}
+                              {/* {review.helper && (review.helper?.imageCount ?? 0) > 0 && (
                               <Badge px={4} py={2} radius="sm" style={{ height: '26px' }}>
                                 <Group spacing={2}>
                                   <IconPhoto size={15} />{' '}
@@ -142,17 +143,17 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                 </Group>
                               </Badge>
                             )} */}
-                          </Group>
+                            </Group>
+                          </Stack>
                         </Stack>
-                      </Stack>
-                    </Paper>
-                  );
-                })}
-              </Stack>
-            </ContainerGrid.Col>
-          </ContainerGrid>
-        </ProfileSection>
-      )}
+                      </Paper>
+                    );
+                  })}
+                </Stack>
+              </ContainerGrid.Col>
+            </ContainerGrid>
+          </ProfileSection>
+        ))}
     </div>
   );
 };
