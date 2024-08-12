@@ -198,9 +198,9 @@ export enum ThreadSort {
 }
 
 export enum MarkerType {
+  Favorited = 'favorited',
   Liked = 'liked',
   Disliked = 'disliked',
-  Favorited = 'favorited',
 };
 
 export enum NsfwLevel {

@@ -13,7 +13,7 @@ import {
   ScrollArea,
   ButtonProps,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter, IconThumbUp, IconThumbDown, IconHeart, IconTag, IconThumbUpFilled, IconThumbDownFilled, IconHeartFilled, IconTagFilled } from '@tabler/icons-react';
+import { IconChevronDown, IconFilter, IconThumbUpFilled, IconThumbDownFilled, IconHeartFilled } from '@tabler/icons-react';
 import { useState, useEffect } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -38,11 +38,10 @@ const ICONS = {
   default: IconFilter,
   liked: IconThumbUpFilled,
   disliked: IconThumbDownFilled,
-  favorited: IconHeartFilled,
-  tagged: IconTagFilled
+  favorited: IconHeartFilled
 };
 
-function getIcon(type: MarkerType | 'tagged' | undefined) {
+function getIcon(type: MarkerType | undefined) {
   return ICONS[type || 'default'];
 }
 
@@ -58,12 +57,9 @@ export function DumbMarkerFiltersDropdown({
   setFilters: (filters: Partial<MarkerFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-  const flags = useFeatureFlags();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
-
-  const localMode = filterMode === 'local';
 
   const [currentMarker, setMarker] = useState<MarkerType | undefined>();
 
@@ -128,8 +124,8 @@ export function DumbMarkerFiltersDropdown({
                 key={marker}
                 checked={marker === currentMarker}
                 onChange={(checked) => {
-                  setFilters({ marker: checked ? marker : undefined });
                   setMarker(checked ? marker : undefined);
+                  setFilters({ marker: checked ? marker : undefined });
                 }}
                 {...chipProps}>
                 <Group spacing={4} noWrap>
