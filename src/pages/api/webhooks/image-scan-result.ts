@@ -130,7 +130,7 @@ async function isBlocked(hash: string) {
   const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
     SELECT hash
     FROM "BlockedImage"
-    WHERE hamming_distance(${hash}::bigint ^ "hash") < 5
+    WHERE hamming_distance(${hash}::bigint, "hash") < 5
   `;
 
   return matches.length > 0;
