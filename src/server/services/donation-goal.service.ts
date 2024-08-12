@@ -32,10 +32,10 @@ export const donationGoalById = async ({
   }
 
   const [data] = await dbWrite.$queryRaw<{ total: number }[]>`
-    SELECT 
+    SELECT
       SUM("amount")::int as total
     FROM "Donation"
-    WHERE "donationGoalId" = ${id} 
+    WHERE "donationGoalId" = ${id}
   `;
 
   return { ...donationGoal, total: data?.total ?? 0 };
@@ -87,12 +87,8 @@ export const donateToGoal = async ({
     // Returns an updated copy of the goal.
     const updatedDonationGoal = await donationGoalById({ id: donationGoalId, userId });
 
-    if (
-      goal.total < goal.goalAmount &&
-      updatedDonationGoal.total >= goal.goalAmount &&
-      goal.isEarlyAccess &&
-      goal.modelVersionId
-    ) {
+    const isGoalMet = updatedDonationGoal.total >= goal.goalAmount;
+    if (goal.isEarlyAccess && goal.modelVersionId && isGoalMet) {
       // This goal was completed, early access should be granted. Fetch the model version to confirm early access still applies and complete it.
       const modelVersion = await dbRead.modelVersion.findUnique({
         where: {
@@ -108,7 +104,7 @@ export const donateToGoal = async ({
       if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
         await dbWrite.$executeRaw`
           UPDATE "ModelVersion"
-          SET "earlyAccessConfig" = 
+          SET "earlyAccessConfig" =
             COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
               'timeframe', 0,
               'originalPublishedAt', "publishedAt",
