@@ -49,17 +49,18 @@ export const tagIdsForImagesCache = createCachedObject<{
 
     // need votable tags?
 
-    const grouped = Object.groupBy(tags, ({ imageId }) => imageId.toString());
-    const hasWD = Object.entries(grouped).map(([imageId, rows]) => {
-      return { [imageId]: !!rows?.some((r) => r.source === TagSource.WD14) };
-    });
-
+    const hasWD: { [p: string]: boolean } = {};
+    for (const row of tags) {
+      const imageIdStr = row.imageId.toString();
+      hasWD[imageIdStr] ??= false;
+      if (row.source === TagSource.WD14) hasWD[imageIdStr] = true;
+    }
     const result = tags.reduce((acc, { tag, imageId, source }) => {
       const imageIdStr = imageId.toString();
       acc[imageIdStr] ??= { imageId, tags: [] };
 
       let canAdd = true;
-      if (source === TagSource.Rekognition && !!hasWD[imageIdStr as keyof typeof hasWD]) {
+      if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
         if (tag.type !== TagType.Moderation && !constants.imageTags.styles.includes(tag.name)) {
           canAdd = false;
         }
