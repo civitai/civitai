@@ -270,6 +270,7 @@ model User {
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
+  oauthClients               OauthClient[]
 }
 
 model CustomerSubscription {
@@ -1645,17 +1646,20 @@ model KeyValue {
 enum ApiKeyType {
   System
   User
+  Access
+  Refresh
 }
 
 model ApiKey {
   id        Int        @id @default(autoincrement())
   key       String     @unique
+  type      ApiKeyType @default(User)
   name      String
   scope     KeyScope[]
   userId    Int
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clientId  String?
   createdAt DateTime   @default(now())
-  type      ApiKeyType @default(User)
   expiresAt DateTime?
 }
 
@@ -3141,6 +3145,18 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+}
+
+model OauthClient {
+  id           String   @id
+  secret       String
+  name         String
+  redirectUris String[]
+  grants       String[]
+  userId       Int
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 /// @view
