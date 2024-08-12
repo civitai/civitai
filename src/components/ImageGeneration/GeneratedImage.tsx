@@ -25,6 +25,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
+import images from '~/pages/api/v1/images';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -148,12 +149,21 @@ export function GeneratedImage({
   const imageRef = useRef<HTMLImageElement>(null);
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
-  const badFeedbackSelected = feedback === 'disliked';
-  const goodFeedbackSelected = feedback === 'liked';
   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
   const available = image.status === 'succeeded';
 
+  const [buttonState, setButtonState] = useState({
+    favorite: isFavorite,
+    feedback
+  });
+
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
+    setButtonState({ ...buttonState, feedback: feedback === newFeedback ? undefined : newFeedback });
+
+    function onError() {
+      setButtonState({ ...buttonState, feedback });
+    }
+
     if (feedback !== 'disliked' && newFeedback === 'disliked') {
       dialogStore.trigger({
         component: TextToImageQualityFeedbackModal,
@@ -165,31 +175,44 @@ export function GeneratedImage({
         },
       });
     }
-    updateImages([
-      {
-        workflowId: request.id,
-        stepName: step.name,
-        images: {
-          [image.id]: {
-            feedback: newFeedback,
+
+    updateImages(
+      [
+        {
+          workflowId: request.id,
+          stepName: step.name,
+          images: {
+            [image.id]: {
+              feedback: newFeedback,
+            },
           },
         },
-      },
-    ]);
+      ],
+      onError
+    );
   }
 
   function handleToggleFavorite(newValue: true | false) {
-    updateImages([
-      {
-        workflowId: request.id,
-        stepName: step.name,
-        images: {
-          [image.id]: {
-            favorite: newValue,
+    setButtonState({ ...buttonState, favorite: newValue });
+
+    function onError() {
+      setButtonState({ ...buttonState, favorite: isFavorite });
+    }
+
+    updateImages(
+      [
+        {
+          workflowId: request.id,
+          stepName: step.name,
+          images: {
+            [image.id]: {
+              favorite: newValue,
+            },
           },
         },
-      },
-    ]);
+      ],
+      onError
+    );
   }
 
   if (!available) return <></>;
@@ -313,11 +336,10 @@ export function GeneratedImage({
           <Group className={classes.info} w="100%" position="apart">
             <Group spacing={4} className={classes.actionsWrapper}>
               <ActionIcon size="md"
-                className={isFavorite ? 'favoriteButton' : undefined}
-                variant={isFavorite ? 'light' : undefined}
-                color={isFavorite ? 'red' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleFavorite(!isFavorite)}
+                className={buttonState.favorite ? 'favoriteButton' : undefined}
+                variant={buttonState.favorite ? 'light' : undefined}
+                color={buttonState.favorite ? 'red' : undefined}
+                onClick={() => handleToggleFavorite(!buttonState.favorite)}
               >
                 <IconHeart size={16} />
               </ActionIcon>
@@ -354,9 +376,8 @@ export function GeneratedImage({
 
               <ActionIcon
                 size="md"
-                variant={goodFeedbackSelected ? 'light' : undefined}
-                color={goodFeedbackSelected ? 'green' : undefined}
-                disabled={isLoading}
+                variant={buttonState.feedback === 'liked' ? 'light' : undefined}
+                color={buttonState.feedback === 'liked' ? 'green' : undefined}
                 onClick={() => handleToggleFeedback('liked')}
               >
                 <IconThumbUp size={16} />
@@ -364,9 +385,8 @@ export function GeneratedImage({
 
               <ActionIcon
                 size="md"
-                variant={badFeedbackSelected ? 'light' : undefined}
-                color={badFeedbackSelected ? 'red' : undefined}
-                disabled={isLoading}
+                variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
+                color={buttonState.feedback === 'disliked' ? 'red' : undefined}
                 onClick={() => handleToggleFeedback('disliked')}
               >
                 <IconThumbDown size={16} />
@@ -457,6 +477,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
+        boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
         background: theme.fn.rgba(
           theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
           0.6
@@ -490,7 +511,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
       // backdropFilter: 'blur(5px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,
       transition: 'opacity .3s',
 

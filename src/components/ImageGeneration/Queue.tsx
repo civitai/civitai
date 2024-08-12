@@ -148,23 +148,6 @@ export function Queue() {
         {data.map((request) =>
           request.steps.map((step) => {
             const { marker } = filters;
-            // let filteredStep = step;
-
-            // if (marker) {
-            //   filteredStep.images = step.images.filter((image) => {
-            //     if (marker === MarkerType.Favorited) {
-            //       const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
-            //       return isFavorite;
-            //     }
-
-            //     if (marker === MarkerType.Liked || marker === MarkerType.Disliked) {
-            //       const feedback = step.metadata?.images?.[image.id]?.feedback;
-            //       return feedback === marker;
-            //     }
-            //   });
-
-            //   if (!filteredStep.images.length) return null;
-            // }
 
             return (
               <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} filter={{ marker }} />

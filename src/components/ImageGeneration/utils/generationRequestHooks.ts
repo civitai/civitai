@@ -92,7 +92,6 @@ export function useGetTextToImageRequests(
     [data]
   );
 
-  // useEffect(() => console.log({ flatData }), [flatData]);
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
   const images = useMemo(() => steps.flatMap((x) => x.images), [steps]);
 
@@ -192,7 +191,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
   const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
 
-  function updateImages(args: Array<UpdateImageStepMetadataArgs>) {
+  function updateImages(args: Array<UpdateImageStepMetadataArgs>, onError?: () => void) {
     const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
       queryKey,
       exact: false,
@@ -216,22 +215,14 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
     const tags: { workflowId: string; tag: string; op: 'add' | 'remove' }[] = [];
     const toDelete: string[] = [];
 
-    // function addWorkflowPatches({ workflowId, patches }: PatchWorkflowParams) {
-    //   const index = workflowPatches.findIndex((x) => x.workflowId === workflowId);
-    //   if (index === -1) workflowPatches.push({ workflowId, patches });
-    //   else workflowPatches[index].patches = workflowPatches[index].patches.concat(patches);
-    // }
-
     for (const workflow of workflows) {
       const match = args.find((x) => x.workflowId === workflow.id);
       if (!match) continue;
       const { workflowId, stepName, images } = match;
-      // let favorites: boolean | undefined;
       for (const step of workflow.steps as WorkflowStepFormatted[]) {
         if (step.name !== stepName) continue;
         const metadata = step.metadata ?? {};
         const jsonPatch = new JsonPatchFactory<GeneratedImageStepMetadata>();
-        // const images = metadata.images ?? {}
         if (!metadata.images) jsonPatch.addOperation({ op: 'add', path: 'images', value: {} });
         for (const imageId in images) {
           if (!metadata.images?.[imageId])
@@ -306,7 +297,7 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'add' });
           }
 
-          if (hasTagLike && !hasLikedImages) {
+          if (hasTagDislike && !hasDislikedImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'remove' });
           }
 
@@ -314,35 +305,8 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'add' });
           }
 
-          // if (Object.values(images).every((x) => !x.favorite)) favorites = false;
-          // else if (Object.values(images).some((x) => x.favorite)) favorites = true;
-
-          // addWorkflowPatches({
-          //   workflowId,
-          //   patches: jsonPatch.operations.map((operation) => ({
-          //     ...operation,
-          //     path: `/steps/${stepName}/metadata${operation.path}`,
-          //   })),
-          // });
-
           stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
         }
-
-        // const tagPatches = new JsonPatchFactory<{ tags: string[] }>();
-        // if (favorites === true) {
-        //   tagPatches.addOperation({
-        //     op: 'add',
-        //     path: 'tags/-',
-        //     value: WORKFLOW_TAGS.FAVORITE,
-        //   });
-        // } else if (favorites === false) {
-        //   const favoritesIndex = workflow.tags.indexOf(WORKFLOW_TAGS.FAVORITE);
-        //   if (favoritesIndex > -1)
-        //     tagPatches.addOperation({ op: 'remove', path: `tags/${favoritesIndex}` });
-        // }
-        // if (tagPatches.operations.length > 0) {
-        //   addWorkflowPatches({ workflowId, patches: tagPatches.operations });
-        // }
       }
     }
 
@@ -389,7 +353,8 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           }
 
           options?.onSuccess?.();
-        }
+        },
+        onError
       }
     );
   }
