@@ -1393,7 +1393,7 @@ export const getAllImagesPost = async (
       tagIds: tagIdsData?.[sr.id]?.tags.map((t) => t.id),
       // tags: tagsVar?.filter((x) => x.imageId === i.id),
       // TODO fix below
-      tags: [],
+      tags: [], // needed?
       name: null, // leave
       generationProcess: null, // deprecated
       scannedAt: null, // remove

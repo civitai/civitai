@@ -5,8 +5,10 @@ import {
   CosmeticType,
   ModelStatus,
   Prisma,
+  TagSource,
+  TagType,
 } from '@prisma/client';
-import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
+import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -38,14 +40,32 @@ export const tagIdsForImagesCache = createCachedObject<{
 
     const tags = await db.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
-      select: { imageId: true, source: true, tag: { select: { id: true, name: true } } },
+      select: {
+        imageId: true,
+        source: true,
+        tag: { select: { id: true, name: true, type: true } },
+      },
     });
 
-    // TODO replicate getVotableTags logic here to account for Rekognition, tagType, constants.imageTags.styles, etc
+    // need votable tags?
 
-    const result = tags.reduce((acc, { tag, imageId }) => {
-      acc[imageId.toString()] ??= { imageId, tags: [] };
-      acc[imageId.toString()].tags.push(tag);
+    const grouped = Object.groupBy(tags, ({ imageId }) => imageId.toString());
+    const hasWD = Object.entries(grouped).map(([imageId, rows]) => {
+      return { [imageId]: !!rows?.some((r) => r.source === TagSource.WD14) };
+    });
+
+    const result = tags.reduce((acc, { tag, imageId, source }) => {
+      const imageIdStr = imageId.toString();
+      acc[imageIdStr] ??= { imageId, tags: [] };
+
+      let canAdd = true;
+      if (source === TagSource.Rekognition && !!hasWD[imageIdStr as keyof typeof hasWD]) {
+        if (tag.type !== TagType.Moderation && !constants.imageTags.styles.includes(tag.name)) {
+          canAdd = false;
+        }
+      }
+
+      if (canAdd) acc[imageIdStr].tags.push(tag);
       return acc;
     }, {} as Record<string, { imageId: number; tags: { id: number; name: string }[] }>);
     return result;
