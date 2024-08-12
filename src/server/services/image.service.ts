@@ -1421,7 +1421,7 @@ export const getAllImagesPost = async (
   };
 };
 
-const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
+const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}`;
 type ImageSearchInput = {
   modelVersionId?: number;
   types?: MediaType[];
