@@ -203,6 +203,7 @@ export function GenerationFormContent() {
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
   function handleSubmit(data: GenerationFormOutput) {
+    if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
 
     const {
