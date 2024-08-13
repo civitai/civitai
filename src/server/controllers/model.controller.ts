@@ -30,6 +30,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
+  CopyGallerySettingsInput,
   DeclineReviewSchema,
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
@@ -40,6 +41,7 @@ import {
   GetModelVersionsSchema,
   GetSimpleModelsInfiniteSchema,
   ModelByHashesInput,
+  ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -61,6 +63,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
+  copyGallerySettingsToAllModelsByUser,
   deleteModelById,
   getDraftModelsByUserId,
   getGallerySettingsByModelId,
@@ -103,12 +106,13 @@ import { redis } from '../redis/client';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, getUserById } from '~/server/services/user.service';
 import {
   BlockedByUsers,
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import { UserMeta } from '~/server/schema/user.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -401,7 +405,15 @@ export const upsertModelHandler = async ({
         );
     }
 
-    const model = await upsertModel({ ...input, userId, isModerator: ctx.user.isModerator });
+    const user = await getUserById({ id: userId, select: { meta: true } });
+    const userGallerySettings = (user?.meta as UserMeta)?.gallerySettings;
+
+    const model = await upsertModel({
+      ...input,
+      userId,
+      isModerator: ctx.user.isModerator,
+      gallerySettings: userGallerySettings,
+    });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     await ctx.track.modelEvent({
@@ -1569,4 +1581,29 @@ export async function getModelOwnerHandler({ input }: { input: GetByIdInput }) {
   const model = await getModel({ ...input, select: { user: { select: userWithCosmeticsSelect } } });
   if (!model) throw throwNotFoundError();
   return model.user;
+}
+
+export async function copyGalleryBrowsingLevelHandler({
+  input,
+  ctx,
+}: {
+  input: CopyGallerySettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await getModel({
+      id: input.id,
+      select: { id: true, userId: true, gallerySettings: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (model.userId !== userId) throw throwAuthorizationError();
+
+    const { pinnedPosts, images, ...settings } =
+      model.gallerySettings as ModelGallerySettingsSchema;
+
+    await copyGallerySettingsToAllModelsByUser({ userId, settings });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 }

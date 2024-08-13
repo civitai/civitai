@@ -6,11 +6,11 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import models from '~/pages/api/v1/models';
 import { constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
+import { modelGallerySettingsInput } from '~/server/schema/model.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -255,5 +255,6 @@ export const userScoreMetaSchema = z.object({
 export const userMeta = z.object({
   firstImage: z.date().optional(),
   scores: userScoreMetaSchema.optional(),
+  gallerySettings: modelGallerySettingsInput.omit({ pinnedPosts: true }).partial().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;

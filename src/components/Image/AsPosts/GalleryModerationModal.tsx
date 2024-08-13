@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Autocomplete,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -26,9 +27,24 @@ import { Flags } from '~/shared/utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
+import { openConfirmModal } from '@mantine/modals';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
+  const { copySettings, updating, copyLoading } = useGallerySettings({ modelId: modelId });
+
+  const handleCopySettings = () => {
+    openConfirmModal({
+      title: 'Copy Gallery Moderation Preferences',
+      centered: true,
+      children:
+        'This will copy the gallery moderation preferences from this model to all your models and future ones. Are you sure you want to proceed?',
+      onConfirm: async () => {
+        await copySettings(modelId);
+      },
+      labels: { confirm: 'Yes, continue', cancel: 'No, cancel' },
+    });
+  };
 
   return (
     <Modal {...dialog} title="Gallery Moderation Preferences">
@@ -36,6 +52,15 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
         <HiddenTagsSection modelId={modelId} />
         <HiddenUsersSection modelId={modelId} />
         <MatureContentSection modelId={modelId} />
+
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleCopySettings}
+          loading={updating || copyLoading}
+        >
+          Copy settings
+        </Button>
       </Stack>
     </Modal>
   );
@@ -225,8 +250,8 @@ function BrowsingLevelsStacked({
   }, [browsingLevel]);
 
   return (
-    <div>
-      <Text weight={500}>Allowed Browsing Levels</Text>
+    <div className="flex flex-col gap-2">
+      <Text>Allowed Browsing Levels</Text>
       <Paper withBorder p={0} className={classes.root}>
         {browsingLevels.map((level) => {
           const isSelected = Flags.hasFlag(browsingLevel, level);
