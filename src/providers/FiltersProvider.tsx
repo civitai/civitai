@@ -24,6 +24,7 @@ import {
   QuestionStatus,
   ThreadSort,
   MarkerType,
+  MarkerSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
@@ -151,6 +152,7 @@ const threadFilterSchema = z.object({
 
 export type MarkerFilterSchema = z.infer<typeof markerFilterSchema>;
 const markerFilterSchema = z.object({
+  sort: z.nativeEnum(MarkerSort).default(MarkerSort.Newest),
   marker: z.nativeEnum(MarkerType).optional(),
   tags: z.string().array().optional(),
 });

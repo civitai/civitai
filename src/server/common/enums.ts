@@ -201,7 +201,12 @@ export enum MarkerType {
   Favorited = 'favorited',
   Liked = 'liked',
   Disliked = 'disliked',
-};
+}
+
+export enum MarkerSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+}
 
 export enum NsfwLevel {
   PG = 1,
