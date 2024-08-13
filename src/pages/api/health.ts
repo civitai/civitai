@@ -68,7 +68,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const disabledChecks = JSON.parse(
     (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS)) ?? '[]'
   ) as CheckKey[];
-  console.log(disabledChecks);
   const resultsArray = await Promise.all(
     Object.entries(checkFns)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
@@ -79,7 +78,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         })
       )
   );
-  console.log(resultsArray);
   const nonCriticalChecks = JSON.parse(
     (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS)) ??
       '[]'
