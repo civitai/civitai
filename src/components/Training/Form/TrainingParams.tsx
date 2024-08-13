@@ -26,7 +26,8 @@ type SelectTrainingSettingsType = {
   default: string;
   overrides?: {
     [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<SelectTrainingSettingsType, 'type' | 'overrides'>
+      Pick<BaseTrainingSettingsType, 'disabled'> &
+        Omit<SelectTrainingSettingsType, 'type' | 'overrides' | 'options'> // could allow options override
     >;
   };
 };
@@ -35,7 +36,8 @@ type BoolTrainingSettingsType = {
   default: boolean;
   overrides?: {
     [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
+      Pick<BaseTrainingSettingsType, 'disabled'> &
+        Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
     >;
   };
 };
@@ -47,7 +49,8 @@ export type NumberTrainingSettingsType = {
   default: number | undefined;
   overrides?: {
     [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<NumberTrainingSettingsType, 'type' | 'overrides'>
+      Pick<BaseTrainingSettingsType, 'disabled'> &
+        Omit<NumberTrainingSettingsType, 'type' | 'overrides'>
     >;
   };
 };
@@ -56,7 +59,8 @@ type StringTrainingSettingsType = {
   default: string;
   overrides?: {
     [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<StringTrainingSettingsType, 'type' | 'overrides'>
+      Pick<BaseTrainingSettingsType, 'disabled'> &
+        Omit<StringTrainingSettingsType, 'type' | 'overrides'>
     >;
   };
 };
