@@ -127,16 +127,13 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
 // @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
 async function isBlocked(hash: string) {
-  // const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
-  //   SELECT hash
-  //   FROM "BlockedImage"
-  //   WHERE hamming_distance(${hash}::bigint ^ "hash") < 5
-  // `;
+  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+    SELECT hash
+    FROM "BlockedImage"
+    WHERE hamming_distance(${hash}::bigint, "hash") < 5
+  `;
 
-  // return matches.length > 0;
-
-  // Uncomment above code once we have the blocked image hash table
-  return false;
+  return matches.length > 0;
 }
 
 async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
