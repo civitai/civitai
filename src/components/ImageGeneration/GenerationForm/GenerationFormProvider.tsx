@@ -160,7 +160,7 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   // check for new model in resources, otherwise use stored model
   let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
   let vae = data.resources.find((x) => x.modelType === 'VAE');
-  const baseModel = getBaseModelFromResources(data.resources);
+  const baseModel = params.baseModel ?? getBaseModelFromResources(data.resources);
 
   const config = getGenerationConfig(baseModel);
 
@@ -255,6 +255,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     } else if (responseData && !isFetching) {
       if (!input) return;
       const runType = input.type === 'modelVersion' ? 'run' : 'remix';
+      console.log(input.type);
       const formData = form.getValues();
 
       const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;

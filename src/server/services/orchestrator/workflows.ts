@@ -1,14 +1,19 @@
 import {
   $OpenApiTs,
+  addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
   queryWorkflows as clientQueryWorkflows,
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
+  patchWorkflow,
+  removeWorkflowTag,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
 import {
+  PatchWorkflowParams,
+  TagsPatchSchema,
   workflowIdSchema,
   workflowQuerySchema,
   workflowUpdateSchema,
@@ -140,5 +145,36 @@ export async function updateManyWorkflows({
     workflows.map(({ workflowId, metadata }) =>
       clientUpdateWorkflow({ client, path: { workflowId }, body: { metadata } })
     )
+  );
+}
+
+export async function patchWorkflows({
+  input,
+  token,
+}: {
+  input: PatchWorkflowParams[];
+  token: string;
+}) {
+  const client = createOrchestratorClient(token);
+  await Promise.all(
+    input.map(async ({ workflowId, patches }) => {
+      await patchWorkflow({ client, body: patches, path: { workflowId } });
+    })
+  );
+}
+
+export async function patchWorkflowTags({
+  input,
+  token,
+}: {
+  input: TagsPatchSchema[];
+  token: string;
+}) {
+  const client = createOrchestratorClient(token);
+  await Promise.all(
+    input.map(async ({ workflowId, tag, op }) => {
+      if (op === 'add') await addWorkflowTag({ client, body: tag, path: { workflowId } });
+      if (op === 'remove') await removeWorkflowTag({ client, path: { workflowId, tag } });
+    })
   );
 }

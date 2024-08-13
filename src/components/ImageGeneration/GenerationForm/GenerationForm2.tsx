@@ -91,6 +91,7 @@ import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -153,6 +154,11 @@ export function GenerationFormContent() {
 
   const { errors } = form.formState;
 
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
+
   function clearWarning() {
     setPromptWarning(null);
   }
@@ -203,6 +209,7 @@ export function GenerationFormContent() {
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
   function handleSubmit(data: GenerationFormOutput) {
+    if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
 
     const {
@@ -247,6 +254,10 @@ export function GenerationFormContent() {
     setPromptWarning(null);
     const totalCost = cost + creatorTip * cost + civitaiTip * cost;
     conditionalPerformTransaction(totalCost, performTransaction);
+
+    if (filters.marker) {
+      setFilters({ marker: undefined });
+    }
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();

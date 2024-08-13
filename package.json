@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "4.0.134",
+  "version": "4.0.137",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -117,6 +117,7 @@
     "chart.js": "^4.4.0",
     "chartjs-adapter-dayjs-4": "^1.0.4",
     "cloudflare": "^2.9.1",
+    "clsx": "^2.1.1",
     "cookies-next": "^2.1.1",
     "cron-parser": "^4.6.0",
     "crypto": "^1.0.1",
