@@ -1,7 +1,11 @@
 // @ts-check
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
-import { commaDelimitedStringArray, commaDelimitedStringObject, stringToArray } from '~/utils/zod-helpers';
+import {
+  commaDelimitedStringArray,
+  commaDelimitedStringObject,
+  stringToArray,
+} from '~/utils/zod-helpers';
 
 /**
  * Specify your server-side environment variables schema here.
@@ -59,8 +63,14 @@ export const serverSchema = z.object({
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),
   S3_UPLOAD_BUCKET: z.string(),
+  S3_IMAGE_UPLOAD_KEY: z.string(),
+  S3_IMAGE_UPLOAD_SECRET: z.string(),
+  S3_IMAGE_UPLOAD_REGION: z.string(),
+  S3_IMAGE_UPLOAD_ENDPOINT: z.string().url(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
+  S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
+  S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
   RATE_LIMITING: zc.booleanString,
   CF_ACCOUNT_ID: z.string(),
   CF_IMAGES_TOKEN: z.string(),
