@@ -4,8 +4,8 @@ export const adWatchedReward = createBuzzEvent({
   type: 'adWatched',
   description: 'For watching ads',
   triggerDescription: 'By watching short ads',
-  awardAmount: 50,
-  cap: 250,
+  awardAmount: 1,
+  cap: 100,
   onDemand: true,
   getKey: async (input: AdWatchEvent) => {
     return {
