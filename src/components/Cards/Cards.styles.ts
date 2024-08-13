@@ -27,29 +27,28 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
       },
 
       frameAdjustment: {
-        height: '100%',
-
-        '&:after': {
-          content: '""',
-          position: 'absolute',
-          pointerEvents: 'none',
-          top: framePadding,
-          left: framePadding,
-          right: framePadding,
-          bottom: framePadding,
-          borderRadius: theme.radius.md - 2,
-          boxShadow: 'inset 0 1px 2px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4)',
-          zIndex: 1000,
-          transition: 'transform 400ms ease, opacity 400ms ease',
-        },
-        [`& .${imageRef}`]: {
-          padding: framePadding,
-          borderRadius: 8 + framePadding,
-          height: '100%',
-          width: '100%',
-          objectFit: 'cover',
-          zIndex: 2,
-        },
+        // height: '100%',
+        // '&:after': {
+        //   content: '""',
+        //   position: 'absolute',
+        //   pointerEvents: 'none',
+        //   top: framePadding,
+        //   left: framePadding,
+        //   right: framePadding,
+        //   bottom: framePadding,
+        //   borderRadius: theme.radius.md - 2,
+        //   boxShadow: 'inset 0 1px 2px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4)',
+        //   zIndex: 1000,
+        //   transition: 'transform 400ms ease, opacity 400ms ease',
+        // },
+        // [`& .${imageRef}`]: {
+        //   padding: framePadding,
+        //   borderRadius: 8 + framePadding,
+        //   height: '100%',
+        //   width: '100%',
+        //   objectFit: 'cover',
+        //   zIndex: 2,
+        // },
       },
 
       image: {
