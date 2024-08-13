@@ -67,9 +67,11 @@ import { BaseModel, baseModelSets } from '~/server/common/constants';
 import { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import {
   ModelVersionUpsertInput,
-  TrainingDetailsBaseModel,
   TrainingDetailsBaseModel15,
+  TrainingDetailsBaseModelFlux,
+  TrainingDetailsBaseModelList,
   trainingDetailsBaseModels15,
+  trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsXL,
   TrainingDetailsBaseModelXL,
   TrainingDetailsObj,
@@ -93,7 +95,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const baseModelDescriptions: {
-  [key in TrainingDetailsBaseModel]: { label: string; type: string; description: string };
+  [key in TrainingDetailsBaseModelList]: { label: string; type: string; description: string };
 } = {
   sd_1_5: { label: 'Standard', type: '15', description: 'Useful for all purposes.' },
   anime: { label: 'Anime', type: '15', description: 'Results will have an anime aesthetic.' },
@@ -112,6 +114,11 @@ const baseModelDescriptions: {
     label: 'Pony',
     type: 'XL',
     description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
+  },
+  flux_dev: {
+    label: 'Dev',
+    type: 'Flux',
+    description: 'High quality images and accurate text.',
   },
 };
 
@@ -193,6 +200,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const formBaseModel = selectedRun.base;
   const formBaseModelType = selectedRun.baseType;
+
   const baseModel15 =
     !!formBaseModel &&
     (trainingDetailsBaseModels15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -201,6 +209,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const baseModelXL =
     !!formBaseModel &&
     (trainingDetailsBaseModelsXL as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelFlux =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsFlux as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -495,7 +508,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
-        (base === 'sdxl' ? 'SDXL 1.0' : base === 'pony' ? 'Pony' : 'SD 1.5');
+        (base === 'sdxl'
+          ? 'SDXL 1.0'
+          : base === 'pony'
+          ? 'Pony'
+          : base === 'flux_dev'
+          ? 'Flux.1 D'
+          : 'SD 1.5');
 
       // TODO there is a bug here where if >1 fails and then get resubmitted, the idx will be 0
       //  and thus overwrites the first version...
@@ -708,7 +727,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 ? 'SDXL'
                 : run.base === 'semi'
                 ? 'Semi'
-                : baseModelDescriptions[run.base].label
+                : baseModelDescriptions[run.base as TrainingDetailsBaseModelList].label ?? 'Unknown'
             })`,
             // value: run.id.toString(),
             value: idx.toString(),
@@ -800,6 +819,40 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 />
               </Group>
 
+              {/*TODO put NEW badge*/}
+              <Group>
+                <Badge color="red" size="lg" radius="xs" w={85}>
+                  <Group>
+                    Flux
+                    <Badge color="green" size="sm" radius="xs">
+                      NEW
+                    </Badge>
+                  </Group>
+                </Badge>
+                <SegmentedControl
+                  data={Object.entries(baseModelDescriptions)
+                    .filter(([, v]) => v.type === 'Flux')
+                    .map(([k, v]) => {
+                      return {
+                        label: v.label,
+                        value: k,
+                      };
+                    })}
+                  value={baseModelFlux as TrainingDetailsBaseModelFlux}
+                  onChange={(value) => {
+                    makeDefaultParams({
+                      base: value,
+                      baseType: 'flux',
+                      customModel: null,
+                    });
+                  }}
+                  color="blue"
+                  size="xs"
+                  className={classes.segControl}
+                  transitionDuration={0}
+                />
+              </Group>
+
               <Group>
                 <Badge color="cyan" size="lg" radius="xs" w={85}>
                   Custom
@@ -841,6 +894,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                           ] as string[]
                         ).includes(gVal.baseModel)
                           ? 'sdxl'
+                          : ([...baseModelSets.Flux1] as string[]).includes(gVal.baseModel)
+                          ? 'flux'
                           : 'sd15';
                         const cLink = `civitai:${mId}@${mvId}`;
 
@@ -862,7 +917,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Text size="sm">
                   {isTrainingCustomModel(formBaseModel)
                     ? 'Custom model selected.'
-                    : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
+                    : baseModelDescriptions[formBaseModel as TrainingDetailsBaseModelList]
+                        ?.description ?? 'No description.'}
                 </Text>
                 {blockedModels.includes(formBaseModel) ? (
                   <AlertWithIcon

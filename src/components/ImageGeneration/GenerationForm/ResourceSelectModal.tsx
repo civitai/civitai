@@ -26,7 +26,6 @@ import {
   IconInfoCircle,
   IconTagOff,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   Configure,
@@ -47,6 +46,7 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
@@ -60,18 +60,16 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
-import { aDayAgo } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions } from './resource-select.types';
 import {
   GenerationResource,
   getBaseModelSet,
   getIsSdxl,
 } from '~/shared/constants/generation.constants';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { aDayAgo } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
+import { ResourceSelectOptions } from './resource-select.types';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -294,7 +292,10 @@ function ResourceSelectCard({
 
   const resourceFilter = resources.find((x) => x.type === data.type);
   const versions = data.versions.filter((version) => {
-    if (isTraining && !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'].includes(version.baseModel))
+    if (
+      isTraining &&
+      !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Flux.1 D'].includes(version.baseModel)
+    )
       return false;
     if (canGenerate === undefined) return true;
     return (

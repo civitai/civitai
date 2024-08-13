@@ -7,6 +7,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { Generation } from '~/server/services/generation/generation.types';
+import { TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;
@@ -30,7 +31,7 @@ export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
 export type TrainingRun = {
   id: number;
   base: TrainingDetailsBaseModel;
-  baseType: 'sd15' | 'sdxl';
+  baseType: TrainingBaseModelType;
   customModel?: Generation.Resource;
   samplePrompts: string[];
   params: TrainingDetailsParams;

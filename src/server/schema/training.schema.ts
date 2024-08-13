@@ -37,6 +37,7 @@ const trainingCostSchema = z.object({
   modelCoefficients: z.object({
     sd15: trainingEtaSchema,
     sdxl: trainingEtaSchema,
+    flux: trainingEtaSchema,
   }),
   hourlyCost: z.number().min(0),
   baseBuzz: z.number().min(0),
@@ -61,6 +62,14 @@ export const defaultTrainingCost: TrainingCost = {
       stepMultiplier: 1.73,
       expStrength: 1.1,
       expStart: 2200,
+    },
+    // TODO what values?
+    flux: {
+      base: 5,
+      steps: 0.012,
+      stepMultiplier: 1.73,
+      expStrength: 1.55,
+      expStart: 3000,
     },
   },
   hourlyCost: 0.44,

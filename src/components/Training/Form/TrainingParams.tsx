@@ -137,6 +137,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { min: 1024, max: 2048, default: 1024 },
       pony: { min: 1024, max: 2048, default: 1024 },
+      flux_dev: { min: 1024, max: 2048, default: 1024 },
     },
   },
   {

@@ -1,7 +1,6 @@
 import {
   ModelStatus,
   ModelType,
-  ModelUploadType,
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
@@ -15,6 +14,7 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { trainingBaseModelType } from '~/utils/training';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -41,16 +41,22 @@ export const recipeSchema = z.object({
 
 export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
 export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
+
 export type TrainingDetailsBaseModel15 = (typeof trainingDetailsBaseModels15)[number];
 export type TrainingDetailsBaseModelXL = (typeof trainingDetailsBaseModelsXL)[number];
+export type TrainingDetailsBaseModelFlux = (typeof trainingDetailsBaseModelsFlux)[number];
 export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
+
 const trainingDetailsBaseModels = [
   ...trainingDetailsBaseModels15,
   ...trainingDetailsBaseModelsXL,
+  ...trainingDetailsBaseModelsFlux,
 ] as const;
+
 export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[number];
 export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
@@ -102,7 +108,7 @@ export const trainingDetailsObj = z.object({
   baseModel: z
     .union([z.enum(trainingDetailsBaseModels), trainingDetailsBaseModelCustom])
     .optional(), // nb: this is not optional when submitting
-  baseModelType: z.enum(['sd15', 'sdxl']).optional(),
+  baseModelType: z.enum(trainingBaseModelType).optional(),
   type: z.enum(constants.trainingModelTypes),
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
