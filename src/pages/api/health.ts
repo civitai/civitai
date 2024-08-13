@@ -65,13 +65,18 @@ const counters = (() =>
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
+  const disabledChecks = JSON.parse(
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS)) ?? '[]'
+  ) as CheckKey[];
   const resultsArray = await Promise.all(
-    Object.entries(checkFns).map(([name, fn]) =>
-      timeoutAsyncFn(fn).then((result) => {
-        if (!result) counters[name as CheckKey].inc();
-        return { [name]: result };
-      })
-    )
+    Object.entries(checkFns)
+      .filter(([name]) => !disabledChecks.includes(name as CheckKey))
+      .map(([name, fn]) =>
+        timeoutAsyncFn(fn).then((result) => {
+          if (!result) counters[name as CheckKey].inc();
+          return { [name]: result };
+        })
+      )
   );
   const nonCriticalChecks = JSON.parse(
     (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS)) ??
