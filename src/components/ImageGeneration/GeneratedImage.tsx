@@ -154,11 +154,14 @@ export function GeneratedImage({
 
   const [buttonState, setButtonState] = useState({
     favorite: isFavorite,
-    feedback
+    feedback,
   });
 
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
-    setButtonState({ ...buttonState, feedback: feedback === newFeedback ? undefined : newFeedback });
+    setButtonState({
+      ...buttonState,
+      feedback: feedback === newFeedback ? undefined : newFeedback,
+    });
 
     function onError() {
       setButtonState({ ...buttonState, feedback });
@@ -335,8 +338,9 @@ export function GeneratedImage({
 
           <Group className={classes.info} w="100%" position="apart">
             <Group spacing={4} className={classes.actionsWrapper}>
-              <ActionIcon size="md"
-                className={buttonState.favorite ? 'favoriteButton' : undefined}
+              <ActionIcon
+                size="md"
+                className={buttonState.favorite ? classes.favoriteButton : undefined}
                 variant={buttonState.favorite ? 'light' : undefined}
                 color={buttonState.favorite ? 'red' : undefined}
                 onClick={() => handleToggleFavorite(!buttonState.favorite)}
@@ -513,18 +517,11 @@ const useStyles = createStyles((theme, _params, getRef) => {
       // backdropFilter: 'blur(5px) saturate(160%)',
       padding: 4,
       transition: 'opacity .3s',
+    },
 
-      ['button']: {
-        opacity: 0,
-        [theme.fn.smallerThan('sm')]: {
-          opacity: 0.7,
-        },
-      },
-
-      ['.favoriteButton']: {
-        opacity: 1,
-        background: 'rgba(240, 62, 62, 0.5)',
-      },
+    favoriteButton: {
+      opacity: 1,
+      background: 'rgba(240, 62, 62, 0.5)',
     },
 
     improveMenu: {

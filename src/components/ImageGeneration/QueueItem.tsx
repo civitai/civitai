@@ -78,7 +78,7 @@ export function QueueItem({
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
   id: string;
-  filter: {marker?:string} | undefined;
+  filter: { marker?: string } | undefined;
 }) {
   const { classes } = useStyle();
   const features = useFeatureFlags();
@@ -98,12 +98,13 @@ export function QueueItem({
   let { images } = step;
 
   if (filter && filter.marker) {
-    images = images.filter(image => {
+    images = images.filter((image) => {
       const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
       const feedback = step.metadata?.images?.[image.id]?.feedback;
 
       if (filter.marker === 'favorited') return isFavorite;
-      else if (filter.marker === 'liked' || filter.marker === 'disliked') return feedback === filter.marker;
+      else if (filter.marker === 'liked' || filter.marker === 'disliked')
+        return feedback === filter.marker;
     });
   }
 
@@ -161,8 +162,8 @@ export function QueueItem({
     hasUnstableResources && status === 'failed'
       ? `${status} - Potentially caused by unstable resources`
       : status === 'failed'
-        ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
-        : status;
+      ? `${status} - Generations can error for any number of reasons, try regenerating or swapping what models/additional resources you're using.`
+      : status;
 
   const actualCost = cost;
 
@@ -196,7 +197,7 @@ export function QueueItem({
               </Text>
               {!!actualCost &&
                 dayjs(request.createdAt).toDate() >=
-                constants.buzz.generationBuzzChargingStartDate && (
+                  constants.buzz.generationBuzzChargingStartDate && (
                   <GenerationCostPopover
                     workflowCost={request.cost ?? {}}
                     disabled={!features.creatorComp}
@@ -223,8 +224,9 @@ export function QueueItem({
                 </ButtonTooltip>
               )}
               <PopConfirm
-                message={`Are you sure you want to ${pendingProcessing ? 'cancel' : 'delete'
-                  } this job?`}
+                message={`Are you sure you want to ${
+                  pendingProcessing ? 'cancel' : 'delete'
+                } this job?`}
                 position="bottom-end"
                 onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
               >

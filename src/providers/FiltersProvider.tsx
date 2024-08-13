@@ -155,7 +155,6 @@ const markerFilterSchema = z.object({
   tags: z.string().array().optional(),
 });
 
-
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -319,20 +318,20 @@ export function useSetFilters(type: FilterSubTypes) {
   return useFiltersContext(
     useCallback(
       (state) =>
-      ({
-        models: state.setModelFilters,
-        posts: state.setPostFilters,
-        images: state.setImageFilters,
-        questions: state.setQuestionFilters,
-        modelImages: state.setModelImageFilters,
-        articles: state.setArticleFilters,
-        collections: state.setCollectionFilters,
-        bounties: state.setBountyFilters,
-        clubs: state.setClubFilters,
-        videos: state.setVideoFilters,
-        threads: state.setThreadFilters,
-        markers: state.setMarkerFilters,
-      }[type]),
+        ({
+          models: state.setModelFilters,
+          posts: state.setPostFilters,
+          images: state.setImageFilters,
+          questions: state.setQuestionFilters,
+          modelImages: state.setModelImageFilters,
+          articles: state.setArticleFilters,
+          collections: state.setCollectionFilters,
+          bounties: state.setBountyFilters,
+          clubs: state.setClubFilters,
+          videos: state.setVideoFilters,
+          threads: state.setThreadFilters,
+          markers: state.setMarkerFilters,
+        }[type]),
       [type]
     )
   );

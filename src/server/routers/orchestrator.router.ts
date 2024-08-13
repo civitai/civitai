@@ -125,43 +125,6 @@ export const orchestratorRouter = router({
         );
       }
     }),
-  steps: router({
-    update: orchestratorProcedure
-      .input(
-        z.object({
-          data: updateWorkflowStepSchema.array(),
-          updateType: z.enum(['feedback']).optional(),
-        })
-      )
-      .mutation(async ({ ctx, input }) => {
-        if (input.updateType === 'feedback') {
-          await Promise.all(
-            input.data.map(async (data) =>
-              Object.entries(data.metadata.images)
-                .filter(([, x]) => (x as any).feedback)
-                .map(([key]) =>
-                  generatorFeedbackReward.apply({
-                    userId: ctx.user.id,
-                    jobId: key,
-                  })
-                )
-            )
-          );
-        }
-        /*
-          1. check if all images are hidden
-            if all hidden, delete this workflow
-          2. check if any image is favorited
-            if any image is favorited, add tag favorite
-            if tag favorite and no image is favorited, then remove tag favorite
-        */
-
-        await updateWorkflowSteps({
-          input: input.data,
-          token: ctx.token,
-        });
-      }),
-  }),
   // #endregion
 
   // #region [generated images]

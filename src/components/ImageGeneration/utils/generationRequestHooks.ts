@@ -5,7 +5,6 @@ import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
-import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflowStepHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -56,38 +55,50 @@ export function useGetTextToImageRequests(
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? []).filter((workflow) => {
-          if (!!input?.tags?.length && workflow.tags.every(tag => !input?.tags?.includes(tag))) return false
-          return true;
-        }).map((response) => {
-          const steps = response.steps.map((step) => {
-            const images = step.images
-              .filter(({ id }) => {
-                const imageMeta = step.metadata?.images?.[id]
-                if (imageMeta?.hidden) return false
-                if (input?.tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
-                if (input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked') return false;
-                if (input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked') return false;
-                return true;
-              })
-              .sort((a, b) => {
-                if (!b.completed) return 1;
-                if (!a.completed) return -1;
-                return b.completed.getTime() - a.completed.getTime();
-                // if (a.completed !== b.completed) {
-                //   if (!b.completed) return 1;
-                //   if (!a.completed) return -1;
-                //   return b.completed.getTime() - a.completed.getTime();
-                // } else {
-                //   if (a.id < b.id) return -1;
-                //   if (a.id > b.id) return 1;
-                //   return 0;
-                // }
-              });
-            return { ...step, images };
-          });
-          return { ...response, steps };
-        })
+        (x.items ?? [])
+          .filter((workflow) => {
+            if (!!input?.tags?.length && workflow.tags.every((tag) => !input?.tags?.includes(tag)))
+              return false;
+            return true;
+          })
+          .map((response) => {
+            const steps = response.steps.map((step) => {
+              const images = step.images
+                .filter(({ id }) => {
+                  const imageMeta = step.metadata?.images?.[id];
+                  if (imageMeta?.hidden) return false;
+                  if (input?.tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite)
+                    return false;
+                  if (
+                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) &&
+                    imageMeta?.feedback !== 'liked'
+                  )
+                    return false;
+                  if (
+                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) &&
+                    imageMeta?.feedback !== 'disliked'
+                  )
+                    return false;
+                  return true;
+                })
+                .sort((a, b) => {
+                  if (!b.completed) return 1;
+                  if (!a.completed) return -1;
+                  return b.completed.getTime() - a.completed.getTime();
+                  // if (a.completed !== b.completed) {
+                  //   if (!b.completed) return 1;
+                  //   if (!a.completed) return -1;
+                  //   return b.completed.getTime() - a.completed.getTime();
+                  // } else {
+                  //   if (a.id < b.id) return -1;
+                  //   if (a.id > b.id) return 1;
+                  //   return 0;
+                  // }
+                });
+              return { ...step, images };
+            });
+            return { ...response, steps };
+          })
       ) ?? [],
     [data]
   );
@@ -283,25 +294,19 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
 
           if (hasTagFavorite && !hasFavoriteImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'remove' });
-          }
-
-          else if (!hasTagFavorite && hasFavoriteImages) {
+          } else if (!hasTagFavorite && hasFavoriteImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'add' });
           }
 
           if (hasTagLike && !hasLikedImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'remove' });
-          }
-
-          else if (!hasTagLike && hasLikedImages) {
+          } else if (!hasTagLike && hasLikedImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'add' });
           }
 
           if (hasTagDislike && !hasDislikedImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'remove' });
-          }
-
-          else if (!hasTagDislike && hasDislikedImages) {
+          } else if (!hasTagDislike && hasDislikedImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'add' });
           }
 
@@ -345,16 +350,16 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
             }
           });
 
-          const tagNames = [...new Set(tags.filter(x => x.op === 'add').map(x => x.tag))]
+          const tagNames = [...new Set(tags.filter((x) => x.op === 'add').map((x) => x.tag))];
           // ['favorite' 'feedback:liked', 'feedback:'disliked']
           for (const tag of tagNames) {
-            const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] })
-            queryClient.invalidateQueries(key, { exact: false })
+            const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] });
+            queryClient.invalidateQueries(key, { exact: false });
           }
 
           options?.onSuccess?.();
         },
-        onError
+        onError,
       }
     );
   }
@@ -369,65 +374,6 @@ export function usePatchTags() {
   }
 
   return { patchTags, isLoading };
-}
-
-export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {
-  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { updateSteps, isLoading } = useUpdateWorkflowSteps({
-    queryKey,
-    onSuccess: options?.onSuccess,
-  });
-
-  function updateImages(
-    args: Array<{
-      workflowId: string;
-      stepName: string;
-      imageId: string;
-      hidden?: boolean;
-      feedback?: 'liked' | 'disliked';
-      comments?: string;
-      postId?: number;
-    }>
-  ) {
-    const data = args.reduce<Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }>[]>(
-      (acc, { workflowId, stepName, imageId, ...metadata }) => {
-        const index = acc.findIndex((x) => x.workflowId === workflowId && x.stepName === stepName);
-        const toUpdate: Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }> =
-          index > -1
-            ? acc[index]
-            : {
-              $type: 'textToImage',
-              workflowId,
-              stepName,
-              metadata: {},
-            };
-        const images = toUpdate.metadata.images ?? {};
-        images[imageId] = { ...images[imageId], ...removeEmpty(metadata) };
-        toUpdate.metadata.images = images;
-        if (index > -1) acc[index] = toUpdate;
-        else acc.push(toUpdate);
-        return acc;
-      },
-      []
-    );
-
-    updateSteps<GeneratedImageStepMetadata>(
-      data,
-      (draft, metadata) => {
-        Object.keys(metadata.images ?? {}).map((imageId) => {
-          const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
-          const images = draft.images ?? {};
-          images[imageId] = { ...images[imageId], ...removeEmpty(rest) };
-          if (feedback)
-            images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
-          draft.images = images;
-        });
-      },
-      !!args.find((x) => x.feedback !== undefined) ? 'feedback' : undefined // TODO - temp for giving buzz for feedback
-    );
-  }
-
-  return { updateImages, isLoading };
 }
 
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & { $type: 'job'; completed?: Date };
@@ -496,4 +442,4 @@ function updateFromEvents() {
       }
     }
   });
-}   
+}
