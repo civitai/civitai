@@ -55,13 +55,13 @@ export const tagIdsForImagesCache = createCachedObject<{
       hasWD[imageIdStr] ??= false;
       if (row.source === TagSource.WD14) hasWD[imageIdStr] = true;
     }
-    const result = tags.reduce((acc, { tag, imageId, source }) => {
+    const result = tags.reduce((acc, { tag: { type, ...tag }, imageId, source }) => {
       const imageIdStr = imageId.toString();
       acc[imageIdStr] ??= { imageId, tags: [] };
 
       let canAdd = true;
       if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
-        if (tag.type !== TagType.Moderation && !constants.imageTags.styles.includes(tag.name)) {
+        if (type !== TagType.Moderation && !constants.imageTags.styles.includes(tag.name)) {
           canAdd = false;
         }
       }
