@@ -11,7 +11,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
-import { getTagIdsForImages } from '~/server/services/image.service';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { getPeriods } from '~/server/utils/enum-helpers';
 
 // TODO do we need this file?
@@ -396,7 +396,7 @@ export async function queryImages({
   const queriedImageIds = rawImages.map((i) => i.id);
 
   // always return tagIds for as long as we are doing front end filtering
-  const tagIdsDictionary = await getTagIdsForImages(queriedImageIds);
+  const tagIdsDictionary = await tagIdsForImagesCache.fetch(queriedImageIds);
   // TODO - if `withImageMetrics`, then get user reactions
 
   const images = rawImages.map(

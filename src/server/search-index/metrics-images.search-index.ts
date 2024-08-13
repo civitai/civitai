@@ -5,7 +5,6 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getTagIdsForImages } from '~/server/services/image.service';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000;
@@ -196,7 +195,7 @@ const transformData = async ({
         cosmetic: cosmetics[imageRecord.id] ?? null,
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
-        tagIds: imageTags[imageRecord.id]?.tags?.map((t) => t.id) ?? [],
+        tagIds: imageTags[imageRecord.id]?.tags ?? [],
       };
     })
     .filter(isDefined);
@@ -211,21 +210,21 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   workerCount: 15,
   indexName: INDEX_ID,
   setup: onIndexSetup,
-  maxQueueSize: 20, // Avoids hogging too much memory.
+  maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 6,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
     // TODO.imageMetrics set updatedAt on image when post is published
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
-      SELECT (	
+      SELECT (
         SELECT
           i.id FROM "Image" i
-        WHERE i."postId" IS NOT NULL 
+        WHERE i."postId" IS NOT NULL
         ${lastUpdatedAt ? ` AND i."createdAt" >= '${lastUpdatedAt}'` : ``}
         ORDER BY "createdAt" LIMIT 1
-      ) as "startId", (	
+      ) as "startId", (
         SELECT MAX (id) FROM "Image" i
         WHERE i."postId" IS NOT NULL
-      ) as "endId";      
+      ) as "endId";
     `);
 
     jobContext.on('cancel', newItemsQuery.cancel);
@@ -273,6 +272,10 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ? Prisma.raw(`i.id BETWEEN ${batch.startId} AND ${batch.endId}`)
         : undefined,
     ].filter(isDefined);
+    logger(
+      `PullData :: Pulling data for batch`,
+      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
+    );
 
     const imageIds = prevData
       ? (prevData as { images: SearchBaseImage[] }).images.map((i) => i.id)
@@ -348,7 +351,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
 
     if (step === 2) {
       // Pull tags:
-      const cacheImageTags = await getTagIdsForImages(imageIds);
+      const cacheImageTags = await tagIdsForImagesCache.fetch(imageIds);
 
       return {
         ...prevData,

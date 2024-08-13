@@ -9,7 +9,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { imagesSearchIndex } from '~/server/search-index';
-import { updateImageTagIdsForImages } from '~/server/services/image.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
@@ -24,6 +23,7 @@ import {
 } from '~/utils/metadata/audit';
 import { signalClient } from '~/utils/signal-client';
 import { normalizeText } from '~/utils/normalize-text';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -430,7 +430,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
 
       if (ingestion === 'Scanned') {
         // Clear cached image tags after completing scans
-        await updateImageTagIdsForImages(id);
+        await tagIdsForImagesCache.refresh(id);
 
         const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
         const isProfilePicture = imageMetadata?.profilePicture === true;

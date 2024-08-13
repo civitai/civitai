@@ -41,7 +41,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { metricsClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
-import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1124,11 +1124,9 @@ export const getAllImages = async (
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar:
-    | Record<string, { tags: { id: number; name: string }[]; imageId: number }>
-    | undefined;
+  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
   if (include?.includes('tagIds')) {
-    tagIdsVar = await getTagIdsForImages(imageIds);
+    tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
   }
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
@@ -1248,7 +1246,7 @@ export const getAllImages = async (
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
-        tagIds: tagIdsVar?.[i.id]?.tags.map((t) => t.id),
+        tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
@@ -1364,7 +1362,7 @@ export const getAllImagesPost = async (
     await getBasicDataForUsers(userIds),
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    include?.includes('tagIds') ? await getTagIdsForImages(imageIds) : undefined,
+    include?.includes('tagIds') ? await tagIdsForImagesCache.fetch(imageIds) : undefined,
   ]);
 
   // TODO tags? we have strings...
@@ -1390,8 +1388,7 @@ export const getAllImagesPost = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
-      tagIds: tagIdsData?.[sr.id]?.tags.map((t) => t.id),
-      // tags: tagsVar?.filter((x) => x.imageId === i.id),
+      tagIds: tagIdsData?.[sr.id]?.tags,
       // TODO fix below
       tags: [], // needed?
       name: null, // leave
@@ -1807,30 +1804,12 @@ const getImageMetrics = async (ids: number[]) => {
   }, {} as { [p: number]: Omit<PgDataType, 'imageId'> });
 };
 
-export async function getTagIdsForImages(imageIds: number[]) {
-  return await tagIdsForImagesCache.fetch(imageIds);
-}
-
-export async function clearImageTagIdsCache(imageId: number | number[]) {
-  await tagIdsForImagesCache.bust(imageId);
-}
-
-export async function updateImageTagIdsForImages(imageId: number | number[]) {
-  await tagIdsForImagesCache.refresh(imageId);
-}
-
 export async function getTagNamesForImages(imageIds: number[]) {
-  const imageTagsArr = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
-    SELECT "imageId", t.name as tag
-    FROM "TagsOnImage" toi
-    JOIN "Tag" t ON t.id = toi."tagId"
-    WHERE "imageId" IN (${Prisma.join(imageIds)})
-  `;
-  const imageTags = imageTagsArr.reduce((acc, { imageId, tag }) => {
-    if (!acc[imageId]) acc[imageId] = [];
-    acc[imageId].push(tag);
-    return acc;
-  }, {} as Record<number, string[]>);
+  const tagIds = await tagIdsForImagesCache.fetch(imageIds);
+  const tags = await tagCache.fetch(Object.values(tagIds).flatMap((x) => x.tags));
+  const imageTags = Object.fromEntries(
+    Object.entries(tagIds).map(([k, v]) => [k, v.tags.map((t) => tags[t]?.name).filter(isDefined)])
+  ) as Record<number, string[]>;
   return imageTags;
 }
 
@@ -2221,9 +2200,9 @@ export const getImagesForModelVersion = async ({
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
-    const tagIdsVar = await getTagIdsForImages(imageIds);
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
     for (const image of images) {
-      image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id);
+      image.tags = tagIdsVar?.[image.id]?.tags;
     }
   }
 
