@@ -55,7 +55,7 @@ export function DumbMarkerFiltersDropdown({
   setFilters: (filters: Partial<MarkerFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ breakpoint: 'xs' });
 
   const [opened, setOpened] = useState(false);
 
@@ -134,7 +134,7 @@ export function DumbMarkerFiltersDropdown({
 
   if (mobile)
     return (
-      <>
+      <IsClient>
         {target}
         <Drawer
           opened={opened}
@@ -153,7 +153,7 @@ export function DumbMarkerFiltersDropdown({
         >
           {dropdown}
         </Drawer>
-      </>
+      </IsClient>
     );
 
   return (
