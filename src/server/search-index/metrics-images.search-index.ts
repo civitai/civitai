@@ -32,7 +32,7 @@ const filterableAttributes = [
   'userId',
   'nsfwLevel',
   'postId',
-  'published',
+  'publishedAtUnix',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -110,7 +110,7 @@ export type SearchBaseImage = {
   sortAt: Date;
   type: string;
   userId: number;
-  published: boolean;
+  publishedAt: Date;
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
@@ -143,15 +143,6 @@ type ImageTechnique = {
 type ImageCosmetics = Awaited<ReturnType<typeof getCosmeticsForEntity>>;
 type ImageTags = Awaited<ReturnType<typeof tagIdsForImagesCache.fetch>>;
 
-export type ImageForMetricSearchIndex = {
-  sortAtUnix: number;
-  tagIds: number[];
-  toolIds: number[];
-  techniqueIds: number[];
-} & SearchBaseImage &
-  Metrics &
-  ModelVersions;
-
 const transformData = async ({
   images,
   imageTags,
@@ -170,7 +161,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map((imageRecord) => {
+    .map(({ publishedAt, ...imageRecord }) => {
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
@@ -193,6 +184,7 @@ const transformData = async ({
         toolIds: imageTools.map((t) => t.toolId),
         techniqueIds: imageTechniques.map((t) => t.techniqueId),
         cosmetic: cosmetics[imageRecord.id] ?? null,
+        publishedAtUnix: publishedAt.getTime(),
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
@@ -212,12 +204,13 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 6,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
+    const lastUpdateIso = lastUpdatedAt?.toISOString();
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
       SELECT (
         SELECT
           i.id FROM "Image" i
         WHERE i."postId" IS NOT NULL
-        ${lastUpdatedAt ? ` AND i."createdAt" >= '${lastUpdatedAt}'` : ``}
+        ${lastUpdatedAt ? ` AND i."createdAt" >= '${lastUpdateIso}'` : ``}
         ORDER BY "createdAt" LIMIT 1
       ) as "startId", (
         SELECT MAX (id) FROM "Image" i
@@ -228,32 +221,19 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     jobContext.on('cancel', newItemsQuery.cancel);
     const newItems = await newItemsQuery.result();
     const { startId, endId } = newItems[0];
-    const updateIds: number[] = [];
 
+    let updateIds: number[] = [];
     if (lastUpdatedAt) {
-      let lastId = 0;
-
-      while (true) {
-        const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-          SELECT id
-          FROM "Image"
-          WHERE "updatedAt" > '${lastUpdatedAt}'
-            AND "postId" IS NOT NULL
-            AND id > ${lastId}
-          ORDER BY id
-          LIMIT ${READ_BATCH_SIZE};
-        `);
-
-        jobContext.on('cancel', updatedIdItemsQuery.cancel);
-        const ids = await updatedIdItemsQuery.result();
-
-        if (!ids.length) {
-          break;
-        }
-
-        lastId = ids[ids.length - 1].id;
-        updateIds.push(...ids.map((x) => x.id));
-      }
+      const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
+        SELECT id
+        FROM "Image"
+        WHERE "updatedAt" > '${lastUpdateIso}'
+          AND "createdAt" < '${lastUpdateIso}'
+          AND "postId" IS NOT NULL
+        ORDER BY id;
+      `);
+      const results = await updatedIdItemsQuery.result();
+      updateIds = results.map((x) => x.id);
     }
 
     return {
@@ -287,11 +267,11 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."height",
         i."hash",
         i."hideMeta",
-        i."sortAt",
+        COALESCE(p."publishedAt", i."createdAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
-        p."publishedAt" is not null as "published",
+        p."publishedAt",
         (
           CASE
             WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
