@@ -1377,14 +1377,11 @@ export const getAllImagesPost = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, userCosmetics, profilePictures, tagIdsData] = await Promise.all([
+  const [userDatas, userCosmetics, profilePictures] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    include?.includes('tagIds') ? await tagIdsForImagesCache.fetch(imageIds) : undefined,
   ]);
-
-  // TODO tags? we have strings...
 
   const mergedData = searchResults.map((sr) => {
     const thisUser = userDatas[sr.userId] ?? {};
@@ -1407,7 +1404,6 @@ export const getAllImagesPost = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
-      tagIds: tagIdsData?.[sr.id]?.tags,
       // TODO fix below
       tags: [], // needed?
       name: null, // leave
