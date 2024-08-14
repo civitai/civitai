@@ -32,7 +32,7 @@ export type FileFromContextProps = {
   type?: ModelFileType | null;
   sizeKB?: number;
   size?: 'full' | 'pruned' | null;
-  fp?: 'fp16' | 'fp32' | 'bf16' | null;
+  fp?: ModelFileFp | null;
   format?: ModelFileFormat | null;
   versionId?: number;
   file?: File;

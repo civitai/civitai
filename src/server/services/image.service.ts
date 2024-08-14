@@ -3924,7 +3924,11 @@ export function addBlockedImage({
   hash: bigint | number;
   reason: BlockImageReason;
 }) {
-  return dbWrite.blockedImage.create({ data: { hash, reason } });
+  return dbWrite.$executeRaw`
+    INSERT INTO "BlockedImage" (hash, reason)
+    VALUES (${hash}, ${reason})
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 export function bulkAddBlockedImages({
@@ -3932,7 +3936,12 @@ export function bulkAddBlockedImages({
 }: {
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
-  return dbWrite.blockedImage.createMany({ data });
+  const values = data.map(({ hash, reason }) => `(${hash}, '${reason}')`).join(',');
+  return dbWrite.$executeRaw`
+    INSERT INTO "BlockedImage" (hash, reason)
+    VALUES ${Prisma.raw(values)}
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 export async function bulkRemoveBlockedImages({
