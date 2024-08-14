@@ -15,7 +15,8 @@ type CivitaiResource = {
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
-const civitaiResources = /, Civitai resources:\s*(.+)/;
+// const civitaiResources = /, Civitai resources:\s*(.+)/; // -- OLD ONE
+const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
