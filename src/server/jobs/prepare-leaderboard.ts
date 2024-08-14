@@ -13,7 +13,7 @@ import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
 import { clickhouse } from '~/server/clickhouse/client';
 import { chunk } from 'lodash-es';
-import { metrics } from '@tensorflow/tfjs';
+import { redis } from '~/server/redis/client';
 
 const log = createLogger('leaderboard', 'blue');
 
@@ -387,7 +387,7 @@ async function clickhouseLeaderboardPopulation(ctx: LeaderboardContext) {
 }
 
 const clearLeaderboardCache = createJob('clear-leaderboard-cache', '0 0 * * *', async () => {
-  await purgeCache({ tags: ['leaderboard'] });
+  await redis.purgeTags('leaderboard');
 });
 
 export const leaderboardJobs = [

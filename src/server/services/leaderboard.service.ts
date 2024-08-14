@@ -9,7 +9,7 @@ import {
   GetLeaderboardsWithResultsInput,
 } from '~/server/schema/leaderboard.schema';
 import { ProfileImage } from '~/server/selectors/image.selector';
-import { getProfilePicturesForUsers } from '~/server/services/user.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 export async function isLeaderboardPopulated() {
   const [{ populated }] = await dbWrite.$queryRaw<{ populated: boolean }[]>`
@@ -137,25 +137,6 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
       u."deletedAt",
       u.image,
       (
-        SELECT
-          jsonb_agg(jsonb_build_object(
-            'data', uc.data,
-            'cosmetic', jsonb_build_object(
-              'id', c.id,
-              'data', c.data,
-              'type', c.type,
-              'source', c.source,
-              'name', c.name,
-              'leaderboardId', c."leaderboardId",
-              'leaderboardPosition', c."leaderboardPosition"
-            )
-          ))
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-        AND "equippedAt" IS NOT NULL
-        WHERE uc."userId" = lr."userId" AND uc."equippedToId" IS NULL
-      ) cosmetics,
-      (
         SELECT jsonb_build_object(
           'position', lr.position - lro.position,
           'score', lr.score - lro.score
@@ -173,11 +154,7 @@ export async function getLeaderboard(input: GetLeaderboardInput) {
     ORDER BY lr.position
   `;
 
-  const profilePictures = await getProfilePicturesForUsers(
-    leaderboardResultsRaw.map((r) => r.userId)
-  );
-
-  return formatLeaderboardResults(leaderboardResultsRaw, metricOrder, profilePictures);
+  return await formatLeaderboardResults(leaderboardResultsRaw, metricOrder);
 }
 
 export type LeaderboardWithResults = Awaited<ReturnType<typeof getLeaderboardsWithResults>>[number];
@@ -245,68 +222,47 @@ export async function getLeaderboardLegends(input: GetLeaderboardInput) {
       u.username,
       u."deletedAt",
       u.image,
-      (
-        SELECT
-          jsonb_agg(jsonb_build_object(
-            'id', c.id,
-            'data', c.data,
-            'type', c.type,
-            'source', c.source,
-            'name', c.name,
-            'leaderboardId', c."leaderboardId",
-            'leaderboardPosition', c."leaderboardPosition"
-          )) cosmetic
-        FROM "UserCosmetic" uc
-        JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
-          AND "equippedAt" IS NOT NULL
-          AND c."type" != 'ContentDecoration'
-        WHERE uc."userId" = s."userId"
-      ) cosmetics,
       null delta
     FROM scores s
     JOIN "User" u ON u.id = s."userId"
     ORDER BY s.score DESC
   `;
 
-  const profilePictures = await getProfilePicturesForUsers(
-    leaderboardResultsRaw.map((r) => r.userId)
-  );
-
-  return formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder, profilePictures);
+  return await formatLeaderboardResults(leaderboardResultsRaw, legendsMetricOrder);
 }
 
-function formatLeaderboardResults(
-  results: LeaderboardRaw[],
-  metricSortOrder = metricOrder,
-  profilePictures: Record<string, ProfileImage> = {}
-) {
-  return results.map(
-    ({ metrics: metricsRaw, userId, username, deletedAt, image, cosmetics, ...results }) => {
-      const metrics = Object.entries(metricsRaw)
-        .map(([type, value]) => ({
-          type,
-          value,
-        }))
-        .sort((a, b) => {
-          const aIndex = metricSortOrder.indexOf(a.type);
-          const bIndex = metricSortOrder.indexOf(b.type);
-          if (aIndex === -1) return 1;
-          if (bIndex === -1) return -1;
-          return aIndex - bIndex;
-        });
+async function formatLeaderboardResults(results: LeaderboardRaw[], metricSortOrder = metricOrder) {
+  const userIds = results.map((r) => r.userId);
+  const [profilePictures, cosmetics] = await Promise.all([
+    getProfilePicturesForUsers(userIds),
+    getCosmeticsForUsers(userIds),
+  ]);
 
-      return {
-        ...results,
-        user: {
-          id: userId,
-          username,
-          deletedAt,
-          image,
-          cosmetics: cosmetics ?? [],
-          profilePicture: profilePictures[userId] ?? null,
-        },
-        metrics,
-      };
-    }
-  );
+  return results.map(({ metrics: metricsRaw, userId, username, deletedAt, image, ...results }) => {
+    const metrics = Object.entries(metricsRaw)
+      .map(([type, value]) => ({
+        type,
+        value,
+      }))
+      .sort((a, b) => {
+        const aIndex = metricSortOrder.indexOf(a.type);
+        const bIndex = metricSortOrder.indexOf(b.type);
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      });
+
+    return {
+      ...results,
+      user: {
+        id: userId,
+        username,
+        deletedAt,
+        image,
+        cosmetics: cosmetics[userId] ?? [],
+        profilePicture: profilePictures[userId] ?? null,
+      },
+      metrics,
+    };
+  });
 }
