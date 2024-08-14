@@ -1456,6 +1456,7 @@ export const publishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  // TODO need imagesMetricsSearchIndex here?
 
   return model;
 };
@@ -1555,6 +1556,7 @@ export const unpublishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  // TODO need imagesMetricsSearchIndex here?
 
   return model;
 };

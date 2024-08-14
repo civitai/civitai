@@ -5,7 +5,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { articlesSearchIndex, imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -115,6 +120,10 @@ export async function equipCosmeticToEntity({
     await imagesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
+  // TODO maybe pull cosmetics out of the index and fetch later
+  await imagesMetricsSearchIndex.queueUpdate([
+    { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
   if (equippedToType === 'Article')
     await articlesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },

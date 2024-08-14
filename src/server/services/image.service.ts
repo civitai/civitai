@@ -62,7 +62,11 @@ import {
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+} from '~/server/search-index';
 import {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
@@ -185,6 +189,10 @@ export const deleteImageById = async ({
     }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+
     // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
@@ -230,6 +238,9 @@ export const moderateImages = async ({
     });
 
     await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
 

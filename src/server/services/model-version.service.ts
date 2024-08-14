@@ -1,49 +1,49 @@
-import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '@prisma/client';
+import { CommercialUse, ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
+import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { TRPCError } from '@trpc/server';
-import { SessionUser } from 'next-auth';
-import { BaseModel, BaseModelSetType, baseModelSets, constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { resourceDataCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
-  ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
+  ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
+import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { hasEntityAccess } from '~/server/services/common.service';
+import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { createNotification } from '~/server/services/notification.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { updateModelLastVersionAt } from './model.service';
-import { isDefined } from '~/utils/type-guards';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import dayjs from 'dayjs';
-import { clickhouse } from '~/server/clickhouse/client';
-import { maxDate } from '~/utils/date-helpers';
-import { env } from '~/env/server.mjs';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { createNotification } from '~/server/services/notification.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import { resourceDataCache } from '~/server/redis/caches';
-import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { maxDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { updateModelLastVersionAt } from './model.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -638,6 +638,7 @@ export const publishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  // TODO need imagesMetricsSearchIndex here?
 
   return version;
 };
@@ -709,6 +710,8 @@ export const unpublishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  // TODO need imagesMetricsSearchIndex here?
+
   await updateModelLastVersionAt({ id: version.model.id });
   await resourceDataCache.bust(version.id);
 
