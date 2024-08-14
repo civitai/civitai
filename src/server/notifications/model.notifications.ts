@@ -222,17 +222,19 @@ export const modelNotifications = createNotificationProcessor({
     }),
     prepareQuery: ({ lastSent }) => `
       WITH early_access_versions AS (
-        SELECT
+         SELECT
           mv.id version_id,
           mv.name version_name,
           m.id model_id,
           m.name model_name,
           m.type model_type,
-          GREATEST(mv."createdAt", m."publishedAt") + interval '1' day * mv."earlyAccessTimeFrame" early_access_deadline
+          mv."earlyAccessEndsAt",
+          (mv."earlyAccessConfig"->>'originalTimeframe')::int original_time_frame
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        where "earlyAccessTimeFrame" != 0
-        AND m."publishedAt" IS NOT NULL
+        where 
+          (mv."earlyAccessConfig"->>'originalTimeframe')::int > 0
+        AND mv."publishedAt" >= '${lastSent}'
       ), early_access_complete AS (
         SELECT DISTINCT
           mve."userId" owner_id,
