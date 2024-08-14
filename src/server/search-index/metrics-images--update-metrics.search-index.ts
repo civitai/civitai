@@ -6,7 +6,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
-const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
+const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`; // TODO new or regular?
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -73,6 +73,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
           ORDER BY id
           LIMIT ${READ_BATCH_SIZE};
         `);
+        // TODO will an image be "updated" if its metrics are updated?
 
         jobContext.on('cancel', updatedIdItemsQuery.cancel);
         const ids = await updatedIdItemsQuery.result();

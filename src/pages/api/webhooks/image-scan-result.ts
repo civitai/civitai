@@ -7,8 +7,9 @@ import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
@@ -21,9 +22,8 @@ import {
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
-import { signalClient } from '~/utils/signal-client';
 import { normalizeText } from '~/utils/normalize-text';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { signalClient } from '~/utils/signal-client';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -446,6 +446,12 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
 
         // Update search index
         await imagesSearchIndex.queueUpdate([
+          {
+            id,
+            action: SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
+        await imagesMetricsSearchIndex.queueUpdate([
           {
             id,
             action: SearchIndexUpdateQueueAction.Update,

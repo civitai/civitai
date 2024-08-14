@@ -12,7 +12,7 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   addBlockedImage,
   bulkAddBlockedImages,
@@ -219,6 +219,9 @@ export const setTosViolationHandler = async ({
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);

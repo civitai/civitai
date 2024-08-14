@@ -1,15 +1,15 @@
-import { dbRead, dbWrite } from '~/server/db/client';
-import { createJob } from './job';
 import { EntityType, JobQueueType, Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
+import { chunk, uniq } from 'lodash-es';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
-import { uniq, chunk } from 'lodash-es';
-import { imagesSearchIndex } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import dayjs from 'dayjs';
+import { createJob } from './job';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -50,6 +50,9 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
   const relatedEntities = await getNsfwLevelRelatedEntities(jobQueueIds);
 
   await imagesSearchIndex.queueUpdate(
+    jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
     jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
 

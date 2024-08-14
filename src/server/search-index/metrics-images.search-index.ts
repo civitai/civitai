@@ -204,7 +204,6 @@ const transformData = async ({
 
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
-// TODO.imageMetrics create another index updater for specifically updating metrics
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 10,
   indexName: INDEX_ID,
@@ -212,7 +211,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 6,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
-    // TODO.imageMetrics set updatedAt on image when post is published
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
       SELECT (
         SELECT
