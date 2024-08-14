@@ -161,6 +161,7 @@ export async function purgeResizeCache({ url }: { url: string }) {
   });
 }
 
+// TODO put this in many different places where images can be deleted
 async function markImagesDeleted(id: number | number[]) {
   if (!Array.isArray(id)) id = [id];
 
@@ -171,13 +172,13 @@ async function markImagesDeleted(id: number | number[]) {
   ]);
 }
 
-async function filterOutDeleted(data: { id: number }[]) {
+const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) => {
   const keys = data.map((x) => x.id.toString());
   const deleted = (
     (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
   ).filter(isDefined);
   return data.filter((x) => !deleted.includes(x.id));
-}
+};
 
 export const deleteImageById = async ({
   id,
@@ -1361,7 +1362,7 @@ export const getAllImagesPost = async (
   const offset = cursor as number | undefined;
   const currentUserId = user?.id;
 
-  const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
+  const { data: searchResultsTmp, total: searchTotal } = await getImagesFromSearch({
     modelVersionId,
     types,
     browsingLevel,
@@ -1383,6 +1384,8 @@ export const getAllImagesPost = async (
     currentUserId,
     isModerator: user?.isModerator,
   });
+
+  const searchResults = await filterOutDeleted(searchResultsTmp);
 
   if (!searchResults.length) {
     return {

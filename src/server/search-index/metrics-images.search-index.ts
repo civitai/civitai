@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { clickhouse } from '~/server/clickhouse/client';
 import { chunk } from 'lodash-es';
+import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -329,8 +329,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     let noMoreSteps = false;
 
     for (const batch of batches) {
-    if (step === 1) {
-      const metrics = await clickhouse?.$query<Metrics>(`
+      if (step === 1) {
+        const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    SUM(if(
                        metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
@@ -343,10 +343,10 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             GROUP BY id
           `);
 
-      result.metrics ??= [];
-      result.metrics.push(...(metrics ?? []));
-      continue;
-    }
+        result.metrics ??= [];
+        result.metrics.push(...(metrics ?? []));
+        continue;
+      }
 
       if (step === 2) {
         // Pull tags:
