@@ -105,7 +105,7 @@ import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { baseS3Client } from '~/utils/s3-client';
+import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -131,11 +131,24 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
 };
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  const { items } = await baseS3Client.listObjects({
+  // TODO Remove after fallback bucket is deprecated
+  if (env.S3_IMAGE_CACHE_BUCKET_OLD) {
+    const { items } = await baseS3Client.listObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+      prefix: url,
+    });
+    await baseS3Client.deleteManyObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+      keys: items.map((x) => x.Key).filter(isDefined),
+    });
+  }
+
+  // Purge from new cache bucket
+  const { items } = await imageS3Client.listObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     prefix: url,
   });
-  await baseS3Client.deleteManyObjects({
+  await imageS3Client.deleteManyObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     keys: items.map((x) => x.Key).filter(isDefined),
   });
@@ -155,7 +168,13 @@ export const deleteImageById = async ({
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+        // TODO Remove after fallback bucket is deprecated
+        if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
+          await baseS3Client.deleteObject({
+            bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD,
+            key: image.url,
+          });
+        await imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
         await purgeResizeCache({ url: image.url });
       }
     } catch {
@@ -3789,7 +3808,11 @@ export function addBlockedImage({
   hash: bigint | number;
   reason: BlockImageReason;
 }) {
-  return dbWrite.blockedImage.create({ data: { hash, reason } });
+  return dbWrite.$executeRaw`
+    INSERT INTO "BlockedImage" (hash, reason)
+    VALUES (${hash}, '${reason}'::"BlockImageReason")
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 export function bulkAddBlockedImages({
@@ -3797,7 +3820,14 @@ export function bulkAddBlockedImages({
 }: {
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
-  return dbWrite.blockedImage.createMany({ data });
+  const values = data
+    .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockedImageReason")`)
+    .join(',');
+  return dbWrite.$executeRaw`
+    INSERT INTO "BlockedImage" (hash, reason)
+    VALUES ${Prisma.raw(values)}
+    ON CONFLICT DO NOTHING
+  `;
 }
 
 export async function bulkRemoveBlockedImages({

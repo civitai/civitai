@@ -27,21 +27,19 @@ import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
 
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { ResourceData, resourceDataCache } from '~/server/redis/caches';
+import { resourceDataCache } from '~/server/redis/caches';
 import {
-  defaultCheckpoints,
   formatGenerationResources,
   GenerationResource,
   getBaseModelFromResources,
   getBaseModelSet,
-  getBaseModelSetType,
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
 import {
   TextToImageParams,
   TextToImageStepRemixMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
-import { BaseModelSetType, getGenerationConfig } from '~/server/common/constants';
+import { getGenerationConfig } from '~/server/common/constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 
 export function parseModelVersionId(assetId: string) {
@@ -203,7 +201,7 @@ export async function getGenerationStatus() {
 export type GenerationData = {
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
-  remix?: TextToImageStepRemixMetadata;
+  remixOfId?: number;
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
@@ -237,9 +235,6 @@ export const getResourceGenerationData = async ({ modelVersionId }: { modelVersi
     params: {
       baseModel: getBaseModelFromResources(deduped),
       clipSkip: resource.clipSkip ?? undefined,
-    },
-    remix: {
-      versionId: resource.id,
     },
   };
 };
@@ -350,9 +345,7 @@ const getImageGenerationData = async (id: number) => {
       prompt,
       negativePrompt,
     },
-    remix: {
-      imageId: image.id,
-    },
+    remixOfId: image.id,
   };
 };
 

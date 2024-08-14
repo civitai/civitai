@@ -1,18 +1,37 @@
-import { WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
+import { JsonPatchFactory, WorkflowEvent, WorkflowStepJobEvent, applyPatch } from '@civitai/client';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
+import { cloneDeep } from 'lodash-es';
 import { useEffect, useMemo } from 'react';
 import { z } from 'zod';
-import { useUpdateWorkflowSteps } from '~/components/Orchestrator/hooks/workflowStepHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
-import { GeneratedImageStepMetadata } from '~/server/schema/orchestrator/textToImage.schema';
-import { workflowQuerySchema } from '~/server/schema/orchestrator/workflows.schema';
-import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
-import { UpdateWorkflowStepParams } from '~/server/services/orchestrator/orchestrator.schema';
-import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
+import {
+  GeneratedImageStepMetadata,
+  TextToImageStepImageMetadata,
+} from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  PatchWorkflowParams,
+  PatchWorkflowStepParams,
+  TagsPatchSchema,
+  workflowQuerySchema,
+} from '~/server/schema/orchestrator/workflows.schema';
+import {
+  WorkflowStepFormatted,
+  queryGeneratedImageWorkflows,
+} from '~/server/services/orchestrator/common';
+import {
+  IWorkflow,
+  IWorkflowsInfinite,
+  UpdateWorkflowStepParams,
+} from '~/server/services/orchestrator/orchestrator.schema';
+import {
+  WORKFLOW_TAGS,
+  orchestratorCompletedStatuses,
+} from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -32,36 +51,58 @@ export function useGetTextToImageRequests(
     enabled: !!currentUser,
     ...options,
   });
+
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
-        (x.items ?? []).map((response) => {
-          const steps = response.steps.map((step) => {
-            const images = step.images
-              .filter((image) => !step.metadata?.images?.[image.id]?.hidden)
-              .sort((a, b) => {
-                if (!b.completed) return 1;
-                if (!a.completed) return -1;
-                return b.completed.getTime() - a.completed.getTime();
-                // if (a.completed !== b.completed) {
-                //   if (!b.completed) return 1;
-                //   if (!a.completed) return -1;
-                //   return b.completed.getTime() - a.completed.getTime();
-                // } else {
-                //   if (a.id < b.id) return -1;
-                //   if (a.id > b.id) return 1;
-                //   return 0;
-                // }
-              });
-            return { ...step, images };
-          });
-          return { ...response, steps };
-        })
+        (x.items ?? [])
+          .filter((workflow) => {
+            if (!!input?.tags?.length && workflow.tags.every((tag) => !input?.tags?.includes(tag)))
+              return false;
+            return true;
+          })
+          .map((response) => {
+            const steps = response.steps.map((step) => {
+              const images = step.images
+                .filter(({ id }) => {
+                  const imageMeta = step.metadata?.images?.[id];
+                  if (imageMeta?.hidden) return false;
+                  if (input?.tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite)
+                    return false;
+                  if (
+                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) &&
+                    imageMeta?.feedback !== 'liked'
+                  )
+                    return false;
+                  if (
+                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) &&
+                    imageMeta?.feedback !== 'disliked'
+                  )
+                    return false;
+                  return true;
+                })
+                .sort((a, b) => {
+                  if (!b.completed) return 1;
+                  if (!a.completed) return -1;
+                  return b.completed.getTime() - a.completed.getTime();
+                  // if (a.completed !== b.completed) {
+                  //   if (!b.completed) return 1;
+                  //   if (!a.completed) return -1;
+                  //   return b.completed.getTime() - a.completed.getTime();
+                  // } else {
+                  //   if (a.id < b.id) return -1;
+                  //   if (a.id > b.id) return 1;
+                  //   return 0;
+                  // }
+                });
+              return { ...step, images };
+            });
+            return { ...response, steps };
+          })
       ) ?? [],
     [data]
   );
 
-  // useEffect(() => console.log({ flatData }), [flatData]);
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
   const images = useMemo(() => steps.flatMap((x) => x.images), [steps]);
 
@@ -70,6 +111,7 @@ export function useGetTextToImageRequests(
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
   const { data, steps, ...rest } = useGetTextToImageRequests(input);
+
   return { requests: data, steps, ...rest };
 }
 
@@ -150,63 +192,188 @@ export function useCancelTextToImageRequest() {
   });
 }
 
-export function useUpdateTextToImageStepMetadata(options?: { onSuccess?: () => void }) {
+export type UpdateImageStepMetadataArgs = {
+  workflowId: string;
+  stepName: string;
+  images: Record<string, TextToImageStepImageMetadata>;
+};
+
+export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { updateSteps, isLoading } = useUpdateWorkflowSteps({
-    queryKey,
-    onSuccess: options?.onSuccess,
-  });
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
 
-  function updateImages(
-    args: Array<{
-      workflowId: string;
-      stepName: string;
-      imageId: string;
-      hidden?: boolean;
-      feedback?: 'liked' | 'disliked';
-      comments?: string;
-      postId?: number;
-    }>
-  ) {
-    const data = args.reduce<Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }>[]>(
-      (acc, { workflowId, stepName, imageId, ...metadata }) => {
-        const index = acc.findIndex((x) => x.workflowId === workflowId && x.stepName === stepName);
-        const toUpdate: Extract<UpdateWorkflowStepParams, { $type: 'textToImage' }> =
-          index > -1
-            ? acc[index]
-            : {
-                $type: 'textToImage',
-                workflowId,
-                stepName,
-                metadata: {},
-              };
-        const images = toUpdate.metadata.images ?? {};
-        images[imageId] = { ...images[imageId], ...removeEmpty(metadata) };
-        toUpdate.metadata.images = images;
-        if (index > -1) acc[index] = toUpdate;
-        else acc.push(toUpdate);
-        return acc;
-      },
-      []
-    );
+  function updateImages(args: Array<UpdateImageStepMetadataArgs>, onError?: () => void) {
+    const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
+      queryKey,
+      exact: false,
+    });
 
-    updateSteps<GeneratedImageStepMetadata>(
-      data,
-      (draft, metadata) => {
-        Object.keys(metadata.images ?? {}).map((imageId) => {
-          const { feedback, ...rest } = metadata.images?.[imageId] ?? {};
-          const images = draft.images ?? {};
-          images[imageId] = { ...images[imageId], ...removeEmpty(rest) };
-          if (feedback)
-            images[imageId].feedback = images[imageId].feedback !== feedback ? feedback : undefined;
-          draft.images = images;
-        });
+    // add workflows from query cache to an array for quick reference
+    const workflows: IWorkflow[] = [];
+    loop: for (const [, queryData] of allQueriesData) {
+      for (const page of queryData?.pages ?? []) {
+        for (const workflow of page.items) {
+          const match = args.find((x) => x.workflowId === workflow.id);
+          if (match) workflows.push(workflow);
+          if (workflows.length === args.length) break loop;
+        }
+      }
+    }
+
+    const workflowPatches: PatchWorkflowParams[] = [];
+    const stepPatches: PatchWorkflowStepParams[] = [];
+    const updated: UpdateImageStepMetadataArgs[] = [];
+    const tags: { workflowId: string; tag: string; op: 'add' | 'remove' }[] = [];
+    const toDelete: string[] = [];
+
+    for (const workflow of workflows) {
+      const match = args.find((x) => x.workflowId === workflow.id);
+      if (!match) continue;
+      const { workflowId, stepName, images } = match;
+      for (const step of workflow.steps as WorkflowStepFormatted[]) {
+        if (step.name !== stepName) continue;
+        const metadata = step.metadata ?? {};
+        const jsonPatch = new JsonPatchFactory<GeneratedImageStepMetadata>();
+        if (!metadata.images) jsonPatch.addOperation({ op: 'add', path: 'images', value: {} });
+        for (const imageId in images) {
+          if (!metadata.images?.[imageId])
+            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}`, value: {} });
+
+          const current = metadata.images?.[imageId] ?? {};
+          const { hidden, feedback, comments, postId, favorite } = match.images[imageId];
+          if (hidden)
+            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}/hidden`, value: true });
+          if (feedback) {
+            jsonPatch.addOperation({
+              op: feedback !== current.feedback ? 'add' : 'remove',
+              path: `images/${imageId}/feedback`,
+              value: feedback,
+            });
+          }
+          if (comments)
+            jsonPatch.addOperation({
+              op: 'add',
+              path: `images/${imageId}/comments`,
+              value: comments,
+            });
+          if (postId)
+            jsonPatch.addOperation({
+              op: 'add',
+              path: `images/${imageId}/postId`,
+              value: postId,
+            });
+          if (favorite !== undefined) {
+            jsonPatch.addOperation({
+              op: favorite ? 'add' : 'remove',
+              path: `images/${imageId}/favorite`,
+              value: true,
+            });
+          }
+        }
+
+        const clone = cloneDeep(metadata);
+        applyPatch(clone, jsonPatch.operations);
+        const patchedImages = clone.images ?? {};
+
+        // first check if the workflow should be deleted
+        const hiddenCount = Object.values(patchedImages).filter((x) => x.hidden).length;
+        if (step.images.length === hiddenCount) {
+          toDelete.push(workflow.id);
+        } else {
+          const images = removeEmpty(patchedImages);
+          // return transformed data
+          updated.push({ workflowId, stepName, images });
+
+          const hasTagFavorite = workflow.tags.includes(WORKFLOW_TAGS.FAVORITE);
+          const hasTagLike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED);
+          const hasTagDislike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED);
+
+          const hasFavoriteImages = Object.values(images).some((x) => x.favorite);
+          const hasLikedImages = Object.values(images).some((x) => x.feedback === 'liked');
+          const hasDislikedImages = Object.values(images).some((x) => x.feedback === 'disliked');
+
+          if (hasTagFavorite && !hasFavoriteImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'remove' });
+          } else if (!hasTagFavorite && hasFavoriteImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'add' });
+          }
+
+          if (hasTagLike && !hasLikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'remove' });
+          } else if (!hasTagLike && hasLikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.LIKED, op: 'add' });
+          }
+
+          if (hasTagDislike && !hasDislikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'remove' });
+          } else if (!hasTagDislike && hasDislikedImages) {
+            tags.push({ workflowId, tag: WORKFLOW_TAGS.FEEDBACK.DISLIKED, op: 'add' });
+          }
+
+          stepPatches.push({ workflowId, stepName, patches: jsonPatch.operations });
+        }
+      }
+    }
+
+    mutate(
+      {
+        workflows: workflowPatches.length ? workflowPatches : undefined,
+        steps: stepPatches.length ? stepPatches : undefined,
+        remove: toDelete.length ? toDelete : undefined,
+        tags: tags.length ? tags : undefined,
       },
-      !!args.find((x) => x.feedback !== undefined) ? 'feedback' : undefined // TODO - temp for giving buzz for feedback
+      {
+        onSuccess: () => {
+          updateQueries<IWorkflowsInfinite>(queryKey, (old) => {
+            for (const page of old.pages) {
+              // remove deleted items
+              page.items = page.items.filter((x) => !toDelete.includes(x.id));
+              for (const workflow of page.items) {
+                // add/remove workflow tags
+                const addTagsMatch = tags.find(
+                  (x) => x.workflowId === workflow.id && x.op === 'add'
+                );
+                const removeTagsMatch = tags.find(
+                  (x) => x.workflowId === workflow.id && x.op === 'remove'
+                );
+                if (addTagsMatch) workflow.tags.push(addTagsMatch.tag);
+                if (removeTagsMatch)
+                  workflow.tags = workflow.tags.filter((tag) => tag !== removeTagsMatch.tag);
+
+                const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
+                if (!toUpdate.length) continue;
+                for (const step of workflow.steps) {
+                  const images = toUpdate.find((x) => x.stepName === step.name)?.images;
+                  if (images) step.metadata = { ...step.metadata, images };
+                }
+              }
+            }
+          });
+
+          const tagNames = [...new Set(tags.filter((x) => x.op === 'add').map((x) => x.tag))];
+          // ['favorite' 'feedback:liked', 'feedback:'disliked']
+          for (const tag of tagNames) {
+            const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] });
+            queryClient.invalidateQueries(key, { exact: false });
+          }
+
+          options?.onSuccess?.();
+        },
+        onError,
+      }
     );
   }
 
   return { updateImages, isLoading };
+}
+
+export function usePatchTags() {
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  function patchTags(tags: TagsPatchSchema[]) {
+    mutate({ tags });
+  }
+
+  return { patchTags, isLoading };
 }
 
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & { $type: 'job'; completed?: Date };

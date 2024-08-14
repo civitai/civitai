@@ -11,6 +11,7 @@ export interface IWorkflowStep {
 export interface IWorkflow {
   id: string;
   steps: IWorkflowStep[];
+  tags: string[];
 }
 
 export type IWorkflowsInfinite = InfiniteData<{ items: IWorkflow[] }>;

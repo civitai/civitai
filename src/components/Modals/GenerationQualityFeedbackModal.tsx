@@ -13,7 +13,7 @@ import { IconThumbDown } from '@tabler/icons-react';
 import React from 'react';
 import { z } from 'zod';
 import { Form, InputTextArea, useForm } from '~/libs/form';
-import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 const useStyles = createStyles((theme) => ({
@@ -54,7 +54,7 @@ export function TextToImageQualityFeedbackModal({
 }) {
   const dialog = useDialogContext();
   const { classes } = useStyles();
-  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();
+  const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const form = useForm({ schema, defaultValues: { message: comments } });
   const handleSubmit = async (data: z.infer<typeof schema>) => {
     if (data.message)
@@ -62,8 +62,11 @@ export function TextToImageQualityFeedbackModal({
         {
           workflowId,
           stepName,
-          imageId,
-          comments: data.message,
+          images: {
+            [imageId]: {
+              comments: data.message,
+            },
+          },
         },
       ]);
     dialog.onClose();
