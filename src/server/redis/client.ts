@@ -153,6 +153,7 @@ export const REDIS_KEYS = {
     NOTIFICATION_COUNTS: 'system:notification-counts',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
+    DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',

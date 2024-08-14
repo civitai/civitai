@@ -3,7 +3,10 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generationConfig } from '~/server/common/constants';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import {
+  TextToImageParams,
+  generateImageWhatIfSchema,
+} from '~/server/schema/orchestrator/textToImage.schema';
 import {
   getBaseModelSetType,
   getSizeFromAspectRatio,
@@ -41,14 +44,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params.height = size.height;
     }
 
-    return {
+    return generateImageWhatIfSchema.parse({
       resources: [defaultModel.id],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,
         ...whatIfQueryOverrides,
       } as TextToImageParams,
-    };
+    });
   }, [watched, defaultModel.id]);
 
   useEffect(() => {

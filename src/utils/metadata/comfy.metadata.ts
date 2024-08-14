@@ -80,7 +80,8 @@ export const comfyMetadataProcessor = createMetadataProcessor({
     const vaes: string[] = [];
     const controlNets: string[] = [];
     const additionalResources: AdditionalResource[] = [];
-    for (const node of Object.values(prompt)) {
+    const nodes = Object.values(prompt);
+    for (const node of nodes) {
       for (const [key, value] of Object.entries(node.inputs)) {
         if (Array.isArray(value)) node.inputs[key] = prompt[value[0]];
       }
@@ -97,7 +98,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'KSampler') samplerNodes.push(node.inputs as SamplerNode);
       if (node.class_type == 'KSampler (Efficient)') samplerNodes.push(node.inputs as SamplerNode);
 
-      if (node.class_type == 'LoraLoader') {
+      if (['LoraLoader', 'LoraLoaderModelOnly'].includes(node.class_type)) {
         // Ignore lora nodes with strength 0
         const strength = node.inputs.strength_model as number;
         if (strength < 0.001 && strength > -0.001) continue;
@@ -119,6 +120,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'ControlNetLoader')
         controlNets.push(node.inputs.control_net_name as string);
     }
+    const customAdvancedSampler = nodes.find((x) => x.class_type == 'SamplerCustomAdvanced');
 
     const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
     const versionIds: number[] = [];
@@ -173,6 +175,52 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.workflow = workflowId;
       metadata.civitaiResources = resources;
       if (extra) metadata.extra = extra;
+    } else if (customAdvancedSampler) {
+      // Its fancy Flux...
+
+      // Get Seed
+      const seedNode = customAdvancedSampler.inputs.noise as ComfyNode;
+      if (seedNode?.class_type === 'RandomNoise')
+        metadata.seed = seedNode.inputs.noise_seed as number;
+
+      // Get sampler
+      const samplerNode = customAdvancedSampler.inputs.sampler as ComfyNode;
+      if (samplerNode?.class_type === 'KSamplerSelect')
+        metadata.sampler = samplerNode.inputs.sampler_name as string;
+      else if (samplerNode?.class_type === 'ODESamplerSelect')
+        metadata.sampler = samplerNode.inputs.solver as string;
+
+      // Get Guidance
+      const guidanceNode = customAdvancedSampler.inputs.guider as ComfyNode;
+      processGuidance: if (guidanceNode?.class_type === 'BasicGuider') {
+        // Get cfgScale
+        const conditioningNode = guidanceNode.inputs.conditioning as ComfyNode;
+        if (conditioningNode?.class_type !== 'FluxGuidance') break processGuidance;
+        metadata.cfgScale = conditioningNode.inputs.guidance as number;
+
+        // Get prompt
+        const textEncoderNode = conditioningNode.inputs.conditioning as ComfyNode;
+        if (textEncoderNode?.class_type !== 'CLIPTextEncode') break processGuidance;
+        if (typeof textEncoderNode.inputs.text === 'string')
+          metadata.prompt = textEncoderNode.inputs.text;
+        else if ((textEncoderNode.inputs.text as ComfyNode)?.class_type === 'String Literal')
+          metadata.prompt = (textEncoderNode.inputs.text as ComfyNode).inputs.string as string;
+      }
+
+      // Get steps
+      const schedulerNode = customAdvancedSampler.inputs.sigmas as ComfyNode;
+      if (schedulerNode?.class_type === 'BasicScheduler') {
+        metadata.steps = schedulerNode.inputs.steps as number;
+        metadata.scheduler = schedulerNode.inputs.scheduler as string;
+        metadata.denoise = schedulerNode.inputs.denoise as number;
+      }
+
+      // Get dimensions
+      const latentImageNode = customAdvancedSampler.inputs.latent_image as ComfyNode;
+      if (latentImageNode?.class_type === 'EmptyLatentImage') {
+        metadata.width = getNumberValue(latentImageNode.inputs.width as ComfyNumber, ['int']);
+        metadata.height = getNumberValue(latentImageNode.inputs.height as ComfyNumber, ['int']);
+      }
     } else {
       const initialSamplerNode =
         samplerNodes.find((x) => x.latent_image.class_type == 'EmptyLatentImage') ??

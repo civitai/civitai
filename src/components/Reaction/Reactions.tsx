@@ -146,12 +146,11 @@ export function Reactions({
             px={0}
             compact
             onClick={() => setShowAll((s) => !s)}
+            classNames={{ inner: 'flex gap-0.5' }}
             {...(buttonStyling ? buttonStyling('AddReaction') : {})}
           >
-            <Group spacing={2} noWrap>
-              <IconPlus size={16} stroke={2.5} />
-              <IconMoodSmile size={18} stroke={2.5} />
-            </Group>
+            <IconPlus size={16} stroke={2.5} />
+            <IconMoodSmile size={18} stroke={2.5} />
           </Button>
         )}
 
@@ -259,14 +258,13 @@ function ReactionBadge({
       pr={3}
       color={color}
       compact
+      classNames={{ inner: 'flex gap-0.5' }}
       {...(buttonStyling ? buttonStyling(reaction, hasReacted) : {})}
     >
-      <Group spacing={4} align="center" noWrap>
-        <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
-          {constants.availableReactions[reaction]}
-        </Text>
-        {!hideReactionCount && <Text inherit>{count}</Text>}
-      </Group>
+      <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
+        {constants.availableReactions[reaction]}
+      </Text>
+      {!hideReactionCount && <Text inherit>{count}</Text>}
     </Button>
   );
 }
@@ -311,26 +309,11 @@ function BuzzTippingBadge({
         color="yellow.7"
         variant="light"
         {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
+        classNames={{ inner: 'flex gap-0.5 items-center' }}
       >
-        <Group spacing={2} align="center" noWrap>
-          <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-          <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
-        </Group>
+        <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+        <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
       </Badge>
     </InteractiveTipBuzzButton>
-  );
-}
-
-function ReactionSelector({
-  reaction,
-  hasReacted,
-}: {
-  reaction: ReviewReactions;
-  hasReacted: boolean;
-}) {
-  return (
-    <Button size="xs" radius="xs" variant={'subtle'} color={hasReacted ? 'blue' : 'gray'}>
-      {constants.availableReactions[reaction]}
-    </Button>
   );
 }

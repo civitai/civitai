@@ -53,6 +53,7 @@ export async function createComfyStep(
     seed: params.seed,
     workflowId: params.workflow,
     resources: resources.map(({ id, strength }) => ({ modelVersionId: id, strength: strength })),
+    remixOfId: input.remixOfId,
   });
 
   return {
@@ -66,7 +67,7 @@ export async function createComfyStep(
     metadata: {
       resources: input.resources,
       params: input.params,
-      remix: input.remix,
+      remixOfId: input.remixOfId,
     },
   } as ComfyStepTemplate;
 }

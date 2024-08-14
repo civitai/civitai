@@ -85,49 +85,7 @@ export const donateToGoal = async ({
     });
 
     // Returns an updated copy of the goal.
-    const updatedDonationGoal = await donationGoalById({ id: donationGoalId, userId });
-
-    const isGoalMet = updatedDonationGoal.total >= goal.goalAmount;
-    if (goal.isEarlyAccess && goal.modelVersionId && isGoalMet) {
-      // This goal was completed, early access should be granted. Fetch the model version to confirm early access still applies and complete it.
-      const modelVersion = await dbRead.modelVersion.findUnique({
-        where: {
-          id: goal.modelVersionId,
-        },
-        select: {
-          earlyAccessConfig: true,
-          earlyAccessEndsAt: true,
-          modelId: true,
-        },
-      });
-
-      if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
-        await dbWrite.$executeRaw`
-          UPDATE "ModelVersion"
-          SET "earlyAccessConfig" =
-            COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
-              'timeframe', 0,
-              'originalPublishedAt', "publishedAt",
-              'originalTimeframe', "earlyAccessConfig"->>'timeframe'
-            ),
-          "earlyAccessEndsAt" = NULL,
-          "availability" = 'Public',
-          "publishedAt" = NOW()
-          WHERE "id" = ${goal.modelVersionId}
-        `;
-
-        await updateModelEarlyAccessDeadline({
-          id: modelVersion.modelId,
-        }).catch((e) => {
-          console.error('Unable to update model early access deadline');
-          console.error(e);
-        });
-
-        // Ensures user gets access to the resource after purchasing.
-        await bustOrchestratorModelCache(goal.modelVersionId);
-      }
-    }
-
+    const updatedDonationGoal = await checkDonationGoalComplete({ donationGoalId });
     return updatedDonationGoal;
   } catch (e) {
     if (buzzTransactionId) {
@@ -143,4 +101,57 @@ export const donateToGoal = async ({
     }
     throw new Error('Failed to create donation');
   }
+};
+
+export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGoalId: number }) => {
+  const goal = await donationGoalById({ id: donationGoalId, isModerator: true }); // Force is moderator since this unlocks the goal.
+  const isGoalMet = goal.total >= goal.goalAmount;
+  if (goal.isEarlyAccess && goal.modelVersionId && isGoalMet) {
+    // Mark goal as complete.
+    await dbWrite.donationGoal.update({
+      where: { id: donationGoalId },
+      data: { active: false },
+    });
+    goal.active = false;
+
+    // This goal was completed, early access should be granted. Fetch the model version to confirm early access still applies and complete it.
+    const modelVersion = await dbRead.modelVersion.findUnique({
+      where: {
+        id: goal.modelVersionId,
+      },
+      select: {
+        earlyAccessConfig: true,
+        earlyAccessEndsAt: true,
+        modelId: true,
+      },
+    });
+
+    if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
+      await dbWrite.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "earlyAccessConfig" =
+          COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
+            'timeframe', 0,
+            'originalPublishedAt', "publishedAt",
+            'originalTimeframe', "earlyAccessConfig"->>'timeframe'
+          ),
+        "earlyAccessEndsAt" = NULL,
+        "availability" = 'Public',
+        "publishedAt" = NOW()
+        WHERE "id" = ${goal.modelVersionId}
+      `;
+
+      await updateModelEarlyAccessDeadline({
+        id: modelVersion.modelId,
+      }).catch((e) => {
+        console.error('Unable to update model early access deadline');
+        console.error(e);
+      });
+
+      // Ensures user gets access to the resource after purchasing.
+      await bustOrchestratorModelCache(goal.modelVersionId);
+    }
+  }
+
+  return goal;
 };

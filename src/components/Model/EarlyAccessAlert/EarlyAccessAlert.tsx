@@ -1,4 +1,4 @@
-import { Anchor, Text, Alert } from '@mantine/core';
+import { Anchor, Text, Alert, Stack } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons-react';
@@ -77,28 +77,46 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
 
   return (
     <Alert color="yellow">
-      <Text size="xs">
-        The creator of this {getDisplayName(modelType)} has set this version to{' '}
-        <Text weight="bold" component="span">
-          Early Access
-        </Text>{' '}
-        and as such it is only available for people who purchase it. This{' '}
-        {getDisplayName(modelType)} will be available for free in{' '}
-        <Text weight="bold" component="span">
-          <Countdown endTime={deadline} />
-        </Text>{' '}
-        {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}. If you want to know
-        more, check out our article{' '}
-        <Anchor
-          color="yellow"
-          td="underline"
-          target="_blank"
-          href={`/articles/${constants.earlyAccess.article}`}
-        >
-          here
-        </Anchor>
-        .
-      </Text>
+      <Stack>
+        <Text size="xs">
+          The creator of this {getDisplayName(modelType)} has set this version to{' '}
+          <Text weight="bold" component="span">
+            Early Access
+          </Text>{' '}
+          and as such it is only available for people who purchase it. This{' '}
+          {getDisplayName(modelType)} will be available for free in{' '}
+          <Text weight="bold" component="span">
+            <Countdown endTime={deadline} />
+          </Text>{' '}
+          {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}. If you want to know
+          more, check out our article{' '}
+          <Anchor
+            color="yellow"
+            td="underline"
+            target="_blank"
+            href={`/articles/${constants.earlyAccess.article}`}
+          >
+            here
+          </Anchor>
+          .
+        </Text>
+        <LoginRedirect reason="notify-version">
+          <Text
+            variant="link"
+            onClick={!toggleNotifyMutation.isLoading ? handleNotifyMeClick : undefined}
+            sx={{
+              cursor: toggleNotifyMutation.isLoading ? 'not-allowed' : 'pointer',
+              lineHeight: 1,
+            }}
+            span
+            color="yellow"
+          >
+            {alreadyNotifying
+              ? 'Remove me from this notification.'
+              : `Notify me when it's available.`}
+          </Text>
+        </LoginRedirect>
+      </Stack>
     </Alert>
   );
 }

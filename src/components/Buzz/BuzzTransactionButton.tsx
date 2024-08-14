@@ -33,6 +33,10 @@ const useButtonStyle = createStyles((theme) => ({
   button: {
     color: theme.colors.dark[8],
     fontWeight: 600,
+
+    ['&[data-loading] .mantine-Button-leftIcon']: {
+      display: 'none',
+    },
   },
 }));
 
@@ -94,6 +98,7 @@ export function BuzzTransactionButton({
         },
       }}
       size={size}
+      loading={loading}
       disabled={buttonProps.disabled || !!error}
     >
       <Group spacing="md" position="apart" noWrap w="100%">

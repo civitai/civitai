@@ -51,7 +51,7 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().nullish(),
-  hash: z.number().nullish(),
+  hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
@@ -126,17 +126,14 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
 // @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
-async function isBlocked(hash: number) {
-  // const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
-  //   SELECT hash
-  //   FROM "BlockedImage"
-  //   WHERE BIT_COUNT(${hash}::bigint ^ "hash") < 5
-  // `;
+async function isBlocked(hash: string) {
+  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+    SELECT hash
+    FROM "BlockedImage"
+    WHERE hamming_distance(${hash}::bigint, "hash") < 5
+  `;
 
-  // return matches.length > 0;
-
-  // Uncomment above code once we have the blocked image hash table
-  return false;
+  return matches.length > 0;
 }
 
 async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
@@ -144,11 +141,19 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     await dbWrite.image.update({
       where: { id },
       data: {
-        pHash: hash,
+        pHash: BigInt(hash),
         ingestion: ImageIngestionStatus.Blocked,
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: 'Similar to blocked content',
       },
+    });
+    return;
+  }
+
+  if (hash && source === TagSource.ImageHash) {
+    await dbWrite.image.update({
+      where: { id },
+      data: { pHash: BigInt(hash), updatedAt: new Date() },
     });
     return;
   }
@@ -384,8 +389,6 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
         data.blockedFor = blockedFor?.join(',') ?? 'Failed audit, no explanation';
       }
     }
-
-    if (hash) data.pHash = hash;
 
     if (Object.keys(data).length > 0) {
       data.updatedAt = new Date();
