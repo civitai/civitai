@@ -169,6 +169,7 @@ export const setTosViolationHandler = async ({
         nsfwLevel: true,
         userId: true,
         postId: true,
+        pHash: true,
         post: {
           select: {
             title: true,
@@ -215,7 +216,7 @@ export const setTosViolationHandler = async ({
       },
     });
 
-    await addBlockedImage({ hash: id, reason: BlockImageReason.TOS });
+    if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 

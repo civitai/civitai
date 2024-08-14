@@ -122,11 +122,11 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
-    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
-    checkPermission: modelVersion.checkPermission,
     canGenerate,
-    freeTrialLimit: modelVersion.freeTrialLimit,
     requireAuth: modelVersion.requireAuth,
+    checkPermission: modelVersion.checkPermission,
+    earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
+    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
   };
   res.status(200).json(data);
 });

@@ -260,15 +260,9 @@ export const checkResourcesCoverageSchema = z.object({
 });
 
 export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
-// export const getGenerationDataSchema = z.object({
-//   id: z.coerce.number(),
-//   type: z.enum(['image', 'model']),
-// });
-
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
-  // z.object({ type: z.literal('random'), includeResources: z.boolean().optional() }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 

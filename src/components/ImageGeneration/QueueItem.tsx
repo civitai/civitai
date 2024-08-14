@@ -73,10 +73,12 @@ export function QueueItem({
   request,
   step,
   id,
+  filter,
 }: {
   request: NormalizedGeneratedImageResponse;
   step: NormalizedGeneratedImageStep;
   id: string;
+  filter: { marker?: string } | undefined;
 }) {
   const { classes } = useStyle();
   const features = useFeatureFlags();
@@ -91,9 +93,22 @@ export function QueueItem({
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
-  const { params, images, resources } = step;
-  const cost = request.totalCost;
+  const { params, resources } = step;
 
+  let { images } = step;
+
+  if (filter && filter.marker) {
+    images = images.filter((image) => {
+      const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
+      const feedback = step.metadata?.images?.[image.id]?.feedback;
+
+      if (filter.marker === 'favorited') return isFavorite;
+      else if (filter.marker === 'liked' || filter.marker === 'disliked')
+        return feedback === filter.marker;
+    });
+  }
+
+  const cost = request.totalCost;
   const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const [processing, setProcessing] = useState(status === 'processing');
   useEffect(() => {
@@ -136,6 +151,7 @@ export function QueueItem({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed: undefined },
+      remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('generate') ? 'generate' : view,
     });
   };
@@ -302,7 +318,7 @@ const useStyle = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gap: theme.spacing.xs,
-    gridTemplateColumns: 'repeat(2, 1fr)', // default for larger screens, max 6 columns
+    gridTemplateColumns: 'repeat(1, 1fr)', // default for larger screens, max 6 columns
 
     // [`@media (max-width: ${theme.breakpoints.xl}px)`]: {
     //   gridTemplateColumns: 'repeat(4, 1fr)', // 4 columns for screens smaller than xl
