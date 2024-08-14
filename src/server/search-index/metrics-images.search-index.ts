@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -7,11 +8,11 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { isDefined } from '~/utils/type-guards';
 
-const READ_BATCH_SIZE = 1000;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
+const READ_BATCH_SIZE = 100000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 
-const searchableAttributes = ['prompt'] as const;
+const searchableAttributes = [] as const;
 
 const sortableAttributes = ['sortAt', 'reactionCount', 'commentCount', 'collectedCount'] as const;
 
@@ -31,7 +32,6 @@ const filterableAttributes = [
   'nsfwLevel',
   'postId',
   'published',
-  'id',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -105,7 +105,6 @@ export type SearchBaseImage = {
   width: number;
   height: number;
   hash: string;
-  prompt: string;
   hideMeta: boolean;
   sortAt: Date;
   type: string;
@@ -207,7 +206,7 @@ export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformD
 
 // TODO.imageMetrics create another index updater for specifically updating metrics
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
-  workerCount: 15,
+  workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
@@ -277,10 +276,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
     );
 
-    const imageIds = prevData
-      ? (prevData as { images: SearchBaseImage[] }).images.map((i) => i.id)
-      : [];
-
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
@@ -292,7 +287,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."width",
         i."height",
         i."hash",
-        i."meta"->'prompt' as "prompt",
         i."hideMeta",
         i."sortAt",
         i."type",
@@ -328,99 +322,106 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       };
     }
 
-    if (step === 1) {
-      // Pull metrics:
-      // TODO: Use clickhouse to pull metrics.
+    const imageIds = prevData
+      ? (prevData as { images: SearchBaseImage[] }).images.map((i) => i.id)
+      : [];
+    const result = prevData as Record<string, any>;
+    const batches = chunk(imageIds, 1000);
+    let noMoreSteps = false;
+    for (const batch of batches) {
+      if (step === 1) {
+        // Pull metrics:
+        // TODO: Use clickhouse to pull metrics.
 
-      const metrics = await db.$queryRaw`
+        const metrics = await db.$queryRaw<Metrics[]>`
+            SELECT
+              im."imageId" as id,
+              im."collectedCount" as "collectedCount",
+              im."reactionCount" as "reactionCount",
+              im."commentCount" as "commentCount"
+            FROM "ImageMetric" im
+            WHERE im."imageId" IN (${Prisma.join(batch)})
+              AND im."timeframe" = 'AllTime'::"MetricTimeframe"
+        `;
+
+        result.metrics ??= [];
+        result.metrics.push(...metrics);
+        continue;
+      }
+
+      if (step === 2) {
+        // Pull tags:
+        const cacheImageTags = await tagIdsForImagesCache.fetch(batch);
+
+        result.imageTags ??= {};
+        Object.assign(result.imageTags, cacheImageTags);
+        continue;
+      }
+
+      if (step === 3) {
+        // Tools and techniqaues
+
+        const tools: ImageTool[] = await db.imageTool.findMany({
+          select: {
+            imageId: true,
+            toolId: true,
+          },
+          where: { imageId: { in: batch } },
+        });
+
+        result.tools ??= [];
+        result.tools.push(...tools);
+
+        const techniques: ImageTechnique[] = await db.imageTechnique.findMany({
+          where: { imageId: { in: batch } },
+          select: {
+            imageId: true,
+            techniqueId: true,
+          },
+        });
+        result.techniques ??= [];
+        result.techniques.push(...techniques);
+        continue;
+      }
+
+      if (step === 4) {
+        // Cosmetics:
+
+        const cosmetics = await getCosmeticsForEntity({
+          ids: batch,
+          entity: 'Image',
+        });
+
+        result.cosmetics ??= {};
+        Object.assign(result.cosmetics, cosmetics);
+        continue;
+      }
+
+      if (step === 5) {
+        // Model versions & baseModel:
+
+        const modelVersions = await db.$queryRaw<ModelVersions[]>`
           SELECT
-            im."imageId" as id,
-            im."collectedCount" as "collectedCount",
-            im."reactionCount" as "reactionCount",
-            im."commentCount" as "commentCount"
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(imageIds)})
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      `;
+            ir."imageId" as id,
+            string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
+            array_agg(mv."id") as "modelVersionIds"
+          FROM "ImageResource" ir
+          JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
+          JOIN "Model" m ON mv."modelId" = m."id"
+          WHERE ir."imageId" IN (${Prisma.join(batch)})
+          GROUP BY ir."imageId", mv."baseModel"
+        `;
 
-      return {
-        ...prevData,
-        metrics,
-      };
+        result.modelVersions ??= [];
+        result.modelVersions.push(...modelVersions);
+        continue;
+      }
+
+      noMoreSteps = true;
     }
 
-    if (step === 2) {
-      // Pull tags:
-      const cacheImageTags = await tagIdsForImagesCache.fetch(imageIds);
-
-      return {
-        ...prevData,
-        imageTags: cacheImageTags,
-      };
-    }
-
-    if (step === 3) {
-      // Tools and techniqaues
-
-      const tools: ImageTool[] = await db.imageTool.findMany({
-        select: {
-          imageId: true,
-          toolId: true,
-        },
-        where: { imageId: { in: imageIds } },
-      });
-
-      const techniques: ImageTechnique[] = await db.imageTechnique.findMany({
-        where: { imageId: { in: imageIds } },
-        select: {
-          imageId: true,
-          techniqueId: true,
-        },
-      });
-
-      return {
-        ...prevData,
-        tools,
-        techniques,
-      };
-    }
-
-    if (step === 4) {
-      // Cosmetics:
-
-      const cosmetics = await getCosmeticsForEntity({
-        ids: imageIds,
-        entity: 'Image',
-      });
-
-      return {
-        ...prevData,
-        cosmetics,
-      };
-    }
-
-    if (step === 5) {
-      // Model versions & baseModel:
-
-      const modelVersions = await db.$queryRaw<ModelVersions[]>`
-        SELECT
-          ir."imageId" as id,
-          string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
-          array_agg(mv."id") as "modelVersionIds"
-        FROM "ImageResource" ir
-        JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
-        JOIN "Model" m ON mv."modelId" = m."id"
-        WHERE ir."imageId" IN (${Prisma.join(imageIds)})
-        GROUP BY ir."imageId", mv."baseModel"
-      `;
-
-      return {
-        ...prevData,
-        modelVersions,
-      };
-    }
-
-    return null;
+    if (noMoreSteps) return null;
+    return result;
   },
   transformData,
   pushData: async ({ indexName }, data) => {

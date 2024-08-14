@@ -326,12 +326,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
-      // if (!resetInMainIndex) {
-      //   // Finally, perform the swap:
-      //   await swapIndex({ indexName, swapIndexName, client: processor.client });
-      // }
+      if (!resetInMainIndex) {
+        // Finally, perform the swap:
+        await swapIndex({ indexName, swapIndexName, client: processor.client });
+      }
       // Clear update queue since our index should be brand new:
-      // await SearchIndexUpdate.clearQueue(indexName);
+      await SearchIndexUpdate.clearQueue(indexName);
       // console.log({ batchSize, startId, endId });
     },
     async updateSync(
