@@ -494,11 +494,11 @@ function FileEditForm({
 
           <Select
             label="Precision"
-            placeholder="fp16, fp32, bf16"
+            placeholder="fp16, fp32, bf16, fp8, nf4"
             data={constants.modelFileFp}
             error={error?.fp?._errors[0]}
             value={versionFile.fp ?? null}
-            onChange={(value: 'fp16' | 'fp32' | 'bf16' | null) => {
+            onChange={(value: ModelFileFp | null) => {
               updateFile(versionFile.uuid, { fp: value });
             }}
             withAsterisk
