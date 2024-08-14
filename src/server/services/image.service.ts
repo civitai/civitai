@@ -38,7 +38,7 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
-import { metricsClient } from '~/server/meilisearch/client';
+import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
@@ -1397,8 +1397,6 @@ export const getAllImagesPost = async (
   const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
   const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
-  // TODO may need to check for image existence in db
-
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (currentUserId) {
     const reactionsRaw = await dbRead.imageReaction.findMany({
@@ -1418,7 +1416,7 @@ export const getAllImagesPost = async (
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
   ]);
 
-  const mergedData = searchResults.map((sr) => {
+  const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
@@ -1429,6 +1427,7 @@ export const getAllImagesPost = async (
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { width: sr.width, height: sr.height },
+      published: !!publishedAtUnix,
       //
       user: {
         id: sr.userId,
@@ -1509,9 +1508,9 @@ const makeMeiliImageSearchFilter = (
 };
 
 async function getImagesFromSearch(input: ImageSearchInput) {
-  if (!metricsClient) return { data: [], total: 0 };
+  if (!metricsSearchClient) return { data: [], total: 0 };
 
-  const {
+  let {
     sort,
     modelVersionId,
     types,
@@ -1565,20 +1564,15 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
-  // do we need publishedAt for < now() check?
   if (notPublished && isModerator) {
-    filters.push(makeMeiliImageSearchFilter('published', '= false'));
-  } else {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (!isModerator) {
+    // Users should only see published stuff or things they own
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
     if (currentUserId) {
-      filters.push(
-        `(${makeMeiliImageSearchFilter('published', '= true')} OR ${makeMeiliImageSearchFilter(
-          'userId',
-          `= ${currentUserId}`
-        )})`
-      );
-    } else {
-      filters.push(makeMeiliImageSearchFilter('published', '= true'));
+      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
+    filters.push(`(${publishedFilters.join(' OR ')})`);
   }
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
@@ -1592,10 +1586,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
   // TODO what are we doing with this? userIds are not passed in, only a single username is
-  // if (userIds) {
-  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(`userId IN [${userIds.join(',')}]`);
-  // }
+  if (userIds) {
+    userIds = Array.isArray(userIds) ? userIds : [userIds];
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+  }
   if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
@@ -1609,16 +1603,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
-
-  // TODO remove, this is for 6/21 dev
-  if (!isProd) {
-    filters.push(
-      makeMeiliImageSearchFilter(
-        'sortAtUnix',
-        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
-      )
-    );
-  }
 
   // Log properties we don't support yet
   const cantProcess: Record<string, any> = {
@@ -1651,7 +1635,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
-    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsClient
+    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 

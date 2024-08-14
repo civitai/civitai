@@ -241,7 +241,7 @@ export function ImagesAsPostsCard({
                   user={data.user}
                   subText={
                     <>
-                      {data.published ? <DaysFromNow date={data.publishedAt} /> : 'Not published'}
+                      {data.publishedAt ? <DaysFromNow date={data.publishedAt} /> : 'Not published'}
                       {' - '}
                       {modelVersionName ?? 'Cross-post'}
                     </>
@@ -260,7 +260,7 @@ export function ImagesAsPostsCard({
                   linkToProfile
                 />
                 <Group spacing={8} position="right" noWrap>
-                  {!data.published && (
+                  {!data.publishedAt && (
                     <Tooltip label="Post not Published" withArrow>
                       <Link href={`/posts/${data.postId}/edit`}>
                         <ActionIcon color="red" variant="outline">

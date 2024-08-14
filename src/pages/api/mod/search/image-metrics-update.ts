@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
-import { metricsClient, updateDocs } from '~/server/meilisearch/client';
+import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 
@@ -79,7 +79,7 @@ const addFields = async () => {
         indexName: INDEX_ID,
         documents,
         batchSize: BATCH_SIZE,
-        client: metricsClient,
+        client: metricsSearchClient,
       });
       console.timeEnd(consolePushKey);
     },
