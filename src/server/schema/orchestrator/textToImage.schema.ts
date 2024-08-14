@@ -34,6 +34,7 @@ export const textToImageParamsSchema = z.object({
   upscale: z.number().max(3).optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
+  experimental: z.boolean().optional(),
 });
 // #endregion
 
@@ -43,8 +44,8 @@ export const textToImageParamsSchema = z.object({
 
 export type TextToImageStepRemixMetadata = z.infer<typeof textToImageStepRemixMetadataSchema>;
 export const textToImageStepRemixMetadataSchema = z.object({
-  versionId: z.number().optional(),
-  imageId: z.number().optional(),
+  id: z.number(),
+  prompt: z.string().optional(),
 });
 
 export type TextToImageStepImageMetadata = z.infer<typeof textToImageStepImageMetadataSchema>;
@@ -53,6 +54,7 @@ const textToImageStepImageMetadataSchema = z.object({
   feedback: z.enum(['liked', 'disliked']).optional(),
   comments: z.string().optional(),
   postId: z.number().optional(),
+  favorite: z.boolean().optional(),
 });
 
 /**
@@ -64,7 +66,7 @@ export type GeneratedImageStepMetadata = z.infer<typeof generatedImageStepMetada
 export const generatedImageStepMetadataSchema = z.object({
   params: textToImageParamsSchema.optional(),
   resources: workflowResourceSchema.array().optional(),
-  remix: textToImageStepRemixMetadataSchema.optional(),
+  remixOfId: z.number().optional(),
   images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
 });
 // #endregion
@@ -73,7 +75,7 @@ export const generateImageSchema = z.object({
   params: textToImageParamsSchema,
   resources: workflowResourceSchema.array().min(1, 'You must select at least one resource'),
   tags: z.string().array().default([]),
-  remix: textToImageStepRemixMetadataSchema.optional(),
+  remixOfId: z.number().optional(),
   tips: z
     .object({
       creators: z.number().min(0).max(1).default(0).optional(),

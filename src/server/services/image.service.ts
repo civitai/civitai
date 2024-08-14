@@ -105,7 +105,7 @@ import { Flags } from '~/shared/utils';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { baseS3Client } from '~/utils/s3-client';
+import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -131,11 +131,24 @@ export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) =>
 };
 
 export async function purgeResizeCache({ url }: { url: string }) {
-  const { items } = await baseS3Client.listObjects({
+  // TODO Remove after fallback bucket is deprecated
+  if (env.S3_IMAGE_CACHE_BUCKET_OLD) {
+    const { items } = await baseS3Client.listObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+      prefix: url,
+    });
+    await baseS3Client.deleteManyObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+      keys: items.map((x) => x.Key).filter(isDefined),
+    });
+  }
+
+  // Purge from new cache bucket
+  const { items } = await imageS3Client.listObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     prefix: url,
   });
-  await baseS3Client.deleteManyObjects({
+  await imageS3Client.deleteManyObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     keys: items.map((x) => x.Key).filter(isDefined),
   });
@@ -155,7 +168,13 @@ export const deleteImageById = async ({
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        await baseS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+        // TODO Remove after fallback bucket is deprecated
+        if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
+          await baseS3Client.deleteObject({
+            bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD,
+            key: image.url,
+          });
+        await imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
         await purgeResizeCache({ url: image.url });
       }
     } catch {
@@ -378,6 +397,11 @@ export const ingestImage = async ({
 
     return true;
   }
+
+  const { prompt } = await dbClient.$queryRaw<{ prompt: string | null }>`
+    SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
+  `;
+
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -387,8 +411,14 @@ export const ingestImage = async ({
       type,
       width,
       height,
+      prompt,
       // wait: true,
-      scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+      scans: [
+        ImageScanType.Label,
+        ImageScanType.Moderation,
+        ImageScanType.WD14,
+        ImageScanType.Hash,
+      ],
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -429,6 +459,8 @@ export const ingestImageBulk = async ({
   const imageIds = images.map(({ id }) => id);
   const dbClient = tx ?? dbWrite;
 
+  if (!imageIds.length) return false;
+
   if (!isProd || !callbackUrl) {
     console.log('skip ingest');
     await dbClient.image.updateMany({
@@ -442,6 +474,10 @@ export const ingestImageBulk = async ({
     return true;
   }
 
+  const prompts = await dbClient.$queryRaw<{ id: number; prompt: string | null }[]>`
+    SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+  `;
+
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
     {
@@ -454,7 +490,13 @@ export const ingestImageBulk = async ({
           type: image.type,
           width: image.width,
           height: image.height,
-          scans: [ImageScanType.Label, ImageScanType.Moderation, ImageScanType.WD14],
+          prompt: prompts.find((x) => x.id === image.id)?.prompt,
+          scans: [
+            ImageScanType.Label,
+            ImageScanType.Moderation,
+            ImageScanType.WD14,
+            ImageScanType.Hash,
+          ],
           callbackUrl,
         }))
       ),

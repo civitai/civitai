@@ -6,12 +6,38 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { MarkerType } from '~/server/common/enums';
 
 export function Feed() {
   const { classes } = useStyles();
+
+  const { filters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
+
+  let workflowTagsFilter = undefined;
+
+  switch (filters.marker) {
+    case MarkerType.Favorited:
+      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
+      break;
+
+    case MarkerType.Liked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
+      break;
+
+    case MarkerType.Disliked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
+      break;
+  }
+
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequestsImages();
+    useGetTextToImageRequestsImages({
+      tags: workflowTagsFilter,
+    });
 
   if (isError)
     return (
@@ -32,23 +58,33 @@ export function Feed() {
       <Center h="100%">
         <Stack spacing="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
-          <Stack spacing={0}>
-            <Text size="md" align="center">
-              The queue is empty
-            </Text>
-            <Text size="sm" color="dimmed">
-              Try{' '}
-              <Text
-                variant="link"
-                onClick={() => generationPanel.setView('generate')}
-                sx={{ cursor: 'pointer' }}
-                span
-              >
-                generating
-              </Text>{' '}
-              new images with our resources
-            </Text>
-          </Stack>
+          {filters.marker && (
+            <Stack spacing={0}>
+              <Text size={32} align="center">
+                No results found
+              </Text>
+              <Text align="center">{'Try adjusting your filters'}</Text>
+            </Stack>
+          )}
+          {!filters.marker && (
+            <Stack spacing={0}>
+              <Text size="md" align="center">
+                The queue is empty
+              </Text>
+              <Text size="sm" color="dimmed">
+                Try{' '}
+                <Text
+                  variant="link"
+                  onClick={() => generationPanel.setView('generate')}
+                  sx={{ cursor: 'pointer' }}
+                  span
+                >
+                  generating
+                </Text>{' '}
+                new images with our resources
+              </Text>
+            </Stack>
+          )}
         </Stack>
       </Center>
     );
@@ -65,6 +101,8 @@ export function Feed() {
           step.images
             .filter((x) => x.status === 'succeeded')
             .map((image) => {
+              if (image.status !== 'succeeded') return null;
+
               const request = requests.find((request) => request.id === image.workflowId);
               if (!request) return null;
 
@@ -97,13 +135,13 @@ const useStyles = createStyles((theme) => ({
     display: 'grid',
     gridTemplateRows: 'masonry',
     gap: theme.spacing.xs,
-    gridTemplateColumns: '1fr 1fr',
+    gridTemplateColumns: '1fr',
 
     [`@container (min-width: 530px)`]: {
-      gridTemplateColumns: 'repeat(3, 1fr)',
+      gridTemplateColumns: 'repeat(2, 1fr)',
     },
     [`@container (min-width: 900px)`]: {
-      gridTemplateColumns: 'repeat(4, 1fr)',
+      gridTemplateColumns: 'repeat(3, 1fr)',
     },
     [`@container (min-width: 1200px)`]: {
       gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',

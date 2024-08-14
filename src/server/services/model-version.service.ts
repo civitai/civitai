@@ -43,6 +43,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { resourceDataCache } from '~/server/redis/caches';
+import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1170,6 +1171,10 @@ export const earlyAccessPurchase = async ({
         WHERE "id" = ${modelVersionId}; -- Your conditions here
       `;
     });
+
+    if (earlyAccessDonationGoal) {
+      await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+    }
 
     // Ensures user gets access to the resource after purchasing.
     await bustOrchestratorModelCache(modelVersionId, userId);

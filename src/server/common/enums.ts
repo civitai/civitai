@@ -89,6 +89,7 @@ export enum ImageScanType {
   Label,
   FaceDetection,
   WD14,
+  Hash,
 }
 
 export enum CommentV2Sort {
@@ -194,6 +195,17 @@ export enum ThreadSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
   MostReactions = 'Most Reactions',
+}
+
+export enum MarkerType {
+  Favorited = 'favorited',
+  Liked = 'liked',
+  Disliked = 'disliked',
+}
+
+export enum MarkerSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
 }
 
 export enum NsfwLevel {
