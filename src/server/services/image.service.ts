@@ -42,7 +42,7 @@ import { metricsClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -161,6 +161,24 @@ export async function purgeResizeCache({ url }: { url: string }) {
   });
 }
 
+async function markImagesDeleted(id: number | number[]) {
+  if (!Array.isArray(id)) id = [id];
+
+  const toSet = Object.fromEntries(id.map((x) => [x, x]));
+  await Promise.all([
+    redis.packed.hmSet(REDIS_KEYS.INDEXES.IMAGE_DELETED, toSet),
+    redis.hExpire(REDIS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
+  ]);
+}
+
+async function filterOutDeleted(data: { id: number }[]) {
+  const keys = data.map((x) => x.id.toString());
+  const deleted = (
+    (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
+  ).filter(isDefined);
+  return data.filter((x) => !deleted.includes(x.id));
+}
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -172,6 +190,9 @@ export const deleteImageById = async ({
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
+
+    // Mark as deleted in cache so we filter it out in the future
+    await markImagesDeleted(id);
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
