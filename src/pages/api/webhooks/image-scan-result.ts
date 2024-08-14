@@ -127,6 +127,7 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
 // @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
 async function isBlocked(hash: string) {
+  return false;
   const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
     SELECT hash
     FROM "BlockedImage"
