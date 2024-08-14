@@ -15,8 +15,8 @@ type CivitaiResource = {
 
 // #region [helpers]
 const hashesRegex = /, Hashes:\s*({[^}]+})/;
-// const civitaiResources = /, Civitai resources:\s*(.+)/; // -- OLD ONE
 const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
+const civitaiMetadata = /, Civitai metadata:\s*(\{.*?\})/;
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -155,6 +155,14 @@ export const automaticMetadataProcessor = createMetadataProcessor({
         delete resource.air;
       }
       detailsLine = detailsLine.replace(civitaiResources, '');
+    }
+
+    // Extract Civitai Metadata
+    const civitaiMetadataMatch = detailsLine?.match(civitaiMetadata)?.[1];
+    if (civitaiMetadataMatch && detailsLine) {
+      const data = JSON.parse(civitaiMetadataMatch) as Record<string, any>;
+      if (Object.keys(data).length !== 0) metadata.extra = data;
+      detailsLine = detailsLine.replace(civitaiMetadata, '');
     }
 
     // Extract fine details
