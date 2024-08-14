@@ -23,10 +23,12 @@ export function JoinPopover({
   children,
   message,
   dependency = true,
+  trigger = 'onClick',
 }: {
   children: React.ReactElement;
   message?: React.ReactNode;
   dependency?: boolean;
+  trigger?: 'onClick' | 'onChange';
 }) {
   const [uuid] = useState(uuidv4());
   const user = useCurrentUser();
@@ -52,7 +54,7 @@ export function JoinPopover({
         closeOnClickOutside
         withinPortal
       >
-        <Popover.Target>{cloneElement(children, { onClick: handleClick })}</Popover.Target>
+        <Popover.Target>{cloneElement(children, { [trigger]: handleClick })}</Popover.Target>
         <Popover.Dropdown>
           <Stack spacing="xs">
             <Group>
@@ -77,11 +79,11 @@ export function JoinPopover({
     );
 
   return cloneElement(children, {
-    onClick: (e: React.MouseEvent) => {
+    [trigger]: (e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
       e.nativeEvent.stopImmediatePropagation();
-      children.props.onClick?.();
+      children.props[trigger]?.();
     },
   });
 }

@@ -192,16 +192,18 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
+export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
-  newsletterDialogLastSeenAt: z.date().nullish(),
+  newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   features: z.record(z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   airEmail: z.string().email().optional(),
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
-  cosmeticStoreLastViewed: z.date().nullish(),
+  cosmeticStoreLastViewed: z.coerce.date().nullish(),
+  allowAds: z.boolean().optional().default(true),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -216,6 +218,7 @@ export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
+  allowAds: z.boolean().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

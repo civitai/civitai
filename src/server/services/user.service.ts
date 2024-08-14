@@ -30,6 +30,8 @@ import {
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
   UserMeta,
+  UserSettingsInput,
+  userSettingsSchema,
 } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
@@ -304,7 +306,7 @@ export const updateUserById = async ({
   return user;
 };
 
-export async function setUserSetting(userId: number, settings: UserSettingsSchema) {
+export async function setUserSetting(userId: number, settings: UserSettingsInput) {
   const toSet = removeEmpty(settings);
   if (Object.keys(toSet).length) {
     await dbWrite.$executeRawUnsafe(`
@@ -332,7 +334,12 @@ export async function getUserSettings(userId: number) {
     FROM "User"
     WHERE id = ${userId}
   `;
-  return settings[0]?.settings ?? {};
+
+  const userSettings = userSettingsSchema.safeParse(settings[0]?.settings ?? {});
+  // Pass over the default settings if the user settings are invalid
+  if (!userSettings.success) return settings[0]?.settings ?? {};
+
+  return userSettings.data;
 }
 
 export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
@@ -673,7 +680,8 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     meta: (response.meta ?? {}) as UserMeta,
   };
 
-  const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
+  const { subscription, profilePicture, profilePictureId, publicSettings, settings, ...rest } =
+    user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
@@ -693,12 +701,15 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // if (!!user.username && !!user.email)
   //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
 
+  const userSettings = userSettingsSchema.safeParse(settings ?? {});
+
   return {
     ...rest,
     image: profilePicture?.url ?? rest.image,
     tier,
     permissions,
     memberInBadState,
+    settings: userSettings.success ? { allowAds: userSettings.data.allowAds } : {},
     // feedbackToken,
   };
 };
