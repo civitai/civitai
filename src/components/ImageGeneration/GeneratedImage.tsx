@@ -101,6 +101,7 @@ export function GeneratedImage({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
+      remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('/generate') ? 'generate' : view,
     });
   };

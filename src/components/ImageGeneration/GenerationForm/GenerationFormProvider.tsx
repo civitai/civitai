@@ -13,24 +13,17 @@ import {
   getGenerationConfig,
 } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
-import {
-  textToImageParamsSchema,
-  textToImageStepRemixMetadataSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
+import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
-  GenerationResource,
   getBaseModelFromResources,
   getBaseModelSetType,
-  getBaseModelSetTypes,
-  getResourcesBaseModelSetType,
   getSizeFromAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
-import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { fetchGenerationData, generationStore, useGenerationStore } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -39,6 +32,7 @@ import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
 import { fluxModeOptions } from '~/shared/constants/generation.constants';
+import { useDebouncer } from '~/utils/debouncer';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -98,7 +92,8 @@ const formSchema = textToImageParamsSchema
           });
         }
       }),
-    remix: textToImageStepRemixMetadataSchema.optional(),
+    remixOfId: z.number().optional(),
+    remixSimilarity: z.number().optional(),
     aspectRatio: z.string(),
     creatorTip: z.number().min(0).max(1).default(0.25).optional(),
     civitaiTip: z.number().min(0).max(1).optional(),
@@ -200,6 +195,7 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     model: checkpoint,
     resources,
     vae,
+    remixOfId: data.remixOfId,
   };
 }
 
@@ -219,15 +215,10 @@ export function useGenerationForm() {
 }
 
 export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
-  const input = useGenerationStore((state) => state.input);
   const storeData = useGenerationStore((state) => state.data);
 
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
-  const { data: responseData, isFetching } = trpc.generation.getGenerationData.useQuery(input!, {
-    enabled: input !== undefined,
-    keepPreviousData: true,
-  });
 
   const getValues = useCallback(
     (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
@@ -235,6 +226,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   );
 
   const prevBaseModelRef = useRef<BaseModelSetType | null>();
+  const debouncer = useDebouncer(1000);
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
@@ -242,58 +234,66 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['tier'],
+    exclude: ['tier', 'remixSimilarity'],
     storage: localStorage,
   });
+
+  function checkSimilarity(id: number, prompt?: string) {
+    fetchGenerationData({ type: 'image', id }).then((data) => {
+      if (data.params.prompt && prompt !== undefined) {
+        const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
+        form.setValue('remixSimilarity', similarity);
+      }
+    });
+  }
 
   // TODO.Briant - determine a better way to pipe the data into the form
   // #region [effects]
   useEffect(() => {
     if (storeData) {
-      const data = formatGenerationData(storeData);
-      setValues(data);
-    } else if (responseData && !isFetching) {
-      if (!input) return;
-      const runType = input.type === 'modelVersion' ? 'run' : 'remix';
-      console.log(input.type);
-      const formData = form.getValues();
-
-      const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
-      const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
-
-      let resources: GenerationResource[];
-      if (runType === 'remix') {
-        resources = responseData.resources;
-      } else {
-        resources = uniqBy(
-          [
-            ...responseData.resources,
+      const { runType, remixOfId, resources, params } = storeData;
+      switch (runType) {
+        case 'replay':
+          setValues(formatGenerationData(storeData));
+          break;
+        case 'remix':
+        case 'run':
+          const formData = form.getValues();
+          const workflowType = formData.workflow?.split('-')?.[0] as WorkflowDefinitionType;
+          const workflow = workflowType !== 'txt2img' ? 'txt2img' : formData.workflow;
+          const formResources = [
             formData.model,
             ...(formData.resources ?? []),
             formData.vae,
-          ].filter(isDefined),
-          'id'
-        );
+          ].filter(isDefined);
+
+          const data = formatGenerationData({
+            params: { ...params, workflow },
+            remixOfId: runType === 'remix' ? remixOfId : undefined,
+            resources:
+              runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
+          });
+
+          setValues(runType === 'remix' ? data : removeEmpty(data));
+          break;
       }
 
-      const formatted = formatGenerationData({ ...responseData, resources });
+      if (remixOfId) {
+        checkSimilarity(remixOfId, params.prompt);
+      }
 
-      const data = { ...formatted, workflow };
-      if (resources.length && resources.some((x) => !x.available)) {
+      if (runType === 'remix' && resources.length && resources.some((x) => !x.available)) {
         showNotification({
           color: 'yellow',
           title: 'Remix',
           message: 'Some resources used to generate this image are unavailable',
         });
       }
-
-      setValues(runType === 'run' ? removeEmpty(data) : data);
     }
-
     return () => {
       generationStore.clearData();
     };
-  }, [responseData, status, currentUser, storeData, isFetching, input]); // eslint-disable-line
+  }, [status, currentUser, storeData]); // eslint-disable-line
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
@@ -323,6 +323,15 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (name === 'image') {
         if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
           form.setValue('workflow', 'txt2img');
+        }
+      }
+
+      if (name === 'prompt') {
+        const { remixOfId, prompt } = watchedValues;
+        if (remixOfId) {
+          debouncer(() => {
+            checkSimilarity(remixOfId, prompt);
+          });
         }
       }
     });
@@ -370,3 +379,68 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   );
 }
 // #endregion
+
+function cleanText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/<(?:\/?p|img|src|=|"|:|\.|\-|_)>/g, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter((token) => token.length > 0);
+}
+
+function createVocabMap(tokens1: string[], tokens2: string[]): Map<string, number> {
+  const vocab = new Set([...tokens1, ...tokens2]);
+  const vocabMap = new Map<string, number>();
+  Array.from(vocab).forEach((token, index) => {
+    vocabMap.set(token, index + 1);
+  });
+  return vocabMap;
+}
+
+function getTokens(tokens: string[], vocabMap: Map<string, number>): number[] {
+  return tokens.map((token) => vocabMap.get(token) || -1);
+}
+
+function cosineSimilarity(vectorA: number[], vectorB: number[]): number {
+  let dotProduct = 0,
+    normA = 0,
+    normB = 0;
+  vectorA.forEach((value, index) => {
+    const vectorBIndex = vectorB[index] ?? 0;
+    dotProduct += value * vectorBIndex;
+    normA += value * value;
+    normB += vectorBIndex * vectorBIndex;
+  });
+  const normy = Math.sqrt(normA) * Math.sqrt(normB);
+  return normy > 0 ? dotProduct / normy : 0;
+}
+
+function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): number {
+  const tokens1 = cleanText(prompt1);
+  const tokens2 = cleanText(prompt2);
+  const vocabMap = createVocabMap(tokens1, tokens2);
+
+  const promptTokens1 = getTokens(tokens1, vocabMap);
+  const promptTokens2 = getTokens(tokens2, vocabMap);
+  const setTokens1 = getTokens(Array.from(new Set(tokens1)), vocabMap);
+  const setTokens2 = getTokens(Array.from(new Set(tokens2)), vocabMap);
+
+  const cosSim = cosineSimilarity(promptTokens1, promptTokens2);
+  const setCosSim = cosineSimilarity(setTokens1, setTokens2);
+
+  const adjustedCosSim = (cosSim + 1) / 2;
+  const adjustedSetCosSim = (setCosSim + 1) / 2;
+
+  return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
+}
+
+// Example usage
+// const prompt1 =
+//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography, soft light, head and shoulders portrait, cover';
+// const prompt2 =
+//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography';
+
+// const similarity = calculateAdjustedCosineSimilarities(prompt1, prompt2);

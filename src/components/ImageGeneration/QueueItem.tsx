@@ -151,6 +151,7 @@ export function QueueItem({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed: undefined },
+      remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('generate') ? 'generate' : view,
     });
   };

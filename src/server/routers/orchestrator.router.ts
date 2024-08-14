@@ -29,18 +29,13 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
-import {
-  patchWorkflowSteps,
-  updateWorkflowSteps,
-} from '~/server/services/orchestrator/workflowSteps';
+import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { logToAxiom } from '~/server/logging/client';
 import { env } from '~/env/server.mjs';
-import { JsonPatchFactory, JsonPatchOperation } from '@civitai/client';
 import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
