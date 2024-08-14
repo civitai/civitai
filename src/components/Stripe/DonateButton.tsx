@@ -10,6 +10,9 @@ export function DonateButton({ children }: { children: React.ReactElement }) {
       if (url) Router.push(url);
       else {
         const stripe = await getClientStripe();
+        if (!stripe) {
+          return;
+        }
         await stripe.redirectToCheckout({ sessionId });
       }
     },

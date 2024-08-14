@@ -674,7 +674,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
-      ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
+      ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
       : undefined;
   const memberInBadState =
     (subscription &&

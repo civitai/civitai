@@ -1,15 +1,15 @@
-import { Elements } from '@stripe/react-stripe-js';
 import { loadStripe, Stripe } from '@stripe/stripe-js';
 import { useRef, useEffect } from 'react';
 import { env } from '~/env/client.mjs';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
-import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { Anchor, Stack, Text } from '@mantine/core';
 import { removeEmpty } from '~/utils/object-helpers';
 
-const stripePromise = loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY);
+const stripePromise = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+  ? loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+  : null;
 
 export const useStripePromise = () => {
   const ref = useRef<Promise<Stripe | null> | null>(null);

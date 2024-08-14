@@ -23,6 +23,10 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
       if (url) await router.push(url);
       else {
         const stripe = await getClientStripe();
+        if (!stripe) {
+          return;
+        }
+
         await stripe.redirectToCheckout({ sessionId });
       }
     },

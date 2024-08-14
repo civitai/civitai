@@ -20,6 +20,7 @@ export async function getUserStripeConnectAccount({ userId }: { userId: number }
 
 export async function createUserStripeConnectAccount({ userId }: { userId: number }) {
   const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe not available');
   const user = await dbRead.user.findUnique({ where: { id: userId } });
 
   if (!user) throw throwBadRequestError(`User not found: ${userId}`);
@@ -68,6 +69,8 @@ export async function getStripeConnectOnboardingLink({ userId }: { userId: numbe
   if (!userStripeConnect) throw throwBadRequestError('User stripe connect account not found');
 
   const stripe = await getServerStripe();
+
+  if (!stripe) throw throwBadRequestError('Stripe not available');
   const accountLink = await stripe.accountLinks.create({
     account: userStripeConnect.connectedAccountId,
     refresh_url: `${env.NEXT_PUBLIC_BASE_URL}/user/stripe-connect/onboard`,
@@ -163,6 +166,8 @@ export const payToStripeConnectAccount = async ({
   metadata?: MixedObject;
 }) => {
   const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe not available');
+
   const toUserStripeConnect = await getUserStripeConnectAccount({ userId: toUserId });
   if (!toUserStripeConnect) throw throwBadRequestError('User stripe connect account not found');
 
@@ -188,6 +193,7 @@ export const payToStripeConnectAccount = async ({
 
 export const revertStripeConnectTransfer = async ({ transferId }: { transferId: string }) => {
   const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe not available');
 
   try {
     const transfer = await stripe.transfers.retrieve(transferId, {

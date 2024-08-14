@@ -31,6 +31,9 @@ export function SubscribeButton({
       if (url) Router.push(url);
       else if (sessionId) {
         const stripe = await getClientStripe();
+        if (!stripe) {
+          return;
+        }
         await stripe.redirectToCheckout({ sessionId });
       }
     },

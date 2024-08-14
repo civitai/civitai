@@ -169,6 +169,11 @@ export const processClubMembershipRecurringPayments = createJob(
               return;
             }
 
+            // TODO.PaddleIntegration: Check for active payment provider and use that instead of stripe.
+            if (!stripe) {
+              return;
+            }
+
             const paymentMethods = await stripe.paymentMethods.list({
               customer: user.customerId as string,
               // type: 'card',
