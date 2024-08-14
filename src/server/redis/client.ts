@@ -188,4 +188,7 @@ export const REDIS_KEYS = {
     HISTORY_DOWNLOADS: 'limits:history-downloads',
   },
   LIVE_NOW: 'live-now',
+  INDEXES: {
+    IMAGE_DELETED: 'indexes:image-deleted',
+  },
 } as const;
