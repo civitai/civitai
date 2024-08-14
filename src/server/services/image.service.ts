@@ -161,7 +161,6 @@ export async function purgeResizeCache({ url }: { url: string }) {
   });
 }
 
-// TODO put this in many different places where images can be deleted
 async function markImagesDeleted(id: number | number[]) {
   if (!Array.isArray(id)) id = [id];
 
@@ -1585,7 +1584,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
-  // TODO what are we doing with this? userIds are not passed in, only a single username is
   if (userIds) {
     userIds = Array.isArray(userIds) ? userIds : [userIds];
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
@@ -1603,6 +1601,16 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
+
+  // TODO remove, this is for 6/21 dev
+  if (!isProd) {
+    filters.push(
+      makeMeiliImageSearchFilter(
+        'sortAtUnix',
+        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+      )
+    );
+  }
 
   // Log properties we don't support yet
   const cantProcess: Record<string, any> = {
