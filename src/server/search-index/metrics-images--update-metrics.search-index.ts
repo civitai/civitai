@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -6,7 +6,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 
 const READ_BATCH_SIZE = 10000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
-const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`; // TODO new or regular?
+const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
     return;
@@ -32,7 +32,6 @@ const transformData = async (metrics: Metrics[]) => {
   return records;
 };
 
-// TODO.imageMetrics create another index updater for specifically updating metrics
 export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpdateProcessor({
   workerCount: 15,
   indexName: INDEX_ID,
@@ -41,7 +40,6 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
   resetInMainIndex: true,
   pullSteps: 1,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
-    // TODO.imageMetrics set updatedAt on image when post is published
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
       SELECT (	
         SELECT
@@ -64,21 +62,18 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
       let lastId = 0;
 
       while (true) {
-        const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-          SELECT id
-          FROM "Image"
-          WHERE "updatedAt" > '${lastUpdatedAt}'
-            AND "postId" IS NOT NULL
-            AND id > ${lastId}
-          ORDER BY id
+        const ids = await clickhouse?.$query<{ id: number }>(`
+          SELECT
+            distinct entityId as "id"
+          FROM entityMetricEvents
+          WHERE entityType = 'Image'
+          AND createdAt > '${lastUpdatedAt}'
+          AND entityId > ${lastId}
+          ORDER BY entityId
           LIMIT ${READ_BATCH_SIZE};
         `);
-        // TODO will an image be "updated" if its metrics are updated?
 
-        jobContext.on('cancel', updatedIdItemsQuery.cancel);
-        const ids = await updatedIdItemsQuery.result();
-
-        if (!ids.length) {
+        if (!ids || ids.length) {
           break;
         }
 
@@ -100,19 +95,20 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
         ? batch.ids
         : Array.from({ length: batch.endId - batch.startId + 1 }, (_, i) => batch.startId + i);
 
-    // TODO: imageMetrics get metrics from clickHouse.
-    const metrics = await db.$queryRaw`
-          SELECT
-            im."imageId" as id,
-            im."collectedCount" as "collectedCount",
-            im."reactionCount" as "reactionCount",
-            im."commentCount" as "commentCount"
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(ids)})
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      `;
+    const metrics = await clickhouse?.$query<Metrics>(`
+          SELECT entityId as "id",
+                 SUM(if(
+                     metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
+                 )) as "reactionCount",
+                 SUM(if(metricType = 'Comment', metricValue, 0)) as "commentCount",
+                 SUM(if(metricType = 'Collection', metricValue, 0)) as "collectedCount"
+          FROM entityMetricEvents
+          WHERE entityType = 'Image'
+            AND entityId IN (${ids.join(',')})
+          GROUP BY id
+        `);
 
-    return metrics;
+    return metrics ?? [];
   },
   transformData,
   pushData: async ({ indexName }, data) => {

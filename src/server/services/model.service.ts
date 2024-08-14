@@ -38,7 +38,11 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
@@ -1456,7 +1460,9 @@ export const publishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  // TODO need imagesMetricsSearchIndex here?
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1556,7 +1562,9 @@ export const unpublishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  // TODO need imagesMetricsSearchIndex here?
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   return model;
 };

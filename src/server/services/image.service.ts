@@ -1540,7 +1540,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
-  if (notPublished && isModerator) filters.push(makeMeiliImageSearchFilter('published', '= false'));
+
+  // do we need publishedAt for < now() check?
+  if (notPublished && isModerator) {
+    filters.push(makeMeiliImageSearchFilter('published', '= false'));
+  } else {
+    if (currentUserId) {
+      filters.push(
+        `(${makeMeiliImageSearchFilter('published', '= true')} OR ${makeMeiliImageSearchFilter(
+          'userId',
+          `= ${currentUserId}`
+        )})`
+      );
+    } else {
+      filters.push(makeMeiliImageSearchFilter('published', '= true'));
+    }
+  }
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));

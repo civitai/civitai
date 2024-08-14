@@ -9,7 +9,7 @@ import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 
 const BATCH_SIZE = 10000;
-const INDEX_ID = `${METRICS_IMAGES_SEARCH_INDEX}_NEW`;
+const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const IMAGE_WHERE: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
 
 // TODO sync this with the search-index code

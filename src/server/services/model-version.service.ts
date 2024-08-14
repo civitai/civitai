@@ -29,7 +29,11 @@ import {
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
@@ -638,7 +642,9 @@ export const publishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
-  // TODO need imagesMetricsSearchIndex here?
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return version;
 };
@@ -710,7 +716,9 @@ export const unpublishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
-  // TODO need imagesMetricsSearchIndex here?
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   await updateModelLastVersionAt({ id: version.model.id });
   await resourceDataCache.bust(version.id);

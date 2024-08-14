@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -326,23 +327,22 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     }
 
     if (step === 1) {
-      // Pull metrics:
-      // TODO: Use clickhouse to pull metrics.
-
-      const metrics = await db.$queryRaw`
-          SELECT
-            im."imageId" as id,
-            im."collectedCount" as "collectedCount",
-            im."reactionCount" as "reactionCount",
-            im."commentCount" as "commentCount"
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(imageIds)})
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      `;
+      const metrics = await clickhouse?.$query<Metrics>(`
+            SELECT entityId as "id",
+                   SUM(if(
+                       metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
+                   )) as "reactionCount",
+                   SUM(if(metricType = 'Comment', metricValue, 0)) as "commentCount",
+                   SUM(if(metricType = 'Collection', metricValue, 0)) as "collectedCount"
+            FROM entityMetricEvents
+            WHERE entityType = 'Image'
+              AND entityId IN (${imageIds.join(',')})
+            GROUP BY id
+          `);
 
       return {
         ...prevData,
-        metrics,
+        metrics: metrics ?? [],
       };
     }
 
