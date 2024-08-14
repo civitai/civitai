@@ -1,26 +1,98 @@
 import { Accordion, Checkbox, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getPrecision, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
-import { trainingSettings } from '~/components/Training/Form/TrainingParams';
+import { optimizerArgMap, trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
-import { TrainingRun, trainingStore } from '~/store/training.store';
+import {
+  defaultRun,
+  defaultTrainingState,
+  trainingStore,
+  useTrainingImageStore,
+} from '~/store/training.store';
 
 export const AdvancedSettings = ({
-  selectedRun,
+  selectedRunIndex,
   modelId,
   maxSteps,
+  numImages,
 }: {
-  selectedRun: TrainingRun;
+  selectedRunIndex: number;
   modelId: number;
   maxSteps: number;
+  numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
+  const { runs } = useTrainingImageStore((state) => state[modelId] ?? { ...defaultTrainingState });
   const [openedSections, setOpenedSections] = useState<string[]>([]);
+
+  const selectedRun = runs[selectedRunIndex] ?? defaultRun;
+
+  console.log('re');
+
+  // Use functions to set proper starting values based on metadata
+  useEffect(() => {
+    if (selectedRun.params.numRepeats === undefined) {
+      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+      updateRun(modelId, selectedRun.id, { params: { numRepeats } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.id, numImages]);
+
+  // Set targetSteps automatically on value changes
+  useEffect(() => {
+    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
+
+    const newSteps = Math.ceil(
+      ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
+    );
+
+    // if (newSteps > maxSteps) {
+    //   showErrorNotification({
+    //     error: new Error(
+    //       `Steps are beyond the maximum (${numberWithCommas(maxSteps)}. Please lower Epochs or Num Repeats, or increase Train Batch Size.`
+    //     ),
+    //     title: 'Too many steps',
+    //   });
+    // }
+
+    if (selectedRun.params.targetSteps !== newSteps) {
+      updateRun(modelId, selectedRun.id, {
+        params: { targetSteps: newSteps },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedRun.params.maxTrainEpochs,
+    selectedRun.params.numRepeats,
+    selectedRun.params.trainBatchSize,
+    numImages,
+  ]);
+
+  // Adjust optimizer and related settings
+  useEffect(() => {
+    const newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
+
+    const newScheduler =
+      selectedRun.params.optimizerType === 'Prodigy' &&
+      selectedRun.params.lrScheduler === 'cosine_with_restarts'
+        ? 'cosine'
+        : selectedRun.params.lrScheduler;
+
+    if (
+      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
+      newScheduler !== selectedRun.params.lrScheduler
+    ) {
+      updateRun(modelId, selectedRun.id, {
+        params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler },
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.optimizerType]);
 
   return (
     <>

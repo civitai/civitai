@@ -39,7 +39,6 @@ import {
 } from '~/components/Training/Form/TrainingCommon';
 import {
   type NumberTrainingSettingsType,
-  optimizerArgMap,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
@@ -163,46 +162,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
-  // TODO move useeffects?
-
-  // Use functions to set proper starting values based on metadata
-  useEffect(() => {
-    if (selectedRun.params.numRepeats === undefined) {
-      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (thisNumImages || 1))));
-      updateRun(model.id, selectedRun.id, { params: { numRepeats } });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.id, thisNumImages]);
-
-  // Set targetSteps automatically on value changes
-  useEffect(() => {
-    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
-
-    const newSteps = Math.ceil(
-      ((thisNumImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
-    );
-
-    // if (newSteps > maxSteps) {
-    //   showErrorNotification({
-    //     error: new Error(
-    //       `Steps are beyond the maximum (${numberWithCommas(maxSteps)}. Please lower Epochs or Num Repeats, or increase Train Batch Size.`
-    //     ),
-    //     title: 'Too many steps',
-    //   });
-    // }
-
-    if (selectedRun.params.targetSteps !== newSteps) {
-      updateRun(model.id, selectedRun.id, {
-        params: { targetSteps: newSteps },
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectedRun.params.maxTrainEpochs,
-    selectedRun.params.numRepeats,
-    selectedRun.params.trainBatchSize,
-    thisNumImages,
-  ]);
+  console.log('parent');
 
   // Calc ETA and Cost
   useEffect(() => {
@@ -230,27 +190,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     formBaseModelType,
     status.cost,
   ]);
-
-  // Adjust optimizer and related settings
-  useEffect(() => {
-    const newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
-
-    const newScheduler =
-      selectedRun.params.optimizerType === 'Prodigy' &&
-      selectedRun.params.lrScheduler === 'cosine_with_restarts'
-        ? 'cosine'
-        : selectedRun.params.lrScheduler;
-
-    if (
-      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
-      newScheduler !== selectedRun.params.lrScheduler
-    ) {
-      updateRun(model.id, selectedRun.id, {
-        params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler },
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.params.optimizerType]);
 
   const { data: dryRunData, isFetching: dryRunLoading } =
     trpc.training.createRequestDryRun.useQuery(
@@ -667,7 +606,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       {formBaseModel && (
         <>
-          <AdvancedSettings modelId={model.id} selectedRun={selectedRun} maxSteps={maxSteps} />
+          <AdvancedSettings
+            modelId={model.id}
+            selectedRunIndex={selectedRunIndex}
+            maxSteps={maxSteps}
+            numImages={thisNumImages}
+          />
 
           <Group mt="lg">
             <Switch
@@ -733,6 +677,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Text>
                   {!isDefined(etaMins)
                     ? 'Unknown'
+                    : etaMins > 20000
+                    ? 'Forever'
                     : minsToHours(
                         (!!dryRunData
                           ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000

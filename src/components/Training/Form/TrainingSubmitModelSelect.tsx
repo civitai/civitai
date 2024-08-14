@@ -4,6 +4,7 @@ import {
   Card,
   createStyles,
   Group,
+  Indicator,
   Input,
   MantineColor,
   SegmentedControl,
@@ -83,17 +84,19 @@ const ModelSelector = ({
   const { classes } = useStyles();
 
   return (
-    <Group>
-      <Badge color={color} size="lg" radius="xs" w={badgeWidth}>
-        <Group>
+    <Group spacing="lg">
+      <Indicator
+        disabled={!isNew}
+        inline
+        color="green.8"
+        label="New"
+        size={16}
+        styles={{ indicator: { top: '2px !important', right: '10px !important' } }}
+      >
+        <Badge color={color} size="lg" radius="xs" px="xs" w={badgeWidth}>
           {name}
-          {isNew && (
-            <Badge color="green" size="sm" radius="xs">
-              NEW
-            </Badge>
-          )}
-        </Group>
-      </Badge>
+        </Badge>
+      </Indicator>
       {!isCustom ? (
         <SegmentedControl
           data={Object.entries(baseModelDescriptions)
@@ -277,7 +280,7 @@ export const ModelSelect = ({
                 value={baseModelFlux}
                 baseType="flux"
                 makeDefaultParams={makeDefaultParams}
-                isNew
+                isNew={new Date() < new Date('2024-09-01')}
               />
               <ModelSelector
                 selectedRun={selectedRun}
