@@ -94,6 +94,7 @@ export const baseModelDescriptions: {
 };
 
 const maxRuns = 5;
+// TODO check override
 const maxSteps =
   (trainingSettings.find((ts) => ts.name === 'targetSteps') as NumberTrainingSettingsType).max ??
   10000;
@@ -176,6 +177,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       eta,
       isCustom,
+      isFlux: selectedRun.baseType === 'flux',
       isPriority: selectedRun.highPriority ?? false,
     });
     setEtaMins(eta);
@@ -388,7 +390,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         // ---
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,
-        clipSkip: paramData.clipSkip,
+        clipSkip: paramData.clipSkip || undefined,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
           baseModel: base,
@@ -586,6 +588,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 ? 'SDXL'
                 : run.base === 'semi'
                 ? 'Semi'
+                : run.base === 'flux_dev'
+                ? 'Flux'
                 : baseModelDescriptions[run.base as TrainingDetailsBaseModelList].label ?? 'Unknown'
             })`,
             // value: run.id.toString(),

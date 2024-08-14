@@ -46,9 +46,6 @@ const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
 
-export type TrainingDetailsBaseModel15 = (typeof trainingDetailsBaseModels15)[number];
-export type TrainingDetailsBaseModelXL = (typeof trainingDetailsBaseModelsXL)[number];
-export type TrainingDetailsBaseModelFlux = (typeof trainingDetailsBaseModelsFlux)[number];
 export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
 
 const trainingDetailsBaseModels = [
@@ -63,6 +60,7 @@ export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelCustom;
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export type OptimizerTypes = (typeof optimizerTypes)[number];
 export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
 export const lrSchedulerTypes = [
   'constant',
@@ -71,6 +69,8 @@ export const lrSchedulerTypes = [
   'constant_with_warmup',
   'linear',
 ] as const;
+export const engineTypes = ['x-flux', 'kohya'] as const;
+export type EngineTypes = (typeof engineTypes)[number];
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
@@ -101,6 +101,8 @@ export const trainingDetailsParams = z.object({
   // lrWarmupSteps: z.number(),
   // seed: null,
   // gradientAccumulationSteps: 1,
+
+  engine: z.enum(engineTypes).optional().default('kohya'),
 });
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;

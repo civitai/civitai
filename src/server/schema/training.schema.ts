@@ -42,6 +42,7 @@ const trainingCostSchema = z.object({
   hourlyCost: z.number().min(0),
   baseBuzz: z.number().min(0),
   customModelBuzz: z.number().min(0),
+  fluxBuzz: z.number().min(0),
   priorityBuzz: z.number().min(0),
   priorityBuzzPct: z.number().min(0),
   minEta: z.number().min(1),
@@ -65,8 +66,8 @@ export const defaultTrainingCost: TrainingCost = {
     },
     // TODO what values?
     flux: {
-      base: 5,
-      steps: 0.012,
+      base: 25,
+      steps: 0.017,
       stepMultiplier: 1.73,
       expStrength: 1.55,
       expStart: 3000,
@@ -75,6 +76,7 @@ export const defaultTrainingCost: TrainingCost = {
   hourlyCost: 0.44,
   baseBuzz: 500,
   customModelBuzz: 500,
+  fluxBuzz: 1500,
   priorityBuzz: 100,
   priorityBuzzPct: 0.1,
   minEta: 5,

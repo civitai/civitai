@@ -33,6 +33,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
+import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
@@ -228,13 +229,16 @@ export const createTrainingRequest = async ({
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
+
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
     if (setting.type === 'int' || setting.type === 'number') {
-      const override = setting.overrides?.[baseModel];
+      const baseOverride = setting.overrides?.[baseModel];
+      const override = baseOverride?.all ?? baseOverride?.[trainingParams.engine];
       const overrideSetting = override ?? setting;
+
       if (
-        (overrideSetting.min && (value as number) < overrideSetting.min) ||
-        (overrideSetting.max && (value as number) > overrideSetting.max)
+        (isDefined(overrideSetting.min) && (value as number) < overrideSetting.min) ||
+        (isDefined(overrideSetting.max) && (value as number) > overrideSetting.max)
       ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`
@@ -264,6 +268,7 @@ export const createTrainingRequest = async ({
       cost: status.cost,
       eta,
       isCustom,
+      isFlux: baseModelType === 'flux',
       isPriority,
     });
 
@@ -317,6 +322,7 @@ export const createTrainingRequest = async ({
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,
     retries: constants.maxTrainingRetries,
+    engine: trainingParams.engine,
     params: {
       ...trainingParams,
       samplePrompts: samplePrompts ?? ['', '', ''],

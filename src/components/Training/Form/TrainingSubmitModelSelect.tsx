@@ -36,6 +36,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import {
   defaultBase,
   defaultBaseType,
+  defaultEngine,
   TrainingRun,
   TrainingRunUpdate,
   trainingStore,
@@ -196,7 +197,10 @@ export const ModelSelect = ({
     const defaultParams = trainingSettings.reduce(
       (a, v) => ({
         ...a,
-        [v.name]: v.overrides?.[data.base!]?.default ?? v.default,
+        [v.name]:
+          v.overrides?.[data.base!]?.all?.default ??
+          v.overrides?.[data.base!]?.[data.params?.engine ?? defaultEngine]?.default ??
+          v.default,
       }),
       {} as TrainingDetailsParams
     );

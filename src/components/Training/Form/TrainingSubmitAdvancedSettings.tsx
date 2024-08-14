@@ -1,13 +1,29 @@
-import { Accordion, Checkbox, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Accordion,
+  Badge,
+  Checkbox,
+  Code,
+  Group,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { getPrecision, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
-import { optimizerArgMap, trainingSettings } from '~/components/Training/Form/TrainingParams';
+import {
+  optimizerArgMap,
+  optimizerArgMapFlux,
+  trainingSettings,
+} from '~/components/Training/Form/TrainingParams';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
+import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import {
   defaultRun,
   defaultTrainingState,
@@ -34,6 +50,31 @@ export const AdvancedSettings = ({
 
   console.log('re');
 
+  useEffect(() => {
+    const defaultParams = trainingSettings.reduce(
+      (a, v) => ({
+        ...a,
+        [v.name]:
+          v.overrides?.[selectedRun.base]?.all?.default ??
+          v.overrides?.[selectedRun.base]?.[selectedRun.params.engine]?.default ??
+          v.default,
+      }),
+      {} as TrainingDetailsParams
+    );
+
+    defaultParams.engine = selectedRun.params.engine;
+    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+
+    if (selectedRun.params.engine !== 'x-flux') {
+      defaultParams.targetSteps = Math.ceil(
+        ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+          defaultParams.trainBatchSize
+      );
+    }
+
+    updateRun(modelId, selectedRun.id, { params: defaultParams });
+  }, [selectedRun.id, selectedRun.params.engine]);
+
   // Use functions to set proper starting values based on metadata
   useEffect(() => {
     if (selectedRun.params.numRepeats === undefined) {
@@ -45,7 +86,8 @@ export const AdvancedSettings = ({
 
   // Set targetSteps automatically on value changes
   useEffect(() => {
-    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
+    const { maxTrainEpochs, numRepeats, trainBatchSize, engine } = selectedRun.params;
+    if (engine === 'x-flux') return;
 
     const newSteps = Math.ceil(
       ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
@@ -75,7 +117,13 @@ export const AdvancedSettings = ({
 
   // Adjust optimizer and related settings
   useEffect(() => {
-    const newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
+    let newOptimizerArgs: string;
+    if (selectedRun.baseType === 'flux') {
+      newOptimizerArgs =
+        optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
+    } else {
+      newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
+    }
 
     const newScheduler =
       selectedRun.params.optimizerType === 'Prodigy' &&
@@ -117,64 +165,76 @@ export const AdvancedSettings = ({
           },
         })}
       >
-        <Accordion.Item value="custom-prompts">
-          <Accordion.Control>
-            <Stack spacing={4}>
-              Sample Image Prompts
-              {openedSections.includes('custom-prompts') && (
-                <Text size="xs" color="dimmed">
-                  Set your own prompts for any of the 3 sample images we generate for each epoch.
-                </Text>
-              )}
-            </Stack>
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack p="sm">
-              <TextInputWrapper
-                label="Image #1"
-                placeholder="Automatically set"
-                value={selectedRun.samplePrompts[0]}
-                onChange={(event) =>
-                  updateRun(modelId, selectedRun.id, {
-                    samplePrompts: [
-                      event.currentTarget.value,
-                      selectedRun.samplePrompts[1],
-                      selectedRun.samplePrompts[2],
-                    ],
-                  })
-                }
-              />
-              <TextInputWrapper
-                label="Image #2"
-                placeholder="Automatically set"
-                value={selectedRun.samplePrompts[1]}
-                onChange={(event) =>
-                  updateRun(modelId, selectedRun.id, {
-                    samplePrompts: [
-                      selectedRun.samplePrompts[0],
-                      event.currentTarget.value,
-                      selectedRun.samplePrompts[2],
-                    ],
-                  })
-                }
-              />
-              <TextInputWrapper
-                label="Image #3"
-                placeholder="Automatically set"
-                value={selectedRun.samplePrompts[2]}
-                onChange={(event) =>
-                  updateRun(modelId, selectedRun.id, {
-                    samplePrompts: [
-                      selectedRun.samplePrompts[0],
-                      selectedRun.samplePrompts[1],
-                      event.currentTarget.value,
-                    ],
-                  })
-                }
-              />
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
+        {selectedRun.baseType !== 'flux' || selectedRun.params.engine === 'kohya' ? (
+          <Accordion.Item value="custom-prompts">
+            <Accordion.Control>
+              <Stack spacing={4}>
+                Sample Image Prompts
+                {openedSections.includes('custom-prompts') && (
+                  <Text size="xs" color="dimmed">
+                    Set your own prompts for any of the 3 sample images we generate for each epoch.
+                  </Text>
+                )}
+              </Stack>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack p="sm">
+                <TextInputWrapper
+                  label="Image #1"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[0]}
+                  onChange={(event) =>
+                    updateRun(modelId, selectedRun.id, {
+                      samplePrompts: [
+                        event.currentTarget.value,
+                        selectedRun.samplePrompts[1],
+                        selectedRun.samplePrompts[2],
+                      ],
+                    })
+                  }
+                />
+                <TextInputWrapper
+                  label="Image #2"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[1]}
+                  onChange={(event) =>
+                    updateRun(modelId, selectedRun.id, {
+                      samplePrompts: [
+                        selectedRun.samplePrompts[0],
+                        event.currentTarget.value,
+                        selectedRun.samplePrompts[2],
+                      ],
+                    })
+                  }
+                />
+                <TextInputWrapper
+                  label="Image #3"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[2]}
+                  onChange={(event) =>
+                    updateRun(modelId, selectedRun.id, {
+                      samplePrompts: [
+                        selectedRun.samplePrompts[0],
+                        selectedRun.samplePrompts[1],
+                        event.currentTarget.value,
+                      ],
+                    })
+                  }
+                />
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        ) : (
+          <AlertWithIcon icon={<IconAlertTriangle />} color="yellow" iconColor="yellow" mb="md">
+            <Text>
+              Heads up: you&apos;re using <Code color="green">x-flux</Code>!
+              <br />
+              We currently do not provide sample images for LoRAs trained this way.
+              <br />
+              We are also working on expanding the list of supported training parameters.
+            </Text>
+          </AlertWithIcon>
+        )}
         <Accordion.Item value="training-settings">
           <Accordion.Control>
             <Stack spacing={4}>
@@ -221,15 +281,24 @@ export const AdvancedSettings = ({
               labelWidth="200px"
               items={trainingSettings.map((ts) => {
                 let inp: React.ReactNode;
-                const disabledOverride = ts.overrides?.[selectedRun.base]?.disabled;
+
+                const baseOverride = ts.overrides?.[selectedRun.base];
+                const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
+
+                const disabledOverride = override?.disabled;
+                const hint = override?.hint ?? ts.hint;
                 const disabled = disabledOverride ?? ts.disabled === true;
 
                 if (ts.type === 'int' || ts.type === 'number') {
-                  const override = ts.overrides?.[selectedRun.base];
+                  // repeating for dumb ts
+                  const tOverride =
+                    ts.overrides?.[selectedRun.base]?.all ??
+                    ts.overrides?.[selectedRun.base]?.[selectedRun.params.engine];
+
                   inp = (
                     <NumberInputWrapper
-                      min={override?.min ?? ts.min}
-                      max={override?.max ?? ts.max}
+                      min={tOverride?.min ?? ts.min}
+                      max={tOverride?.max ?? ts.max}
                       precision={
                         ts.type === 'number' ? getPrecision(ts.step ?? ts.default) || 4 : undefined
                       }
@@ -300,20 +369,26 @@ export const AdvancedSettings = ({
                 }
 
                 return {
-                  label: ts.hint ? (
+                  label: hint ? (
                     <CivitaiTooltip
                       position="top"
                       variant="roundedOpaque"
                       withArrow
                       multiline
-                      label={ts.hint}
+                      label={hint}
                     >
-                      <Group spacing={6}>
-                        <Text inline style={{ cursor: 'help' }}>
-                          {ts.label}
-                        </Text>
-                        {ts.name === 'targetSteps' && selectedRun.params.targetSteps > maxSteps && (
-                          <IconAlertTriangle color="orange" size={16} />
+                      <Group>
+                        <Group spacing={6}>
+                          <Text inline style={{ cursor: 'help' }}>
+                            {ts.label}
+                          </Text>
+                          {ts.name === 'targetSteps' &&
+                            selectedRun.params.targetSteps > maxSteps && (
+                              <IconAlertTriangle color="orange" size={16} />
+                            )}
+                        </Group>
+                        {ts.name === 'engine' && selectedRun.baseType === 'flux' && (
+                          <Badge color="green">NEW</Badge>
                         )}
                       </Group>
                     </CivitaiTooltip>
@@ -321,6 +396,7 @@ export const AdvancedSettings = ({
                     ts.label
                   ),
                   value: inp,
+                  visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux'),
                 };
               })}
             />

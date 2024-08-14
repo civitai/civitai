@@ -72,11 +72,15 @@ type TrainingImageStore = {
 };
 
 export const defaultBase = 'sdxl';
+export const defaultEngine = 'kohya';
 export const defaultBaseType = 'sdxl' as const;
 const defaultParams = trainingSettings.reduce(
   (a, v) => ({
     ...a,
-    [v.name]: v.overrides?.[defaultBase]?.default ?? v.default,
+    [v.name]:
+      v.overrides?.[defaultBase]?.all?.default ??
+      v.overrides?.[defaultBase]?.[defaultEngine]?.default ??
+      v.default,
   }),
   {} as TrainingDetailsParams
 );

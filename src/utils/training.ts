@@ -38,17 +38,20 @@ export const calcBuzzFromEta = ({
   eta,
   isCustom,
   isPriority,
+  isFlux,
 }: {
   cost: TrainingCost;
   eta: number | undefined;
   isCustom: boolean;
   isPriority: boolean;
+  isFlux: boolean;
 }) => {
   if (!eta) return cost.baseBuzz;
 
   const computedCost = eta * (cost.hourlyCost / 60) * constants.buzz.buzzDollarRatio;
   let buzz = Math.max(cost.baseBuzz, computedCost);
   if (isCustom) buzz += cost.customModelBuzz;
+  if (isFlux) buzz += cost.fluxBuzz;
   if (isPriority) buzz += Math.max(cost.priorityBuzz, cost.priorityBuzzPct * buzz);
   return Math.round(buzz);
 };
