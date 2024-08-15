@@ -112,9 +112,9 @@ export async function parseGenerateImageInput({
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
   if (isFlux && originalParams.fluxMode) {
-    const { version } = parseAIR(originalParams.fluxMode);
+    // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
-    originalResources = [{ id: version, strength: 1 }];
+    // originalResources = [{ id: version, strength: 1 }];
     originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
     originalParams.negativePrompt = '';

@@ -72,6 +72,7 @@ import {
   getIsSdxl,
 } from '~/shared/constants/generation.constants';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -285,7 +286,7 @@ function ResourceSelectCard({
   data: SearchIndexDataMap['models'][number];
 }) {
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView<HTMLAnchorElement>({ rootMargin: '600px' });
+  const { ref, inView } = useInView();
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
@@ -414,7 +415,7 @@ function ResourceSelectCard({
 
   return (
     // Visually hide card if there are no versions
-    <FeedCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
+    <TwCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
       {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           {image && (
@@ -583,7 +584,7 @@ function ResourceSelectCard({
       ) : (
         <></>
       )}
-    </FeedCard>
+    </TwCard>
   );
 }
 
