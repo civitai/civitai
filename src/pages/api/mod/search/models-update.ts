@@ -4,12 +4,12 @@ import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { MODELS_SEARCH_INDEX } from '../../../../server/common/constants';
-import { updateDocs } from '../../../../server/meilisearch/client';
-import { getModelVersionsForSearchIndex } from '../../../../server/selectors/modelVersion.selector';
-import { userWithCosmeticsSelect } from '../../../../server/selectors/user.selector';
-import { withRetries } from '../../../../server/utils/errorHandling';
-import { isDefined } from '../../../../utils/type-guards';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { updateDocs } from '~/server/meilisearch/client';
+import { getModelVersionsForSearchIndex } from '~/server/selectors/modelVersion.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { withRetries } from '~/server/utils/errorHandling';
+import { isDefined } from '~/utils/type-guards';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
