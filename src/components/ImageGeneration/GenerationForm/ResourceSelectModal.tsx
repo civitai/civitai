@@ -292,10 +292,8 @@ function ResourceSelectCard({
 
   const resourceFilter = resources.find((x) => x.type === data.type);
   const versions = data.versions.filter((version) => {
-    if (
-      isTraining &&
-      !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Flux.1 D'].includes(version.baseModel)
-    )
+    // TODO test 'Flux.1 D'
+    if (isTraining && !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'].includes(version.baseModel))
       return false;
     if (canGenerate === undefined) return true;
     return (

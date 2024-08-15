@@ -13,6 +13,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   addBlockedImage,
   bulkAddBlockedImages,
@@ -51,7 +52,6 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 const reviewTypeToBlockedReason = {
   csam: BlockImageReason.CSAM,
@@ -289,7 +289,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
   try {
     const features = getFeatureFlags({ user });
     const fetchFn = features.imageIndex ? getAllImagesPost : getAllImages;
-    console.log(features.imageIndex ? 'Using search index' : 'Using DB');
+    // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
