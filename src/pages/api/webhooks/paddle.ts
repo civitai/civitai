@@ -27,7 +27,13 @@ async function buffer(readable: Readable) {
   return Buffer.concat(chunks);
 }
 
-const relevantEvents = new Set([EventName.TransactionCompleted]);
+const relevantEvents = new Set([
+  EventName.TransactionCompleted,
+  EventName.ProductCreated,
+  EventName.ProductUpdated,
+  EventName.PriceCreated,
+  EventName.PriceUpdated,
+]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
@@ -67,6 +73,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               await processCompleteBuzzTransaction(event.data as Transaction);
             }
 
+            break;
+          case EventName.ProductCreated:
+          case EventName.ProductUpdated:
             break;
           default:
             throw new Error('Unhandled relevant event!');

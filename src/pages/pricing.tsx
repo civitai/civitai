@@ -58,7 +58,7 @@ export default function Pricing() {
   const features = useFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
 
-  const { data: products, isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
+  const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
   const { subscription, subscriptionLoading } = useActiveSubscription({
     checkWhenInBadState: true,
   });
@@ -270,7 +270,7 @@ const useStyles = createStyles((theme) => ({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg }) => {
-    await ssg?.stripe.getPlans.prefetch();
+    await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.stripe.getUserSubscription.prefetch();
   },
 });

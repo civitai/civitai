@@ -33,7 +33,8 @@ import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stri
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { Currency } from '@prisma/client';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import type { StripePlan, StripeSubscription } from '~/server/services/stripe.service';
+import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
+import type { StripeSubscription } from '~/server/services/stripe.service';
 import { useState } from 'react';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
@@ -55,7 +56,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 
 type PlanCardProps = {
-  product: StripePlan;
+  product: SubscriptionPlan;
   subscription?: StripeSubscription | null;
 };
 
@@ -248,9 +249,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
 }
 
 export const getPlanDetails: (
-  product: Pick<StripePlan, 'metadata' | 'name'>,
+  product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
   features: FeatureAccess
-) => PlanMeta = (product: Pick<StripePlan, 'metadata' | 'name'>, features: FeatureAccess) => {
+) => PlanMeta = (product: Pick<SubscriptionPlan, 'metadata' | 'name'>, features: FeatureAccess) => {
   const metadata = (product.metadata ?? {}) as ProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',

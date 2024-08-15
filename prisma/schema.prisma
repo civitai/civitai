@@ -178,7 +178,7 @@ model User {
   rewardsEligibility      RewardsEligibility    @default(Eligible)
   eligibilityChangedAt    DateTime?
   // Payment provider related
-  customerId              String?               @unique
+  customerId              String?               @unique // Stripe
   paddleCustomerId        String?               @unique
 
   profile          UserProfile?

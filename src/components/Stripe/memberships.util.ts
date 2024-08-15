@@ -27,7 +27,9 @@ export const useActiveSubscription = ({
 export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
   const { subscription, subscriptionLoading } = useActiveSubscription();
-  const { data: products = [], isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
+  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
+    {}
+  );
   const features = useFeatureFlags();
 
   if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {

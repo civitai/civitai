@@ -57,8 +57,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const { classes } = useStyles();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
-  const { data: products = [], isLoading: productsLoading } = trpc.stripe.getPlans.useQuery(
-    undefined,
+  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
+    {},
     {
       enabled: !!currentUser,
     }

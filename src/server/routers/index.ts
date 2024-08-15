@@ -68,6 +68,7 @@ import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.r
 import { gamesRouter } from '~/server/routers/games.router';
 import { recommendersRouter } from './recommenders.router';
 import { paddleRouter } from '~/server/routers/paddle.router';
+import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -105,6 +106,7 @@ export const appRouter = router({
   resourceReview: resourceReviewRouter,
   signals: signalsRouter,
   stripe: stripeRouter,
+  subscriptions: subscriptionsRouter,
   tag: tagRouter,
   track: trackRouter,
   training: trainingRouter,

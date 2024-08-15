@@ -1,4 +1,4 @@
-import { Currency } from '@prisma/client';
+import { Currency, PaymentProvider } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -7,12 +7,17 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getOrCreateCustomer,
-  updateTransaction,
+  // updateTransaction,
 } from '~/server/paddle/client';
 import { TransactionCreateInput, TransactionMetadataSchema } from '~/server/schema/paddle.schema';
-import { Transaction, TransactionCompletedEvent } from '@paddle/paddle-node-sdk';
+import {
+  Product as PaddleProduct,
+  Price as PaddlePrice,
+  Transaction,
+} from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { number } from 'zod';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -110,4 +115,52 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
   //   transactionId: transaction.id,
   //   metadata: { ...meta, buzzTransactionId: buzzTransaction.transactionId },
   // });
+};
+
+export const upsertProductRecord = async (product: PaddleProduct) => {
+  const productData = {
+    id: product.id,
+    active: product.status === 'active',
+    name: product.name,
+    description: product.description ?? null,
+    metadata: product.customData ?? undefined,
+    defaultPriceId: null,
+    provider: PaymentProvider.Paddle,
+  };
+
+  await dbWrite.product.upsert({
+    where: { id: product.id },
+    update: productData,
+    create: {
+      ...productData,
+      metadata: productData.metadata ?? {},
+    },
+  });
+
+  return productData;
+};
+
+export const upsertPriceRecord = async (price: PaddlePrice) => {
+  const priceData = {
+    id: price.id,
+    productId: price.productId,
+    active: price.status === 'active',
+    currency: price.unitPrice.currencyCode,
+    description: price.description ?? undefined,
+    type: price.billingCycle ? 'recurring' : 'one_time',
+    unitAmount: parseInt(price.unitPrice.amount, 10),
+    interval: price.billingCycle?.interval,
+    intervalCount: price.billingCycle?.frequency,
+    metadata: price.customData ?? undefined,
+    provider: PaymentProvider.Paddle,
+  };
+  await dbWrite.price.upsert({
+    where: { id: price.id },
+    update: priceData,
+    create: {
+      ...priceData,
+      metadata: priceData.metadata ?? {},
+    },
+  });
+  return priceData;
 };

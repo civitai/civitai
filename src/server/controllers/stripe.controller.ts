@@ -18,14 +18,9 @@ import {
 import { Context } from '~/server/createContext';
 import * as Schema from '../schema/stripe.schema';
 
-import { getPlans } from '~/server/services/stripe.service';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { createRecaptchaAssesment } from '../recaptcha/client';
 import { RECAPTCHA_ACTIONS } from '../common/constants';
-
-export const getPlansHandler = async () => {
-  return await getPlans();
-};
 
 export const getUserSubscriptionHandler = async ({ ctx }: { ctx: Context }) => {
   if (!ctx.user?.id || !ctx.user.subscriptionId) return null;

@@ -247,9 +247,9 @@ const BuzzPurchasePaymentButton = ({
     <Button
       disabled={disabled}
       onClick={
-        paymentProvider === 'paddle'
+        paymentProvider === 'Paddle'
           ? handlePaddleSubmit
-          : paymentProvider === 'stripe'
+          : paymentProvider === 'Stripe'
           ? handleStripeSubmit
           : undefined
       }
@@ -535,10 +535,6 @@ export const BuzzPurchase = ({
                 </Button>
               )}
             </Group>
-
-            <Text size="xs" align="center" color="dimmed" mt={-10}>
-              Credit card, bank transfer, Google Pay, Apple Pay, and more.
-            </Text>
           </Stack>
         </Stack>
       </Grid.Col>
