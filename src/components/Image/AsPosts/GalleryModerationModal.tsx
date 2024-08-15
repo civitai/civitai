@@ -2,6 +2,7 @@ import {
   ActionIcon,
   Autocomplete,
   Badge,
+  Button,
   Card,
   Group,
   Loader,
@@ -12,7 +13,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { IconCheck, IconSearch, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useGallerySettings } from './gallery.utils';
@@ -26,9 +27,34 @@ import { Flags } from '~/shared/utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { createDebouncer } from '~/utils/debouncer';
 import { TagSort } from '~/server/common/enums';
+import { openConfirmModal } from '@mantine/modals';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
+  const { copySettings, updating, copySettingsLoading } = useGallerySettings({ modelId: modelId });
+
+  const handleCopySettings = () => {
+    openConfirmModal({
+      title: (
+        <div className="flex flex-row flex-nowrap gap-2">
+          <IconAlertTriangle color="gold" />
+          <p className="text-lg">Copy Gallery Moderation Preferences</p>
+        </div>
+      ),
+      centered: true,
+      children:
+        'This will copy the gallery moderation preferences from this model to all your models and future ones. Are you sure you want to proceed?',
+      onConfirm: async () => {
+        try {
+          await copySettings(modelId);
+          dialog.onClose();
+        } catch {
+          // Error is handled in the hook
+        }
+      },
+      labels: { confirm: 'Yes, continue', cancel: 'No, cancel' },
+    });
+  };
 
   return (
     <Modal {...dialog} title="Gallery Moderation Preferences">
@@ -36,6 +62,15 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
         <HiddenTagsSection modelId={modelId} />
         <HiddenUsersSection modelId={modelId} />
         <MatureContentSection modelId={modelId} />
+
+        <Button
+          variant="outline"
+          size="xs"
+          onClick={handleCopySettings}
+          loading={updating || copySettingsLoading}
+        >
+          Apply these settings to all my models
+        </Button>
       </Stack>
     </Modal>
   );
@@ -225,8 +260,8 @@ function BrowsingLevelsStacked({
   }, [browsingLevel]);
 
   return (
-    <div>
-      <Text weight={500}>Allowed Browsing Levels</Text>
+    <div className="flex flex-col gap-2">
+      <Text>Allowed Browsing Levels</Text>
       <Paper withBorder p={0} className={classes.root}>
         {browsingLevels.map((level) => {
           const isSelected = Flags.hasFlag(browsingLevel, level);
