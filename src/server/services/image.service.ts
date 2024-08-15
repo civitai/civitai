@@ -3926,7 +3926,7 @@ export function addBlockedImage({
 }) {
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
-    VALUES (${hash}, '${reason}'::"BlockImageReason")
+    VALUES (${hash}, ${reason}::"BlockImageReason")
     ON CONFLICT DO NOTHING
   `;
 }
