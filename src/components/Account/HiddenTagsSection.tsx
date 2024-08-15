@@ -3,7 +3,6 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo, useRef, useState } from 'react';
-import { ContentControls } from '~/components/Account/ContentControls';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { TagSort } from '~/server/common/enums';
@@ -43,50 +42,47 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
   };
 
   return (
-    <Stack>
-      <ContentControls />
-      <Card withBorder>
-        {withTitle && (
-          <Card.Section withBorder inheritPadding py="xs">
-            <Text weight={500}>Hidden Tags</Text>
-          </Card.Section>
-        )}
-        <Card.Section withBorder sx={{ marginTop: -1 }}>
-          <Autocomplete
-            name="tag"
-            ref={searchInputRef}
-            placeholder="Search tags to hide"
-            data={modelTags}
-            value={search}
-            onChange={setSearch}
-            icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
-            onItemSubmit={(item: { value: string; id: number }) => {
-              handleToggleBlockedTag({ id: item.id, name: item.value });
-              searchInputRef.current?.focus();
-            }}
-            withinPortal
-            variant="unstyled"
-            zIndex={400}
-            limit={20}
-            maxDropdownHeight={250}
+    <Card withBorder>
+      {withTitle && (
+        <Card.Section withBorder inheritPadding py="xs">
+          <Text weight={500}>Hidden Tags</Text>
+        </Card.Section>
+      )}
+      <Card.Section withBorder sx={{ marginTop: -1 }}>
+        <Autocomplete
+          name="tag"
+          ref={searchInputRef}
+          placeholder="Search tags to hide"
+          data={modelTags}
+          value={search}
+          onChange={setSearch}
+          icon={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+          onItemSubmit={(item: { value: string; id: number }) => {
+            handleToggleBlockedTag({ id: item.id, name: item.value });
+            searchInputRef.current?.focus();
+          }}
+          withinPortal
+          variant="unstyled"
+          zIndex={400}
+          limit={20}
+          maxDropdownHeight={250}
+        />
+      </Card.Section>
+      <Card.Section inheritPadding py="md">
+        <Stack spacing={5}>
+          <BasicMasonryGrid
+            items={hiddenTags}
+            render={TagBadge}
+            maxHeight={250}
+            columnGutter={4}
+            columnWidth={140}
           />
-        </Card.Section>
-        <Card.Section inheritPadding py="md">
-          <Stack spacing={5}>
-            <BasicMasonryGrid
-              items={hiddenTags}
-              render={TagBadge}
-              maxHeight={250}
-              columnGutter={4}
-              columnWidth={140}
-            />
-            <Text color="dimmed" size="xs">
-              {`We'll hide content with these tags throughout the site.`}
-            </Text>
-          </Stack>
-        </Card.Section>
-      </Card>
-    </Stack>
+          <Text color="dimmed" size="xs">
+            {`We'll hide content with these tags throughout the site.`}
+          </Text>
+        </Stack>
+      </Card.Section>
+    </Card>
   );
 }
 

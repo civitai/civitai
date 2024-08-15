@@ -34,7 +34,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // const enabled = env.NEXT_PUBLIC_ADS;
   const enabled = false;
   // const adsEnabled = enabled && !isMember;
-  const adsEnabled = true;
+  const adsEnabled = (currentUser?.settings.allowAds ?? true) || !isMember;
   // const { targeting: cookieConsent = false } = useConsentManager();
   const cookieConsent = true;
 

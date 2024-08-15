@@ -3821,7 +3821,7 @@ export function bulkAddBlockedImages({
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
   const values = data
-    .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockedImageReason")`)
+    .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
     .join(',');
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
