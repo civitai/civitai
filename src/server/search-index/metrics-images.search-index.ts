@@ -110,7 +110,7 @@ export type SearchBaseImage = {
   sortAt: Date;
   type: string;
   userId: number;
-  publishedAt: Date;
+  publishedAt?: Date;
   hasMeta: boolean;
   onSite: boolean;
   postedToId?: number;
@@ -184,7 +184,7 @@ const transformData = async ({
         toolIds: imageTools.map((t) => t.toolId),
         techniqueIds: imageTechniques.map((t) => t.techniqueId),
         cosmetic: cosmetics[imageRecord.id] ?? null,
-        publishedAtUnix: publishedAt.getTime(),
+        publishedAtUnix: publishedAt?.getTime(),
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
