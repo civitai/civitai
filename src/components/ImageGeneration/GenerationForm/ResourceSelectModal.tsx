@@ -37,7 +37,6 @@ import {
 import trieMemoize from 'trie-memoize';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { FeedCard } from '~/components/Cards/FeedCard';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -53,6 +52,7 @@ import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
@@ -70,8 +70,6 @@ import {
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { TwCard } from '~/components/TwCard/TwCard';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
