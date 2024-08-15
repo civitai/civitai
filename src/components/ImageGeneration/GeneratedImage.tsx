@@ -368,7 +368,7 @@ export function GeneratedImage({
                       <Menu.Item
                         key={workflow.key}
                         onClick={() => {
-                          if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                          if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
                           else handleSelectWorkflow(workflow.key);
                         }}
                       >

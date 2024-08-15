@@ -5,8 +5,10 @@ import {
   CosmeticType,
   ModelStatus,
   Prisma,
+  TagSource,
+  TagType,
 } from '@prisma/client';
-import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
+import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -15,11 +17,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
-import {
-  getImagesForModelVersion,
-  getTagIdsForImages,
-  ImagesForModelVersions,
-} from '~/server/services/image.service';
+import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -27,7 +25,7 @@ import { isDefined } from '~/utils/type-guards';
 
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
-  tags: { id: number; name: string }[];
+  tags: number[];
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
@@ -35,16 +33,46 @@ export const tagIdsForImagesCache = createCachedObject<{
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
-    const tags = await db.tagsOnImage.findMany({
+
+    const imageTags = await db.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
-      select: { imageId: true, tag: { select: { id: true, name: true } } },
+      select: {
+        imageId: true,
+        source: true,
+        tagId: true,
+      },
     });
 
-    const result = tags.reduce((acc, { tag, imageId }) => {
-      acc[imageId.toString()] ??= { imageId, tags: [] };
-      acc[imageId.toString()].tags.push(tag);
+    const tagIds = imageTags.map((t) => t.tagId);
+    const tags = await tagCache.fetch(tagIds);
+
+    const hasWD: { [p: string]: boolean } = {};
+    for (const row of imageTags) {
+      const imageIdStr = row.imageId.toString();
+      hasWD[imageIdStr] ??= false;
+      if (row.source === TagSource.WD14) hasWD[imageIdStr] = true;
+    }
+    const result = imageTags.reduce((acc, { tagId, imageId, source }) => {
+      const imageIdStr = imageId.toString();
+      acc[imageIdStr] ??= { imageId, tags: [] };
+
+      const tag = tags[tagId];
+      if (!tag) return acc;
+
+      let canAdd = true;
+      if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
+        if (
+          tag.type !== TagType.Moderation &&
+          tag.name &&
+          !constants.imageTags.styles.includes(tag.name)
+        ) {
+          canAdd = false;
+        }
+      }
+
+      if (canAdd) acc[imageIdStr].tags.push(tagId);
       return acc;
-    }, {} as Record<string, { imageId: number; tags: { id: number; name: string }[] }>);
+    }, {} as Record<string, { imageId: number; tags: number[] }>);
     return result;
   },
 });
@@ -163,10 +191,10 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
   appendFn: async (records) => {
     const imageIds = [...records].flatMap((x) => x.images.map((i) => i.id));
-    const tagIdsVar = await getTagIdsForImages(imageIds);
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
     for (const entry of records) {
       for (const image of entry.images) {
-        image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id) ?? [];
+        image.tags = tagIdsVar?.[image.id]?.tags ?? [];
       }
     }
   },
@@ -263,6 +291,7 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
 type TagLookup = {
   id: number;
   name: string | null;
+  type: TagType;
   nsfwLevel: NsfwLevel;
 };
 export const tagCache = createCachedObject<TagLookup>({
@@ -275,6 +304,7 @@ export const tagCache = createCachedObject<TagLookup>({
         id: true,
         name: true,
         nsfwLevel: true,
+        type: true,
       },
     });
     return Object.fromEntries(tagBasicData.map((x) => [x.id, x]));

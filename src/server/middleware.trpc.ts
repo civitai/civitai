@@ -43,11 +43,13 @@ type CacheItProps<TInput extends object> = {
   key?: string;
   ttl?: number;
   excludeKeys?: (keyof TInput)[];
+  tags?: (input: TInput) => string[];
 };
 export function cacheIt<TInput extends object>({
   key,
   ttl,
   excludeKeys,
+  tags,
 }: CacheItProps<TInput> = {}) {
   ttl ??= 60 * 3;
 
@@ -62,18 +64,29 @@ export function cacheIt<TInput extends object>({
         if (value) cacheKeyObj[key] = value;
       }
     }
-    const cacheKey = `trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
-    const cached = await redis.get(cacheKey);
+    const cacheKey = `packed:trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
+    const cached = await redis.packed.get(cacheKey);
     if (cached) {
-      const data = superjson.parse(cached);
-      return { ok: true, data, marker: 'fromCache' as any, ctx };
+      return { ok: true, data: cached, marker: 'fromCache' as any, ctx };
     }
 
     const result = await next({ ctx });
     if (result.ok && result.data && ctx.cache?.canCache) {
-      await redis.set(cacheKey, superjson.stringify(result.data), {
+      const cacheTags = tags?.(_input).map((x) => slugit(x));
+      await redis.packed.set(cacheKey, result.data, {
         EX: ttl,
       });
+
+      if (cacheTags) {
+        await Promise.all(
+          cacheTags
+            .map((tag) => {
+              const key = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + tag;
+              return [redis.sAdd(key, cacheKey), redis.expire(key, ttl)];
+            })
+            .flat()
+        );
+      }
     }
 
     return result;

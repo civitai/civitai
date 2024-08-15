@@ -6,11 +6,10 @@ import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { userBasicCache } from '~/server/redis/caches';
+import { tagCache, tagIdsForImagesCache, userBasicCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { getTagIdsForImages } from '~/server/services/image.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { isDefined } from '~/utils/type-guards';
@@ -393,13 +392,14 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const { images } = prevData as { images: BaseImage[] };
 
       const imageIds = images.map((i) => i.id);
-      const cacheImageTags = await getTagIdsForImages(imageIds);
+      const imageTagIds = await tagIdsForImagesCache.fetch(imageIds);
+      const tags = await tagCache.fetch(Object.values(imageTagIds).flatMap((x) => x.tags));
 
       const imageTags = {} as Record<number, { tagNames: string[]; tagIds: number[] }>;
-      for (const [imageId, { tags }] of Object.entries(cacheImageTags)) {
+      for (const [imageId, cache] of Object.entries(imageTagIds)) {
         imageTags[+imageId] = {
-          tagNames: tags.map((t) => t.name),
-          tagIds: tags.map((t) => t.id),
+          tagNames: cache.tags.map((t) => tags[t]?.name).filter(isDefined),
+          tagIds: cache.tags,
         };
       }
 

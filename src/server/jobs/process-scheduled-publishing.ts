@@ -1,11 +1,11 @@
 import { Prisma } from '@prisma/client';
-import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { isDefined } from '~/utils/type-guards';
+import { createJob, getJobDate } from './job';
 
 type ScheduledEntity = {
   id: number;
@@ -79,7 +79,7 @@ export const processScheduledPublishing = createJob(
 
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
-          await tx.$executeRaw`
+          const returnedIds = await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
           UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
           FROM "ModelVersion" mv
@@ -87,8 +87,18 @@ export const processScheduledPublishing = createJob(
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-            AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+            AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+          RETURNING p.id
+          ;
         `;
+
+          if (returnedIds.length) {
+            await tx.$executeRaw`
+              UPDATE "Image"
+              SET "updatedAt" = NOW()
+              WHERE "postId" IN (${Prisma.join(returnedIds.map((r) => r.id))})
+            `;
+          }
         }
 
         if (scheduledModelVersions.length) {

@@ -256,10 +256,13 @@ export const baseS3Client = new S3Client({
   uploadRegion: env.S3_UPLOAD_REGION,
 });
 
-export const imageS3Client = new S3Client({
-  name: 'image-s3-client',
-  uploadKey: env.S3_IMAGE_UPLOAD_KEY,
-  uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
-  uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
-  uploadRegion: env.S3_IMAGE_UPLOAD_REGION,
-});
+export const imageS3Client =
+  env.S3_IMAGE_UPLOAD_KEY && env.S3_IMAGE_UPLOAD_SECRET
+    ? new S3Client({
+        name: 'image-s3-client',
+        uploadKey: env.S3_IMAGE_UPLOAD_KEY,
+        uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
+        uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT ?? env.S3_UPLOAD_ENDPOINT,
+        uploadRegion: env.S3_IMAGE_UPLOAD_REGION ?? env.S3_UPLOAD_REGION,
+      })
+    : baseS3Client;

@@ -228,8 +228,7 @@ export const modelNotifications = createNotificationProcessor({
           m.id model_id,
           m.name model_name,
           m.type model_type,
-          mv."earlyAccessEndsAt",
-          (mv."earlyAccessConfig"->>'originalTimeframe')::int original_time_frame
+          mv."publishedAt" updated_published_at,
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         where 
@@ -247,7 +246,7 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM early_access_versions ev
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
-        WHERE ev.early_access_deadline > '${lastSent}' AND ev.early_access_deadline < now()
+        WHERE ev.updated_published_at > '${lastSent}' AND ev.updated_published_at < now()
       )
       SELECT
         concat('early-access-complete:', details->>'versionId') "key",
