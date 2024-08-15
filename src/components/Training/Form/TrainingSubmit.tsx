@@ -1,14 +1,10 @@
 import {
   Accordion,
-  Anchor,
   Badge,
   Button,
-  Card,
-  Checkbox,
   createStyles,
   Divider,
   Group,
-  Input,
   Loader,
   Paper,
   SegmentedControl,
@@ -16,21 +12,12 @@ import {
   Switch,
   Text,
   Title,
-  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, ModelType, TrainingStatus } from '@prisma/client';
-import {
-  IconAlertCircle,
-  IconAlertTriangle,
-  IconCopy,
-  IconExclamationCircle,
-  IconExclamationMark,
-  IconPlus,
-  IconX,
-} from '@tabler/icons-react';
+import { Currency, TrainingStatus } from '@prisma/client';
+import { IconCopy, IconExclamationMark, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
@@ -40,48 +27,34 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
-  getPrecision,
   goBack,
   isTrainingCustomModel,
   minsToHours,
 } from '~/components/Training/Form/TrainingCommon';
 import {
   type NumberTrainingSettingsType,
-  optimizerArgMap,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
+import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvancedSettings';
+import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
-import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { BaseModel } from '~/server/common/constants';
 import { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import {
   ModelVersionUpsertInput,
-  TrainingDetailsBaseModel,
-  TrainingDetailsBaseModel15,
-  trainingDetailsBaseModels15,
-  trainingDetailsBaseModelsXL,
-  TrainingDetailsBaseModelXL,
+  TrainingDetailsBaseModelList,
   TrainingDetailsObj,
-  TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { Generation } from '~/server/services/generation/generation.types';
 import {
-  defaultBase,
-  defaultBaseType,
   defaultRun,
   defaultTrainingState,
-  TrainingRunUpdate,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
@@ -92,8 +65,8 @@ import { calcBuzzFromEta, calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-const baseModelDescriptions: {
-  [key in TrainingDetailsBaseModel]: { label: string; type: string; description: string };
+export const baseModelDescriptions: {
+  [key in TrainingDetailsBaseModelList]: { label: string; type: string; description: string };
 } = {
   sd_1_5: { label: 'Standard', type: '15', description: 'Useful for all purposes.' },
   anime: { label: 'Anime', type: '15', description: 'Results will have an anime aesthetic.' },
@@ -113,27 +86,20 @@ const baseModelDescriptions: {
     type: 'XL',
     description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
   },
+  flux_dev: {
+    label: 'Dev',
+    type: 'Flux',
+    description: 'High quality images and accurate text.',
+  },
 };
 
 const maxRuns = 5;
+// TODO check override
 const maxSteps =
   (trainingSettings.find((ts) => ts.name === 'targetSteps') as NumberTrainingSettingsType).max ??
   10000;
 
 const useStyles = createStyles((theme) => ({
-  segControl: {
-    root: {
-      border: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-      }`,
-      background: 'none',
-      flexWrap: 'wrap',
-    },
-    label: {
-      paddingLeft: theme.spacing.sm,
-      paddingRight: theme.spacing.sm,
-    },
-  },
   sticky: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
     position: 'sticky',
@@ -149,6 +115,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisTrainingDetails = thisModelVersion.trainingDetails as TrainingDetailsObj | undefined;
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
+  const thisNumImages = thisMetadata?.numImages;
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
@@ -157,7 +124,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
-  const [openedSections, setOpenedSections] = useState<string[]>([]);
+
   const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
   // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -193,60 +160,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const formBaseModel = selectedRun.base;
   const formBaseModelType = selectedRun.baseType;
-  const baseModel15 =
-    !!formBaseModel &&
-    (trainingDetailsBaseModels15 as ReadonlyArray<string>).includes(formBaseModel)
-      ? formBaseModel
-      : null;
-  const baseModelXL =
-    !!formBaseModel &&
-    (trainingDetailsBaseModelsXL as ReadonlyArray<string>).includes(formBaseModel)
-      ? formBaseModel
-      : null;
 
   const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
-
-  // Use functions to set proper starting values based on metadata
-  useEffect(() => {
-    if (selectedRun.params.numRepeats === undefined) {
-      const numRepeats = Math.max(
-        1,
-        Math.min(5000, Math.ceil(200 / (thisMetadata?.numImages || 1)))
-      );
-      updateRun(model.id, selectedRun.id, { params: { numRepeats } });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.id, thisMetadata?.numImages]);
-
-  // Set targetSteps automatically on value changes
-  useEffect(() => {
-    const { maxTrainEpochs, numRepeats, trainBatchSize } = selectedRun.params;
-
-    const newSteps = Math.ceil(
-      ((thisMetadata?.numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
-    );
-
-    // if (newSteps > maxSteps) {
-    //   showErrorNotification({
-    //     error: new Error(
-    //       `Steps are beyond the maximum (${numberWithCommas(maxSteps)}. Please lower Epochs or Num Repeats, or increase Train Batch Size.`
-    //     ),
-    //     title: 'Too many steps',
-    //   });
-    // }
-
-    if (selectedRun.params.targetSteps !== newSteps) {
-      updateRun(model.id, selectedRun.id, {
-        params: { targetSteps: newSteps },
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    selectedRun.params.maxTrainEpochs,
-    selectedRun.params.numRepeats,
-    selectedRun.params.trainBatchSize,
-    thisMetadata?.numImages,
-  ]);
 
   // Calc ETA and Cost
   useEffect(() => {
@@ -260,6 +175,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       eta,
       isCustom,
+      isFlux: selectedRun.baseType === 'flux',
       isPriority: selectedRun.highPriority ?? false,
     });
     setEtaMins(eta);
@@ -274,50 +190,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     formBaseModelType,
     status.cost,
   ]);
-
-  // Adjust optimizer and related settings
-  useEffect(() => {
-    const newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
-
-    const newScheduler =
-      selectedRun.params.optimizerType === 'Prodigy' &&
-      selectedRun.params.lrScheduler === 'cosine_with_restarts'
-        ? 'cosine'
-        : selectedRun.params.lrScheduler;
-
-    if (
-      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
-      newScheduler !== selectedRun.params.lrScheduler
-    ) {
-      updateRun(model.id, selectedRun.id, {
-        params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler },
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.params.optimizerType]);
-
-  // - Apply default params with overrides and calculations upon base model selection
-  const makeDefaultParams = (data: TrainingRunUpdate) => {
-    const defaultParams = trainingSettings.reduce(
-      (a, v) => ({
-        ...a,
-        [v.name]: v.overrides?.[data.base!]?.default ?? v.default,
-      }),
-      {} as TrainingDetailsParams
-    );
-
-    defaultParams.numRepeats = Math.max(
-      1,
-      Math.min(5000, Math.ceil(200 / (thisMetadata?.numImages || 1)))
-    );
-
-    defaultParams.targetSteps = Math.ceil(
-      ((thisMetadata?.numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
-        defaultParams.trainBatchSize
-    );
-
-    updateRun(model.id, selectedRun.id, { params: { ...defaultParams }, ...data });
-  };
 
   const { data: dryRunData, isFetching: dryRunLoading } =
     trpc.training.createRequestDryRun.useQuery(
@@ -495,7 +367,13 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
-        (base === 'sdxl' ? 'SDXL 1.0' : base === 'pony' ? 'Pony' : 'SD 1.5');
+        (base === 'sdxl'
+          ? 'SDXL 1.0'
+          : base === 'pony'
+          ? 'Pony'
+          : base === 'flux_dev'
+          ? 'Flux.1 D'
+          : 'SD 1.5');
 
       // TODO there is a bug here where if >1 fails and then get resubmitted, the idx will be 0
       //  and thus overwrites the first version...
@@ -510,7 +388,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         // ---
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,
-        clipSkip: paramData.clipSkip,
+        clipSkip: paramData.clipSkip || undefined,
         trainingDetails: {
           ...((thisModelVersion.trainingDetails as TrainingDetailsObj) ?? {}),
           baseModel: base,
@@ -551,6 +429,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               title: `Failed to create model file for run #${idx + 1}`,
               autoClose: false,
             });
+            // TODO ideally, mark this as errored and don't leave the screen
             finishedRuns++;
             if (finishedRuns === runs.length) setAwaitInvalidate(false);
           }
@@ -562,6 +441,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           title: `Failed to save model version info for run #${idx + 1}`,
           autoClose: false,
         });
+        // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
         if (finishedRuns === runs.length) setAwaitInvalidate(false);
       }
@@ -607,7 +487,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 { label: 'Type', value: thisTrainingDetails?.type ?? '(unknown)' },
                 {
                   label: 'Images',
-                  value: thisMetadata?.numImages || 0,
+                  value: thisNumImages || 0,
                 },
                 {
                   label: 'Captions',
@@ -708,7 +588,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 ? 'SDXL'
                 : run.base === 'semi'
                 ? 'Semi'
-                : baseModelDescriptions[run.base].label
+                : run.base === 'flux_dev'
+                ? 'Flux'
+                : baseModelDescriptions[run.base as TrainingDetailsBaseModelList].label ?? 'Unknown'
             })`,
             // value: run.id.toString(),
             value: idx.toString(),
@@ -724,417 +606,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <Divider />
       </Stack>
 
-      <Stack spacing={0}>
-        <Title mt="md" order={5}>
-          Base Model for Training{' '}
-          <Text span color="red">
-            *
-          </Text>
-        </Title>
-        <Text color="dimmed" size="sm">
-          Not sure which one to choose? Read our{' '}
-          <Anchor
-            href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            On-Site LoRA Trainer Guide
-          </Anchor>{' '}
-          for more info.
-        </Text>
-      </Stack>
-      <Input.Wrapper>
-        <Card withBorder mt={8} p="sm">
-          <Card.Section inheritPadding withBorder py="sm">
-            <Stack spacing="xs">
-              <Group>
-                <Badge color="violet" size="lg" radius="xs" w={85}>
-                  SD 1.5
-                </Badge>
-                <SegmentedControl
-                  data={Object.entries(baseModelDescriptions)
-                    .filter(([, v]) => v.type === '15')
-                    .map(([k, v]) => {
-                      return {
-                        label: v.label,
-                        value: k,
-                      };
-                    })}
-                  // nb: this type is not accurate, but null is the only way to clear out SegmentedControl
-                  value={baseModel15 as TrainingDetailsBaseModel15}
-                  onChange={(value) => {
-                    makeDefaultParams({ base: value, baseType: 'sd15', customModel: null });
-                  }}
-                  color="blue"
-                  size="xs"
-                  className={classes.segControl}
-                  transitionDuration={0}
-                />
-              </Group>
-
-              <Group>
-                <Badge color="grape" size="lg" radius="xs" w={85}>
-                  SDXL
-                </Badge>
-                <SegmentedControl
-                  data={Object.entries(baseModelDescriptions)
-                    .filter(([, v]) => v.type === 'XL')
-                    .map(([k, v]) => {
-                      return {
-                        label: v.label,
-                        value: k,
-                      };
-                    })}
-                  value={baseModelXL as TrainingDetailsBaseModelXL}
-                  onChange={(value) => {
-                    makeDefaultParams({
-                      base: value,
-                      baseType: 'sdxl',
-                      customModel: null,
-                    });
-                  }}
-                  color="blue"
-                  size="xs"
-                  className={classes.segControl}
-                  transitionDuration={0}
-                />
-              </Group>
-
-              <Group>
-                <Badge color="cyan" size="lg" radius="xs" w={85}>
-                  Custom
-                </Badge>
-                <Card px="sm" py={8} radius="md" withBorder>
-                  <ResourceSelect
-                    buttonLabel="Select custom model"
-                    buttonProps={{
-                      size: 'md',
-                      compact: true,
-                      styles: { label: { fontSize: 12 } },
-                    }}
-                    options={{
-                      resources: [
-                        {
-                          type: ModelType.Checkpoint,
-                        },
-                      ],
-                    }}
-                    allowRemove={true}
-                    isTraining={true}
-                    value={selectedRun.customModel}
-                    onChange={(val) => {
-                      const gVal = val as Generation.Resource | undefined;
-                      if (!gVal) {
-                        makeDefaultParams({
-                          base: defaultBase,
-                          baseType: defaultBaseType,
-                          customModel: null,
-                        });
-                      } else {
-                        const mId = gVal.modelId;
-                        const mvId = gVal.id;
-                        const castBase = (
-                          [
-                            ...baseModelSets.SDXL,
-                            ...baseModelSets.SDXLDistilled,
-                            ...baseModelSets.Pony,
-                          ] as string[]
-                        ).includes(gVal.baseModel)
-                          ? 'sdxl'
-                          : 'sd15';
-                        const cLink = `civitai:${mId}@${mvId}`;
-
-                        makeDefaultParams({
-                          base: cLink,
-                          baseType: castBase,
-                          customModel: gVal,
-                        });
-                      }
-                    }}
-                  />
-                </Card>
-              </Group>
-            </Stack>
-          </Card.Section>
-          {formBaseModel && (
-            <Card.Section inheritPadding py="sm">
-              <Stack>
-                <Text size="sm">
-                  {isTrainingCustomModel(formBaseModel)
-                    ? 'Custom model selected.'
-                    : baseModelDescriptions[formBaseModel]?.description ?? 'No description.'}
-                </Text>
-                {blockedModels.includes(formBaseModel) ? (
-                  <AlertWithIcon
-                    icon={<IconExclamationCircle />}
-                    iconColor="default"
-                    p="sm"
-                    color="red"
-                  >
-                    <Text>
-                      This model currently does not work properly with kohya.
-                      <br />
-                      We are working on a fix for this - in the meantime, please try a different
-                      model.
-                    </Text>
-                  </AlertWithIcon>
-                ) : isTrainingCustomModel(formBaseModel) ? (
-                  <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
-                    Note: custom models may see a higher failure rate than normal, and cost more
-                    Buzz.
-                  </AlertWithIcon>
-                ) : undefined}
-              </Stack>
-            </Card.Section>
-          )}
-        </Card>
-      </Input.Wrapper>
+      <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
 
       {formBaseModel && (
         <>
-          <Title mt="md" order={5}>
-            Advanced Settings
-          </Title>
+          <AdvancedSettings
+            modelId={model.id}
+            selectedRun={selectedRun}
+            maxSteps={maxSteps}
+            numImages={thisNumImages}
+          />
 
-          <Accordion
-            variant="separated"
-            multiple
-            mt="md"
-            onChange={setOpenedSections}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-              },
-            })}
-          >
-            <Accordion.Item value="custom-prompts">
-              <Accordion.Control>
-                <Stack spacing={4}>
-                  Sample Image Prompts
-                  {openedSections.includes('custom-prompts') && (
-                    <Text size="xs" color="dimmed">
-                      Set your own prompts for any of the 3 sample images we generate for each
-                      epoch.
-                    </Text>
-                  )}
-                </Stack>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <Stack p="sm">
-                  <TextInputWrapper
-                    label="Image #1"
-                    placeholder="Automatically set"
-                    value={selectedRun.samplePrompts[0]}
-                    onChange={(event) =>
-                      updateRun(model.id, selectedRun.id, {
-                        samplePrompts: [
-                          event.currentTarget.value,
-                          selectedRun.samplePrompts[1],
-                          selectedRun.samplePrompts[2],
-                        ],
-                      })
-                    }
-                  />
-                  <TextInputWrapper
-                    label="Image #2"
-                    placeholder="Automatically set"
-                    value={selectedRun.samplePrompts[1]}
-                    onChange={(event) =>
-                      updateRun(model.id, selectedRun.id, {
-                        samplePrompts: [
-                          selectedRun.samplePrompts[0],
-                          event.currentTarget.value,
-                          selectedRun.samplePrompts[2],
-                        ],
-                      })
-                    }
-                  />
-                  <TextInputWrapper
-                    label="Image #3"
-                    placeholder="Automatically set"
-                    value={selectedRun.samplePrompts[2]}
-                    onChange={(event) =>
-                      updateRun(model.id, selectedRun.id, {
-                        samplePrompts: [
-                          selectedRun.samplePrompts[0],
-                          selectedRun.samplePrompts[1],
-                          event.currentTarget.value,
-                        ],
-                      })
-                    }
-                  />
-                </Stack>
-              </Accordion.Panel>
-            </Accordion.Item>
-            <Accordion.Item value="training-settings">
-              <Accordion.Control>
-                <Stack spacing={4}>
-                  <Group spacing="sm">
-                    <Text>Training Parameters</Text>
-                    {isTrainingCustomModel(formBaseModel) && (
-                      <Tooltip
-                        label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
-                        maw={300}
-                        multiline
-                        withArrow
-                        styles={(theme) => ({
-                          tooltip: {
-                            border: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                          },
-                          arrow: {
-                            borderRight: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                            borderBottom: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                          },
-                        })}
-                      >
-                        <IconAlertTriangle color="orange" size={16} />
-                      </Tooltip>
-                    )}
-                  </Group>
-                  {openedSections.includes('training-settings') && (
-                    <Text size="xs" color="dimmed">
-                      Hover over each setting for more information.
-                      <br />
-                      Default settings are based on your chosen model. Altering these settings may
-                      cause undesirable results.
-                    </Text>
-                  )}
-                </Stack>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <DescriptionTable
-                  labelWidth="200px"
-                  items={trainingSettings.map((ts) => {
-                    let inp: React.ReactNode;
-
-                    if (ts.type === 'int' || ts.type === 'number') {
-                      const override = ts.overrides?.[formBaseModel];
-                      inp = (
-                        <NumberInputWrapper
-                          min={override?.min ?? ts.min}
-                          max={override?.max ?? ts.max}
-                          precision={
-                            ts.type === 'number'
-                              ? getPrecision(ts.step ?? ts.default) || 4
-                              : undefined
-                          }
-                          step={ts.step}
-                          sx={{ flexGrow: 1 }}
-                          disabled={ts.disabled === true}
-                          format="default"
-                          value={selectedRun.params[ts.name] as number}
-                          onChange={(value) =>
-                            updateRun(model.id, selectedRun.id, {
-                              params: { [ts.name]: value },
-                            })
-                          }
-                        />
-                      );
-                    } else if (ts.type === 'select') {
-                      let options = ts.options as string[];
-                      // TODO if we fix the bitsandbytes issue, we can disable this
-                      if (ts.name === 'optimizerType' && formBaseModelType === 'sdxl') {
-                        options = options.filter((o) => o !== 'AdamW8Bit');
-                      }
-                      if (
-                        ts.name === 'lrScheduler' &&
-                        selectedRun.params.optimizerType === 'Prodigy'
-                      ) {
-                        options = options.filter((o) => o !== 'cosine_with_restarts');
-                      }
-
-                      inp = (
-                        <SelectWrapper
-                          data={options}
-                          disabled={ts.disabled === true}
-                          value={selectedRun.params[ts.name] as string}
-                          onChange={(value) =>
-                            updateRun(model.id, selectedRun.id, {
-                              params: { [ts.name]: value },
-                            })
-                          }
-                        />
-                      );
-                    } else if (ts.type === 'bool') {
-                      inp = (
-                        <Checkbox
-                          py={8}
-                          disabled={ts.disabled === true}
-                          checked={selectedRun.params[ts.name] as boolean}
-                          onChange={(event) =>
-                            updateRun(model.id, selectedRun.id, {
-                              params: {
-                                [ts.name]: event.currentTarget.checked,
-                              },
-                            })
-                          }
-                        />
-                      );
-                    } else if (ts.type === 'string') {
-                      inp = (
-                        <TextInputWrapper
-                          disabled={ts.disabled === true}
-                          clearable={ts.disabled !== true}
-                          value={selectedRun.params[ts.name] as string}
-                          onChange={(event) =>
-                            updateRun(model.id, selectedRun.id, {
-                              params: {
-                                [ts.name]: event.currentTarget.value,
-                              },
-                            })
-                          }
-                        />
-                      );
-                    }
-
-                    return {
-                      label: ts.hint ? (
-                        <CivitaiTooltip
-                          position="top"
-                          variant="roundedOpaque"
-                          withArrow
-                          multiline
-                          label={ts.hint}
-                        >
-                          <Group spacing={6}>
-                            <Text inline style={{ cursor: 'help' }}>
-                              {ts.label}
-                            </Text>
-                            {ts.name === 'targetSteps' &&
-                              selectedRun.params.targetSteps > maxSteps && (
-                                <IconAlertTriangle color="orange" size={16} />
-                              )}
-                          </Group>
-                        </CivitaiTooltip>
-                      ) : (
-                        ts.label
-                      ),
-                      value: inp,
-                    };
-                  })}
-                />
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
           <Group mt="lg">
             <Switch
               label={
@@ -1199,6 +681,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Text>
                   {!isDefined(etaMins)
                     ? 'Unknown'
+                    : etaMins > 20000
+                    ? 'Forever'
                     : minsToHours(
                         (!!dryRunData
                           ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000

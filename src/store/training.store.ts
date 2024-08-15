@@ -7,6 +7,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { Generation } from '~/server/services/generation/generation.types';
+import { TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;
@@ -30,7 +31,7 @@ export type AutoCaptionType = Nullable<AutoTagSchemaType> & {
 export type TrainingRun = {
   id: number;
   base: TrainingDetailsBaseModel;
-  baseType: 'sd15' | 'sdxl';
+  baseType: TrainingBaseModelType;
   customModel?: Generation.Resource;
   samplePrompts: string[];
   params: TrainingDetailsParams;
@@ -71,11 +72,15 @@ type TrainingImageStore = {
 };
 
 export const defaultBase = 'sdxl';
+export const defaultEngine = 'kohya';
 export const defaultBaseType = 'sdxl' as const;
 const defaultParams = trainingSettings.reduce(
   (a, v) => ({
     ...a,
-    [v.name]: v.overrides?.[defaultBase]?.default ?? v.default,
+    [v.name]:
+      v.overrides?.[defaultBase]?.all?.default ??
+      v.overrides?.[defaultBase]?.[defaultEngine]?.default ??
+      v.default,
   }),
   {} as TrainingDetailsParams
 );
