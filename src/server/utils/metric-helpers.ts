@@ -17,8 +17,16 @@ export const updateEntityMetric = async ({
   metricType: EntityMetric_MetricType_Type;
   amount?: number;
 }) => {
+  const logData = JSON.stringify({
+    userId: ctx.user?.id,
+    entityType,
+    entityId,
+    metricType,
+    metricValue: amount,
+  });
+
+  // Inc postgres EntityMetric
   try {
-    // Inc postgres EntityMetric
     const dbData = await dbWrite.$executeRaw`
       UPDATE "EntityMetric"
       SET "metricValue" = "metricValue" + ${amount}
@@ -45,17 +53,12 @@ export const updateEntityMetric = async ({
           {
             type: 'error',
             name: 'No clickhouse client - update',
-            details: {
-              data: JSON.stringify({ entityType, entityId, metricType, metricValue: amount }),
-            },
+            details: { data: logData },
           },
           'clickhouse'
         ).catch();
       }
     }
-
-    // Queue with clickhouse tracker
-    await ctx.track.entityMetric({ entityType, entityId, metricType, metricValue: amount });
   } catch (e) {
     const error = e as Error;
     // putting this into the clickhouse dataset for now
@@ -63,9 +66,25 @@ export const updateEntityMetric = async ({
       {
         type: 'error',
         name: 'Failed to increment metric',
-        details: {
-          data: JSON.stringify({ entityType, entityId, metricType, metricValue: amount }),
-        },
+        details: { data: logData },
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+  }
+
+  // Queue with clickhouse tracker
+  try {
+    await ctx.track.entityMetric({ entityType, entityId, metricType, metricValue: amount });
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to queue metric into CH',
+        details: { data: logData },
         message: error.message,
         stack: error.stack,
         cause: error.cause,
