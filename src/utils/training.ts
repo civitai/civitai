@@ -37,14 +37,14 @@ export const calcBuzzFromEta = ({
   cost,
   eta,
   isCustom,
-  isPriority,
   isFlux,
+  isPriority,
 }: {
   cost: TrainingCost;
   eta: number | undefined;
   isCustom: boolean;
-  isPriority: boolean;
   isFlux: boolean;
+  isPriority: boolean;
 }) => {
   if (!eta) return cost.baseBuzz;
 
