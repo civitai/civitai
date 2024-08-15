@@ -26,7 +26,6 @@ import {
   IconInfoCircle,
   IconTagOff,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   Configure,
@@ -38,7 +37,6 @@ import {
 import trieMemoize from 'trie-memoize';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { FeedCard } from '~/components/Cards/FeedCard';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -47,12 +45,14 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
@@ -60,18 +60,16 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
-import { aDayAgo } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions } from './resource-select.types';
 import {
   GenerationResource,
   getBaseModelSet,
   getIsSdxl,
 } from '~/shared/constants/generation.constants';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { aDayAgo } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
+import { ResourceSelectOptions } from './resource-select.types';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -285,7 +283,7 @@ function ResourceSelectCard({
   data: SearchIndexDataMap['models'][number];
 }) {
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView<HTMLAnchorElement>({ rootMargin: '600px' });
+  const { ref, inView } = useInView();
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
@@ -294,6 +292,7 @@ function ResourceSelectCard({
 
   const resourceFilter = resources.find((x) => x.type === data.type);
   const versions = data.versions.filter((version) => {
+    // TODO test 'Flux.1 D'
     if (isTraining && !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'].includes(version.baseModel))
       return false;
     if (canGenerate === undefined) return true;
@@ -414,7 +413,7 @@ function ResourceSelectCard({
 
   return (
     // Visually hide card if there are no versions
-    <FeedCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
+    <TwCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
       {inView ? (
         <div className={classes.root} onClick={handleSelect}>
           {image && (
@@ -583,7 +582,7 @@ function ResourceSelectCard({
       ) : (
         <></>
       )}
-    </FeedCard>
+    </TwCard>
   );
 }
 

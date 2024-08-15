@@ -6,6 +6,7 @@ import { constants } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction, TagSort } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   AdjustTagsSchema,
@@ -16,7 +17,6 @@ import {
   ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
-import { clearImageTagIdsCache } from '~/server/services/image.service';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
 import {
   HiddenImages,
@@ -606,7 +606,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         }
     `);
     updateImageNSFWLevels(entityIds);
-    await clearImageTagIdsCache(entityIds);
+    await tagIdsForImagesCache.bust(entityIds);
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       DELETE
@@ -643,7 +643,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
 
     // Update nsfw baseline
     if (disable) updateImageNSFWLevels(entityIds);
-    await clearImageTagIdsCache(entityIds);
+    await tagIdsForImagesCache.bust(entityIds);
   }
 };
 

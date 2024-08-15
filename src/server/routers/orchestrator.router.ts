@@ -105,6 +105,7 @@ export const orchestratorRouter = router({
         await Promise.all(
           steps.map((step) =>
             Object.values(step.patches)
+              // todo - add clickhouse tracking for user feedback/favorites
               .filter((patch) => patch.path.includes('feedback'))
               .map(async ({ op, path }) => {
                 if (op === 'add') {

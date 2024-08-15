@@ -6,11 +6,14 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import models from '~/pages/api/v1/models';
 import { constants } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
+import {
+  modelGallerySettingsInput,
+  modelGallerySettingsSchema,
+} from '~/server/schema/model.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -204,6 +207,10 @@ export const userSettingsSchema = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional().default(true),
+  gallerySettings: modelGallerySettingsSchema
+    .omit({ pinnedPosts: true, images: true })
+    .partial()
+    .optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;

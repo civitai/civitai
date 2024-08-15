@@ -13,6 +13,7 @@ import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
+import { searchClient } from '~/server/meilisearch/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -37,6 +38,7 @@ import {
   articlesSearchIndex,
   bountiesSearchIndex,
   collectionsSearchIndex,
+  imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
@@ -67,7 +69,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { searchClient } from '~/server/meilisearch/client';
 import dayjs from 'dayjs';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -164,6 +165,7 @@ type UserSearchResult = {
   profilePicture?: { url: string; nsfwLevel: NsfwLevel };
   image?: string;
 };
+
 export async function getUsersWithSearch({
   limit = 10,
   query,
@@ -336,7 +338,7 @@ export async function getUserSettings(userId: number) {
   `;
 
   const userSettings = userSettingsSchema.safeParse(settings[0]?.settings ?? {});
-  // Pass over the default settings if the user settings are invalid
+  // Pass over the default settings if the user settings cannot be parsed
   if (!userSettings.success) return settings[0]?.settings ?? {};
 
   return userSettings.data;
@@ -765,6 +767,9 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await imagesSearchIndex.queueUpdate(
+    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
     images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await articlesSearchIndex.queueUpdate(

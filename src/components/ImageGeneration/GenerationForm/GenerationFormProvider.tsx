@@ -334,6 +334,13 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           });
         }
       }
+
+      // handle setting flux mode to standard when flux loras are added
+      if (name === 'resources') {
+        if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
+          form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
+        }
+      }
     });
     return () => {
       subscription.unsubscribe();

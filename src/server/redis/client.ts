@@ -147,7 +147,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-2',
+    RESOURCE_DATA: 'packed:generation:resource-data',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
@@ -174,7 +174,7 @@ export const REDIS_KEYS = {
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
-    TAG_IDS_FOR_IMAGES: 'packed:caches:tagIdsForImages',
+    TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     COSMETICS: 'packed:caches:cosmetics',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
@@ -205,4 +205,7 @@ export const REDIS_KEYS = {
     HISTORY_DOWNLOADS: 'limits:history-downloads',
   },
   LIVE_NOW: 'live-now',
+  INDEXES: {
+    IMAGE_DELETED: 'indexes:image-deleted',
+  },
 } as const;

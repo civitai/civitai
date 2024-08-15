@@ -10,13 +10,13 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client.mjs';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { GenerationResource } from '~/shared/constants/generation.constants';
-import { env } from '~/env/client.mjs';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { increaseDate } from '~/utils/date-helpers';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -737,7 +737,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    additionalResourceTypes: [] as ResourceFilter[],
+    additionalResourceTypes: [{ type: ModelType.LORA, baseModelSet: 'Flux1' }] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -777,7 +777,7 @@ export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 
 // Metrics:
-export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v2';
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',

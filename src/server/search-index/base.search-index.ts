@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { MeiliSearch } from 'meilisearch';
+import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { AugmentedPool } from '~/server/db/db-helpers';
@@ -28,6 +29,7 @@ const logger = createLogger(`search-index-processor`);
 type SearchIndexContext = {
   db: PrismaClient;
   pg: AugmentedPool;
+  ch?: CustomClickHouseClient;
   indexName: string;
   jobContext: JobContext;
   logger: ReturnType<typeof createLogger>;
@@ -176,7 +178,15 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${indexName.toLowerCase()}`
       );
-      const ctx = { db: dbWrite, pg: pgDbWrite, lastUpdatedAt, indexName, jobContext, logger };
+      const ctx = {
+        db: dbWrite,
+        pg: pgDbWrite,
+        ch: clickhouse,
+        lastUpdatedAt,
+        indexName,
+        jobContext,
+        logger,
+      };
       // Check if update is needed
       const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 

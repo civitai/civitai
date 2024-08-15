@@ -90,10 +90,28 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
     });
   };
 
+  const copyGallerySettingsMutations = trpc.model.copyGallerySettings.useMutation({
+    onSuccess: async () => {
+      await queryUtils.model.getGallerySettings.invalidate({ id: modelId });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Unable to copy gallery moderation preferences',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleCopyGallerySettings = async (modelId: number) => {
+    await copyGallerySettingsMutations.mutateAsync({ id: modelId });
+  };
+
   return {
     gallerySettings: data,
     loading: isLoading,
     toggle: handleToggleSettings,
     updating: updateGallerySettingsMutation.isLoading,
+    copySettings: handleCopyGallerySettings,
+    copySettingsLoading: copyGallerySettingsMutations.isLoading,
   };
 };

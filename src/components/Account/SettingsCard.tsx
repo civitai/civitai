@@ -102,7 +102,7 @@ export function SettingsCard() {
         </Group>
         {toggles.available.length > 0 && (
           <>
-            <Divider label="Early Access Features" />
+            <Divider label="Early Access" />
             {toggles.available.map((feature) => (
               <Switch
                 name={feature.key}

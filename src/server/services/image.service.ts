@@ -2,6 +2,8 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
@@ -14,15 +16,16 @@ import {
 } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
-import { chunk, truncate } from 'lodash-es';
+import { chunk, lowerFirst, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { VotableTagModel } from '~/libs/tags';
+import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
-import { CacheTTL, constants } from '~/server/common/constants';
+import { CacheTTL, constants, METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import {
   BlockedReason,
   ImageScanType,
@@ -35,11 +38,11 @@ import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
-import { metricsClient } from '~/server/meilisearch/client';
+import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
-import { imagesForModelVersionsCache, tagIdsForImagesCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -59,7 +62,11 @@ import {
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { articlesSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+} from '~/server/search-index';
 import {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
@@ -154,6 +161,25 @@ export async function purgeResizeCache({ url }: { url: string }) {
   });
 }
 
+async function markImagesDeleted(id: number | number[]) {
+  if (!Array.isArray(id)) id = [id];
+
+  const toSet = Object.fromEntries(id.map((x) => [x, x]));
+  await Promise.all([
+    redis.packed.hmSet(REDIS_KEYS.INDEXES.IMAGE_DELETED, toSet),
+    redis.hExpire(REDIS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
+  ]);
+}
+
+const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) => {
+  const keys = data.map((x) => x.id.toString());
+  if (!keys.length) return data;
+  const deleted = (
+    (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
+  ).filter(isDefined);
+  return data.filter((x) => !deleted.includes(x.id));
+};
+
 export const deleteImageById = async ({
   id,
   updatePost,
@@ -165,6 +191,9 @@ export const deleteImageById = async ({
       select: { url: true, postId: true, nsfwLevel: true, userId: true },
     });
     if (!image) return;
+
+    // Mark as deleted in cache so we filter it out in the future
+    await markImagesDeleted(id);
 
     try {
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
@@ -182,6 +211,10 @@ export const deleteImageById = async ({
     }
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
+
     // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
     if (updatePost && image.postId) {
       await updatePostNsfwLevel(image.postId);
@@ -227,6 +260,9 @@ export const moderateImages = async ({
     });
 
     await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
       ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
     );
 
@@ -355,18 +391,13 @@ export const getImageById = async ({ id }: GetByIdInput) => {
 };
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-      width: true,
-      height: true,
-    },
-  });
-  if (!image) throw new TRPCError({ code: 'NOT_FOUND' });
-  return await ingestImage({ image });
+  const images = await dbWrite.$queryRaw<IngestImageInput[]>`
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
+    FROM "Image"
+    WHERE id = ${id}
+  `;
+  if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
+  return await ingestImage({ image: images[0] });
 };
 
 export const ingestImage = async ({
@@ -398,9 +429,12 @@ export const ingestImage = async ({
     return true;
   }
 
-  const { prompt } = await dbClient.$queryRaw<{ prompt: string | null }>`
-    SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
-  `;
+  if (!image.prompt) {
+    const { prompt } = await dbClient.$queryRaw<{ prompt?: string }>`
+      SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
+    `;
+    image.prompt = prompt;
+  }
 
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
     method: 'POST',
@@ -411,7 +445,7 @@ export const ingestImage = async ({
       type,
       width,
       height,
-      prompt,
+      prompt: image.prompt,
       // wait: true,
       scans: [
         ImageScanType.Label,
@@ -446,10 +480,12 @@ export const ingestImageBulk = async ({
   images,
   tx,
   lowPriority = true,
+  scans,
 }: {
   images: IngestImageInput[];
   tx?: Prisma.TransactionClient;
   lowPriority?: boolean;
+  scans?: ImageScanType[];
 }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
@@ -461,22 +497,27 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  if (!isProd || !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-      },
-    });
-    return true;
-  }
+  // if (!isProd || !callbackUrl) {
+  //   console.log('skip ingest');
+  //   await dbClient.image.updateMany({
+  //     where: { id: { in: imageIds } },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //     },
+  //   });
+  //   return true;
+  // }
 
-  const prompts = await dbClient.$queryRaw<{ id: number; prompt: string | null }[]>`
-    SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
-  `;
+  const needsPrompts = !images.some((x) => x.prompt);
+  if (needsPrompts) {
+    const prompts = await dbClient.$queryRaw<{ id: number; prompt?: string }[]>`
+      SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+    `;
+    const promptMap = Object.fromEntries(prompts.map((x) => [x.id, x.prompt]));
+    for (const image of images) image.prompt = promptMap[image.id];
+  }
 
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
@@ -490,8 +531,8 @@ export const ingestImageBulk = async ({
           type: image.type,
           width: image.width,
           height: image.height,
-          prompt: prompts.find((x) => x.id === image.id)?.prompt,
-          scans: [
+          prompt: image.prompt,
+          scans: scans ?? [
             ImageScanType.Label,
             ImageScanType.Moderation,
             ImageScanType.WD14,
@@ -503,10 +544,10 @@ export const ingestImageBulk = async ({
     }
   );
   if (response.status === 202) {
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: { scanRequestedAt },
-    });
+    // await dbClient.image.updateMany({
+    //   where: { id: { in: imageIds } },
+    //   data: { scanRequestedAt },
+    // });
     return true;
   }
   return false;
@@ -1140,11 +1181,9 @@ export const getAllImages = async (
     nextCursor = nextItem?.cursorId;
   }
 
-  let tagIdsVar:
-    | Record<string, { tags: { id: number; name: string }[]; imageId: number }>
-    | undefined;
+  let tagIdsVar: Record<string, { tags: number[]; imageId: number }> | undefined;
   if (include?.includes('tagIds')) {
-    tagIdsVar = await getTagIdsForImages(imageIds);
+    tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
   }
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
@@ -1264,7 +1303,7 @@ export const getAllImages = async (
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
-        tagIds: tagIdsVar?.[i.id]?.tags.map((t) => t.id),
+        tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
       })
     );
@@ -1298,6 +1337,7 @@ export const getAllImagesPost = async (
     notPublished,
     withMeta: hasMeta,
     excludedUserIds,
+    excludeCrossPosts,
     //
     modelId, // TODO fix
     reviewId, // TODO - remove, not in use...true?
@@ -1309,7 +1349,6 @@ export const getAllImagesPost = async (
     periodMode,
     generation,
     prioritizedUserIds,
-    excludeCrossPosts,
     includeBaseModel,
     hidden,
     followed,
@@ -1328,8 +1367,7 @@ export const getAllImagesPost = async (
   const offset = cursor as number | undefined;
   const currentUserId = user?.id;
 
-  console.time('SEARCH IDS');
-  const { data: searchResults, total: searchTotal } = await getImagesFromSearch({
+  const { data: searchResultsTmp, total: searchTotal } = await getImagesFromSearch({
     modelVersionId,
     types,
     browsingLevel,
@@ -1346,12 +1384,13 @@ export const getAllImagesPost = async (
     limit,
     offset,
     excludedUserIds,
+    excludeCrossPosts,
     // userIds: userIds,
     currentUserId,
     isModerator: user?.isModerator,
   });
-  console.timeEnd('SEARCH IDS');
-  console.log(searchResults[0]?.id, searchResults.length);
+
+  const searchResults = await filterOutDeleted(searchResultsTmp);
 
   if (!searchResults.length) {
     return {
@@ -1363,34 +1402,6 @@ export const getAllImagesPost = async (
   const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
   const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
-  // TODO may need to check for image existence in db
-
-  // console.time('ADDITIONAL');
-  // const additionalData = await dbRead.image.findMany({
-  //   where: { id: { in: searchIds } },
-  //   select: {
-  //     id: true,
-  //     name: true,
-  //     type: true,
-  //     width: true,
-  //     height: true,
-  //     nsfwLevel: true,
-  //     createdAt: true,
-  //     index: true,
-  //     user: { select: { id: true, image: true, username: true, deletedAt: true } },
-  //     post: { select: { publishedAt: true, title: true, modelVersionId: true } },
-  //   },
-  // });
-  // console.timeEnd('ADDITIONAL');
-
-  // await dbRead.user.findMany({
-  //   where: { id: { in: userIds } },
-  //   select: {
-  //     username: true,
-  //   },
-  // });
-
-  console.time('REACTION');
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (currentUserId) {
     const reactionsRaw = await dbRead.imageReaction.findMany({
@@ -1403,20 +1414,14 @@ export const getAllImagesPost = async (
       return acc;
     }, {} as Record<number, ReviewReactions[]>);
   }
-  console.timeEnd('REACTION');
 
-  console.time('CACHE');
-  const [userDatas, userCosmetics, profilePictures, tagIdsData] = await Promise.all([
+  const [userDatas, userCosmetics, profilePictures] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    include?.includes('tagIds') ? await getTagIdsForImages(imageIds) : undefined,
   ]);
-  console.timeEnd('CACHE');
 
-  // TODO tags? we have strings...
-
-  const mergedData = searchResults.map((sr) => {
+  const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
@@ -1427,6 +1432,7 @@ export const getAllImagesPost = async (
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { width: sr.width, height: sr.height },
+      published: !!publishedAtUnix,
       //
       user: {
         id: sr.userId,
@@ -1437,10 +1443,8 @@ export const getAllImagesPost = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
-      tagIds: tagIdsData?.[sr.id]?.tags.map((t) => t.id),
-      // tags: tagsVar?.filter((x) => x.imageId === i.id),
       // TODO fix below
-      tags: [],
+      tags: [], // needed?
       name: null, // leave
       generationProcess: null, // deprecated
       scannedAt: null, // remove
@@ -1456,8 +1460,10 @@ export const getAllImagesPost = async (
   });
 
   let nextCursor: number | undefined;
-  if (searchTotal) {
-    nextCursor = (offset ?? 0) + limit;
+  const lastImg = (offset ?? 0) + limit;
+  // - using >= just in case the total estimate is rounding
+  if (searchTotal && searchTotal >= lastImg) {
+    nextCursor = lastImg;
   }
 
   return {
@@ -1466,7 +1472,7 @@ export const getAllImagesPost = async (
   };
 };
 
-const METRICS_SEARCH_INDEX = 'metrics_images_v1_NEW';
+const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}`;
 type ImageSearchInput = {
   modelVersionId?: number;
   types?: MediaType[];
@@ -1489,6 +1495,7 @@ type ImageSearchInput = {
   modelId?: number;
   reviewId?: number;
   excludedUserIds?: number[];
+  excludeCrossPosts?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
 };
@@ -1506,7 +1513,7 @@ const makeMeiliImageSearchFilter = (
 };
 
 async function getImagesFromSearch(input: ImageSearchInput) {
-  if (!metricsClient) return { data: [], total: 0 };
+  if (!metricsSearchClient) return { data: [], total: 0 };
 
   const {
     sort,
@@ -1526,12 +1533,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId, // missing
     modelId, // missing
     excludedUserIds,
+    excludeCrossPosts,
     limit,
     offset,
     page,
-    userIds,
   } = input;
-  let { browsingLevel } = input;
+  let { userIds, browsingLevel } = input;
 
   // Filter
   //------------------------
@@ -1546,17 +1553,31 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
 
   if (modelVersionId) {
-    filters.push(
-      `(${makeMeiliImageSearchFilter(
-        'modelVersionIds',
-        `IN [${modelVersionId}]`
-      )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
-    );
+    if (excludeCrossPosts) {
+      filters.push(makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`));
+    } else {
+      filters.push(
+        `(${makeMeiliImageSearchFilter(
+          'modelVersionIds',
+          `IN [${modelVersionId}]`
+        )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
+      );
+    }
   }
 
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
-  if (notPublished && isModerator) filters.push(makeMeiliImageSearchFilter('published', '= false'));
+
+  if (notPublished && isModerator) {
+    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+  } else if (!isModerator) {
+    // Users should only see published stuff or things they own
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    if (currentUserId) {
+      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+    }
+    filters.push(`(${publishedFilters.join(' OR ')})`);
+  }
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
@@ -1568,11 +1589,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
-  // TODO what are we doing with this? userIds are not passed in, only a single username is
-  // if (userIds) {
-  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(`userId IN [${userIds.join(',')}]`);
-  // }
+  if (userIds) {
+    userIds = Array.isArray(userIds) ? userIds : [userIds];
+    filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+  }
   if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
@@ -1628,7 +1648,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
-    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsClient
+    const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 
@@ -1646,15 +1666,27 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       total: results.estimatedTotalHits,
       processingTimeMs: results.processingTimeMs,
     };
-    logToAxiom(
-      { type: 'search-result', metrics, input: removeEmpty(input), request },
-      'temp-search'
-    ).catch();
+    // console.log({ input: removeEmpty(input), request });
 
-    const imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
+    let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
+    try {
+      imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to getImageMetrics',
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
 
     const fullData = filtered.map((h) => {
-      const match = imageMetrics.find((im) => im.id === h.id);
+      const match = imageMetrics[h.id];
       return {
         ...h,
         stats: {
@@ -1694,6 +1726,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 const getImageMetrics = async (ids: number[]) => {
+  if (!ids.length) return {};
+
   const pgData = await dbRead.entityMetricImage.findMany({
     where: { imageId: { in: ids } },
     select: {
@@ -1702,60 +1736,142 @@ const getImageMetrics = async (ids: number[]) => {
       reactionHeart: true,
       reactionLaugh: true,
       reactionCry: true,
-      reactionTotal: true,
+      // reactionTotal: true,
       comment: true,
       collection: true,
       buzz: true,
     },
   });
 
-  const finalData = pgData.map(({ imageId, ...rest }) => ({ ...rest, id: imageId }));
+  type PgDataType = (typeof pgData)[number];
 
-  // TODO fix this
-  // // if no data in postgres, get latest from clickhouse
-  // if (clickhouse) {
-  //   const missing = ids.filter((i) => !pgData.map((pgd) => pgd.imageId).includes(i));
-  //   if (missing.length > 0) {
-  //     // TODO fix this query
-  //     const clickData = await clickhouse?.$query<typeof pgData[number]>(`
-  //         SELECT entityId, metricType, sum(metricValue)
-  //         FROM entityMetricEvents
-  //         WHERE entityType = 'Image'
-  //           AND entityId in (${missing.join(',')})
-  //         GROUP BY entityId, metricType
-  //       `
-  //     )
-  //     return pgData.concat(clickData);
-  //   }
-  // }
+  // - If missing data in postgres, get latest from clickhouse
 
-  return finalData;
+  // - get images with no data at all
+  const missingIds = ids.filter((i) => !pgData.map((d) => d.imageId).includes(i));
+  // - get images where some of the properties are null
+  const missingData = pgData
+    .filter((d) => Object.values(d).some((v) => !isDefined(v)))
+    .map((x) => x.imageId);
+  const missing = [...new Set([...missingIds, ...missingData])];
+
+  let clickData: DeepNonNullable<PgDataType>[] = [];
+  if (missing.length > 0) {
+    if (clickhouse) {
+      // - find the missing IDs' data in clickhouse
+      clickData = await clickhouse.$query<DeepNonNullable<PgDataType>>(`
+          SELECT entityId                                              as "imageId",
+                 SUM(if(metricType = 'ReactionLike', metricValue, 0))  as "reactionLike",
+                 SUM(if(metricType = 'ReactionHeart', metricValue, 0)) as "reactionHeart",
+                 SUM(if(metricType = 'ReactionLaugh', metricValue, 0)) as "reactionLaugh",
+                 SUM(if(metricType = 'ReactionCry', metricValue, 0))   as "reactionCry",
+                 -- SUM(if(
+                 --         metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), metricValue, 0
+                 --     ))                                                as "reactionTotal",
+                 SUM(if(metricType = 'Comment', metricValue, 0))       as "comment",
+                 SUM(if(metricType = 'Collection', metricValue, 0))    as "collection",
+                 SUM(if(metricType = 'Buzz', metricValue, 0))          as "buzz"
+          FROM entityMetricEvents
+          WHERE entityType = 'Image'
+            AND entityId IN (${missing.join(',')})
+          GROUP BY imageId
+        `);
+
+      // - if there is nothing at all in clickhouse, fill this with zeroes
+      const missingClickIds = missingIds.filter(
+        (i) => !clickData.map((c) => c.imageId).includes(i)
+      );
+      for (const mci of missingClickIds) {
+        clickData.push({
+          imageId: mci,
+          reactionLike: 0,
+          reactionHeart: 0,
+          reactionLaugh: 0,
+          reactionCry: 0,
+          comment: 0,
+          collection: 0,
+          buzz: 0,
+        });
+      }
+
+      // TODO if we somehow have some data in PG but none at all in CH, these datapoints won't get resolved
+      const missingClickData = missingData.filter(
+        (i) => !clickData.map((c) => c.imageId).includes(i)
+      );
+      if (missingClickData.length) {
+        logToAxiom(
+          {
+            type: 'info',
+            name: 'Missing datapoints in clickhouse',
+            details: {
+              ids: missingClickData,
+            },
+          },
+          'clickhouse'
+        ).catch();
+      }
+
+      const dataToInsert = clickData
+        .map((cd) =>
+          [
+            EntityMetric_MetricType_Type.ReactionLike,
+            EntityMetric_MetricType_Type.ReactionHeart,
+            EntityMetric_MetricType_Type.ReactionLaugh,
+            EntityMetric_MetricType_Type.ReactionCry,
+            EntityMetric_MetricType_Type.Comment,
+            EntityMetric_MetricType_Type.Collection,
+            EntityMetric_MetricType_Type.Buzz,
+          ].map((mt) => ({
+            entityType: EntityMetric_EntityType_Type.Image,
+            entityId: cd.imageId,
+            metricType: mt,
+            metricValue: cd[lowerFirst(mt) as keyof typeof cd],
+          }))
+        )
+        .flat();
+
+      try {
+        await dbWrite.entityMetric.createMany({
+          data: dataToInsert,
+          skipDuplicates: true,
+        });
+      } catch (e) {
+        const error = e as Error;
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'Failed to insert EntityMetric cache',
+            message: error.message,
+            stack: error.stack,
+            cause: error.cause,
+          },
+          'clickhouse'
+        ).catch();
+      }
+    } else {
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'No clickhouse client - fetch',
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
+
+  return [...pgData, ...clickData].reduce((acc, row) => {
+    const { imageId, ...rest } = row;
+    acc[imageId] = rest;
+    return acc;
+  }, {} as { [p: number]: Omit<PgDataType, 'imageId'> });
 };
 
-export async function getTagIdsForImages(imageIds: number[]) {
-  return await tagIdsForImagesCache.fetch(imageIds);
-}
-
-export async function clearImageTagIdsCache(imageId: number | number[]) {
-  await tagIdsForImagesCache.bust(imageId);
-}
-
-export async function updateImageTagIdsForImages(imageId: number | number[]) {
-  await tagIdsForImagesCache.refresh(imageId);
-}
-
 export async function getTagNamesForImages(imageIds: number[]) {
-  const imageTagsArr = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
-    SELECT "imageId", t.name as tag
-    FROM "TagsOnImage" toi
-    JOIN "Tag" t ON t.id = toi."tagId"
-    WHERE "imageId" IN (${Prisma.join(imageIds)})
-  `;
-  const imageTags = imageTagsArr.reduce((acc, { imageId, tag }) => {
-    if (!acc[imageId]) acc[imageId] = [];
-    acc[imageId].push(tag);
-    return acc;
-  }, {} as Record<number, string[]>);
+  const tagIds = await tagIdsForImagesCache.fetch(imageIds);
+  const tags = await tagCache.fetch(Object.values(tagIds).flatMap((x) => x.tags));
+  const imageTags = Object.fromEntries(
+    Object.entries(tagIds).map(([k, v]) => [k, v.tags.map((t) => tags[t]?.name).filter(isDefined)])
+  ) as Record<number, string[]>;
   return imageTags;
 }
 
@@ -2146,9 +2262,9 @@ export const getImagesForModelVersion = async ({
 
   if (include.includes('tags')) {
     const imageIds = images.map((i) => i.id);
-    const tagIdsVar = await getTagIdsForImages(imageIds);
+    const tagIdsVar = await tagIdsForImagesCache.fetch(imageIds);
     for (const image of images) {
-      image.tags = tagIdsVar?.[image.id]?.tags.map((t) => t.id);
+      image.tags = tagIdsVar?.[image.id]?.tags;
     }
   }
 
@@ -3820,9 +3936,12 @@ export function bulkAddBlockedImages({
 }: {
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
+  if (data.length === 0) return;
+
   const values = data
     .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
     .join(',');
+
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
     VALUES ${Prisma.raw(values)}
@@ -3843,8 +3962,10 @@ export async function bulkRemoveBlockedImages({
       select: { pHash: true },
     });
 
-    hashes = images.map((i) => i.pHash as bigint);
+    hashes = images.map((i) => i.pHash as bigint).filter(isDefined);
   }
+
+  if (!hashes?.length) return;
 
   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 }

@@ -30,12 +30,14 @@ import {
   updateGallerySettingsHandler,
   upsertModelHandler,
   getModelOwnerHandler,
+  copyGalleryBrowsingLevelHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   changeModelModifierSchema,
+  copyGallerySettingsSchema,
   declineReviewSchema,
   deleteModelSchema,
   findResourcesToAssociateSchema,
@@ -201,4 +203,8 @@ export const modelRouter = router({
   toggleCheckpointCoverage: moderatorProcedure
     .input(toggleCheckpointCoverageSchema)
     .mutation(toggleCheckpointCoverageHandler),
+  copyGallerySettings: guardedProcedure
+    .input(copyGallerySettingsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(copyGalleryBrowsingLevelHandler),
 });

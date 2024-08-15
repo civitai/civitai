@@ -15,9 +15,9 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
   const hasDetails = !!external.details && Object.keys(external.details).length > 0;
 
   return (
-    <Card className="rounded-xl flex flex-col gap-3">
+    <Card className="flex flex-col gap-3 rounded-xl">
       <div className="flex items-center gap-3">
-        <Text className="flex items-center gap-2 font-semibold text-xl">
+        <Text className="flex items-center gap-2 text-xl font-semibold">
           <IconDatabase />
           <span>External data</span>
         </Text>
@@ -26,7 +26,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         {/* TODO make URLs */}
         {hasSource && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="leading-snug text-nowrap">
+            <Text color="dimmed" className="text-nowrap leading-snug">
               Source
             </Text>
             {external.source?.name ? (
@@ -41,7 +41,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         )}
         {hasReference && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="leading-snug text-nowrap">
+            <Text color="dimmed" className="text-nowrap leading-snug">
               Media URL
             </Text>
             <Text className="leading-snug">{external.referenceUrl}</Text>
@@ -49,7 +49,7 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         )}
         {hasCreate && (
           <div className="flex justify-between gap-3">
-            <Text color="dimmed" className="leading-snug text-nowrap">
+            <Text color="dimmed" className="text-nowrap leading-snug">
               Create URL
             </Text>
             <Text className="leading-snug">{external.createUrl}</Text>
@@ -58,15 +58,17 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
         {hasDetails && (
           <>
             {(hasSource || hasReference || hasCreate) && <Divider my="sm" />}
-            <Text className="text-md font-semibold">Other metadata</Text>
-            {Object.entries(external.details ?? {}).map(([k, v]) => (
-              <div key={k} className="flex justify-between gap-3">
-                <Text color="dimmed" className="leading-snug text-nowrap">
-                  {titleCase(k)}
-                </Text>
-                <Text className="leading-snug">{v.toString()}</Text>
-              </div>
-            ))}
+            <Text className="font-semibold">Other metadata</Text>
+            {Object.entries(external.details ?? {})
+              .filter(([k, v]) => v !== 'Undefined')
+              .map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-3">
+                  <Text color="dimmed" className="text-nowrap leading-snug">
+                    {titleCase(k)}
+                  </Text>
+                  <Text className="leading-snug">{v.toString()}</Text>
+                </div>
+              ))}
           </>
         )}
       </div>
