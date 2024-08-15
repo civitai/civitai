@@ -22,14 +22,6 @@ export const metricsSearchClient = shouldConnectToMetricsSearch
     })
   : null;
 
-const showConnectMetrics = !!env.METRICS_SEARCH_HOST && !!env.METRICS_SEARCH_API_KEY;
-export const metricsClient = showConnectMetrics
-  ? new MeiliSearch({
-      host: env.METRICS_SEARCH_HOST as string,
-      apiKey: env.METRICS_SEARCH_API_KEY,
-    })
-  : null;
-
 const RETRY_LIMIT = 5;
 export async function updateDocs({
   indexName,

@@ -10,13 +10,13 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client.mjs';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { GenerationResource } from '~/shared/constants/generation.constants';
-import { env } from '~/env/client.mjs';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { increaseDate } from '~/utils/date-helpers';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -103,7 +103,7 @@ export const constants = {
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
-  modelFileFp: ['fp16', 'fp32', 'bf16'],
+  modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -777,7 +777,7 @@ export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 
 // Metrics:
-export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v2';
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',

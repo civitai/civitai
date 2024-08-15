@@ -3,13 +3,14 @@ import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
+import { QS } from '~/utils/qs';
 
-export type RunType = 'run' | 'remix' | 'params';
+export type RunType = 'run' | 'remix' | 'params' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
-  data?: GenerationData;
+  data?: GenerationData & { runType: RunType };
   input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
@@ -21,18 +22,23 @@ type GenerationState = {
 
 export const useGenerationStore = create<GenerationState>()(
   devtools(
-    immer((set, get) => ({
+    immer((set) => ({
       opened: false,
       view: 'generate',
       open: async (input) => {
         set((state) => {
           state.opened = true;
-          state.input = input;
           if (input) {
             state.view = 'generate';
-            state.data = undefined;
           }
         });
+
+        if (input) {
+          const response = await fetchGenerationData(input);
+          set((state) => {
+            state.data = { ...response, runType: input.type === 'image' ? 'remix' : 'run' };
+          });
+        }
       },
       close: () =>
         set((state) => {
@@ -41,13 +47,11 @@ export const useGenerationStore = create<GenerationState>()(
       setView: (view) =>
         set((state) => {
           state.view = view;
-          state.input = undefined;
         }),
       setData: ({ view, ...data }) =>
         set((state) => {
           state.view = view ?? 'generate';
-          state.data = data;
-          state.input = undefined;
+          state.data = { ...data, runType: 'replay' };
         }),
       clearData: () =>
         set((state) => {
@@ -68,4 +72,26 @@ export const generationPanel = {
 export const generationStore = {
   setData: store.setData,
   clearData: store.clearData,
+};
+
+const dictionary: Record<string, GenerationData> = {};
+export const fetchGenerationData = async (input: GetGenerationDataInput) => {
+  let key = 'default';
+  switch (input.type) {
+    case 'image':
+    case 'modelVersion':
+      key = `${input.type}_${input.id}`;
+      break;
+    case 'modelVersions':
+      key = `${input.type}_${input.ids.join('_')}`;
+      break;
+  }
+  if (dictionary[key]) return dictionary[key];
+  else {
+    const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
+    if (!response.ok) throw new Error(response.statusText);
+    const data: GenerationData = await response.json();
+    dictionary[key] = data;
+    return data;
+  }
 };

@@ -17,24 +17,28 @@ import { env } from '~/env/server.mjs';
 
 const missingEnvs = (): string[] => {
   const keys = [];
-  if (!env.S3_UPLOAD_KEY) {
-    keys.push('S3_UPLOAD_KEY');
-  }
-  if (!env.S3_UPLOAD_SECRET) {
-    keys.push('S3_UPLOAD_SECRET');
-  }
-  if (!env.S3_UPLOAD_ENDPOINT) {
-    keys.push('S3_UPLOAD_ENDPOINT');
-  }
-  if (!env.S3_UPLOAD_BUCKET) {
-    keys.push('S3_UPLOAD_BUCKET');
-  }
+  if (!env.S3_UPLOAD_KEY) keys.push('S3_UPLOAD_KEY');
+  if (!env.S3_UPLOAD_SECRET) keys.push('S3_UPLOAD_SECRET');
+  if (!env.S3_UPLOAD_ENDPOINT) keys.push('S3_UPLOAD_ENDPOINT');
+  if (!env.S3_UPLOAD_BUCKET) keys.push('S3_UPLOAD_BUCKET');
   return keys;
 };
 
-export function getS3Client() {
+type S3Clients = 'model' | 'image';
+export function getS3Client(destination: S3Clients = 'model') {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);
+
+  if (destination === 'image' && env.S3_IMAGE_UPLOAD_KEY && env.S3_IMAGE_UPLOAD_SECRET) {
+    return new S3Client({
+      credentials: {
+        accessKeyId: env.S3_IMAGE_UPLOAD_KEY,
+        secretAccessKey: env.S3_IMAGE_UPLOAD_SECRET,
+      },
+      region: env.S3_IMAGE_UPLOAD_REGION,
+      endpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
+    });
+  }
 
   return new S3Client({
     credentials: {

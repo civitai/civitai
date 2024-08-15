@@ -1,11 +1,11 @@
-import { createJob, getJobDate } from './job';
-import { dbWrite } from '~/server/db/client';
-import { constants } from '~/server/common/constants';
-import { imagesSearchIndex } from '~/server/search-index';
 import { Prisma } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { chunk, uniqBy } from 'lodash-es';
-import { updateImageTagIdsForImages } from '~/server/services/image.service';
+import { constants } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbWrite } from '~/server/db/client';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { imagesSearchIndex } from '~/server/search-index';
+import { createJob, getJobDate } from './job';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -92,7 +92,7 @@ async function applyUpvotes() {
   `;
 
   // Bust cache
-  await updateImageTagIdsForImages(affectedImageResults);
+  await tagIdsForImagesCache.refresh(affectedImageResults);
 
   // Update search index
   await imagesSearchIndex.queueUpdate(
@@ -101,6 +101,7 @@ async function applyUpvotes() {
       action: SearchIndexUpdateQueueAction.Update,
     }))
   );
+  // - no need to update imagesMetricsSearchIndex here
 
   // Update NSFW baseline
   // --------------------------------------------
@@ -268,7 +269,7 @@ async function applyDownvotes() {
   `;
 
   // Bust cache
-  await updateImageTagIdsForImages(affectedImageResults);
+  await tagIdsForImagesCache.refresh(affectedImageResults);
 
   // Update search index
   await imagesSearchIndex.queueUpdate(
@@ -277,6 +278,7 @@ async function applyDownvotes() {
       action: SearchIndexUpdateQueueAction.Update,
     }))
   );
+  // - no need to update imagesMetricsSearchIndex here
 
   // Update NSFW baseline
   // --------------------------------------------

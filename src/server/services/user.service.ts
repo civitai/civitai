@@ -13,6 +13,7 @@ import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
+import { searchClient } from '~/server/meilisearch/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -35,6 +36,7 @@ import {
   articlesSearchIndex,
   bountiesSearchIndex,
   collectionsSearchIndex,
+  imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
   usersSearchIndex,
@@ -65,7 +67,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { searchClient } from '~/server/meilisearch/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -160,6 +161,7 @@ type UserSearchResult = {
   profilePicture?: { url: string; nsfwLevel: NsfwLevel };
   image?: string;
 };
+
 export async function getUsersWithSearch({
   limit = 10,
   query,
@@ -752,6 +754,9 @@ export const removeAllContent = async ({ id }: { id: number }) => {
     models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await imagesSearchIndex.queueUpdate(
+    images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
     images.map((i) => ({ id: i.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
   await articlesSearchIndex.queueUpdate(

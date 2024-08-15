@@ -1,27 +1,28 @@
+import { Availability } from '@prisma/client';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import {
   AvailabilityInput,
   GetByEntityInput,
   SupportedAvailabilityResources,
   supportedAvailabilityResources,
 } from '~/server/schema/base.schema';
+import { supportedClubEntities, SupportedClubEntities } from '~/server/schema/club.schema';
 import {
   entityAvailabilityUpdate,
   entityRequiresClub,
   hasEntityAccess,
 } from '~/server/services/common.service';
-import { supportedClubEntities, SupportedClubEntities } from '~/server/schema/club.schema';
+import { throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import { dbRead } from '../db/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
   collectionsSearchIndex,
+  imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
 } from '../search-index';
-import { Availability } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead } from '../db/client';
 
 export const getEntityAccessHandler = async ({
   input: { entityType, entityId },
@@ -125,6 +126,16 @@ export const updateEntityAvailabilityHandler = async ({
       case 'Post':
         const images = await dbRead.image.findMany({ where: { postId: entityId } });
         await imagesSearchIndex.queueUpdate(
+          images.map((image) => ({
+            id: image.id,
+            action:
+              availability === Availability.Unsearchable
+                ? SearchIndexUpdateQueueAction.Delete
+                : SearchIndexUpdateQueueAction.Update,
+          }))
+        );
+        // TODO do we need this here?
+        await imagesMetricsSearchIndex.queueUpdate(
           images.map((image) => ({
             id: image.id,
             action:

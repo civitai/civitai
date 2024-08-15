@@ -10,6 +10,7 @@ import {
   CollectionSort,
   ImageSort,
   ImageSortHidden,
+  MarkerSort,
   ModelSort,
   PostSort,
   QuestionSort,
@@ -40,6 +41,7 @@ const sortOptions = {
   clubs: Object.values(ClubSort),
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
+  markers: Object.values(MarkerSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -59,6 +61,7 @@ type DumbProps = {
     | CollectionSort
     | BountySort
     | ClubSort
+    | MarkerSort
     | ThreadSort;
   onChange: (
     value:
@@ -70,6 +73,7 @@ type DumbProps = {
       | CollectionSort
       | BountySort
       | ClubSort
+      | MarkerSort
       | ThreadSort
   ) => void;
 } & SortFilterComponentProps;
