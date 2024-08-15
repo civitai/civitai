@@ -3839,6 +3839,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     modelType: ModelType;
     versionId: number;
     versionName: string;
+    baseModel: string;
   }>(Prisma.sql`
     SELECT
       ir.id,
@@ -3847,7 +3848,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
       m.name as "modelName",
       m.type as "modelType",
       mv.id as "versionId",
-      mv.name as "versionName"
+      mv.name as "versionName",
+      mv."baseModel" as "baseModel"
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m on mv."modelId" = m.id

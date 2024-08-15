@@ -59,16 +59,14 @@ export function ImageExternalMeta({ imageId }: { imageId: number }) {
           <>
             {(hasSource || hasReference || hasCreate) && <Divider my="sm" />}
             <Text className="font-semibold">Other metadata</Text>
-            {Object.entries(external.details ?? {})
-              .filter(([k, v]) => v !== 'Undefined')
-              .map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-3">
-                  <Text color="dimmed" className="text-nowrap leading-snug">
-                    {titleCase(k)}
-                  </Text>
-                  <Text className="leading-snug">{v.toString()}</Text>
-                </div>
-              ))}
+            {Object.entries(external.details ?? {}).map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3">
+                <Text color="dimmed" className="text-nowrap leading-snug">
+                  {titleCase(k)}
+                </Text>
+                <Text className="leading-snug">{v.toString()}</Text>
+              </div>
+            ))}
           </>
         )}
       </div>

@@ -270,7 +270,9 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
   });
 }
 
-export function getBaseModelFromResources(resources: GenerationResource[]) {
+export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
+  resources: T[]
+) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
