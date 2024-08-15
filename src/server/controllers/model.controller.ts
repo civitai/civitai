@@ -86,7 +86,7 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -106,13 +106,12 @@ import { redis } from '../redis/client';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { amIBlockedByUser, getUserById } from '~/server/services/user.service';
+import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
 import {
   BlockedByUsers,
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
-import { UserMeta } from '~/server/schema/user.schema';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -401,18 +400,16 @@ export const upsertModelHandler = async ({
         throw throwBadRequestError(
           `Model cannot have multiple categories. Please include only one from: ${matchedTags
             .map((tag) => tag.name)
-            .join(', ')} `
+            .join(', ')}`
         );
     }
 
-    const user = await getUserById({ id: userId, select: { meta: true } });
-    const userGallerySettings = (user?.meta as UserMeta)?.gallerySettings;
-
+    const { gallerySettings } = await getUserSettings(userId);
     const model = await upsertModel({
       ...input,
       userId,
       isModerator: ctx.user.isModerator,
-      gallerySettings: userGallerySettings,
+      gallerySettings,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 

@@ -45,7 +45,12 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
       children:
         'This will copy the gallery moderation preferences from this model to all your models and future ones. Are you sure you want to proceed?',
       onConfirm: async () => {
-        await copySettings(modelId);
+        try {
+          await copySettings(modelId);
+          dialog.onClose();
+        } catch {
+          // Error is handled in the hook
+        }
       },
       labels: { confirm: 'Yes, continue', cancel: 'No, cancel' },
     });

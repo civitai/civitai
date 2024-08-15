@@ -89,7 +89,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { UserMeta } from '~/server/schema/user.schema';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2175,21 +2175,39 @@ export async function copyGallerySettingsToAllModelsByUser({
   settings,
   userId,
 }: {
-  settings: ModelGallerySettingsSchema;
+  settings: Pick<ModelGallerySettingsSchema, 'level' | 'users' | 'tags'>;
   userId: number;
 }) {
   const result = await dbWrite.$transaction(async (tx) => {
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { meta: true } });
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
-    const userMeta = user.meta as UserMeta;
+    const userSettings = user.settings as UserSettingsSchema;
 
     await tx.user.update({
       where: { id: userId },
-      data: { meta: { ...userMeta, gallerySettings: settings } },
+      data: {
+        settings: {
+          ...userSettings,
+          gallerySettings: { ...userSettings.gallerySettings, ...settings },
+        },
+      },
     });
-    await tx.model.updateMany({ where: { userId }, data: { gallerySettings: settings } });
+    await tx.$executeRaw`
+      UPDATE "Model"
+      SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
+        'level', ${settings.level},
+        'users', ${JSON.stringify(settings.users || [])}::jsonb,
+        'tags', ${JSON.stringify(settings.tags || [])}::jsonb
+      )
+      WHERE "userId" = ${userId}
+    `;
   });
+
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  const modelIds = models.map((x) => x.id);
+
+  await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
 
   return result;
 }

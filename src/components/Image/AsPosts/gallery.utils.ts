@@ -96,7 +96,7 @@ export const useGallerySettings = ({ modelId }: { modelId: number }) => {
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'Unable to copy gallery settings',
+        title: 'Unable to copy gallery moderation preferences',
         error: new Error(error.message),
       });
     },
