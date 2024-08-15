@@ -1509,7 +1509,7 @@ const makeMeiliImageSearchFilter = (
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], total: 0 };
 
-  let {
+  const {
     sort,
     modelVersionId,
     types,
@@ -1531,9 +1531,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit,
     offset,
     page,
-    userIds,
   } = input;
-  let { browsingLevel } = input;
+  let { userIds, browsingLevel } = input;
 
   // Filter
   //------------------------
@@ -3931,9 +3930,12 @@ export function bulkAddBlockedImages({
 }: {
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
+  if (data.length === 0) return;
+
   const values = data
     .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
     .join(',');
+
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
     VALUES ${Prisma.raw(values)}
@@ -3954,8 +3956,10 @@ export async function bulkRemoveBlockedImages({
       select: { pHash: true },
     });
 
-    hashes = images.map((i) => i.pHash as bigint);
+    hashes = images.map((i) => i.pHash as bigint).filter(isDefined);
   }
+
+  if (!hashes?.length) return;
 
   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 }
