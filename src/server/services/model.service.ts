@@ -89,6 +89,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1258,14 +1259,25 @@ export const upsertModel = async (
     userId: number;
     meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
     isModerator?: boolean;
+    gallerySettings?: Partial<ModelGallerySettingsSchema>;
   }
 ) => {
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
-    input;
+  const {
+    id,
+    tagsOnModels,
+    userId,
+    templateId,
+    bountyId,
+    meta,
+    isModerator,
+    status,
+    gallerySettings,
+    ...data
+  } = input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1281,6 +1293,7 @@ export const upsertModel = async (
       data: {
         ...data,
         status,
+        gallerySettings,
         meta:
           bountyId || meta
             ? {
@@ -2156,4 +2169,45 @@ export async function getModelsWithVersions({
     ),
     nextCursor,
   };
+}
+
+export async function copyGallerySettingsToAllModelsByUser({
+  settings,
+  userId,
+}: {
+  settings: Pick<ModelGallerySettingsSchema, 'level' | 'users' | 'tags'>;
+  userId: number;
+}) {
+  const result = await dbWrite.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    const userSettings = user.settings as UserSettingsSchema;
+
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        settings: {
+          ...userSettings,
+          gallerySettings: { ...userSettings.gallerySettings, ...settings },
+        },
+      },
+    });
+    await tx.$executeRaw`
+      UPDATE "Model"
+      SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
+        'level', ${settings.level},
+        'users', ${JSON.stringify(settings.users || [])}::jsonb,
+        'tags', ${JSON.stringify(settings.tags || [])}::jsonb
+      )
+      WHERE "userId" = ${userId}
+    `;
+  });
+
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  const modelIds = models.map((x) => x.id);
+
+  await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
+
+  return result;
 }
