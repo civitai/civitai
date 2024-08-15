@@ -20,9 +20,11 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
   GetModelVersionsSchema,
@@ -36,7 +38,11 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
@@ -53,10 +59,12 @@ import {
   ImagesForModelVersions,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -69,8 +77,8 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -81,10 +89,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -221,6 +225,7 @@ export const getModelsRaw = async ({
 
   const includeDetails = !!include?.includes('details');
   const includeCosmetics = !!include?.includes('cosmetics');
+
   function ifDetails(sql: TemplateStringsArray) {
     return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
   }
@@ -1455,6 +1460,9 @@ export const publishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1552,6 +1560,9 @@ export const unpublishModelById = async ({
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   // Remove all affected images from search index
   await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
 

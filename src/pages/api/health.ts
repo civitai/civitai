@@ -7,7 +7,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { pingBuzzService } from '~/server/services/buzz.service';
 import { env } from '~/env/server.mjs';
 import { pgDbWrite } from '~/server/db/pgDb';
-import { metricsClient } from '~/server/meilisearch/client';
+import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
 import client from 'prom-client';
 
@@ -31,8 +31,8 @@ const checkFns = {
     return !!(await pgDbWrite.query('SELECT 1'));
   },
   async searchMetrics() {
-    if (metricsClient === null) return true;
-    return await metricsClient.isHealthy();
+    if (metricsSearchClient === null) return true;
+    return await metricsSearchClient.isHealthy();
   },
   async redis() {
     return await redis

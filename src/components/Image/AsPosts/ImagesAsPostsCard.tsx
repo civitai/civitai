@@ -1,55 +1,54 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import {
   ActionIcon,
+  Badge,
+  createStyles,
   Group,
+  HoverCard,
   Menu,
   Paper,
-  Tooltip,
-  createStyles,
   Stack,
-  Badge,
   Text,
   ThemeIcon,
   ThemeIconProps,
-  HoverCard,
+  Tooltip,
 } from '@mantine/core';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import {
+  IconBrush,
   IconExclamationMark,
   IconInfoCircle,
-  IconBrush,
   IconMessage,
+  IconPinFilled,
   IconPinned,
   IconPinnedOff,
   IconProps,
-  IconPinFilled,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
+import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { trpc } from '~/utils/trpc';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { showSuccessNotification } from '~/utils/notifications';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { trpc } from '~/utils/trpc';
 
 export function ImagesAsPostsCard({
   data,
