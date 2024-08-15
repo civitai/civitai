@@ -437,6 +437,14 @@ const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
   const favoriteButtonRef = getRef('favoriteButton');
 
+  const buttonBackground = {
+    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    background: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      0.6
+    ),
+  };
+
   return {
     checkboxLabel: {
       position: 'absolute',
@@ -482,13 +490,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-      [`&:hover .${thumbActionRef}`]: {
-        boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-        background: theme.fn.rgba(
-          theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-          0.6
-        ),
-      },
+      [`&:hover .${thumbActionRef}`]: buttonBackground,
       [`&:hover .${thumbActionRef} button`]: {
         opacity: 1,
         transition: 'opacity .3s',
@@ -519,6 +521,8 @@ const useStyles = createStyles((theme, _params, getRef) => {
       padding: 4,
       transition: 'opacity .3s',
 
+      [theme.fn.smallerThan('sm')]: buttonBackground,
+
       ['button']: {
         opacity: 0,
 
@@ -527,7 +531,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
         },
 
         [theme.fn.smallerThan('sm')]: {
-          opacity: 0.7,
+          opacity: 1,
         },
       },
     },
