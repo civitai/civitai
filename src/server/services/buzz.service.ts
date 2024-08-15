@@ -846,7 +846,7 @@ export async function claimWatchedAdReward({
   const now = new Date();
   if (now.getTime() - match.createdAt.getTime() < 15000) return false;
 
-  await adWatchedReward.apply({ token, userId }, ip);
+  // await adWatchedReward.apply({ token, userId }, ip);
   await dbWrite.adToken.update({
     where: { token },
     data: { expiresAt: new Date() },
