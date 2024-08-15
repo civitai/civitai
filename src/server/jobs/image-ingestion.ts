@@ -17,7 +17,7 @@ const errorInterval = `${IMAGE_SCANNING_ERROR_DELAY} minutes`;
 
 export const ingestImages = createJob('ingest-images', '0 * * * *', async () => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
-    SELECT id, url, type, width, height
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
     FROM "Image"
     WHERE (
         ingestion = ${ImageIngestionStatus.Pending}::"ImageIngestionStatus"

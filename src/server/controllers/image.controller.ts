@@ -97,14 +97,14 @@ export const moderateImageHandler = async ({
         });
       }
 
-      const imagesToBlock = affected.filter((x) => !!x.pHash);
-      if (imagesToBlock.length)
-        await bulkAddBlockedImages({
-          data: imagesToBlock.map((x) => ({
+      await bulkAddBlockedImages({
+        data: affected
+          .filter((x) => !!x.pHash)
+          .map((x) => ({
             hash: x.pHash,
             reason: reviewTypeToBlockedReason[input.reviewType],
           })),
-        });
+      });
     } else {
       await bulkRemoveBlockedImages({ ids: input.ids });
     }

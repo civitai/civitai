@@ -608,8 +608,14 @@ export const updatePost = async ({
   return post;
 };
 
-export const deletePost = async ({ id }: GetByIdInput) => {
-  const images = await dbWrite.image.findMany({ where: { postId: id } });
+export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
+  const images = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT i.id
+    FROM "Image" i
+    JOIN "Post" p ON p.id = "postId"
+    WHERE i."postId" = ${id}
+      AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
+  `;
   if (images.length) {
     for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
   }
@@ -795,9 +801,6 @@ export const addPostImage = async ({
   });
 
   try {
-    // Disable the single-pass read+write for now
-    // await dbWrite.$executeRaw`SELECT insert_image_resource(${partialResult.id}::int)`;
-
     // Read the resources based on complex metadata and hash matches
     const resources = await dbWrite.$queryRaw<
       ImageResource[]
@@ -835,6 +838,7 @@ export const addPostImage = async ({
       type: props.type,
       height: props.height,
       width: props.width,
+      prompt: meta?.prompt,
     },
   });
 

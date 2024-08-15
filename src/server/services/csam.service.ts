@@ -88,7 +88,12 @@ export async function createCsamReport({
     });
 
     await bulkAddBlockedImages({
-      data: affectedImages.map((x) => ({ hash: x.pHash as bigint, reason: BlockImageReason.CSAM })),
+      data: affectedImages
+        .filter((img) => !!img.pHash)
+        .map((x) => ({
+          hash: x.pHash as bigint,
+          reason: BlockImageReason.CSAM,
+        })),
     });
   } else {
     await dbWrite.csamReport.update({
