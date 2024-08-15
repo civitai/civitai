@@ -7,7 +7,10 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { TrainingDetailsBaseModel, TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import {
+  TrainingDetailsBaseModelList,
+  TrainingDetailsObj,
+} from '~/server/schema/model-version.schema';
 import {
   AutoTagInput,
   CreateTrainingRequestDryRunInput,
@@ -30,16 +33,20 @@ import {
 } from '~/server/utils/errorHandling';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { calcBuzzFromEta, calcEta } from '~/utils/training';
+import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
-const modelMap: { [key in TrainingDetailsBaseModel]: string } = {
-  sdxl: 'civitai:101055@128078',
+const modelMap: { [key in TrainingDetailsBaseModelList]: string } = {
   sd_1_5: 'SD_1_5',
   anime: 'civitai:84586@89927',
-  realistic: 'civitai:81458@132760',
   semi: 'civitai:4384@128713',
+  realistic: 'civitai:81458@132760',
+  //
+  sdxl: 'civitai:101055@128078',
   pony: 'civitai:257749@290640',
+  //
+  flux_dev: 'civitai:618692@691639',
 };
 
 type TrainingRequest = {
@@ -222,13 +229,16 @@ export const createTrainingRequest = async ({
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
     if (!setting) continue;
+
     // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
     if (setting.type === 'int' || setting.type === 'number') {
-      const override = setting.overrides?.[baseModel];
+      const baseOverride = setting.overrides?.[baseModel];
+      const override = baseOverride?.all ?? baseOverride?.[trainingParams.engine];
       const overrideSetting = override ?? setting;
+
       if (
-        (overrideSetting.min && (value as number) < overrideSetting.min) ||
-        (overrideSetting.max && (value as number) > overrideSetting.max)
+        (isDefined(overrideSetting.min) && (value as number) < overrideSetting.min) ||
+        (isDefined(overrideSetting.max) && (value as number) > overrideSetting.max)
       ) {
         throw throwBadRequestError(
           `Invalid settings for training: "${key}" is outside allowed min/max.`
@@ -258,6 +268,7 @@ export const createTrainingRequest = async ({
       cost: status.cost,
       eta,
       isCustom,
+      isFlux: baseModelType === 'flux',
       isPriority,
     });
 
@@ -307,10 +318,11 @@ export const createTrainingRequest = async ({
     // interruptible: !isPriority,
     callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
     properties: { userId, transactionId, skipModeration, modelFileId: modelVersion.fileId },
-    model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
+    model: baseModel in modelMap ? modelMap[baseModel as keyof typeof modelMap] : baseModel,
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,
     retries: constants.maxTrainingRetries,
+    engine: trainingParams.engine,
     params: {
       ...trainingParams,
       samplePrompts: samplePrompts ?? ['', '', ''],
@@ -396,7 +408,7 @@ export const createTrainingRequestDryRun = async ({
   const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
     priority: isPriority ? 'high' : 'normal',
     // interruptible: !isPriority,
-    model: baseModel in modelMap ? modelMap[baseModel] : baseModel,
+    model: baseModel in modelMap ? modelMap[baseModel as keyof typeof modelMap] : baseModel,
     // cost: Math.round((cost ?? 0) * 100) / 100,
     cost: 0,
     trainingData: '',

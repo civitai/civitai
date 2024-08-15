@@ -1654,7 +1654,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     const filtered = results.hits.filter((hit) => {
       // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel)) return true;
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
     });
 

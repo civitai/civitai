@@ -31,6 +31,7 @@ import {
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
   UserMeta,
+  userSettingsSchema,
 } from '~/server/schema/user.schema';
 import {
   articlesSearchIndex,
@@ -332,7 +333,12 @@ export async function getUserSettings(userId: number) {
     FROM "User"
     WHERE id = ${userId}
   `;
-  return settings[0]?.settings ?? {};
+
+  const userSettings = userSettingsSchema.safeParse(settings[0]?.settings ?? {});
+  // Pass over the default settings if the user settings cannot be parsed
+  if (!userSettings.success) return settings[0]?.settings ?? {};
+
+  return userSettings.data;
 }
 
 export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
