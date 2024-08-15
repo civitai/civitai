@@ -167,7 +167,7 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
-  PAYMENT_PROCESSOR: z.enum(['Stripe', 'Paddle']).default('Stripe'),
+  PAYMENT_PROVIDER: z.enum(['stripe', 'paddle']).default('stripe'),
   TIER_METADATA_KEY: z.string().default('tier'),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -213,6 +213,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PADDLE_TOKEN: z.string().optional(),
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
+  NEXT_PUBLIC_PAYMENT_PROVIDER: z.string().default('Stripe'),
 });
 
 /**
@@ -252,4 +253,5 @@ export const clientEnv = {
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
+  NEXT_PUBLIC_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_PAYMENT_PROVIDER ?? 'stripe',
 };

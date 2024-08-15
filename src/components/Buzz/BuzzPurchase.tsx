@@ -36,6 +36,8 @@ import { BuzzPurchaseMultiplierFeature } from '~/components/Stripe/SubscriptionF
 import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { PaddleTransacionModal } from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { ButtonProps } from '@headlessui/react';
 
 const useStyles = createStyles((theme) => ({
   chipGroup: {
@@ -120,39 +122,25 @@ type Props = {
   onCancel?: () => void;
 };
 
-export const BuzzPurchase = ({
-  message,
+const BuzzPurchasePaymentButton = ({
+  unitAmount,
+  buzzAmount,
+  priceId,
+  onValidate,
   onPurchaseSuccess,
-  minBuzzAmount,
   purchaseSuccessMessage,
-  onCancel,
-}: Props) => {
-  const { classes, cx, theme } = useStyles();
-  const isMobile = useIsMobile();
-  const canUpgradeMembership = useCanUpgrade();
-
+  disabled,
+}: Pick<Props, 'onPurchaseSuccess' | 'purchaseSuccessMessage'> & {
+  disabled: boolean;
+  unitAmount: number;
+  buzzAmount: number;
+  priceId?: string;
+  onValidate: () => boolean;
+}) => {
+  const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
-  const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
-  const [error, setError] = useState('');
-  const [customAmount, setCustomAmount] = useState<number | undefined>();
-  const [activeControl, setActiveControl] = useState<string | null>(null);
-  const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
+  const isMobile = useIsMobile();
 
-  const {
-    packages = [],
-    isLoading,
-    processing,
-    completeStripeBuzzPurchaseMutation,
-  } = useQueryBuzzPackages({
-    onPurchaseSuccess: () => {
-      onPurchaseSuccess?.();
-    },
-  });
-
-  const { processCompleteBuzzTransaction } = useMutatePaddle();
-
-  const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
-  const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
   const successMessage = useMemo(
     () =>
       purchaseSuccessMessage ? (
@@ -166,54 +154,13 @@ export const BuzzPurchase = ({
     [buzzAmount, purchaseSuccessMessage]
   );
 
-  const onValidate = () => {
-    if (!selectedPrice && !customAmount) {
-      setError('Please choose one option');
-      return false;
-    }
+  const { completeStripeBuzzPurchaseMutation } = useQueryBuzzPackages({
+    onPurchaseSuccess: () => {
+      onPurchaseSuccess?.();
+    },
+  });
 
-    if (unitAmount < constants.buzz.minChargeAmount) {
-      setError(`Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`);
-
-      return false;
-    }
-
-    if (!currentUser) {
-      setError('Please log in to continue');
-      return false;
-    }
-
-    if (!unitAmount) {
-      setError('Please enter the amount you wish to buy');
-      return false;
-    }
-
-    return true;
-  };
-
-  const onPaypalSuccess = useCallback(() => {
-    dialogStore.trigger({
-      component: AlertDialog,
-      props: {
-        type: 'success',
-        title: 'Payment successful!',
-        children: ({ handleClose }: { handleClose: () => void }) => (
-          <>
-            {successMessage}
-            <Button
-              onClick={() => {
-                handleClose();
-              }}
-            >
-              Close
-            </Button>
-          </>
-        ),
-      },
-    });
-
-    onPurchaseSuccess?.();
-  }, [buzzAmount, successMessage]);
+  const { processCompleteBuzzTransaction } = useMutatePaddle();
 
   const handleStripeSubmit = async () => {
     if (!onValidate()) {
@@ -229,7 +176,7 @@ export const BuzzPurchase = ({
       unitAmount,
       buzzAmount,
       userId: currentUser.id as number,
-      priceId: selectedPrice?.id,
+      priceId,
     };
 
     openStripeTransactionModal(
@@ -291,6 +238,106 @@ export const BuzzPurchase = ({
       },
     });
   };
+
+  if (!paymentProvider) {
+    return null;
+  }
+
+  return (
+    <Button
+      disabled={disabled}
+      onClick={
+        paymentProvider === 'paddle'
+          ? handlePaddleSubmit
+          : paymentProvider === 'stripe'
+          ? handleStripeSubmit
+          : undefined
+      }
+      radius="xl"
+      fullWidth
+    >
+      Pay Now{' '}
+      {!!unitAmount
+        ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
+        : ''}
+    </Button>
+  );
+};
+
+export const BuzzPurchase = ({
+  message,
+  onPurchaseSuccess,
+  minBuzzAmount,
+  onCancel,
+  purchaseSuccessMessage,
+  ...props
+}: Props) => {
+  const { classes, cx, theme } = useStyles();
+  const canUpgradeMembership = useCanUpgrade();
+
+  const currentUser = useCurrentUser();
+  const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
+  const [error, setError] = useState('');
+  const [customAmount, setCustomAmount] = useState<number | undefined>();
+  const [activeControl, setActiveControl] = useState<string | null>(null);
+  const ctaEnabled = !!selectedPrice?.unitAmount || (!selectedPrice && customAmount);
+
+  const { packages = [], isLoading, processing } = useQueryBuzzPackages({});
+
+  const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
+  const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
+
+  const onValidate = () => {
+    if (!selectedPrice && !customAmount) {
+      setError('Please choose one option');
+      return false;
+    }
+
+    if (unitAmount < constants.buzz.minChargeAmount) {
+      setError(`Minimum amount is $${formatPriceForDisplay(constants.buzz.minChargeAmount)} USD`);
+
+      return false;
+    }
+
+    if (!currentUser) {
+      setError('Please log in to continue');
+      return false;
+    }
+
+    if (!unitAmount) {
+      setError('Please enter the amount you wish to buy');
+      return false;
+    }
+
+    return true;
+  };
+
+  const onPaypalSuccess = useCallback(() => {
+    dialogStore.trigger({
+      component: AlertDialog,
+      props: {
+        type: 'success',
+        title: 'Payment successful!',
+        children: ({ handleClose }: { handleClose: () => void }) => (
+          <>
+            <Stack>
+              <Text>Thank you for your purchase!</Text>
+              <Text>Purchased buzz has been credited to your account.</Text>
+            </Stack>
+            <Button
+              onClick={() => {
+                handleClose();
+              }}
+            >
+              Close
+            </Button>
+          </>
+        ),
+      },
+    });
+
+    onPurchaseSuccess?.();
+  }, [buzzAmount]);
 
   useEffect(() => {
     if (packages.length && !selectedPrice && !minBuzzAmount) {
@@ -465,19 +512,16 @@ export const BuzzPurchase = ({
           )}
           <Stack spacing="md" mt="md">
             {(buzzAmount ?? 0) > 0 && <BuzzPurchaseMultiplierFeature buzzAmount={buzzAmount} />}
-            <Stack spacing="xs" mt="md">
-              <Button disabled={!ctaEnabled} onClick={handleStripeSubmit} radius="xl" fullWidth>
-                Pay Now With Stripe{' '}
-                {!!unitAmount
-                  ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-                  : ''}
-              </Button>
-              <Button disabled={!ctaEnabled} onClick={handlePaddleSubmit} radius="xl" fullWidth>
-                Pay Now With Paddle{' '}
-                {!!unitAmount
-                  ? `- $${formatCurrencyForDisplay(unitAmount, undefined, { decimals: false })}`
-                  : ''}
-              </Button>
+            <Group spacing="xs" mt="md" noWrap>
+              <BuzzPurchasePaymentButton
+                unitAmount={unitAmount}
+                buzzAmount={buzzAmount}
+                priceId={selectedPrice?.id}
+                onPurchaseSuccess={onPurchaseSuccess}
+                onValidate={onValidate}
+                disabled={!ctaEnabled}
+                purchaseSuccessMessage={purchaseSuccessMessage}
+              />
               <BuzzPaypalButton
                 onError={(error) => setError(error.message)}
                 onSuccess={onPaypalSuccess}
@@ -490,7 +534,7 @@ export const BuzzPurchase = ({
                   Cancel
                 </Button>
               )}
-            </Stack>
+            </Group>
 
             <Text size="xs" align="center" color="dimmed" mt={-10}>
               Credit card, bank transfer, Google Pay, Apple Pay, and more.
