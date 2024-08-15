@@ -13,7 +13,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { IconCheck, IconSearch, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconCheck, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useGallerySettings } from './gallery.utils';
@@ -35,7 +35,12 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
 
   const handleCopySettings = () => {
     openConfirmModal({
-      title: 'Copy Gallery Moderation Preferences',
+      title: (
+        <div className="flex flex-row flex-nowrap gap-2">
+          <IconAlertTriangle color="gold" />
+          <p className="text-lg">Copy Gallery Moderation Preferences</p>
+        </div>
+      ),
       centered: true,
       children:
         'This will copy the gallery moderation preferences from this model to all your models and future ones. Are you sure you want to proceed?',

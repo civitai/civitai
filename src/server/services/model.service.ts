@@ -89,10 +89,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import { UserMeta } from '~/server/schema/user.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
