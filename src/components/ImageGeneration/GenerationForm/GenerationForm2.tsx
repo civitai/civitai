@@ -44,7 +44,6 @@ import {
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -87,31 +86,16 @@ import {
   TextToImageWhatIfProvider,
   useTextToImageWhatIfContext,
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
-  const utils = trpc.useUtils();
-  const currentUser = useCurrentUser();
-
-  const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
-  const handleSetDefinitions = async () => {
-    await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
-    utils.generation.getWorkflowDefinitions.invalidate();
-  };
-
   return (
     <IsClient>
-      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
-        <div className="p-3">
-          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-        </div>
-      )} */}
-
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
           <GenerationFormContent />
@@ -152,6 +136,11 @@ export function GenerationFormContent() {
   features.draft = features.draft && featureFlags.draftMode;
 
   const { errors } = form.formState;
+
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
 
   function clearWarning() {
     setPromptWarning(null);
@@ -210,7 +199,8 @@ export function GenerationFormContent() {
       model,
       resources: additionalResources,
       vae,
-      remix,
+      remixOfId,
+      remixSimilarity,
       aspectRatio,
       civitaiTip = 0,
       creatorTip: _creatorTip,
@@ -234,7 +224,7 @@ export function GenerationFormContent() {
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
             : undefined,
-          remix,
+          remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
       } catch (e) {
         const error = e as Error;
@@ -248,6 +238,10 @@ export function GenerationFormContent() {
     setPromptWarning(null);
     const totalCost = cost + creatorTip * cost + civitaiTip * cost;
     conditionalPerformTransaction(totalCost, performTransaction);
+
+    if (filters.marker) {
+      setFilters({ marker: undefined });
+    }
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();

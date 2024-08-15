@@ -107,6 +107,13 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
   const goal = await donationGoalById({ id: donationGoalId, isModerator: true }); // Force is moderator since this unlocks the goal.
   const isGoalMet = goal.total >= goal.goalAmount;
   if (goal.isEarlyAccess && goal.modelVersionId && isGoalMet) {
+    // Mark goal as complete.
+    await dbWrite.donationGoal.update({
+      where: { id: donationGoalId },
+      data: { active: false },
+    });
+    goal.active = false;
+
     // This goal was completed, early access should be granted. Fetch the model version to confirm early access still applies and complete it.
     const modelVersion = await dbRead.modelVersion.findUnique({
       where: {
@@ -121,18 +128,18 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
 
     if (modelVersion?.earlyAccessEndsAt && modelVersion.earlyAccessEndsAt > new Date()) {
       await dbWrite.$executeRaw`
-          UPDATE "ModelVersion"
-          SET "earlyAccessConfig" =
-            COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
-              'timeframe', 0,
-              'originalPublishedAt', "publishedAt",
-              'originalTimeframe', "earlyAccessConfig"->>'timeframe'
-            ),
-          "earlyAccessEndsAt" = NULL,
-          "availability" = 'Public',
-          "publishedAt" = NOW()
-          WHERE "id" = ${goal.modelVersionId}
-        `;
+        UPDATE "ModelVersion"
+        SET "earlyAccessConfig" =
+          COALESCE("earlyAccessConfig", '{}'::jsonb)  || JSONB_BUILD_OBJECT(
+            'timeframe', 0,
+            'originalPublishedAt', "publishedAt",
+            'originalTimeframe', "earlyAccessConfig"->>'timeframe'
+          ),
+        "earlyAccessEndsAt" = NULL,
+        "availability" = 'Public',
+        "publishedAt" = NOW()
+        WHERE "id" = ${goal.modelVersionId}
+      `;
 
       await updateModelEarlyAccessDeadline({
         id: modelVersion.modelId,

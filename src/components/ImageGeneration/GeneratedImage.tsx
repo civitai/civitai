@@ -13,17 +13,19 @@ import {
   IconThumbUp,
   IconTrash,
   IconWand,
+  IconHeart,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useRef } from 'react';
+import { useState, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useUpdateTextToImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
+import images from '~/pages/api/v1/images';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -63,6 +65,7 @@ export function GeneratedImage({
   const { pathname } = useRouter();
   const view = useGenerationStore((state) => state.view);
 
+  const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
 
@@ -81,8 +84,6 @@ export function GeneratedImage({
     );
   const { copied, copy } = useClipboard();
 
-  const { updateImages, isLoading } = useUpdateTextToImageStepMetadata();
-
   const handleImageClick = () => {
     if (!image || !available) return;
 
@@ -100,6 +101,7 @@ export function GeneratedImage({
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
+      remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('/generate') ? 'generate' : view,
     });
   };
@@ -118,8 +120,11 @@ export function GeneratedImage({
           {
             workflowId: request.id,
             stepName: step.name,
-            imageId: image.id,
-            hidden: true,
+            images: {
+              [image.id]: {
+                hidden: true,
+              },
+            },
           },
         ]),
       zIndex: constants.imageGeneration.drawerZIndex + 2,
@@ -145,11 +150,24 @@ export function GeneratedImage({
   const imageRef = useRef<HTMLImageElement>(null);
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
-  const badFeedbackSelected = feedback === 'disliked';
-  const goodFeedbackSelected = feedback === 'liked';
+  const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
   const available = image.status === 'succeeded';
 
+  const [buttonState, setButtonState] = useState({
+    favorite: isFavorite,
+    feedback,
+  });
+
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
+    setButtonState({
+      ...buttonState,
+      feedback: feedback === newFeedback ? undefined : newFeedback,
+    });
+
+    function onError() {
+      setButtonState({ ...buttonState, feedback });
+    }
+
     if (feedback !== 'disliked' && newFeedback === 'disliked') {
       dialogStore.trigger({
         component: TextToImageQualityFeedbackModal,
@@ -161,14 +179,44 @@ export function GeneratedImage({
         },
       });
     }
-    updateImages([
-      {
-        workflowId: request.id,
-        stepName: step.name,
-        imageId: image.id,
-        feedback: newFeedback,
-      },
-    ]);
+
+    updateImages(
+      [
+        {
+          workflowId: request.id,
+          stepName: step.name,
+          images: {
+            [image.id]: {
+              feedback: newFeedback,
+            },
+          },
+        },
+      ],
+      onError
+    );
+  }
+
+  function handleToggleFavorite(newValue: true | false) {
+    setButtonState({ ...buttonState, favorite: newValue });
+
+    function onError() {
+      setButtonState({ ...buttonState, favorite: isFavorite });
+    }
+
+    updateImages(
+      [
+        {
+          workflowId: request.id,
+          stepName: step.name,
+          images: {
+            [image.id]: {
+              favorite: newValue,
+            },
+          },
+        },
+      ],
+      onError
+    );
   }
 
   if (!available) return <></>;
@@ -293,22 +341,12 @@ export function GeneratedImage({
             <Group spacing={4} className={classes.actionsWrapper}>
               <ActionIcon
                 size="md"
-                variant={goodFeedbackSelected ? 'light' : undefined}
-                color={goodFeedbackSelected ? 'green' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleFeedback('liked')}
+                className={buttonState.favorite ? classes.favoriteButton : undefined}
+                variant={buttonState.favorite ? 'light' : undefined}
+                color={buttonState.favorite ? 'red' : undefined}
+                onClick={() => handleToggleFavorite(!buttonState.favorite)}
               >
-                <IconThumbUp size={16} />
-              </ActionIcon>
-
-              <ActionIcon
-                size="md"
-                variant={badFeedbackSelected ? 'light' : undefined}
-                color={badFeedbackSelected ? 'red' : undefined}
-                disabled={isLoading}
-                onClick={() => handleToggleFeedback('disliked')}
-              >
-                <IconThumbDown size={16} />
+                <IconHeart size={16} />
               </ActionIcon>
 
               {!!img2imgWorkflows?.length && canRemix && (
@@ -330,7 +368,7 @@ export function GeneratedImage({
                       <Menu.Item
                         key={workflow.key}
                         onClick={() => {
-                          if (workflow.key.includes('upscale')) handleUpscale(workflow.key);
+                          if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
                           else handleSelectWorkflow(workflow.key);
                         }}
                       >
@@ -340,6 +378,24 @@ export function GeneratedImage({
                   </Menu.Dropdown>
                 </Menu>
               )}
+
+              <ActionIcon
+                size="md"
+                variant={buttonState.feedback === 'liked' ? 'light' : undefined}
+                color={buttonState.feedback === 'liked' ? 'green' : undefined}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </ActionIcon>
+
+              <ActionIcon
+                size="md"
+                variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
+                color={buttonState.feedback === 'disliked' ? 'red' : undefined}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </ActionIcon>
             </Group>
             <ImageMetaPopover
               meta={step.params}
@@ -379,6 +435,7 @@ export function GenerationPlaceholder({ width, height }: { width: number; height
 
 const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
+  const favoriteButtonRef = getRef('favoriteButton');
 
   return {
     checkboxLabel: {
@@ -426,6 +483,13 @@ const useStyles = createStyles((theme, _params, getRef) => {
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: {
+        boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+        background: theme.fn.rgba(
+          theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+          0.6
+        ),
+      },
+      [`&:hover .${thumbActionRef} button`]: {
         opacity: 1,
         transition: 'opacity .3s',
       },
@@ -452,20 +516,27 @@ const useStyles = createStyles((theme, _params, getRef) => {
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      background: theme.fn.rgba(
-        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        0.6
-      ),
-      // backdropFilter: 'blur(5px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
       padding: 4,
-      opacity: 0,
       transition: 'opacity .3s',
 
-      [theme.fn.smallerThan('sm')]: {
-        opacity: 0.7,
+      ['button']: {
+        opacity: 0,
+
+        [`&.${favoriteButtonRef}`]: {
+          opacity: 1,
+        },
+
+        [theme.fn.smallerThan('sm')]: {
+          opacity: 0.7,
+        },
       },
     },
+
+    favoriteButton: {
+      ref: favoriteButtonRef,
+      background: 'rgba(240, 62, 62, 0.5)',
+    },
+
     improveMenu: {
       borderRadius: theme.radius.sm,
       background: theme.fn.rgba(

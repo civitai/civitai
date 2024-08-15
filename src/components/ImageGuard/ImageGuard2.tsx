@@ -1,4 +1,4 @@
-import { Badge, BadgeProps, Text, createStyles, Center, Alert, Button, Stack } from '@mantine/core';
+import { Badge, BadgeProps, Text, createStyles, Alert, Button } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
@@ -113,11 +113,13 @@ export function ImageGuard2({
   image,
   children,
   explain = true,
+  inView,
   ...connectProps
 }: {
   image: ImageProps;
   children: (show: boolean) => React.ReactElement | null;
   explain?: boolean;
+  inView?: boolean;
 } & ConnectProps) {
   const state = useImageGuard({ image, ...connectProps });
   const { show, browsingLevel, tosViolation } = state;
@@ -129,6 +131,7 @@ export function ImageGuard2({
         browsingLevel={browsingLevel}
         tosViolation={tosViolation}
         explain={explain}
+        inView={inView}
       >
         {children(show)}
       </ImageGuardContentInner>
@@ -142,61 +145,61 @@ function ImageGuardContentInner({
   browsingLevel,
   tosViolation,
   children,
+  inView,
 }: {
   show: boolean;
   explain?: boolean;
   browsingLevel: number;
   tosViolation?: boolean;
   children: React.ReactNode;
+  inView?: boolean;
 }) {
   const { classes } = useBadgeStyles({ browsingLevel });
   return (
     <>
-      {!show && explain && (
+      {(inView === undefined || inView) && !show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <Center className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col text-white">
-              <Stack align="center" spacing="sm" w="100%">
-                <Text size="sm" className="shadow-black/50 text-shadow-sm">
-                  This image is rated
-                </Text>
-                <Badge
-                  color="red"
-                  size="xl"
-                  classNames={classes}
-                  className="min-w-[32px] text-center shadow shadow-black/30"
-                >
-                  {browsingLevelLabels[browsingLevel as NsfwLevel]}
-                </Badge>
-                <Button
-                  onClick={toggle}
-                  radius="xl"
-                  sx={(theme) => ({
-                    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
+            <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col items-center gap-2 text-white">
+              <Text size="sm" className="shadow-black/50 text-shadow-sm">
+                This image is rated
+              </Text>
+              <Badge
+                color="red"
+                size="xl"
+                classNames={classes}
+                className="min-w-[32px] text-center shadow shadow-black/30"
+              >
+                {browsingLevelLabels[browsingLevel as NsfwLevel]}
+              </Badge>
+              <Button
+                onClick={toggle}
+                radius="xl"
+                sx={(theme) => ({
+                  color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[9],
+                  backgroundColor: theme.fn.rgba(
+                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                    0.6
+                  ),
+                  boxShadow: theme.shadows.sm,
+                  '&:hover': {
                     backgroundColor: theme.fn.rgba(
                       theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                      0.6
+                      0.7
                     ),
-                    boxShadow: theme.shadows.sm,
-                    '&:hover': {
-                      backgroundColor: theme.fn.rgba(
-                        theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-                        0.7
-                      ),
-                    },
-                  })}
-                >
-                  Show
-                </Button>
-              </Stack>
-            </Center>
+                  },
+                })}
+              >
+                Show
+              </Button>
+            </div>
           )}
         </BlurToggle>
       )}
       {tosViolation ? (
-        <Center w="100%" h="100%">
+        <div className="flex size-full items-center justify-center">
           <Alert color="red">TOS Violation</Alert>
-        </Center>
+        </div>
       ) : (
         children
       )}

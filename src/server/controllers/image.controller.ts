@@ -12,12 +12,13 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { imagesSearchIndex } from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   addBlockedImage,
   bulkAddBlockedImages,
   bulkRemoveBlockedImages,
   deleteImageById,
+  getAllImagesPost,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -50,6 +51,7 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 const reviewTypeToBlockedReason = {
   csam: BlockImageReason.CSAM,
@@ -95,14 +97,14 @@ export const moderateImageHandler = async ({
         });
       }
 
-      const imagesToBlock = affected.filter((x) => !!x.pHash);
-      if (imagesToBlock.length)
-        await bulkAddBlockedImages({
-          data: imagesToBlock.map((x) => ({
+      await bulkAddBlockedImages({
+        data: affected
+          .filter((x) => !!x.pHash)
+          .map((x) => ({
             hash: x.pHash,
             reason: reviewTypeToBlockedReason[input.reviewType],
           })),
-        });
+      });
     } else {
       await bulkRemoveBlockedImages({ ids: input.ids });
     }
@@ -218,6 +220,9 @@ export const setTosViolationHandler = async ({
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
 
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
@@ -272,19 +277,25 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 };
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
+type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesPost>['items'][number];
+type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
-  ctx,
+  ctx: { user },
 }: {
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
-    // TODO.searchUpdate restore
-    // const posts: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    // const pinned: Record<number, AsyncReturnType<typeof getAllImagesPost>['items']> = {};
-    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
-    const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const features = getFeatureFlags({ user });
+    const fetchFn = features.imageIndex ? getAllImagesPost : getAllImages;
+    console.log(features.imageIndex ? 'Using search index' : 'Using DB');
+    type ResultType = typeof features.imageIndex extends true
+      ? ImageResultSearchIndex
+      : ImageResultDB;
+
+    const posts: Record<number, ResultType[]> = {};
+    const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     const modelGallerySettings = input.modelId
@@ -296,14 +307,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      // TODO.searchUpdate restore
-      // const { items: pinnedPostsImages } = await getAllImagesPost({
-      const { items: pinnedPostsImages } = await getAllImages({
+      const { items: pinnedPostsImages } = await fetchFn({
         ...input,
         limit: limit * 3,
         followed: false,
         postIds: versionPinnedPosts,
-        user: ctx.user,
+        user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
       });
@@ -317,15 +326,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
     while (true) {
       // TODO handle/remove all these (headers, include, ids)
-      // TODO.searchUpdate restore
-      // const { nextCursor, items } = await getAllImagesPost({
-      const { nextCursor, items } = await getAllImages({
+      const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
-        user: ctx.user,
+        user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
       });
@@ -375,6 +382,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const review = reviews.find((review) => review.userId === user.id);
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
+      let publishedAt: Date | undefined = image.sortAt;
+      if (features.imageIndex && !(image as ImageResultSearchIndex).published)
+        publishedAt = undefined;
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -389,7 +399,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt: image.publishedAt,
+        publishedAt,
         createdAt,
         user,
         images,

@@ -15,6 +15,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import {
+  IconArrowsCross,
   IconCloudOff,
   IconEye,
   IconEyeOff,
@@ -35,6 +36,7 @@ import { SortFilter } from '~/components/Filters';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -44,6 +46,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useSetFilters } from '~/providers/FiltersProvider';
 import { Flags } from '~/shared/utils';
 import { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -98,7 +101,7 @@ export default function ImagesAsPostsInfinite({
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
-  // const setFilters = useSetFilters('modelImages');
+  const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
@@ -222,7 +225,7 @@ export default function ImagesAsPostsInfinite({
                 <Group ml="auto" spacing={8}>
                   <SortFilter type="modelImages" variant="button" />
                   <ImageFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
-                  {/* <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
+                  <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                     <ActionIcon
                       radius="xl"
                       variant={excludeCrossPosts ? 'light' : 'filled'}
@@ -231,7 +234,7 @@ export default function ImagesAsPostsInfinite({
                     >
                       <IconArrowsCross size={16} />
                     </ActionIcon>
-                  </ButtonTooltip> */}
+                  </ButtonTooltip>
                   {showModerationOptions && (
                     <>
                       {!!gallerySettings?.hiddenImages.length && (
@@ -292,9 +295,7 @@ export default function ImagesAsPostsInfinite({
                   .
                 </Text>
               ) : null}
-              {/* TODO.imageTags: Bring back once we support tags again.  */}
-              {/* TODO.metricSearch can we enable this? */}
-              {/* <ImageCategories /> */}
+              <ImageCategories />
               {enabled && isLoading ? (
                 <Paper style={{ minHeight: 200, position: 'relative' }}>
                   <LoadingOverlay visible zIndex={10} />

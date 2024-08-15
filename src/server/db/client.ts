@@ -48,6 +48,15 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
   }
   const dbUrl = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
   const prisma = new PrismaClient({ log, datasources: { db: { url: dbUrl } } });
+
+  // use with prisma-slow,prisma-showparams
+  if (env.LOGGING.some((x) => x === 'prisma-showparams')) {
+    // @ts-ignore
+    prisma.$on('query', async (e) => {
+      // @ts-ignore
+      console.log({ query: e.query, params: e.params });
+    });
+  }
   return prisma;
 };
 

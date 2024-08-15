@@ -31,7 +31,7 @@ import { openConfirmModal } from '@mantine/modals';
 
 export function GalleryModerationModal({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
-  const { copySettings, updating, copyLoading } = useGallerySettings({ modelId: modelId });
+  const { copySettings, updating, copySettingsLoading } = useGallerySettings({ modelId: modelId });
 
   const handleCopySettings = () => {
     openConfirmModal({
@@ -57,9 +57,9 @@ export function GalleryModerationModal({ modelId }: { modelId: number }) {
           variant="outline"
           size="xs"
           onClick={handleCopySettings}
-          loading={updating || copyLoading}
+          loading={updating || copySettingsLoading}
         >
-          Copy settings
+          Apply these settings to all my models
         </Button>
       </Stack>
     </Modal>

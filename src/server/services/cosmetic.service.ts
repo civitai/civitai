@@ -5,7 +5,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { cosmeticEntityCaches } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { EquipCosmeticInput, GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { articlesSearchIndex, imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  articlesSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
@@ -105,7 +110,7 @@ export async function equipCosmeticToEntity({
     data: { equippedToId, equippedToType, equippedAt: new Date() },
   });
 
-  await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -115,6 +120,10 @@ export async function equipCosmeticToEntity({
     await imagesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
     ]);
+  // TODO maybe pull cosmetics out of the index and fetch later
+  await imagesMetricsSearchIndex.queueUpdate([
+    { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
   if (equippedToType === 'Article')
     await articlesSearchIndex.queueUpdate([
       { id: equippedToId, action: SearchIndexUpdateQueueAction.Update },
@@ -122,10 +131,7 @@ export async function equipCosmeticToEntity({
 
   // Clear cache for previous entity if it was equipped
   if (userCosmetic.equippedToId && userCosmetic.equippedToType) {
-    await deleteEntityCosmeticCache({
-      entityId: userCosmetic.equippedToId,
-      entityType: userCosmetic.equippedToType,
-    });
+    await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
   }
 
   return updated;
@@ -143,7 +149,7 @@ export async function unequipCosmetic({
     data: { equippedToId: null, equippedToType: null, equippedAt: null },
   });
 
-  await deleteEntityCosmeticCache({ entityId: equippedToId, entityType: equippedToType });
+  await cosmeticEntityCaches[equippedToType].refresh(equippedToId);
 
   if (equippedToType === 'Model')
     await modelsSearchIndex.queueUpdate([
@@ -170,14 +176,4 @@ export async function getCosmeticsForEntity({
 }) {
   if (ids.length === 0) return {};
   return await cosmeticEntityCaches[entity].fetch(ids);
-}
-
-export async function deleteEntityCosmeticCache({
-  entityId,
-  entityType,
-}: {
-  entityId: number;
-  entityType: CosmeticEntity;
-}) {
-  return await cosmeticEntityCaches[entityType].bust(entityId);
 }

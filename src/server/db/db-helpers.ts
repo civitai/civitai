@@ -182,7 +182,7 @@ export async function dataProcessor({
   await limitConcurrency(() => {
     if (stop || cursor > maxCursor) return null;
     const start = cursor;
-    cursor += batchSize;
+    cursor = Math.min(cursor + batchSize, maxCursor);
     const end = cursor;
     cursor++; // To avoid batch overlap
 
@@ -214,6 +214,7 @@ type BatchProcessorOptions = {
     end?: number;
   };
 };
+
 export async function batchProcessor({
   batchFetcher,
   processor,

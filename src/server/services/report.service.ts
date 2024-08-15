@@ -8,6 +8,7 @@ import { CreateReportInput, GetReportsInput, ReportEntity } from '~/server/schem
 import {
   articlesSearchIndex,
   collectionsSearchIndex,
+  imagesMetricsSearchIndex,
   imagesSearchIndex,
 } from '~/server/search-index';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -200,6 +201,9 @@ export const createReport = async ({
         data: { ingestion: 'Blocked', nsfwLevel: NsfwLevel.Blocked, blockedFor: 'CSAM' },
       });
       await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+      await imagesMetricsSearchIndex.queueUpdate([
+        { id, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
     }
   });
 };
@@ -327,4 +331,5 @@ function trackModReports({ ids, userId }: { ids: number[]; userId: number }) {
     )
   );
 }
+
 // #endregion
