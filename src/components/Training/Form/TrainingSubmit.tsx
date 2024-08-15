@@ -163,8 +163,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
-  console.log('parent');
-
   // Calc ETA and Cost
   useEffect(() => {
     const eta = calcEta({
@@ -431,6 +429,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               title: `Failed to create model file for run #${idx + 1}`,
               autoClose: false,
             });
+            // TODO ideally, mark this as errored and don't leave the screen
             finishedRuns++;
             if (finishedRuns === runs.length) setAwaitInvalidate(false);
           }
@@ -442,6 +441,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           title: `Failed to save model version info for run #${idx + 1}`,
           autoClose: false,
         });
+        // TODO ideally, mark this as errored and don't leave the screen
         finishedRuns++;
         if (finishedRuns === runs.length) setAwaitInvalidate(false);
       }
@@ -612,7 +612,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <>
           <AdvancedSettings
             modelId={model.id}
-            selectedRunIndex={selectedRunIndex}
+            selectedRun={selectedRun}
             maxSteps={maxSteps}
             numImages={thisNumImages}
           />

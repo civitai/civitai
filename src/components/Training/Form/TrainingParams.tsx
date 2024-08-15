@@ -108,7 +108,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'kohya',
     options: engineTypes,
     disabled: true,
-    overrides: { flux_dev: { all: { disabled: false, default: 'x-flux' } } },
+    overrides: { flux_dev: { all: { disabled: false } } },
   },
   {
     name: 'maxTrainEpochs',

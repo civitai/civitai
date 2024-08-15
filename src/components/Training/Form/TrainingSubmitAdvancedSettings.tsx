@@ -9,6 +9,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -24,34 +25,29 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
-import {
-  defaultRun,
-  defaultTrainingState,
-  trainingStore,
-  useTrainingImageStore,
-} from '~/store/training.store';
+import { TrainingRun, TrainingRunUpdate, trainingStore } from '~/store/training.store';
 
 export const AdvancedSettings = ({
-  selectedRunIndex,
+  selectedRun,
   modelId,
   maxSteps,
   numImages,
 }: {
-  selectedRunIndex: number;
+  selectedRun: TrainingRun;
   modelId: number;
   maxSteps: number;
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
-  const { runs } = useTrainingImageStore((state) => state[modelId] ?? { ...defaultTrainingState });
-  // const debouncer = useDebouncer(300);
+  const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
-  const selectedRun = runs[selectedRunIndex] ?? defaultRun;
-
-  console.log('re');
+  const doUpdate = (data: TrainingRunUpdate) => {
+    updateRun(modelId, selectedRun.id, data);
+  };
 
   useEffect(() => {
+    if (previous?.id !== selectedRun.id) return;
     const defaultParams = trainingSettings.reduce(
       (a, v) => ({
         ...a,
@@ -73,14 +69,14 @@ export const AdvancedSettings = ({
       );
     }
 
-    updateRun(modelId, selectedRun.id, { params: defaultParams });
-  }, [selectedRun.id, selectedRun.params.engine]);
+    doUpdate({ params: defaultParams });
+  }, [selectedRun.params.engine]);
 
   // Use functions to set proper starting values based on metadata
   useEffect(() => {
     if (selectedRun.params.numRepeats === undefined) {
       const numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
-      updateRun(modelId, selectedRun.id, { params: { numRepeats } });
+      doUpdate({ params: { numRepeats } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.id, numImages]);
@@ -104,9 +100,7 @@ export const AdvancedSettings = ({
     // }
 
     if (selectedRun.params.targetSteps !== newSteps) {
-      updateRun(modelId, selectedRun.id, {
-        params: { targetSteps: newSteps },
-      });
+      doUpdate({ params: { targetSteps: newSteps } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -136,9 +130,7 @@ export const AdvancedSettings = ({
       newOptimizerArgs !== selectedRun.params.optimizerArgs ||
       newScheduler !== selectedRun.params.lrScheduler
     ) {
-      updateRun(modelId, selectedRun.id, {
-        params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler },
-      });
+      doUpdate({ params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);
@@ -184,43 +176,43 @@ export const AdvancedSettings = ({
                   label="Image #1"
                   placeholder="Automatically set"
                   value={selectedRun.samplePrompts[0]}
-                  onChange={(event) =>
-                    updateRun(modelId, selectedRun.id, {
+                  onChange={(event) => {
+                    doUpdate({
                       samplePrompts: [
                         event.currentTarget.value,
                         selectedRun.samplePrompts[1],
                         selectedRun.samplePrompts[2],
                       ],
-                    })
-                  }
+                    });
+                  }}
                 />
                 <TextInputWrapper
                   label="Image #2"
                   placeholder="Automatically set"
                   value={selectedRun.samplePrompts[1]}
-                  onChange={(event) =>
-                    updateRun(modelId, selectedRun.id, {
+                  onChange={(event) => {
+                    doUpdate({
                       samplePrompts: [
                         selectedRun.samplePrompts[0],
                         event.currentTarget.value,
                         selectedRun.samplePrompts[2],
                       ],
-                    })
-                  }
+                    });
+                  }}
                 />
                 <TextInputWrapper
                   label="Image #3"
                   placeholder="Automatically set"
                   value={selectedRun.samplePrompts[2]}
-                  onChange={(event) =>
-                    updateRun(modelId, selectedRun.id, {
+                  onChange={(event) => {
+                    doUpdate({
                       samplePrompts: [
                         selectedRun.samplePrompts[0],
                         selectedRun.samplePrompts[1],
                         event.currentTarget.value,
                       ],
-                    })
-                  }
+                    });
+                  }}
                 />
               </Stack>
             </Accordion.Panel>
@@ -308,11 +300,9 @@ export const AdvancedSettings = ({
                       disabled={disabled}
                       format="default"
                       value={selectedRun.params[ts.name] as number}
-                      onChange={(value) =>
-                        updateRun(modelId, selectedRun.id, {
-                          params: { [ts.name]: value },
-                        })
-                      }
+                      onChange={(value) => {
+                        doUpdate({ params: { [ts.name]: value } });
+                      }}
                     />
                   );
                 } else if (ts.type === 'select') {
@@ -330,11 +320,9 @@ export const AdvancedSettings = ({
                       data={options}
                       disabled={disabled}
                       value={selectedRun.params[ts.name] as string}
-                      onChange={(value) =>
-                        updateRun(modelId, selectedRun.id, {
-                          params: { [ts.name]: value },
-                        })
-                      }
+                      onChange={(value) => {
+                        doUpdate({ params: { [ts.name]: value } });
+                      }}
                     />
                   );
                 } else if (ts.type === 'bool') {
@@ -343,13 +331,9 @@ export const AdvancedSettings = ({
                       py={8}
                       disabled={disabled}
                       checked={selectedRun.params[ts.name] as boolean}
-                      onChange={(event) =>
-                        updateRun(modelId, selectedRun.id, {
-                          params: {
-                            [ts.name]: event.currentTarget.checked,
-                          },
-                        })
-                      }
+                      onChange={(event) => {
+                        doUpdate({ params: { [ts.name]: event.currentTarget.checked } });
+                      }}
                     />
                   );
                 } else if (ts.type === 'string') {
@@ -358,13 +342,9 @@ export const AdvancedSettings = ({
                       disabled={disabled}
                       clearable={!disabled}
                       value={selectedRun.params[ts.name] as string}
-                      onChange={(event) =>
-                        updateRun(modelId, selectedRun.id, {
-                          params: {
-                            [ts.name]: event.currentTarget.value,
-                          },
-                        })
-                      }
+                      onChange={(event) => {
+                        doUpdate({ params: { [ts.name]: event.currentTarget.value } });
+                      }}
                     />
                   );
                 }
