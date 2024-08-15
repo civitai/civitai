@@ -57,7 +57,9 @@ export function ImageMeta({ imageId }: { imageId: number }) {
   }
 
   const simpleMeta = Object.entries(simpleMetaProps)
-    .filter(([key]) => meta[key as keyof typeof meta])
+    .filter(
+      ([key]) => meta[key as SimpleMetaPropsKey] && meta[key as SimpleMetaPropsKey] !== 'Undefined'
+    )
     .map(([key, label]) => {
       const content = getSimpleMetaContent(key as SimpleMetaPropsKey);
       if (!content) return null;
