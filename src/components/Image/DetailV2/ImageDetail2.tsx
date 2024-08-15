@@ -25,7 +25,6 @@ import {
   IconChevronUp,
   IconDotsVertical,
   IconDownload,
-  IconEye,
   IconFlag,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
@@ -71,7 +70,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
-import { abbreviateNumber } from '~/utils/number-helpers';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',

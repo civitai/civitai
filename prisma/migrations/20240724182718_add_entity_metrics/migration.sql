@@ -14,14 +14,14 @@ CREATE TABLE "EntityMetric" (
 CREATE OR REPLACE VIEW "EntityMetricImage" AS
   SELECT
     "entityId" as "imageId",
-    SUM(CASE WHEN "metricType" = 'ReactionLike' THEN "metricValue" ELSE 0 END) as "reactionLike",
-    SUM(CASE WHEN "metricType" = 'ReactionHeart' THEN "metricValue" ELSE 0 END) as "reactionHeart",
-    SUM(CASE WHEN "metricType" = 'ReactionLaugh' THEN "metricValue" ELSE 0 END) as "reactionLaugh",
-    SUM(CASE WHEN "metricType" = 'ReactionCry' THEN "metricValue" ELSE 0 END) as "reactionCry",
-    SUM(CASE WHEN "metricType" in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry') THEN "metricValue" ELSE 0 END) as "reactionTotal",
-    SUM(CASE WHEN "metricType" = 'Comment' THEN "metricValue" ELSE 0 END) as "comment",
-    SUM(CASE WHEN "metricType" = 'Collection' THEN "metricValue" ELSE 0 END) as "collection",
-    SUM(CASE WHEN "metricType" = 'Buzz' THEN "metricValue" ELSE 0 END) as "buzz"
+    SUM(CASE WHEN "metricType" = 'ReactionLike' THEN "metricValue" END) as "reactionLike",
+    SUM(CASE WHEN "metricType" = 'ReactionHeart' THEN "metricValue" END) as "reactionHeart",
+    SUM(CASE WHEN "metricType" = 'ReactionLaugh' THEN "metricValue" END) as "reactionLaugh",
+    SUM(CASE WHEN "metricType" = 'ReactionCry' THEN "metricValue" END) as "reactionCry",
+    SUM(CASE WHEN "metricType" in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry') THEN "metricValue" END) as "reactionTotal",
+    SUM(CASE WHEN "metricType" = 'Comment' THEN "metricValue" END) as "comment",
+    SUM(CASE WHEN "metricType" = 'Collection' THEN "metricValue" END) as "collection",
+    SUM(CASE WHEN "metricType" = 'Buzz' THEN "metricValue" END) as "buzz"
   FROM "EntityMetric"
   WHERE "entityType" = 'Image'
   GROUP BY "imageId"
