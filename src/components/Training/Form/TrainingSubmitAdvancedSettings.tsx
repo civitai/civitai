@@ -1,4 +1,14 @@
-import { Accordion, Checkbox, Code, Group, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Accordion,
+  Checkbox,
+  Code,
+  Group,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+  Badge,
+} from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
@@ -304,10 +314,6 @@ export const AdvancedSettings = ({
                   if (ts.name === 'lrScheduler' && selectedRun.params.optimizerType === 'Prodigy') {
                     options = options.filter((o) => o !== 'cosine_with_restarts');
                   }
-                  // TODO re-enable x-flux
-                  if (ts.name === 'engine') {
-                    options = options.filter((o) => o !== 'x-flux');
-                  }
 
                   inp = (
                     <SelectWrapper
@@ -362,10 +368,9 @@ export const AdvancedSettings = ({
                               <IconAlertTriangle color="orange" size={16} />
                             )}
                         </Group>
-                        {/*TODO re-enable when x-flux is back*/}
-                        {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
-                        {/*  <Badge color="green">NEW</Badge>*/}
-                        {/*)}*/}
+                        {ts.name === 'engine' && selectedRun.baseType === 'flux' && (
+                          <Badge color="green">NEW</Badge>
+                        )}
                       </Group>
                     </CivitaiTooltip>
                   ) : (
