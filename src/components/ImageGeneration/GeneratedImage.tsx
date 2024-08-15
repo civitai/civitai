@@ -435,6 +435,7 @@ export function GenerationPlaceholder({ width, height }: { width: number; height
 
 const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
+  const favoriteButtonRef = getRef('favoriteButton');
 
   return {
     checkboxLabel: {
@@ -515,13 +516,24 @@ const useStyles = createStyles((theme, _params, getRef) => {
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      // backdropFilter: 'blur(5px) saturate(160%)',
       padding: 4,
       transition: 'opacity .3s',
+
+      ['button']: {
+        opacity: 0,
+
+        [`&.${favoriteButtonRef}`]: {
+          opacity: 1,
+        },
+
+        [theme.fn.smallerThan('sm')]: {
+          opacity: 0.7,
+        },
+      },
     },
 
     favoriteButton: {
-      opacity: 1,
+      ref: favoriteButtonRef,
       background: 'rgba(240, 62, 62, 0.5)',
     },
 
