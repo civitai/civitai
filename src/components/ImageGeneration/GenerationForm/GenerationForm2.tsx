@@ -213,7 +213,6 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
-      creatorTip = 0;
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -1104,9 +1103,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
-  const isFlux = getIsFlux(baseModel);
-  const hasCreatorTip = !isFlux;
+  const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
 
   useEffect(() => {
     if (data) {
@@ -1115,8 +1112,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   const cost = data?.cost?.base ?? 0;
-  const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip ?? 0 : 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+  const totalTip = Math.ceil(cost * (creatorTip ?? 0)) + Math.ceil(cost * (civitaiTip ?? 0));
   const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
@@ -1152,7 +1148,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
             value: (civitaiTip ?? 0) * 100,
             onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
           }}
-          hideCreatorTip={!hasCreatorTip}
         >
           <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
             <IconInfoCircle stroke={2.5} />
