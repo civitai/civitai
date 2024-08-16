@@ -318,7 +318,7 @@ export const resourceDataCache = createCachedArray({
   idKey: 'id',
   lookupFn: async (ids) => {
     const dbResults = (
-      await dbRead.modelVersion.findMany({
+      await dbWrite.modelVersion.findMany({
         where: { id: { in: ids as number[] } },
         select: generationResourceSelect,
       })
