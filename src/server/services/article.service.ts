@@ -772,7 +772,10 @@ export const upsertArticle = async ({
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
-      await deleteImageById({ id: article.coverId });
+      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+      if (isImgOwner) {
+        await deleteImageById({ id: article.coverId });
+      }
     }
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
