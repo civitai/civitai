@@ -231,7 +231,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: false,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
       },
     },
   },
