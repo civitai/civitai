@@ -7,9 +7,16 @@ import {
   EventName,
   Transaction,
   TransactionCompletedEvent,
+  ProductNotification,
+  ProductCreatedEvent,
+  PriceCreatedEvent,
 } from '@paddle/paddle-node-sdk';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
-import { processCompleteBuzzTransaction } from '~/server/services/paddle.service';
+import {
+  processCompleteBuzzTransaction,
+  upsertPriceRecord,
+  upsertProductRecord,
+} from '~/server/services/paddle.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -59,6 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
+    console.log(event.eventType);
     if (relevantEvents.has(event.eventType)) {
       try {
         switch (event.eventType) {
@@ -75,21 +83,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             break;
           case EventName.ProductCreated:
-          case EventName.ProductUpdated:
+          case EventName.ProductUpdated: {
+            const data = (event as ProductCreatedEvent).data;
+            await upsertProductRecord(data);
             break;
+          }
+          case EventName.PriceCreated:
+          case EventName.PriceUpdated: {
+            const data = (event as PriceCreatedEvent).data;
+            await upsertPriceRecord(data);
+            break;
+          }
           default:
             throw new Error('Unhandled relevant event!');
         }
 
-        return res.status(200);
+        return res.status(200).json({ received: true });
       } catch (error: any) {
+        console.log('ERROOOR', error);
         return res.status(400).send({
           error: error.message,
         });
       }
     }
 
-    return res.status(200);
+    return res.status(200).json({ received: true });
   } else {
     res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');

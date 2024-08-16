@@ -14,6 +14,8 @@ import {
   Product as PaddleProduct,
   Price as PaddlePrice,
   Transaction,
+  ProductNotification,
+  PriceNotification,
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -117,14 +119,16 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
   // });
 };
 
-export const upsertProductRecord = async (product: PaddleProduct) => {
+export const upsertProductRecord = async (product: ProductNotification) => {
   const productData = {
     id: product.id,
     active: product.status === 'active',
     name: product.name,
     description: product.description ?? null,
     metadata: product.customData ?? undefined,
-    defaultPriceId: null,
+    // Paddle doesn't have a concept of default price in the same way as Stripe.
+    // We backfill when we receive a price with default metadata.
+    defaultPriceId: undefined,
     provider: PaymentProvider.Paddle,
   };
 
@@ -140,7 +144,9 @@ export const upsertProductRecord = async (product: PaddleProduct) => {
   return productData;
 };
 
-export const upsertPriceRecord = async (price: PaddlePrice) => {
+export const upsertPriceRecord = async (price: PriceNotification) => {
+  const priceMeta = (price.customData ?? {}) as { default?: boolean };
+
   const priceData = {
     id: price.id,
     productId: price.productId,
@@ -154,6 +160,7 @@ export const upsertPriceRecord = async (price: PaddlePrice) => {
     metadata: price.customData ?? undefined,
     provider: PaymentProvider.Paddle,
   };
+
   await dbWrite.price.upsert({
     where: { id: price.id },
     update: priceData,
@@ -162,5 +169,14 @@ export const upsertPriceRecord = async (price: PaddlePrice) => {
       metadata: priceData.metadata ?? {},
     },
   });
+
+  if (priceMeta.default) {
+    // Update the product
+    await dbWrite.product.update({
+      where: { id: price.productId },
+      data: { defaultPriceId: price.id },
+    });
+  }
+
   return priceData;
 };
