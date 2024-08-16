@@ -2,12 +2,13 @@ import { Button, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useState } from 'react';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
-import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
+
 import { ResourceSelectOptions } from './resource-select.types';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ModelType } from '@prisma/client';
+import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
