@@ -80,7 +80,7 @@ export function QueueItem({
   id: string;
   filter: { marker?: string } | undefined;
 }) {
-  const { classes } = useStyle();
+  const { classes, cx } = useStyle();
   const features = useFeatureFlags();
   const { pathname } = useRouter();
   const [ref, inView] = useInViewDynamic({ id });
@@ -281,7 +281,7 @@ export function QueueItem({
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
 
-            <div className={classes.grid}>
+            <div className={cx(classes.grid, {[classes.asSidebar]: !features.largerGenerationImages})}>
               {images.map((image) => (
                 <GeneratedImage key={image.id} image={image} request={request} step={step} />
               ))}
@@ -320,9 +320,6 @@ const useStyle = createStyles((theme) => ({
     gap: theme.spacing.xs,
     gridTemplateColumns: 'repeat(1, 1fr)', // default for larger screens, max 6 columns
 
-    // [`@media (max-width: ${theme.breakpoints.xl}px)`]: {
-    //   gridTemplateColumns: 'repeat(4, 1fr)', // 4 columns for screens smaller than xl
-    // },
     [`@container (min-width: 530px)`]: {
       gridTemplateColumns: 'repeat(3, 1fr)', // 3 columns for screens smaller than md
     },
