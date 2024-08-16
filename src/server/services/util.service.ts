@@ -23,3 +23,36 @@ export const entityExists = async ({
 
   // TODO: Add more entities as needed here.
 };
+
+export const isImageOwner = async ({
+  userId,
+  imageId,
+  isModerator,
+  allowMods = true,
+}: {
+  userId: number;
+  imageId: number;
+  isModerator?: boolean;
+  allowMods?: boolean;
+}) => {
+  if (allowMods) {
+    if (isModerator === undefined) {
+      const user = await dbRead.user.findUnique({
+        select: { isModerator: true },
+        where: { id: userId },
+      });
+      isModerator = user?.isModerator ?? false;
+    }
+
+    if (isModerator) return true;
+  }
+
+  const img = await dbRead.image.findUnique({
+    select: { userId: true },
+    where: { id: imageId },
+  });
+  console.log(img);
+
+  if (!img) return false;
+  return img.userId === userId;
+};

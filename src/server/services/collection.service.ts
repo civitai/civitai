@@ -52,12 +52,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import {
-  deleteImageById,
-  getAllImages,
-  ImagesInfiniteModel,
-  ingestImage,
-} from '~/server/services/image.service';
+import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import {
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
@@ -644,6 +639,16 @@ export const upsertCollection = async ({
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
+    // nb - if we ever allow a cover image on create, copy this logic below
+    // TODO commenting this out - other users can manage collections
+    // const coverImgId = imageId ?? image?.id;
+    // if (isDefined(coverImgId)) {
+    //   const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
+    //   if (!isImgOwner) {
+    //     throw throwAuthorizationError('Invalid cover image');
+    //   }
+    // }
+
     const updated = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.collection.update({
         select: {
@@ -676,6 +681,7 @@ export const upsertCollection = async ({
                       meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                       userId,
                       resources: undefined,
+                      id: undefined,
                     },
                   },
                 }
@@ -774,14 +780,22 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
-    // Delete image if it was removed
-    if (currentCollection.image && !input.image) {
-      await deleteImageById({ id: currentCollection.image.id });
-    }
+    // nb: doing this will delete a user's own image
+    // if (currentCollection.image && !input.image) {
+    //   const isOwner = await isImageOwner({
+    //     userId,
+    //     isModerator,
+    //     imageId: currentCollection.image.id,
+    //   });
+    //   if (isOwner) {
+    //     await deleteImageById({ id: currentCollection.image.id });
+    //   }
+    // }
 
     return updated;
   }
 
+  // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: { id: true, image: { select: { id: true, url: true } } },
     data: {
@@ -841,6 +855,8 @@ export const updateCollectionCoverImage = async ({
   if (!permission.manage) {
     return;
   }
+
+  // TODO if necessary, check image ownership here
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
