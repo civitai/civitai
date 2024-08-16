@@ -4,17 +4,17 @@ import {
   Box,
   Center,
   ContainerProps,
+  createStyles,
+  Divider,
   Group,
+  Menu,
+  Popover,
+  Select,
   Stack,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
-  createStyles,
-  Menu,
-  Popover,
-  Select,
-  Divider,
 } from '@mantine/core';
 import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
 import {
@@ -25,60 +25,58 @@ import {
   IconInfoCircle,
   IconPhoto,
 } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
+import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
+import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
+import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
+import {
+  contestCollectionReactionsHidden,
+  isCollectionSubsmissionPeriod,
+  useCollection,
+} from '~/components/Collections/collection.utils';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
+import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useImageQueryParams } from '~/components/Image/image.utils';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
+import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { MAX_ANIMATION_DURATION_SECONDS, constants } from '~/server/common/constants';
-import { CollectionByIdModel } from '~/types/router';
-import { trpc } from '~/utils/trpc';
-import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { PostCategories } from '~/components/Post/Infinite/PostCategories';
-import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
-import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
-import { showSuccessNotification } from '~/utils/notifications';
-import { Meta } from '../Meta/Meta';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { getRandom } from '~/utils/array-helpers';
-import ReactMarkdown from 'react-markdown';
-import rehypeRaw from 'rehype-raw';
-import remarkGfm from 'remark-gfm';
-import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import {
-  contestCollectionReactionsHidden,
-  isCollectionSubsmissionPeriod,
-  useCollection,
-} from '~/components/Collections/collection.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { capitalize, truncate } from 'lodash-es';
-import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { removeTags, toPascalCase } from '~/utils/string-helpers';
-import { useRouter } from 'next/router';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
-import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
+import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
+import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { CollectionByIdModel } from '~/types/router';
+import { getRandom } from '~/utils/array-helpers';
+import { formatDate } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
+import { removeTags, toPascalCase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { Meta } from '../Meta/Meta';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -187,7 +185,7 @@ const ImageCollection = ({
           <Menu.Item
             icon={
               // @ts-ignore: transparent variant actually works here.
-              <ThemeIcon color="pink.7" variant="transparent" size="sm">
+              <ThemeIcon color="pink.7" variant="transparent" size="xs">
                 <IconPhoto size={16} stroke={1.5} />
               </ThemeIcon>
             }
