@@ -1,22 +1,21 @@
-import OneKeyMap from '@essentials/one-key-map';
 import {
   ActionIcon,
   Badge,
   Box,
   Button,
-  Card,
   Center,
+  CloseButton,
   Divider,
   Group,
   Loader,
   Menu,
+  Modal,
   Select,
   Stack,
   Text,
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { ContextModalProps, openContextModal } from '@mantine/modals';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { ModelType } from '@prisma/client';
 import {
@@ -34,7 +33,6 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
-import trieMemoize from 'trie-memoize';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -45,10 +43,7 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import {
-  IntersectionObserverProvider,
-  useInViewDynamic,
-} from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
@@ -58,7 +53,6 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from '~/hooks/useInView';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -74,8 +68,11 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { PageModal } from '~/components/Dialog/Templates/PageModal';
+import clsx from 'clsx';
 
-export type ResourceSelectModalProps = {
+type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
   onClose?: () => void;
@@ -83,43 +80,17 @@ export type ResourceSelectModalProps = {
   isTraining?: boolean;
 };
 
-export const openResourceSelectModal = ({
-  title,
-  onClose,
-  ...innerProps
-}: ResourceSelectModalProps) =>
-  openContextModal({
-    modal: 'resourceSelectModal',
-    title,
-    zIndex: 400,
-    innerProps,
-    size: 1200,
-    onClose,
-  });
-
-const ResourceSelectContext = React.createContext<{
-  canGenerate?: boolean;
-  isTraining?: boolean;
-  resources: { type: ModelType; baseModels: BaseModel[] }[];
-  onSelect: (
-    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
-  ) => void;
-} | null>(null);
-
-const useResourceSelectContext = () => {
-  const context = useContext(ResourceSelectContext);
-  if (!context) throw new Error('missing ResourceSelectContext');
-  return context;
-};
-
 export default function ResourceSelectModal({
-  context,
-  id,
-  innerProps: { onSelect, options = {}, isTraining = false },
-}: ContextModalProps<ResourceSelectModalProps>) {
-  const isMobile = useIsMobile();
-  const features = useFeatureFlags();
+  title,
+  onSelect,
+  onClose,
+  options = {},
+  isTraining,
+}: ResourceSelectModalProps) {
+  const dialog = useDialogContext();
 
+  const features = useFeatureFlags();
+  const isMobile = useIsMobile();
   const { resources = [], canGenerate } = options;
   const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
     let aggregate: BaseModel[] = [];
@@ -153,30 +124,58 @@ export default function ResourceSelectModal({
     }
   }
 
-  const handleSelect = (value: GenerationResource) => {
+  function handleSelect(value: GenerationResource) {
     onSelect(value);
-    context.closeModal(id);
-  };
+    dialog.onClose();
+  }
+
+  function handleClose() {
+    dialog.onClose();
+    onClose?.();
+  }
 
   return (
-    <ResourceSelectContext.Provider
-      value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
-    >
-      <InstantSearch
-        searchClient={searchClient}
-        indexName={searchIndexMap.models}
-        future={{ preserveSharedStateOnUnmount: true }}
-      >
-        <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
-        <Stack>
-          <CustomSearchBox isMobile={isMobile} autoFocus />
-          <CategoryTagFilters />
-          <ResourceHitList />
-        </Stack>
-      </InstantSearch>
-    </ResourceSelectContext.Provider>
+    <PageModal {...dialog} onClose={handleClose} fullScreen withCloseButton={false} padding={0}>
+      <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden">
+        <ResourceSelectContext.Provider
+          value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
+        >
+          <InstantSearch
+            searchClient={searchClient}
+            indexName={searchIndexMap.models}
+            future={{ preserveSharedStateOnUnmount: true }}
+          >
+            <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
+            <div className="flex flex-col gap-3 p-3">
+              <div className="flex items-center justify-between">
+                <Text>{title}</Text>
+                <CloseButton onClick={handleClose} />
+              </div>
+              <CustomSearchBox isMobile={isMobile} autoFocus />
+              <CategoryTagFilters />
+            </div>
+            <ResourceHitList />
+          </InstantSearch>
+        </ResourceSelectContext.Provider>
+      </div>
+    </PageModal>
   );
 }
+
+const ResourceSelectContext = React.createContext<{
+  canGenerate?: boolean;
+  isTraining?: boolean;
+  resources: { type: ModelType; baseModels: BaseModel[] }[];
+  onSelect: (
+    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
+  ) => void;
+} | null>(null);
+
+const useResourceSelectContext = () => {
+  const context = useContext(ResourceSelectContext);
+  if (!context) throw new Error('missing ResourceSelectContext');
+  return context;
+};
 
 function CategoryTagFilters() {
   const [tag, setTag] = useState<string>();
@@ -253,16 +252,21 @@ function ResourceHitList() {
     );
 
   return (
-    <ScrollArea id="resource-select-modal">
+    <ScrollArea id="resource-select-modal" className="flex-1 p-3">
       <div className="flex flex-col gap-3">
         {hiddenCount > 0 && (
           <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
         )}
 
         <div className={classes.grid}>
+          {/* {models
+            .filter((model) => model.versions.length > 0)
+            .map((model, index) => createRenderElement(ResourceSelectCard, index, model))} */}
           {models
             .filter((model) => model.versions.length > 0)
-            .map((model, index) => createRenderElement(ResourceSelectCard, index, model))}
+            .map((model) => (
+              <ResourceSelectCard key={model.id} data={model} />
+            ))}
         </div>
         {hits.length > 0 && !isLastPage && (
           <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
@@ -276,19 +280,9 @@ function ResourceHitList() {
   );
 }
 
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, model) => <RenderComponent key={model.id} index={index} data={model} />
-);
-
 const IMAGE_CARD_WIDTH = 450;
 
-function ResourceSelectCard({
-  data,
-}: {
-  index: number;
-  data: SearchIndexDataMap['models'][number];
-}) {
+function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
   const currentUser = useCurrentUser();
   const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
@@ -418,123 +412,26 @@ function ResourceSelectCard({
     );
   }
 
+  const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
+  const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
+
   return (
     // Visually hide card if there are no versions
-    <TwCard ref={ref} style={{ display: versions.length === 0 ? 'none' : undefined }}>
-      {inView ? (
-        <div className={classes.root} onClick={handleSelect}>
+    <TwCard ref={ref} className={clsx(classes.root, 'justify-between')} onClick={handleSelect}>
+      {inView && (
+        <>
           {image && (
             <ImageGuard2 image={image} connectType="model" connectId={data.id}>
               {(safe) => {
-                const originalAspectRatio =
-                  image.width && image.height ? image.width / image.height : 1;
-
                 return (
-                  <>
-                    <Group
-                      spacing={4}
-                      position="apart"
-                      align="start"
-                      className={cx(classes.contentOverlay, classes.top)}
-                      noWrap
-                    >
-                      <Group spacing={4}>
-                        <ImageGuard2.BlurToggle />
-                        <Badge
-                          className={cx(classes.infoChip, classes.chip)}
-                          variant="light"
-                          radius="xl"
-                        >
-                          <Text color="white" size="xs" transform="capitalize">
-                            {getDisplayName(data.type)}
-                          </Text>
-                          {isSDXL && (
-                            <>
-                              <Divider orientation="vertical" />
-                              {isPony ? (
-                                <IconHorse size={16} strokeWidth={2.5} />
-                              ) : (
-                                <Text color="white" size="xs">
-                                  XL
-                                </Text>
-                              )}
-                            </>
-                          )}
-                        </Badge>
-
-                        {(isNew || isUpdated) && (
-                          <Badge
-                            className={classes.chip}
-                            variant="filled"
-                            radius="xl"
-                            sx={(theme) => ({
-                              backgroundColor: isUpdated
-                                ? '#1EBD8E'
-                                : theme.colors.blue[theme.fn.primaryShade()],
-                            })}
-                          >
-                            <Text color="white" size="xs" transform="capitalize">
-                              {isUpdated ? 'Updated' : 'New'}
-                            </Text>
-                          </Badge>
-                        )}
-                      </Group>
-                      <Stack spacing="xs">
-                        {contextMenuItems.length > 0 && (
-                          <Menu position="left-start" withArrow offset={-5}>
-                            <Menu.Target>
-                              <ActionIcon
-                                variant="transparent"
-                                p={0}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                              >
-                                <IconDotsVertical
-                                  size={24}
-                                  color="#fff"
-                                  style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                                />
-                              </ActionIcon>
-                            </Menu.Target>
-                            <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                          </Menu>
-                        )}
-                        <CivitaiLinkManageButton
-                          modelId={data.id}
-                          modelName={data.name}
-                          modelType={data.type}
-                          hashes={data.hashes}
-                          noTooltip
-                          iconSize={16}
-                        >
-                          {({ color, onClick, icon, label }) => (
-                            <HoverActionButton
-                              onClick={onClick}
-                              label={label}
-                              size={30}
-                              color={color}
-                              variant="filled"
-                              keepIconOnHover
-                            >
-                              {icon}
-                            </HoverActionButton>
-                          )}
-                        </CivitaiLinkManageButton>
-                      </Stack>
-                    </Group>
+                  <div className="relative overflow-hidden aspect-portrait">
                     {safe ? (
                       <EdgeMedia
                         src={image.url}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         type={image.type}
-                        width={
-                          originalAspectRatio > 1
-                            ? IMAGE_CARD_WIDTH * originalAspectRatio
-                            : IMAGE_CARD_WIDTH
-                        }
+                        width={width}
                         placeholder="empty"
                         className={classes.image}
                         loading="lazy"
@@ -542,52 +439,130 @@ function ResourceSelectCard({
                     ) : (
                       <MediaHash {...image} />
                     )}
-                  </>
+                    <div className="absolute left-2 top-2 flex items-center gap-1">
+                      <ImageGuard2.BlurToggle />
+                      <Badge
+                        className={cx(classes.infoChip, classes.chip)}
+                        variant="light"
+                        radius="xl"
+                      >
+                        <Text color="white" size="xs" transform="capitalize">
+                          {getDisplayName(data.type)}
+                        </Text>
+                        {isSDXL && (
+                          <>
+                            <Divider orientation="vertical" />
+                            {isPony ? (
+                              <IconHorse size={16} strokeWidth={2.5} />
+                            ) : (
+                              <Text color="white" size="xs">
+                                XL
+                              </Text>
+                            )}
+                          </>
+                        )}
+                      </Badge>
+
+                      {(isNew || isUpdated) && (
+                        <Badge
+                          className={classes.chip}
+                          variant="filled"
+                          radius="xl"
+                          sx={(theme) => ({
+                            backgroundColor: isUpdated
+                              ? '#1EBD8E'
+                              : theme.colors.blue[theme.fn.primaryShade()],
+                          })}
+                        >
+                          <Text color="white" size="xs" transform="capitalize">
+                            {isUpdated ? 'Updated' : 'New'}
+                          </Text>
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="absolute right-2 top-2 flex flex-col gap-1">
+                      {contextMenuItems.length > 0 && (
+                        <Menu position="left-start" withArrow offset={-5}>
+                          <Menu.Target>
+                            <ActionIcon
+                              variant="transparent"
+                              p={0}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            >
+                              <IconDotsVertical
+                                size={24}
+                                color="#fff"
+                                style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                              />
+                            </ActionIcon>
+                          </Menu.Target>
+                          <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                        </Menu>
+                      )}
+                      <CivitaiLinkManageButton
+                        modelId={data.id}
+                        modelName={data.name}
+                        modelType={data.type}
+                        hashes={data.hashes}
+                        noTooltip
+                        iconSize={16}
+                      >
+                        {({ color, onClick, icon, label }) => (
+                          <HoverActionButton
+                            onClick={onClick}
+                            label={label}
+                            size={30}
+                            color={color}
+                            variant="filled"
+                            keepIconOnHover
+                          >
+                            {icon}
+                          </HoverActionButton>
+                        )}
+                      </CivitaiLinkManageButton>
+                    </div>
+                  </div>
                 );
               }}
             </ImageGuard2>
           )}
 
-          <Card
-            sx={{ position: 'absolute', bottom: 0, left: 0, right: 0, overflow: 'visible' }}
-            radius={0}
-          >
-            <Stack>
-              <Text size="sm" weight={700} lineClamp={1} lh={1}>
-                {data.name}
-              </Text>
-              <Group noWrap position="apart">
-                {versions.length === 1 ? (
-                  <span>{versions[0].name}</span>
-                ) : (
-                  <Select
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    value={selected?.toString()}
-                    data={versions.map((version) => ({
-                      label: version.name,
-                      value: version.id.toString(),
-                    }))}
-                    onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
-                  />
-                )}
-                <Button
+          <div className="flex flex-col gap-2 p-3">
+            <Text size="sm" weight={700} lineClamp={1} lh={1}>
+              {data.name}
+            </Text>
+            <Group noWrap position="apart">
+              {versions.length === 1 ? (
+                <span>{versions[0].name}</span>
+              ) : (
+                <Select
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    handleSelect();
                   }}
-                >
-                  Select
-                </Button>
-              </Group>
-            </Stack>
-          </Card>
-        </div>
-      ) : (
-        <></>
+                  value={selected?.toString()}
+                  data={versions.map((version) => ({
+                    label: version.name,
+                    value: version.id.toString(),
+                  }))}
+                  onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
+                />
+              )}
+              <Button
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleSelect();
+                }}
+              >
+                Select
+              </Button>
+            </Group>
+          </div>
+        </>
       )}
     </TwCard>
   );

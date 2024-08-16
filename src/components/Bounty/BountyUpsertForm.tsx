@@ -305,6 +305,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
         const result = await upsertBounty({
           ...bounty,
           ...data,
+          startsAt: dayjs.utc(data.startsAt).toDate(),
+          expiresAt: dayjs.utc(data.expiresAt).toDate(),
           images: filteredImages,
         });
 

@@ -1,7 +1,6 @@
 import { ModelType } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useContext } from 'react';
-import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
 import { BaseModelSetType } from '~/server/common/constants';
 import {
   BaseModelResourceTypes,

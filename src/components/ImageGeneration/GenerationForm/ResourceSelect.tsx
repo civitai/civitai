@@ -3,7 +3,7 @@ import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
-import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
+import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
