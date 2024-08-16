@@ -64,6 +64,7 @@ import {
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
+import { isImageOwner } from '~/server/services/util.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -644,6 +645,15 @@ export const upsertCollection = async ({
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
+    // nb - if we ever allow a cover image on create, copy this logic below
+    const coverImgId = imageId ?? image?.id;
+    if (isDefined(coverImgId)) {
+      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
+      if (!isImgOwner) {
+        throw throwAuthorizationError('Invalid cover image');
+      }
+    }
+
     const updated = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.collection.update({
         select: {
@@ -676,6 +686,7 @@ export const upsertCollection = async ({
                       meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                       userId,
                       resources: undefined,
+                      id: undefined,
                     },
                   },
                 }

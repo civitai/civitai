@@ -34,6 +34,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { createImage, deleteImageById } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
+import { isImageOwner } from '~/server/services/util.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -652,12 +653,8 @@ export const upsertArticle = async ({
         const result = await createImage({ ...coverImage, userId });
         coverId = result.id;
       } else {
-        const img = await dbRead.image.findFirst({
-          select: { userId: true },
-          where: { id: coverId },
-        });
-
-        if (!img || (img.userId !== userId && !isModerator)) {
+        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
+        if (!isImgOwner) {
           throw throwAuthorizationError('Invalid cover image');
         }
       }
