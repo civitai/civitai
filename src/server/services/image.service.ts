@@ -497,18 +497,18 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  // if (!isProd || !callbackUrl) {
-  //   console.log('skip ingest');
-  //   await dbClient.image.updateMany({
-  //     where: { id: { in: imageIds } },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //     },
-  //   });
-  //   return true;
-  // }
+  if (!isProd || !callbackUrl) {
+    console.log('skip ingest');
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
+    return true;
+  }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -544,10 +544,10 @@ export const ingestImageBulk = async ({
     }
   );
   if (response.status === 202) {
-    // await dbClient.image.updateMany({
-    //   where: { id: { in: imageIds } },
-    //   data: { scanRequestedAt },
-    // });
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { scanRequestedAt },
+    });
     return true;
   }
   return false;
