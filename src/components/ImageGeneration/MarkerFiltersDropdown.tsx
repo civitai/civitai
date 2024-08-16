@@ -12,6 +12,7 @@ import {
   ScrollArea,
   ButtonProps,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import {
   IconChevronDown,
   IconFilter,
@@ -23,7 +24,6 @@ import { useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { MarkerType } from '~/server/common/enums';
 
 export function MarkerFiltersDropdown(props: Props) {
@@ -49,7 +49,6 @@ function getIcon(type: MarkerType | undefined) {
 export function DumbMarkerFiltersDropdown({
   filters,
   setFilters,
-  filterMode = 'local',
   position = 'bottom-end',
   isFeed,
   ...buttonProps
@@ -58,7 +57,7 @@ export function DumbMarkerFiltersDropdown({
   setFilters: (filters: Partial<MarkerFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useMediaQuery('(max-width: 576px)');
 
   const [opened, setOpened] = useState(false);
 
