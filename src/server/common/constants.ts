@@ -737,7 +737,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    additionalResourceTypes: [] as ResourceFilter[],
+    additionalResourceTypes: [{ type: ModelType.LORA, baseModelSet: 'Flux1' }] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },

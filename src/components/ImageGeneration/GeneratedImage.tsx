@@ -435,6 +435,15 @@ export function GenerationPlaceholder({ width, height }: { width: number; height
 
 const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
+  const favoriteButtonRef = getRef('favoriteButton');
+
+  const buttonBackground = {
+    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
+    background: theme.fn.rgba(
+      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      0.6
+    ),
+  };
 
   return {
     checkboxLabel: {
@@ -481,13 +490,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-      [`&:hover .${thumbActionRef}`]: {
-        boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-        background: theme.fn.rgba(
-          theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-          0.6
-        ),
-      },
+      [`&:hover .${thumbActionRef}`]: buttonBackground,
       [`&:hover .${thumbActionRef} button`]: {
         opacity: 1,
         transition: 'opacity .3s',
@@ -515,13 +518,26 @@ const useStyles = createStyles((theme, _params, getRef) => {
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      // backdropFilter: 'blur(5px) saturate(160%)',
       padding: 4,
       transition: 'opacity .3s',
+
+      [theme.fn.smallerThan('sm')]: buttonBackground,
+
+      ['button']: {
+        opacity: 0,
+
+        [`&.${favoriteButtonRef}`]: {
+          opacity: 1,
+        },
+
+        [theme.fn.smallerThan('sm')]: {
+          opacity: 1,
+        },
+      },
     },
 
     favoriteButton: {
-      opacity: 1,
+      ref: favoriteButtonRef,
       background: 'rgba(240, 62, 62, 0.5)',
     },
 

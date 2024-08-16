@@ -20,7 +20,7 @@ import {
   Group,
 } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
-import { hashify } from '~/utils/string-helpers';
+import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
@@ -90,6 +90,7 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { clone } from 'lodash-es';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -208,12 +209,19 @@ export function GenerationFormContent() {
     } = data;
     let { creatorTip = 0.25 } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
+    const modelClone = clone(model);
 
-    const resources = [model, ...additionalResources, vae]
+    const isFlux = getIsFlux(params.baseModel);
+    if (isFlux) {
+      if (params.fluxMode) {
+        const { version } = parseAIR(params.fluxMode);
+        modelClone.id = version;
+      }
+    }
+
+    const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.available !== false);
-    const isFlux = getIsFlux(params.baseModel);
-    if (isFlux) creatorTip = 0;
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -283,7 +291,6 @@ export function GenerationFormContent() {
         {({ baseModel, fluxMode, draft }) => {
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
-          const hasAdditionalResources = !isFlux;
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : features.draft && !!draft;
@@ -412,105 +419,102 @@ export function GenerationFormContent() {
                               },
                             ],
                           }}
-                          hideVersion={!hasAdditionalResources}
+                          hideVersion={isFlux}
                           pb={
-                            !hasAdditionalResources &&
-                            (unstableResources.length || minorFlaggedResources.length)
+                            unstableResources.length || minorFlaggedResources.length
                               ? 'sm'
                               : undefined
                           }
                         />
-                        {hasAdditionalResources && (
-                          <Card.Section
-                            className={cx(
-                              { [classes.formError]: form.formState.errors.resources },
-                              'border-b-0 mt-3'
-                            )}
-                            withBorder
+                        <Card.Section
+                          className={cx(
+                            { [classes.formError]: form.formState.errors.resources },
+                            'border-b-0 mt-3'
+                          )}
+                          withBorder
+                        >
+                          <PersistentAccordion
+                            storeKey="generation-form-resources"
+                            classNames={{
+                              item: classes.accordionItem,
+                              control: classes.accordionControl,
+                              content: classes.accordionContent,
+                            }}
                           >
-                            <PersistentAccordion
-                              storeKey="generation-form-resources"
-                              classNames={{
-                                item: classes.accordionItem,
-                                control: classes.accordionControl,
-                                content: classes.accordionContent,
-                              }}
-                            >
-                              <Accordion.Item value="resources" className="border-b-0">
-                                <Accordion.Control
-                                  className={cx({
-                                    [classes.formError]: form.formState.errors.resources,
-                                  })}
-                                >
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1">
-                                      <Text size="sm" weight={590}>
-                                        Additional Resources
-                                      </Text>
-                                      {resources.length > 0 && (
-                                        <Badge className="font-semibold">
-                                          {resources.length}/{status.limits.resources}
-                                        </Badge>
-                                      )}
-
-                                      <Button
-                                        component="span"
-                                        compact
-                                        variant="light"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setOpened(true);
-                                        }}
-                                        radius="xl"
-                                        ml="auto"
-                                        disabled={atLimit}
-                                        classNames={{ inner: 'flex gap-1' }}
-                                      >
-                                        <IconPlus size={16} />
-                                        <Text size="sm" weight={500}>
-                                          Add
-                                        </Text>
-                                      </Button>
-                                    </div>
-
-                                    {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                                      <Text size="xs">
-                                        <Link href="/pricing" passHref>
-                                          <Anchor
-                                            color="yellow"
-                                            rel="nofollow"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Become a member
-                                          </Anchor>
-                                        </Link>{' '}
-                                        <Text inherit span>
-                                          to use more resources at once
-                                        </Text>
-                                      </Text>
+                            <Accordion.Item value="resources" className="border-b-0">
+                              <Accordion.Control
+                                className={cx({
+                                  [classes.formError]: form.formState.errors.resources,
+                                })}
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <Text size="sm" weight={590}>
+                                      Additional Resources
+                                    </Text>
+                                    {resources.length > 0 && (
+                                      <Badge className="font-semibold">
+                                        {resources.length}/{status.limits.resources}
+                                      </Badge>
                                     )}
+
+                                    <Button
+                                      component="span"
+                                      compact
+                                      variant="light"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpened(true);
+                                      }}
+                                      radius="xl"
+                                      ml="auto"
+                                      disabled={atLimit}
+                                      classNames={{ inner: 'flex gap-1' }}
+                                    >
+                                      <IconPlus size={16} />
+                                      <Text size="sm" weight={500}>
+                                        Add
+                                      </Text>
+                                    </Button>
                                   </div>
-                                </Accordion.Control>
-                                <Accordion.Panel>
-                                  <InputResourceSelectMultiple
-                                    name="resources"
-                                    limit={status.limits.resources}
-                                    buttonLabel="Add additional resource"
-                                    modalOpened={opened}
-                                    onCloseModal={() => setOpened(false)}
-                                    options={{
-                                      canGenerate: true,
-                                      resources:
-                                        getGenerationConfig(baseModel).additionalResourceTypes,
-                                    }}
-                                    hideButton
-                                  />
-                                </Accordion.Panel>
-                              </Accordion.Item>
-                            </PersistentAccordion>
-                          </Card.Section>
-                        )}
+
+                                  {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                                    <Text size="xs">
+                                      <Link href="/pricing" passHref>
+                                        <Anchor
+                                          color="yellow"
+                                          rel="nofollow"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          Become a member
+                                        </Anchor>
+                                      </Link>{' '}
+                                      <Text inherit span>
+                                        to use more resources at once
+                                      </Text>
+                                    </Text>
+                                  )}
+                                </div>
+                              </Accordion.Control>
+                              <Accordion.Panel>
+                                <InputResourceSelectMultiple
+                                  name="resources"
+                                  limit={status.limits.resources}
+                                  buttonLabel="Add additional resource"
+                                  modalOpened={opened}
+                                  onCloseModal={() => setOpened(false)}
+                                  options={{
+                                    canGenerate: true,
+                                    resources:
+                                      getGenerationConfig(baseModel).additionalResourceTypes,
+                                  }}
+                                  hideButton
+                                />
+                              </Accordion.Panel>
+                            </Accordion.Item>
+                          </PersistentAccordion>
+                        </Card.Section>
                         {unstableResources.length > 0 && (
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
@@ -557,16 +561,24 @@ export function GenerationFormContent() {
                 </Watch>
 
                 {isFlux && (
-                  <div className="flex flex-col gap-0.5">
-                    <Input.Label className="flex items-center gap-1">
-                      Model Mode{' '}
-                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                        {`Flux comes with 3 model variants: Schnell, Dev, and Pro. We've
-                        choosen names that we believe best align with their purpose.`}
-                      </InfoPopover>
-                    </Input.Label>
-                    <InputSegmentedControl name="fluxMode" data={fluxModeOptions} />
-                  </div>
+                  <Watch {...form} fields={['resources']}>
+                    {({ resources }) => (
+                      <div className="flex flex-col gap-0.5">
+                        <Input.Label className="flex items-center gap-1">
+                          Model Mode{' '}
+                          <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                            {`Flux comes with 3 model variants: Schnell, Dev, and Pro. We've
+                       choosen names that we believe best align with their purpose.`}
+                          </InfoPopover>
+                        </Input.Label>
+                        <InputSegmentedControl
+                          name="fluxMode"
+                          data={fluxModeOptions}
+                          disabled={!!resources?.length}
+                        />
+                      </div>
+                    )}
+                  </Watch>
                 )}
 
                 <div className="flex flex-col">
@@ -1091,9 +1103,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
-  const isFlux = getIsFlux(baseModel);
-  const hasCreatorTip = !isFlux;
+  const [creatorTip, civitaiTip] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
 
   useEffect(() => {
     if (data) {
@@ -1102,8 +1112,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   }, [data?.cost]); // eslint-disable-line
 
   const cost = data?.cost?.base ?? 0;
-  const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip ?? 0 : 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+  const totalTip = Math.ceil(cost * (creatorTip ?? 0)) + Math.ceil(cost * (civitaiTip ?? 0));
   const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
@@ -1139,7 +1148,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
             value: (civitaiTip ?? 0) * 100,
             onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
           }}
-          hideCreatorTip={!hasCreatorTip}
         >
           <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
             <IconInfoCircle stroke={2.5} />

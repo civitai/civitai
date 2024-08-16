@@ -191,6 +191,9 @@ export const updateGallerySettingsSchema = z.object({
   gallerySettings: modelGallerySettingsInput.nullable(),
 });
 
+export type CopyGallerySettingsInput = z.infer<typeof copyGallerySettingsSchema>;
+export const copyGallerySettingsSchema = z.object({ id: z.number() });
+
 export type ReorderModelVersionsSchema = z.infer<typeof reorderModelVersionsSchema>;
 export const reorderModelVersionsSchema = z.object({
   id: z.number(),

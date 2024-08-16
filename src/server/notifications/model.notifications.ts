@@ -228,7 +228,7 @@ export const modelNotifications = createNotificationProcessor({
           m.id model_id,
           m.name model_name,
           m.type model_type,
-          mv."publishedAt" updated_published_at,
+          mv."publishedAt" updated_published_at
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         where 

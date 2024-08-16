@@ -173,6 +173,7 @@ async function markImagesDeleted(id: number | number[]) {
 
 const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) => {
   const keys = data.map((x) => x.id.toString());
+  if (!keys.length) return data;
   const deleted = (
     (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
   ).filter(isDefined);
@@ -390,18 +391,13 @@ export const getImageById = async ({ id }: GetByIdInput) => {
 };
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
-  const image = await dbRead.image.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      url: true,
-      type: true,
-      width: true,
-      height: true,
-    },
-  });
-  if (!image) throw new TRPCError({ code: 'NOT_FOUND' });
-  return await ingestImage({ image });
+  const images = await dbWrite.$queryRaw<IngestImageInput[]>`
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
+    FROM "Image"
+    WHERE id = ${id}
+  `;
+  if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
+  return await ingestImage({ image: images[0] });
 };
 
 export const ingestImage = async ({
@@ -433,9 +429,12 @@ export const ingestImage = async ({
     return true;
   }
 
-  const { prompt } = await dbClient.$queryRaw<{ prompt: string | null }>`
-    SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
-  `;
+  if (!image.prompt) {
+    const { prompt } = await dbClient.$queryRaw<{ prompt?: string }>`
+      SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
+    `;
+    image.prompt = prompt;
+  }
 
   const response = await fetch(env.IMAGE_SCANNING_ENDPOINT + '/enqueue', {
     method: 'POST',
@@ -446,7 +445,7 @@ export const ingestImage = async ({
       type,
       width,
       height,
-      prompt,
+      prompt: image.prompt,
       // wait: true,
       scans: [
         ImageScanType.Label,
@@ -481,10 +480,12 @@ export const ingestImageBulk = async ({
   images,
   tx,
   lowPriority = true,
+  scans,
 }: {
   images: IngestImageInput[];
   tx?: Prisma.TransactionClient;
   lowPriority?: boolean;
+  scans?: ImageScanType[];
 }): Promise<boolean> => {
   if (!env.IMAGE_SCANNING_ENDPOINT)
     throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
@@ -509,9 +510,14 @@ export const ingestImageBulk = async ({
     return true;
   }
 
-  const prompts = await dbClient.$queryRaw<{ id: number; prompt: string | null }[]>`
-    SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
-  `;
+  const needsPrompts = !images.some((x) => x.prompt);
+  if (needsPrompts) {
+    const prompts = await dbClient.$queryRaw<{ id: number; prompt?: string }[]>`
+      SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+    `;
+    const promptMap = Object.fromEntries(prompts.map((x) => [x.id, x.prompt]));
+    for (const image of images) image.prompt = promptMap[image.id];
+  }
 
   const response = await fetch(
     env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
@@ -525,8 +531,8 @@ export const ingestImageBulk = async ({
           type: image.type,
           width: image.width,
           height: image.height,
-          prompt: prompts.find((x) => x.id === image.id)?.prompt,
-          scans: [
+          prompt: image.prompt,
+          scans: scans ?? [
             ImageScanType.Label,
             ImageScanType.Moderation,
             ImageScanType.WD14,
@@ -1509,7 +1515,7 @@ const makeMeiliImageSearchFilter = (
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], total: 0 };
 
-  let {
+  const {
     sort,
     modelVersionId,
     types,
@@ -1531,9 +1537,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit,
     offset,
     page,
-    userIds,
   } = input;
-  let { browsingLevel } = input;
+  let { userIds, browsingLevel } = input;
 
   // Filter
   //------------------------
@@ -1649,7 +1654,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     const filtered = results.hits.filter((hit) => {
       // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel)) return true;
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
     });
 
@@ -3834,6 +3839,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     modelType: ModelType;
     versionId: number;
     versionName: string;
+    baseModel: string;
   }>(Prisma.sql`
     SELECT
       ir.id,
@@ -3842,7 +3848,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
       m.name as "modelName",
       m.type as "modelType",
       mv.id as "versionId",
-      mv.name as "versionName"
+      mv.name as "versionName",
+      mv."baseModel" as "baseModel"
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m on mv."modelId" = m.id
@@ -3921,7 +3928,7 @@ export function addBlockedImage({
 }) {
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
-    VALUES (${hash}, '${reason}'::"BlockImageReason")
+    VALUES (${hash}, ${reason}::"BlockImageReason")
     ON CONFLICT DO NOTHING
   `;
 }
@@ -3931,9 +3938,12 @@ export function bulkAddBlockedImages({
 }: {
   data: { hash: bigint | number; reason: BlockImageReason }[];
 }) {
+  if (data.length === 0) return;
+
   const values = data
     .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
     .join(',');
+
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
     VALUES ${Prisma.raw(values)}
@@ -3954,8 +3964,10 @@ export async function bulkRemoveBlockedImages({
       select: { pHash: true },
     });
 
-    hashes = images.map((i) => i.pHash as bigint);
+    hashes = images.map((i) => i.pHash as bigint).filter(isDefined);
   }
+
+  if (!hashes?.length) return;
 
   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
 }

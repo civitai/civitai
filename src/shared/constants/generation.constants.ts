@@ -270,11 +270,14 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
   });
 }
 
-export function getBaseModelFromResources(resources: GenerationResource[]) {
+export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
+  resources: T[]
+) {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
   else return 'SD1';
 }
 
@@ -394,7 +397,10 @@ export const baseModelResourceTypes = {
       baseModels: [...baseModelSets.SDXL],
     },
   ],
-  Flux1: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] }],
+  Flux1: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
+  ],
 };
 
 export const fluxModeOptions = [

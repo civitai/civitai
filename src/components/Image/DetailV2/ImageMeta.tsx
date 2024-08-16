@@ -4,6 +4,8 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 import React from 'react';
 import { isDefined } from '~/utils/type-guards';
+import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import { BaseModelSetType } from '~/server/common/constants';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
 const simpleMetaProps = {
@@ -17,7 +19,8 @@ const simpleMetaProps = {
 
 export function ImageMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
-  const { meta, generationProcess } = data ?? {};
+  const { meta, generationProcess, resources = [] } = data ?? {};
+  const baseModel = getBaseModelFromResources(resources);
 
   if (!meta) return null;
   const { comfy } = meta;
@@ -56,8 +59,9 @@ export function ImageMeta({ imageId }: { imageId: number }) {
     }
   }
 
+  const metaRemoved = removeUnrelated(baseModel, meta);
   const simpleMeta = Object.entries(simpleMetaProps)
-    .filter(([key]) => meta[key as keyof typeof meta])
+    .filter(([key]) => metaRemoved[key as SimpleMetaPropsKey])
     .map(([key, label]) => {
       const content = getSimpleMetaContent(key as SimpleMetaPropsKey);
       if (!content) return null;
@@ -138,4 +142,24 @@ export function ImageMeta({ imageId }: { imageId: number }) {
       )}
     </>
   );
+}
+
+function removeUnrelated<T extends Record<string, unknown>>(baseModel: BaseModelSetType, data: T) {
+  let keys: string[] = [];
+  switch (baseModel) {
+    case 'Flux1':
+      keys = ['clipSkip', 'sampler'];
+      break;
+    default:
+      break;
+  }
+
+  if (keys.length) {
+    return Object.entries(data).reduce<T>((acc, [key, val]) => {
+      if (!keys.includes(key)) return { ...acc, [key]: val };
+      return acc;
+    }, {} as T);
+  }
+
+  return data;
 }

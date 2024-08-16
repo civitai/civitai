@@ -9,6 +9,7 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   getBaseModelSetType,
+  getIsFlux,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
 } from '~/shared/constants/generation.constants';
@@ -16,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
+import { parseAIR } from '~/utils/string-helpers';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -44,8 +46,15 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params.height = size.height;
     }
 
+    let modelId = defaultModel.id;
+    const isFlux = getIsFlux(watched.baseModel);
+    if (isFlux && watched.fluxMode) {
+      const { version } = parseAIR(watched.fluxMode);
+      modelId = version;
+    }
+
     return generateImageWhatIfSchema.parse({
-      resources: [defaultModel.id],
+      resources: [modelId],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,

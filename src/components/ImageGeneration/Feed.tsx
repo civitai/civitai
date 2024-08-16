@@ -137,11 +137,14 @@ const useStyles = createStyles((theme) => ({
     gap: theme.spacing.xs,
     gridTemplateColumns: '1fr',
 
-    [`@container (min-width: 530px)`]: {
+    [`@container (min-width: 440px)`]: {
       gridTemplateColumns: 'repeat(2, 1fr)',
     },
-    [`@container (min-width: 900px)`]: {
+    [`@container (min-width: 630px)`]: {
       gridTemplateColumns: 'repeat(3, 1fr)',
+    },
+    [`@container (min-width: 900px)`]: {
+      gridTemplateColumns: 'repeat(4, 1fr)',
     },
     [`@container (min-width: 1200px)`]: {
       gridTemplateColumns: 'repeat(auto-fill, minmax(256px, 1fr))',

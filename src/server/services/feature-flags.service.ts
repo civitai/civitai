@@ -25,7 +25,7 @@ const featureFlags = createFeatureFlags({
   imageGeneration: {
     toggleable: true,
     default: true,
-    displayName: 'Image Generation (Beta)',
+    displayName: 'Image Generation',
     description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
     availability: ['public'],
   },
@@ -46,7 +46,7 @@ const featureFlags = createFeatureFlags({
   assistant: {
     toggleable: true,
     default: true,
-    displayName: 'CivBot Assistant (Alpha)',
+    displayName: 'CivBot Assistant',
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['mod', 'member'],
   },
