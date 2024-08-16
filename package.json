@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "4.0.154",
+  "version": "4.0.156",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -9,9 +9,9 @@
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
-    "release:major": "npm version major && git push --follow-tags && npm run release:base",
-    "release:minor": "npm version minor && git push --follow-tags && npm run release:base",
-    "release:patch": "npm version patch && git push --follow-tags && npm run release:base",
+    "release:major": "git pull && npm version major && git push --follow-tags && npm run release:base",
+    "release:minor": "git pull && npm version minor && git push --follow-tags && npm run release:base",
+    "release:patch": "git pull && npm version patch && git push --follow-tags && npm run release:base",
     "release": "npm run release:patch",
     "yolo": "npm run release",
     "build": "next build",

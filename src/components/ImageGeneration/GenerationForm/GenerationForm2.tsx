@@ -213,7 +213,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
-      creatorTip = 0;
+      if (additionalResources.length === 0) creatorTip = 0;
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -1104,9 +1104,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
+  const [creatorTip, civitaiTip, baseModel, resources] = form.watch([
+    'creatorTip',
+    'civitaiTip',
+    'baseModel',
+    'resources',
+  ]);
   const isFlux = getIsFlux(baseModel);
-  const hasCreatorTip = !isFlux;
+  const hasCreatorTip = !isFlux || resources?.length > 0;
 
   useEffect(() => {
     if (data) {
