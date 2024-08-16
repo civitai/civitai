@@ -392,7 +392,7 @@ export const getImageById = async ({ id }: GetByIdInput) => {
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt
     FROM "Image"
     WHERE id = ${id}
   `;

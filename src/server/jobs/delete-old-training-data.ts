@@ -68,7 +68,7 @@ export const deleteOldTrainingData = createJob(
       if (!!job_id) {
         try {
           const result = await deleteAssets(job_id, submitted_at);
-          if (!result || !result.total) {
+          if (!result) {
             hasError = true;
             logJob({
               message: `Delete assets result blank`,
@@ -100,7 +100,7 @@ export const deleteOldTrainingData = createJob(
             if (!seenJobs.includes(histJobId)) {
               try {
                 const result = await deleteAssets(histJobId, submitted_at);
-                if (!result || !result.total) {
+                if (!result) {
                   hasError = true;
                   logJob({
                     message: `Delete assets result blank`,

@@ -3,6 +3,7 @@ import {
   AspectRatio,
   Badge,
   Box,
+  Center,
   Container,
   createStyles,
   Divider,
@@ -11,8 +12,8 @@ import {
   Stack,
   Text,
   Title,
-  Center,
 } from '@mantine/core';
+import { getHotkeyHandler } from '@mantine/hooks';
 import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
@@ -20,6 +21,7 @@ import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
+import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
@@ -30,38 +32,36 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { Collection } from '~/components/Collection/Collection';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { hasPublicBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
-import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
-import { getHotkeyHandler } from '@mantine/hooks';
-import { constants } from '~/server/common/constants';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -276,6 +276,7 @@ export default function ArticleDetailsPage({
                               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                               <ImageContextMenu
                                 image={image}
+                                noDelete={true}
                                 className="absolute right-2 top-2 z-10"
                               />
                               {!safe ? (
