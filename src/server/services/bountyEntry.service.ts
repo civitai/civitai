@@ -353,23 +353,24 @@ export const deleteBountyEntry = async ({
     }
   }
 
-  const deletedBountyEntry = await dbWrite.$transaction(async (tx) => {
-    const deletedBountyEntry = await tx.bountyEntry.delete({ where: { id } });
-    if (!deletedBountyEntry) return null;
+  const deletedBountyEntry = await dbWrite.$transaction(
+    async (tx) => {
+      const deletedBountyEntry = await tx.bountyEntry.delete({ where: { id } });
+      if (!deletedBountyEntry) return null;
 
-    await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-    const images = await tx.imageConnection.findMany({
-      select: {
-        imageId: true,
-      },
-      where: { entityId: id, entityType: 'BountyEntry' },
-    });
+      await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+      const images = await tx.imageConnection.findMany({
+        select: { imageId: true },
+        where: { entityId: id, entityType: 'BountyEntry' },
+      });
 
-    await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-    await tx.image.deleteMany({ where: { id: { in: images.map((i) => i.imageId) } } });
+      await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+      await tx.image.deleteMany({ where: { id: { in: images.map((i) => i.imageId) } } });
 
-    return deletedBountyEntry;
-  });
+      return deletedBountyEntry;
+    },
+    { maxWait: 10000, timeout: 30000 }
+  );
 
   if (!deletedBountyEntry) return null;
 
