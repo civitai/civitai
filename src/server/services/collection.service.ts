@@ -64,7 +64,6 @@ import {
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
-import { isImageOwner } from '~/server/services/util.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -646,13 +645,14 @@ export const upsertCollection = async ({
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
     // nb - if we ever allow a cover image on create, copy this logic below
-    const coverImgId = imageId ?? image?.id;
-    if (isDefined(coverImgId)) {
-      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
-      if (!isImgOwner) {
-        throw throwAuthorizationError('Invalid cover image');
-      }
-    }
+    // TODO commenting this out - other users can manage collections
+    // const coverImgId = imageId ?? image?.id;
+    // if (isDefined(coverImgId)) {
+    //   const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
+    //   if (!isImgOwner) {
+    //     throw throwAuthorizationError('Invalid cover image');
+    //   }
+    // }
 
     const updated = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.collection.update({
@@ -793,6 +793,7 @@ export const upsertCollection = async ({
     return updated;
   }
 
+  // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: { id: true, image: { select: { id: true, url: true } } },
     data: {
@@ -852,6 +853,8 @@ export const updateCollectionCoverImage = async ({
   if (!permission.manage) {
     return;
   }
+
+  // TODO if necessary, check image ownership here
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
