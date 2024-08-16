@@ -342,6 +342,7 @@ export default function BountyEntryDetailsPage({
               ),
               centered: true,
               labels: { confirm: 'Delete', cancel: 'Cancel' },
+              confirmProps: { color: 'red' },
               onConfirm: () => {
                 deleteEntryMutation({ id: bountyEntry.id });
               },
