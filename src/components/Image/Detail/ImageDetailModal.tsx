@@ -18,7 +18,9 @@ export default function ImageDetailModal({
 } & ImagesContextState) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
-  const queryFilters = imagesQueryParamSchema.parse(removeEmpty({ ...query, ...filters }));
+  const queryFilters = imagesQueryParamSchema
+    .omit({ tags: true })
+    .parse(removeEmpty({ ...query, ...filters }));
 
   if (!query.imageId) return null;
 
