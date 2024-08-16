@@ -190,7 +190,7 @@ export const getMinMaxDates = () => {
   const today = dayjs().startOf('day');
 
   return {
-    minStartDate: today.startOf('day').toDate(),
+    minStartDate: today.toDate(),
     maxStartDate: today.clone().add(1, 'month').toDate(),
     minExpiresDate: today.clone().add(1, 'day').endOf('day').toDate(),
     maxExpiresDate: today.clone().add(1, 'day').add(1, 'month').endOf('day').toDate(),
