@@ -120,6 +120,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'ControlNetLoader')
         controlNets.push(node.inputs.control_net_name as string);
     }
+    console.log(nodes);
     const customAdvancedSampler = nodes.find((x) => x.class_type == 'SamplerCustomAdvanced');
 
     const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
@@ -302,6 +303,8 @@ function a1111Compatability(metadata: ImageMetaProps) {
 
 function getPromptText(node: ComfyNode, target: 'positive' | 'negative' = 'positive'): string {
   if (node.class_type === 'ControlNetApply')
+    return getPromptText(node.inputs.conditioning as ComfyNode, target);
+  if (node.class_type === 'FluxGuidance')
     return getPromptText(node.inputs.conditioning as ComfyNode, target);
 
   // Handle wildcard nodes
