@@ -2589,11 +2589,13 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const AND: Prisma.Sql[] = [
-    Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-      userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-    })`,
-  ];
+  const AND: Prisma.Sql[] = !isModerator
+    ? [
+        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+        })`,
+      ]
+    : [];
 
   if (!isModerator) {
     const needsReviewOr = [
@@ -2620,7 +2622,7 @@ export const getImagesByEntity = async ({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id
             AND ic."entityType" = ${type}
             AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
-        WHERE ${Prisma.join(AND, ' AND ')}
+        ${AND.length ? Prisma.sql`WHERE ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
     )
