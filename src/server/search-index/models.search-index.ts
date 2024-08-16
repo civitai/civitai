@@ -1,8 +1,8 @@
-import { client, updateDocs } from '~/server/meilisearch/client';
+import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
 import { Availability, MetricTimeframe, ModelHashType, ModelStatus, Prisma } from '@prisma/client';
-import { isEqual } from 'lodash-es';
+import { chunk, isEqual } from 'lodash-es';
 import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { TypoTolerance } from 'meilisearch';
@@ -18,14 +18,14 @@ import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema'
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { imagesForModelVersionsCache } from '~/server/redis/caches';
 import { ImagesForModelVersions } from '~/server/services/image.service';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
 
-const READ_BATCH_SIZE = 500;
-const MEILISEARCH_DOCUMENT_BATCH_SIZE = 10000;
+const READ_BATCH_SIZE = 2000;
+const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
 const INDEX_ID = MODELS_SEARCH_INDEX;
-const SWAP_INDEX_ID = `${INDEX_ID}_NEW`;
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   if (!client) {
@@ -193,16 +193,12 @@ const modelSelect = {
 type Model = Prisma.ModelGetPayload<{
   select: typeof modelSelect;
 }>;
-
-const transformData = async ({
-  models,
-  cosmetics,
-  images,
-}: {
+type PullDataResult = {
   models: Model[];
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
-}) => {
+};
+const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -371,7 +367,11 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     };
   },
   pullData: async ({ db, logger }, batch) => {
-    logger(`PullData :: Pulling data for batch: ${batch}`);
+    const batchLogKey =
+      batch.type === 'update'
+        ? `Update ${batch.ids.length} items`
+        : `${batch.startId} - ${batch.endId}`;
+    logger(`PullData :: Pulling data for batch`, batchLogKey);
     const models = await db.model.findMany({
       select: modelSelect,
       where: {
@@ -391,33 +391,49 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
       },
     });
 
-    logger(`PullData :: Pulled models`);
+    logger(`PullData :: Pulled models`, batchLogKey);
 
-    if (models.length === 0) {
-      return {
-        models: [],
-        cosmetics: {},
-        images: [],
-        tagsOnImages: [],
-      };
-    }
-
-    const cosmetics = await getCosmeticsForEntity({
-      ids: models.map((m) => m.id),
-      entity: 'Model',
-    });
-
-    logger(`PullData :: Pulled cosmetics`);
-
-    const modelVersionIds = models.flatMap((m) => m.modelVersions.map((m) => m.id));
-    const imagesCache = await imagesForModelVersionsCache.fetch(modelVersionIds);
-    const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
-
-    return {
+    const results: PullDataResult = {
       models,
-      cosmetics,
-      images,
+      cosmetics: {},
+      images: [],
     };
+
+    if (models.length === 0) return results;
+
+    const pullBatches = chunk(models, 500);
+    const tasks: Task[] = [];
+    for (const batch of pullBatches) {
+      tasks.push(async () => {
+        logger(`PullData :: Pull cosmetics`, batchLogKey);
+        const batchIds = batch.map((m) => m.id);
+        const cosmetics = await getCosmeticsForEntity({
+          ids: batchIds,
+          entity: 'Model',
+        });
+        logger(`PullData :: Pulled cosmetics`, batchLogKey);
+
+        Object.assign(results.cosmetics, cosmetics);
+      });
+
+      const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));
+      const versionBatches = chunk(modelVersionIds, 500);
+      for (const versionBatch of versionBatches) {
+        tasks.push(async () => {
+          logger(`PullData :: Pull images`, batchLogKey);
+          const imagesCache = await imagesForModelVersionsCache.fetch(versionBatch);
+          const images = Object.values(imagesCache).flatMap((x) => x.images.slice(0, 10));
+          logger(`PullData :: Pulled images`, batchLogKey);
+
+          results.images.push(...images);
+        });
+      }
+    }
+    await limitConcurrency(tasks, 2);
+
+    logger(`PullData :: Finished pulling data for batch`, batchLogKey);
+
+    return results;
   },
   transformData,
   pushData: async ({ indexName }, data) => {

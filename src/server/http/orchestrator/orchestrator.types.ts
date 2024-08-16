@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { engineTypes, trainingDetailsParams } from '~/server/schema/model-version.schema';
 
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
@@ -69,6 +69,7 @@ export namespace Orchestrator {
       callbackUrl: z.string().url().optional(),
       retries: z.number(),
       trainingData: z.string().url(),
+      engine: z.enum(engineTypes),
       params: z
         .object({
           modelFileId: z.number(),
@@ -173,7 +174,8 @@ export namespace Orchestrator {
       providers: string[];
     };
     export type BustModelCache = {
-      modelVersionId: number;
+      air: string;
+      userId?: number;
     };
     export type PrepareModelResponse = Orchestrator.JobResponse<PrepareModelJob>;
   }

@@ -8,7 +8,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 // --------------------------
 const featureAvailability = ['dev', 'mod', 'public', 'user', 'member', 'granted'] as const;
 const featureFlags = createFeatureFlags({
-  earlyAccessModel: ['mod'],
+  earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
   gallery: ['mod', 'member'],
@@ -25,7 +25,7 @@ const featureFlags = createFeatureFlags({
   imageGeneration: {
     toggleable: true,
     default: true,
-    displayName: 'Image Generation (Beta)',
+    displayName: 'Image Generation',
     description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
     availability: ['public'],
   },
@@ -46,7 +46,7 @@ const featureFlags = createFeatureFlags({
   assistant: {
     toggleable: true,
     default: true,
-    displayName: 'CivBot Assistant (Alpha)',
+    displayName: 'CivBot Assistant',
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['mod', 'member'],
   },
@@ -74,6 +74,8 @@ const featureFlags = createFeatureFlags({
   impersonation: ['granted'],
   donationGoals: ['public'],
   creatorComp: ['user'],
+  experimentalGen: ['mod'],
+  imageIndex: ['granted'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

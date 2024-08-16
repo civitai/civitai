@@ -1,31 +1,29 @@
-import { ImageSort } from '~/server/common/enums';
 import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   AspectRatio,
   Box,
-  Center,
-  createStyles,
   Button,
+  Center,
   Container,
+  createStyles,
   Text,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
+import { MetricTimeframe } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { useQueryImages } from '~/components/Image/image.utils';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { NextLink } from '@mantine/next';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { MetricTimeframe } from '@prisma/client';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { ImageSort } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 
 export function ResourceReviewCarousel({
   username,
@@ -47,6 +45,7 @@ export function ResourceReviewCarousel({
     limit: 10,
   };
 
+  // TODO get images by reviewid
   const { data, images } = useQueryImages(filters);
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;

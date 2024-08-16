@@ -10,13 +10,13 @@ import {
   ReviewReactions,
 } from '@prisma/client';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client.mjs';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import { GenerationResource } from '~/shared/constants/generation.constants';
-import { env } from '~/env/client.mjs';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { increaseDate } from '~/utils/date-helpers';
+import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
 export const constants = {
   modelFilterDefaults: {
@@ -103,7 +103,7 @@ export const constants = {
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
-  modelFileFp: ['fp16', 'fp32', 'bf16'],
+  modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -359,15 +359,26 @@ export const constants = {
     maxCollaborators: 15,
   },
   earlyAccess: {
+    article: 6341,
     buzzChargedPerDay: 100,
     timeframeValues: [3, 5, 7, 9, 12, 15],
     scoreTimeFrameUnlock: [
-      [900, 3],
-      [1800, 5],
-      [2200, 7],
-      [8500, 9],
-      [18000, 12],
-      [40000, 15],
+      // The maximum amount of days that can be set based off of score.
+      [40000, 3],
+      [65000, 5],
+      [90000, 7],
+      [125000, 9],
+      [200000, 12],
+      [250000, 15],
+    ],
+    scoreQuantityUnlock: [
+      // How many items can be marked EA at the same time based off of score.
+      [40000, 1],
+      [65000, 2],
+      [90000, 4],
+      [125000, 6],
+      [200000, 8],
+      [250000, 10],
     ],
   },
 } as const;
@@ -726,7 +737,7 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    additionalResourceTypes: [] as ResourceFilter[],
+    additionalResourceTypes: [{ type: ModelType.LORA, baseModelSet: 'Flux1' }] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -764,6 +775,9 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
+
+// Metrics:
+export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
 
 export const modelVersionMonetizationTypeOptions: Record<ModelVersionMonetizationType, string> = {
   [ModelVersionMonetizationType.PaidAccess]: 'Paid access',

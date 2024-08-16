@@ -25,7 +25,6 @@ import {
   IconChevronUp,
   IconDotsVertical,
   IconDownload,
-  IconEye,
   IconFlag,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
@@ -71,7 +70,6 @@ import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
-import { abbreviateNumber } from '~/utils/number-helpers';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -103,7 +101,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, isLoading, active, close, toggleInfo, shareUrl, connect, navigate, index } =
+  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index } =
     useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
@@ -121,16 +119,12 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { blockedUsers } = useHiddenPreferencesData();
-  const isBlocked = blockedUsers.find((u) => u.id === image?.user.id);
-
   const { collectionItems = [] } = useImageContestCollectionDetails(
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
 
-  if (isLoading) return <PageLoader />;
-  if (!image || isBlocked) return <NotFound />;
+  if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
 
@@ -234,12 +228,13 @@ export function ImageDetail2() {
                         {...sharedBadgeProps}
                         className={`${sharedBadgeProps.className} @md:hidden`}
                       />
-                      <Badge {...sharedBadgeProps}>
+                      {/* Disable view count  */}
+                      {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
                         <Text color="white" size="xs" align="center" weight={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
-                      </Badge>
+                      </Badge> */}
                       <DownloadImage src={image.url} type={image.type} name={image.name}>
                         {({ onClick, isLoading, progress }) => (
                           <ActionIcon
@@ -361,9 +356,9 @@ export function ImageDetail2() {
                 user={image.user}
                 subText={
                   <Text size="xs" color="dimmed">
-                    {image.publishedAt ? (
+                    {image.publishedAt || image.sortAt ? (
                       <>
-                        Uploaded <DaysFromNow date={image.publishedAt} />
+                        Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />
                       </>
                     ) : (
                       'Not published'

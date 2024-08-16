@@ -1,4 +1,4 @@
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { BlockImageReason, ReportReason, ReportStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import {
@@ -12,8 +12,16 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { imagesSearchIndex } from '~/server/search-index';
-import { deleteImageById, updateImageReportStatusByReason } from '~/server/services/image.service';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import {
+  addBlockedImage,
+  bulkAddBlockedImages,
+  bulkRemoveBlockedImages,
+  deleteImageById,
+  getAllImagesPost,
+  updateImageReportStatusByReason,
+} from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -25,6 +33,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { isDefined } from '~/utils/type-guards';
 import {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -43,6 +52,16 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+
+const reviewTypeToBlockedReason = {
+  csam: BlockImageReason.CSAM,
+  minor: BlockImageReason.TOS,
+  poi: BlockImageReason.TOS,
+  reported: BlockImageReason.TOS,
+  blocked: BlockImageReason.TOS,
+  tag: BlockImageReason.TOS,
+  newUser: BlockImageReason.Ownership,
+};
 
 export const moderateImageHandler = async ({
   input,
@@ -66,6 +85,7 @@ export const moderateImageHandler = async ({
         const tags = imageTags[id] ?? [];
         tags.push(input.reviewType ?? 'other');
         const resources = imageResources[id] ?? [];
+
         await ctx.track.image({
           type: 'DeleteTOS',
           imageId: id,
@@ -76,6 +96,17 @@ export const moderateImageHandler = async ({
           ownerId: userId,
         });
       }
+
+      await bulkAddBlockedImages({
+        data: affected
+          .filter((x) => !!x.pHash)
+          .map((x) => ({
+            hash: x.pHash,
+            reason: reviewTypeToBlockedReason[input.reviewType],
+          })),
+      });
+    } else {
+      await bulkRemoveBlockedImages({ ids: input.ids });
     }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -139,6 +170,7 @@ export const setTosViolationHandler = async ({
         nsfwLevel: true,
         userId: true,
         postId: true,
+        pHash: true,
         post: {
           select: {
             title: true,
@@ -159,7 +191,6 @@ export const setTosViolationHandler = async ({
       reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
     }
 
-    // Create notifications in the background
     await createNotification({
       userId: image.userId,
       type: 'tos-violation',
@@ -170,10 +201,7 @@ export const setTosViolationHandler = async ({
         entity: 'image',
         url: `/posts/${image.postId}`,
       },
-    }).catch((error) => {
-      // Print out any errors
-      console.error(error);
-    });
+    }).catch();
 
     // Block image
     // This used to be a delete, but the mod team prefers to have the clean up happen later
@@ -189,7 +217,12 @@ export const setTosViolationHandler = async ({
       },
     });
 
+    if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
+
     await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
@@ -244,16 +277,25 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 };
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
+type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesPost>['items'][number];
+type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
-  ctx,
+  ctx: { user },
 }: {
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
-    const posts: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
-    const pinned: Record<number, AsyncReturnType<typeof getAllImages>['items']> = {};
+    const features = getFeatureFlags({ user });
+    const fetchFn = features.imageIndex ? getAllImagesPost : getAllImages;
+    // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
+    type ResultType = typeof features.imageIndex extends true
+      ? ImageResultSearchIndex
+      : ImageResultDB;
+
+    const posts: Record<number, ResultType[]> = {};
+    const pinned: Record<number, ResultType[]> = {};
     let remaining = limit;
     const fetchHidden = hidden && input.modelId;
     const modelGallerySettings = input.modelId
@@ -265,12 +307,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       pinnedPosts && input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await getAllImages({
+      const { items: pinnedPostsImages } = await fetchFn({
         ...input,
         limit: limit * 3,
         followed: false,
         postIds: versionPinnedPosts,
-        user: ctx.user,
+        user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
       });
@@ -283,13 +325,14 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     while (true) {
-      const { nextCursor, items } = await getAllImages({
+      // TODO handle/remove all these (headers, include, ids)
+      const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
-        limit: Math.ceil(limit * 3), // Overscan so that I can merge by postId
-        user: ctx.user,
+        limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
+        user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
       });
@@ -314,7 +357,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const mergedPosts = Object.values({ ...pinned, ...posts });
 
     // Get reviews from the users who created the posts
-    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id))];
+    const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
     const reviews = await dbRead.resourceReview.findMany({
       where: {
         userId: { in: userIds },
@@ -337,7 +380,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const [image] = images;
       const user = image.user;
       const review = reviews.find((review) => review.userId === user.id);
-      const createdAt = images.map((image) => image.createdAt).sort()[0];
+      // TODO meili has sortAt as a string, not a date
+      const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
+      let publishedAt: Date | undefined = image.sortAt;
+      if (features.imageIndex && !(image as ImageResultSearchIndex).published)
+        publishedAt = undefined;
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -348,11 +395,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
 
       return {
         postId: image.postId as number,
-        postTitle: image.postTitle,
-        pinned: image.postId && pinned[image.postId] ? true : false,
+        // postTitle: image.postTitle,
+        pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt: image.publishedAt,
+        publishedAt,
         createdAt,
         user,
         images,

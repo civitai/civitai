@@ -1205,6 +1205,7 @@ enum MediaType {
 
 model Image {
   id                Int                     @id @default(autoincrement())
+  pHash             BigInt?
   name              String?
   url               String
   user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1237,6 +1238,7 @@ model Image {
   blockedFor        String?
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
+  sortAt            DateTime                @default(now())
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1268,6 +1270,19 @@ model Image {
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+  @@index([sortAt])
+}
+
+enum BlockImageReason {
+  Ownership
+  CSAM
+  TOS
+}
+
+model BlockedImage {
+  hash      BigInt           @id
+  reason    BlockImageReason @default(Ownership)
+  createdAt DateTime         @default(now())
 }
 
 model ImageConnection {
@@ -1476,6 +1491,7 @@ enum TagSource {
   Rekognition
   WD14
   Computed
+  ImageHash
 }
 
 model TagsOnImage {
@@ -4165,4 +4181,40 @@ model ClubRank {
   clubPostCountMonthRank   Int  @default(0)
   clubPostCountYearRank    Int  @default(0)
   clubPostCountAllTimeRank Int  @default(0)
+}
+
+enum EntityMetric_EntityType_Type {
+  Image
+}
+
+enum EntityMetric_MetricType_Type {
+  ReactionLike
+  ReactionHeart
+  ReactionLaugh
+  ReactionCry
+  Comment
+  Collection
+  Buzz
+}
+
+model EntityMetric {
+  entityType  EntityMetric_EntityType_Type
+  entityId    Int
+  metricType  EntityMetric_MetricType_Type
+  metricValue Int                          @default(0)
+
+  @@id([entityType, entityId, metricType])
+}
+
+/// @view
+model EntityMetricImage {
+  imageId       Int  @id
+  reactionLike  Int?
+  reactionHeart Int?
+  reactionLaugh Int?
+  reactionCry   Int?
+  reactionTotal Int? // computed
+  comment       Int?
+  collection    Int?
+  buzz          Int?
 }

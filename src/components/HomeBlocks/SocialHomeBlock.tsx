@@ -206,7 +206,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 
   const blocks = useMemo(() => {
-    const blocks: SocialBlockProps[] = socialData.slice(0, 2);
+    const blocks: SocialBlockProps[] = socialData;
     if (typeof window === 'undefined') return blocks;
     if (isLive) {
       blocks.unshift({
@@ -214,7 +214,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
         url: 'civitai',
       });
     }
-    return blocks.slice(0, 6);
+    return blocks;
   }, [socialData, isLive]);
 
   return (

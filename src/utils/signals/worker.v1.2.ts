@@ -72,7 +72,6 @@ const getConnection = async ({ token }: { token: string }) => {
             if (pingInterval) clearInterval(pingInterval);
             return;
           }
-          await connection.send('ping');
           pingTimeout = setTimeout(async () => {
             console.log('timed out');
             if (!connection) return;
@@ -80,6 +79,7 @@ const getConnection = async ({ token }: { token: string }) => {
             connection = null;
             emitter.emit('connectionError', { message: 'ping timeout' });
           }, PING_TIMEOUT);
+          await connection.send('ping');
         }, PING_INTERVAL)
       : null;
     // Backend response with `Pong` to the `ping`
@@ -88,7 +88,7 @@ const getConnection = async ({ token }: { token: string }) => {
       if (pingTimeout) clearTimeout(pingTimeout);
     });
   } catch (e) {
-    emitter.emit('connectionError', { message: JSON.stringify(e) });
+    emitter.emit('connectionError', { message: (e as Error).message ?? '' });
     connection = null;
   }
 

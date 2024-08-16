@@ -1,4 +1,4 @@
-import { CsamReport, CsamReportType } from '@prisma/client';
+import { BlockImageReason, CsamReport, CsamReportType } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CsamImage,
@@ -31,6 +31,7 @@ import { getFileForModelVersion } from '~/server/services/file.service';
 import nodeFetch from 'node-fetch';
 import JSZip from 'jszip';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { bulkAddBlockedImages } from '~/server/services/image.service';
 
 type CsamReportProps = Omit<CsamReport, 'details' | 'images'> & {
   details: CsamReportDetails;
@@ -79,6 +80,20 @@ export async function createCsamReport({
         createdAt: date,
         type,
       },
+    });
+
+    const affectedImages = await dbWrite.image.findMany({
+      where: { id: { in: imageIds } },
+      select: { pHash: true },
+    });
+
+    await bulkAddBlockedImages({
+      data: affectedImages
+        .filter((img) => !!img.pHash)
+        .map((x) => ({
+          hash: x.pHash as bigint,
+          reason: BlockImageReason.CSAM,
+        })),
     });
   } else {
     await dbWrite.csamReport.update({

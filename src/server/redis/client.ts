@@ -1,11 +1,11 @@
-import { createClient, commandOptions } from 'redis';
+import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
+import { commandOptions, createClient } from 'redis';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
-import { isProd } from '~/env/other';
-import { pack, unpack } from 'msgpackr';
 
-export interface PackedRedisClient extends RedisClientType {
+export interface CustomRedisClient extends RedisClientType {
   packed: {
     get<T>(key: string): Promise<T | null>;
     mGet<T>(keys: string[]): Promise<(T | null)[]>;
@@ -20,14 +20,16 @@ export interface PackedRedisClient extends RedisClientType {
     hmSet<T>(key: string, records: Record<string, T>): Promise<void>;
     hmGet<T>(key: string, hashKeys: string[]): Promise<(T | null)[]>;
   };
+  purgeTags: (tag: string | string[]) => Promise<void>;
 }
 
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
-  var globalRedis: PackedRedisClient | undefined;
+  var globalRedis: CustomRedisClient | undefined;
 }
 
 const log = createLogger('redis', 'green');
+
 function getCache(legacyMode = false) {
   log('Creating Redis client');
   const baseClient: RedisClientType = createClient({
@@ -48,7 +50,7 @@ function getCache(legacyMode = false) {
   baseClient.on('ready', () => log('Redis ready!'));
   baseClient.connect();
 
-  const client = baseClient as PackedRedisClient;
+  const client = baseClient as CustomRedisClient;
   client.packed = {
     async get<T>(key: string): Promise<T | null> {
       const result = await client.get(commandOptions({ returnBuffers: true }), key);
@@ -111,11 +113,26 @@ function getCache(legacyMode = false) {
       return results.map((result) => (result ? unpack(result) : null));
     },
   };
+  client.purgeTags = async (tag: string | string[]) => {
+    const tags = Array.isArray(tag) ? tag : [tag];
+    for (const tag of tags) {
+      const cacheKey = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + tag;
+      const count = await client.sCard(cacheKey);
+      let processed = 0;
+      while (true) {
+        const keys = await client.sPop(cacheKey, 1000);
+        const hasOverfetched = processed > count * 1.5;
+        if (!keys.length || hasOverfetched) break;
+        await client.del(keys);
+        processed += keys.length;
+      }
+    }
+  };
 
   return client;
 }
 
-export let redis: PackedRedisClient;
+export let redis: CustomRedisClient;
 if (isProd) {
   redis = getCache();
 } else {
@@ -130,7 +147,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-2',
+    RESOURCE_DATA: 'packed:generation:resource-data',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
@@ -152,15 +169,17 @@ export const REDIS_KEYS = {
     NOTIFICATION_COUNTS: 'system:notification-counts',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
+    DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
-    TAG_IDS_FOR_IMAGES: 'packed:caches:tagIdsForImages',
+    TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     COSMETICS: 'packed:caches:cosmetics',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
+    TAGGED_CACHE: 'packed:caches:tagged-cache',
     DATA_FOR_MODEL: 'packed:caches:data-for-model',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
@@ -186,4 +205,7 @@ export const REDIS_KEYS = {
     HISTORY_DOWNLOADS: 'limits:history-downloads',
   },
   LIVE_NOW: 'live-now',
+  INDEXES: {
+    IMAGE_DELETED: 'indexes:image-deleted',
+  },
 } as const;

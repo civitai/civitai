@@ -1,17 +1,34 @@
 import React from 'react';
 import {
+  engineTypes,
+  EngineTypes,
   loraTypes,
   lrSchedulerTypes,
+  OptimizerTypes,
   optimizerTypes,
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 
-// nb: keep this in line with what is set by the worker
-export const optimizerArgMap: { [key: string]: string } = {
+// nb: keep these in line with what is set by the worker
+export const optimizerArgMap: { [key in OptimizerTypes]: string } = {
   Adafactor: 'scale_parameter=False, relative_step=False, warmup_init=False',
   AdamW8Bit: 'weight_decay=0.1',
   Prodigy: 'weight_decay=0.5, decouple=True, betas=0.9,0.99, use_bias_correction=False',
+};
+export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTypes]: string } } = {
+  Adafactor: {
+    kohya: optimizerArgMap.Adafactor,
+    'x-flux': '(empty)',
+  },
+  AdamW8Bit: {
+    kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
+    'x-flux': 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
+  },
+  Prodigy: {
+    kohya: optimizerArgMap.Prodigy,
+    'x-flux': '(empty)',
+  },
 };
 
 type BaseTrainingSettingsType = {
@@ -20,23 +37,30 @@ type BaseTrainingSettingsType = {
   hint: React.ReactNode;
   disabled?: boolean;
 };
+
 type SelectTrainingSettingsType = {
   type: 'select';
   options: readonly string[];
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<SelectTrainingSettingsType, 'type' | 'overrides'>
-    >;
+    [key in TrainingDetailsBaseModel]?: {
+      [key in EngineTypes | 'all']?: Partial<
+        Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
+          Omit<SelectTrainingSettingsType, 'type' | 'overrides' | 'options'> // could allow options override
+      >;
+    };
   };
 };
 type BoolTrainingSettingsType = {
   type: 'bool';
   default: boolean;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
-    >;
+    [key in TrainingDetailsBaseModel]?: {
+      [key in EngineTypes | 'all']?: Partial<
+        Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
+          Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
+      >;
+    };
   };
 };
 export type NumberTrainingSettingsType = {
@@ -46,18 +70,24 @@ export type NumberTrainingSettingsType = {
   step: number;
   default: number | undefined;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<NumberTrainingSettingsType, 'type' | 'overrides'>
-    >;
+    [key in TrainingDetailsBaseModel]?: {
+      [key in EngineTypes | 'all']?: Partial<
+        Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
+          Omit<NumberTrainingSettingsType, 'type' | 'overrides' | 'step'> // could allow step override
+      >;
+    };
   };
 };
 type StringTrainingSettingsType = {
   type: 'string';
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: Partial<
-      Omit<StringTrainingSettingsType, 'type' | 'overrides'>
-    >;
+    [key in TrainingDetailsBaseModel]?: {
+      [key in EngineTypes | 'all']?: Partial<
+        Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
+          Omit<StringTrainingSettingsType, 'type' | 'overrides'>
+      >;
+    };
   };
 };
 
@@ -71,6 +101,16 @@ export type TrainingSettingsType = BaseTrainingSettingsType &
 
 export const trainingSettings: TrainingSettingsType[] = [
   {
+    name: 'engine',
+    label: 'Engine',
+    hint: "The training script used. In most cases, you'll want Kohya.",
+    type: 'select',
+    default: 'kohya',
+    options: engineTypes,
+    disabled: true,
+    overrides: { flux_dev: { all: { disabled: false } } },
+  },
+  {
     name: 'maxTrainEpochs',
     label: 'Epochs',
     hint: 'An epoch is one set of learning. By default, we will save a maximum of 20 epochs (evenly distributed), and they are all available for download.',
@@ -79,7 +119,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 3,
     max: 500,
     step: 1,
-    overrides: { sdxl: { min: 1 }, pony: { min: 1 } },
+    overrides: {
+      sdxl: { all: { min: 1 } },
+      pony: { all: { min: 1 } },
+      flux_dev: { kohya: { default: 5 }, 'x-flux': { default: 5, max: 5, min: 2 } },
+    },
   },
   {
     name: 'numRepeats',
@@ -90,6 +134,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 5000,
     step: 1,
+    overrides: {
+      flux_dev: {
+        'x-flux': { disabled: true },
+      },
+    },
   },
   {
     name: 'trainBatchSize',
@@ -102,9 +151,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 9,
     step: 1,
     overrides: {
-      realistic: { default: 2, min: 1, max: 2 },
-      sdxl: { max: 4, min: 1, default: 4 },
-      pony: { max: 5, min: 1, default: 5 },
+      realistic: { all: { default: 2, max: 2 } },
+      sdxl: { all: { default: 4, max: 4 } },
+      pony: { all: { default: 5, max: 5 } },
+      flux_dev: {
+        'x-flux': { default: 1, max: 1, disabled: true },
+        kohya: { default: 4, max: 4 },
+      },
     },
   },
   {
@@ -124,6 +177,16 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
+    overrides: {
+      flux_dev: {
+        'x-flux': {
+          disabled: false,
+          default: 2500,
+          min: 1000,
+          hint: 'The number of target training steps.',
+        },
+      },
+    },
   },
   {
     name: 'resolution',
@@ -135,8 +198,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 1024,
     step: 64,
     overrides: {
-      sdxl: { min: 1024, max: 2048, default: 1024 },
-      pony: { min: 1024, max: 2048, default: 1024 },
+      sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
+      pony: { all: { min: 1024, max: 2048, default: 1024 } },
     },
   },
   {
@@ -154,6 +217,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sorts images into buckets by size for the purposes of training. If your training images are all the same size, you can turn this option off, but leaving it on has no effect.',
     type: 'bool',
     default: true,
+    overrides: {
+      flux_dev: {
+        'x-flux': { default: false, disabled: true },
+      },
+    },
   },
   {
     name: 'shuffleCaption',
@@ -161,6 +229,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Shuffling tags randomly changes the order of your caption tags during training. The intent of shuffling is to improve learning. If you have written captions as sentences, this option has no meaning.',
     type: 'bool',
     default: false,
+    overrides: {
+      flux_dev: {
+        all: { disabled: true },
+      },
+    },
   },
   {
     name: 'keepTokens',
@@ -180,6 +253,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 0,
     max: 3,
     step: 1,
+    overrides: {
+      flux_dev: {
+        'x-flux': { disabled: true },
+      },
+    },
   },
   {
     name: 'clipSkip',
@@ -190,7 +268,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 4,
     step: 1,
-    overrides: { anime: { default: 2 } },
+    overrides: {
+      anime: { all: { default: 2 } },
+      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+    },
   },
   {
     name: 'flipAugmentation',
@@ -198,27 +279,40 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'If this option is turned on, the image will be horizontally flipped randomly. It can learn left and right angles, which is useful when you want to learn symmetrical people and objects.',
     type: 'bool',
     default: false,
+    overrides: {
+      flux_dev: {
+        'x-flux': { disabled: true },
+      },
+    },
   },
   {
     name: 'unetLR',
     label: 'Unet LR',
     hint: 'Sets the learning rate for U-Net. This is the learning rate when performing additional learning on each attention block (and other blocks depending on the setting) in U-Net.',
     type: 'number',
-    default: 0.0005,
+    default: 5e-4,
     min: 0,
     max: 1,
-    step: 0.00001,
+    step: 1e-5,
+    overrides: {
+      flux_dev: {
+        'x-flux': { default: 5e-5 },
+      },
+    },
   },
   {
     name: 'textEncoderLR',
     label: 'Text Encoder LR',
     hint: 'Sets the learning rate for the text encoder. The effect of additional training on text encoders affects the entire U-Net.',
     type: 'number',
-    default: 0.00005,
+    default: 5e-5,
     min: 0,
     max: 1,
-    step: 0.00001,
-    overrides: { anime: { default: 0.0001 } },
+    step: 1e-5,
+    overrides: {
+      anime: { all: { default: 1e-4 } },
+      flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+    },
   },
   {
     name: 'lrScheduler',
@@ -227,7 +321,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'cosine_with_restarts',
     options: lrSchedulerTypes,
-    overrides: { pony: { default: 'cosine' } },
+    overrides: {
+      pony: { all: { default: 'cosine' } },
+      flux_dev: { 'x-flux': { default: 'cosine', disabled: true } },
+    },
   },
   // TODO add warmup if constant_with_warmup
   {
@@ -240,6 +337,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 4,
     step: 1,
+    overrides: {
+      flux_dev: {
+        'x-flux': { disabled: true, default: 0, min: 0, max: 0 },
+      },
+    },
   },
   {
     name: 'minSnrGamma',
@@ -259,7 +361,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 0,
     max: 20,
     step: 1,
-    overrides: { pony: { default: 0 } },
+    overrides: {
+      pony: { all: { default: 0 } },
+      flux_dev: { 'x-flux': { disabled: true, default: 0, max: 0 } },
+    },
   },
   {
     name: 'networkDim',
@@ -270,7 +375,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256 }, anime: { default: 16 } },
+    overrides: {
+      sdxl: { all: { max: 256 } },
+      pony: { all: { max: 256 } },
+      anime: { all: { default: 16 } },
+      flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
+    },
   },
   {
     name: 'networkAlpha',
@@ -290,7 +400,12 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 128,
     step: 1,
-    overrides: { sdxl: { max: 256 }, pony: { max: 256, default: 32 }, anime: { default: 8 } },
+    overrides: {
+      sdxl: { all: { max: 256 } },
+      pony: { all: { max: 256, default: 32 } },
+      anime: { all: { default: 8 } },
+      flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
+    },
   },
   {
     name: 'noiseOffset',
@@ -301,7 +416,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 0,
     max: 1,
     step: 0.01,
-    overrides: { pony: { default: 0.03 } },
+    overrides: {
+      pony: { all: { default: 0.03 } },
+      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+    },
   },
   {
     name: 'optimizerType',
@@ -318,7 +436,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'select',
     default: 'AdamW8Bit',
     options: optimizerTypes,
-    overrides: { sdxl: { default: 'Adafactor' }, pony: { default: 'Prodigy' } },
+    overrides: {
+      sdxl: { all: { default: 'Adafactor' } },
+      pony: { all: { default: 'Prodigy' } },
+      flux_dev: { 'x-flux': { disabled: true } },
+    },
   },
   {
     // this is only used for display
@@ -328,5 +450,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'string',
     default: optimizerArgMap.AdamW8Bit,
     disabled: true,
+    overrides: {
+      sdxl: { all: { default: optimizerArgMap.Adafactor } },
+      pony: { all: { default: optimizerArgMap.Prodigy } },
+      flux_dev: {
+        kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
+        'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
+      },
+    },
   },
 ];

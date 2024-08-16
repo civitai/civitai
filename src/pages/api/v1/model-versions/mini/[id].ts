@@ -24,6 +24,7 @@ type VersionRow = {
   status: string;
   type: ModelType;
   earlyAccessEndsAt?: Date;
+  requireAuth: boolean;
   checkPermission: boolean;
   covered?: boolean;
   freeTrialLimit?: number;
@@ -63,6 +64,7 @@ export default MixedAuthEndpoint(async function handler(
       mv.availability,
       m.type,
       mv."earlyAccessEndsAt",
+      mv."requireAuth",
       (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
@@ -120,10 +122,11 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
-    earlyAccessEndsAt: modelVersion.earlyAccessEndsAt,
-    checkPermission: modelVersion.checkPermission,
     canGenerate,
-    freeTrialLimit: modelVersion.freeTrialLimit,
+    requireAuth: modelVersion.requireAuth,
+    checkPermission: modelVersion.checkPermission,
+    earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
+    freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
   };
   res.status(200).json(data);
 });

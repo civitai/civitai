@@ -16,8 +16,8 @@ import { NextLink } from '@mantine/next';
 import { truncate } from 'lodash-es';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-
 import { NavigateBack } from '~/components/BackButton/BackButton';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -28,13 +28,12 @@ import { ResourceReviewMenu } from '~/components/ResourceReview/ResourceReviewMe
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { PostSort } from '~/server/common/enums';
 import { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
 import { formatDate } from '~/utils/date-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const router = useRouter();

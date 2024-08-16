@@ -30,6 +30,7 @@ import {
 } from '~/server/schema/model-version.schema';
 import {
   ChangeModelModifierSchema,
+  CopyGallerySettingsInput,
   DeclineReviewSchema,
   DeleteModelSchema,
   FindResourcesToAssociateSchema,
@@ -40,6 +41,7 @@ import {
   GetModelVersionsSchema,
   GetSimpleModelsInfiniteSchema,
   ModelByHashesInput,
+  ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
@@ -61,6 +63,7 @@ import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
+  copyGallerySettingsToAllModelsByUser,
   deleteModelById,
   getDraftModelsByUserId,
   getGallerySettingsByModelId,
@@ -83,7 +86,7 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -103,7 +106,7 @@ import { redis } from '../redis/client';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -397,11 +400,17 @@ export const upsertModelHandler = async ({
         throw throwBadRequestError(
           `Model cannot have multiple categories. Please include only one from: ${matchedTags
             .map((tag) => tag.name)
-            .join(', ')} `
+            .join(', ')}`
         );
     }
 
-    const model = await upsertModel({ ...input, userId, isModerator: ctx.user.isModerator });
+    const { gallerySettings } = await getUserSettings(userId);
+    const model = await upsertModel({
+      ...input,
+      userId,
+      isModerator: ctx.user.isModerator,
+      gallerySettings,
+    });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     await ctx.track.modelEvent({
@@ -523,7 +532,7 @@ export const deleteModelHandler = async ({
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
-    const model = await deleteModel({ id, userId: ctx.user.id });
+    const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
     await ctx.track.modelEvent({
@@ -1569,4 +1578,29 @@ export async function getModelOwnerHandler({ input }: { input: GetByIdInput }) {
   const model = await getModel({ ...input, select: { user: { select: userWithCosmeticsSelect } } });
   if (!model) throw throwNotFoundError();
   return model.user;
+}
+
+export async function copyGalleryBrowsingLevelHandler({
+  input,
+  ctx,
+}: {
+  input: CopyGallerySettingsInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await getModel({
+      id: input.id,
+      select: { id: true, userId: true, gallerySettings: true },
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (model.userId !== userId) throw throwAuthorizationError();
+
+    const { pinnedPosts, images, ...settings } =
+      model.gallerySettings as ModelGallerySettingsSchema;
+
+    await copyGallerySettingsToAllModelsByUser({ userId, settings });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 }

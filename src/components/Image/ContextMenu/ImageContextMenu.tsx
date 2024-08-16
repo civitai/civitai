@@ -9,7 +9,11 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
 import {
+  IconAlertTriangle,
+  IconBan,
+  IconBookmark,
   IconCheck,
   IconDotsVertical,
   IconEye,
@@ -24,29 +28,25 @@ import {
   IconUserOff,
 } from '@tabler/icons-react';
 import Router, { useRouter } from 'next/router';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { IconBookmark } from '@tabler/icons-react';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
-import { IconBan } from '@tabler/icons-react';
-import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
-import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
-import { IconAlertTriangle } from '@tabler/icons-react';
-import { useReportCsamImages } from '~/components/Image/image.utils';
-import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
-import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
+import React, { createContext, useContext } from 'react';
+import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
-import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import React, { createContext, useContext } from 'react';
-import { trpc } from '~/utils/trpc';
-import { imageStore, useImageStore } from '~/store/image.store';
-import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
+import { useReportTosViolation } from '~/components/Image/hooks/useReportTosViolation';
+import { useRescanImage } from '~/components/Image/hooks/useRescanImage';
+import { useReportCsamImages } from '~/components/Image/image.utils';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { imageStore, useImageStore } from '~/store/image.store';
+import { trpc } from '~/utils/trpc';
 
 // type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
 //   id: number;
@@ -61,6 +61,7 @@ type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
   context?: 'image' | 'post';
   additionalMenuItems?: React.ReactNode;
+  noDelete?: boolean;
   children?: React.ReactElement;
 };
 
@@ -68,6 +69,7 @@ export function ImageContextMenu({
   iconSize = 26,
   context,
   additionalMenuItems,
+  noDelete = false,
   image,
   className,
   children,
@@ -115,7 +117,7 @@ export function ImageContextMenu({
           {...props}
           isModerator={isModerator}
           isOwner={isOwner}
-          disableDelete={router.pathname.includes('/collections')}
+          disableDelete={router.pathname.includes('/collections') || noDelete}
         />
       </Menu.Dropdown>
     </Menu>

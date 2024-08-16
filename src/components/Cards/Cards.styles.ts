@@ -28,7 +28,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
 
       frameAdjustment: {
         height: '100%',
-
         '&:after': {
           content: '""',
           position: 'absolute',

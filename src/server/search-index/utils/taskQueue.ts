@@ -9,6 +9,8 @@ type BaseTask = {
   currentData?: any;
   currentStep?: number;
   steps?: number;
+  index?: number;
+  total?: number;
   start?: number;
 };
 
@@ -177,7 +179,7 @@ export const getTaskQueueWorker = (
         queue.completeTask(task);
         if (result !== 'done') {
           result.start = task.start;
-          queue.addTask(result);
+          await queue.addTask(result);
         } else {
           logger?.(
             `Worker :: Task done`,

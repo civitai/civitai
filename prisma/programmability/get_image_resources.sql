@@ -100,7 +100,7 @@ BEGIN
     LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
     LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     LEFT JOIN "Model" m ON m.id = mv."modelId"
-    WHERE irh.name != 'vae'
+    WHERE (irh.name IS NULL OR irh.name != 'vae')
       AND (m.id IS NULL OR m.status != 'Deleted')
   ), image_resource_id AS (
     SELECT
@@ -131,6 +131,3 @@ BEGIN
     );
 END;
 $$ LANGUAGE plpgsql;
-
-
-SELECT * FROM get_image_resources(11450909);

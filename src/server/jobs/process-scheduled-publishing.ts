@@ -1,16 +1,16 @@
 import { Prisma } from '@prisma/client';
-import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { isDefined } from '~/utils/type-guards';
+import { createJob, getJobDate } from './job';
 
 type ScheduledEntity = {
   id: number;
   userId: number;
-  extras?: { modelId: number } & MixedObject;
+  extras?: { modelId: number; hasEarlyAccess?: boolean; earlyAccessEndsAt?: Date } & MixedObject;
 };
 
 export const processScheduledPublishing = createJob(
@@ -34,7 +34,8 @@ export const processScheduledPublishing = createJob(
         m."userId",
         JSON_BUILD_OBJECT(
           'modelId', m.id,
-          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL
+          'hasEarlyAccess', mv."earlyAccessConfig" IS NOT NULL AND (mv."earlyAccessConfig"->>'timeframe')::int > 0,
+          'earlyAccessEndsAt', mv."earlyAccessEndsAt"
         ) as "extras"
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
@@ -78,7 +79,7 @@ export const processScheduledPublishing = createJob(
 
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
-          await tx.$executeRaw`
+          const returnedIds = await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
           UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
           FROM "ModelVersion" mv
@@ -86,8 +87,18 @@ export const processScheduledPublishing = createJob(
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-            AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now};
+            AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+          RETURNING p.id
+          ;
         `;
+
+          if (returnedIds.length) {
+            await tx.$executeRaw`
+              UPDATE "Image"
+              SET "updatedAt" = NOW()
+              WHERE "postId" IN (${Prisma.join(returnedIds.map((r) => r.id))})
+            `;
+          }
         }
 
         if (scheduledModelVersions.length) {
@@ -96,11 +107,11 @@ export const processScheduledPublishing = createJob(
             .map(({ id }) => id);
 
           await tx.$executeRaw`
-        -- Update scheduled versions published
-        UPDATE "ModelVersion" SET status = 'Published'
-        WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
-          AND status = 'Scheduled' AND "publishedAt" <= ${now};
-      `;
+            -- Update scheduled versions published
+            UPDATE "ModelVersion" SET status = 'Published'
+            WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
+              AND status = 'Scheduled' AND "publishedAt" <= ${now};
+          `;
 
           if (earlyAccess.length) {
             // The only downside to this failing is that the model version will be published with no early access.
@@ -110,6 +121,19 @@ export const processScheduledPublishing = createJob(
               continueOnError: true,
               tx,
             });
+
+            // Attempt to update the model early access deadline:
+            await tx.$executeRaw`
+              UPDATE "Model" mo
+              SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
+              FROM (
+                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline" 
+                FROM "ModelVersion" mv
+                JOIN "Model" m on m.id = mv."modelId"
+                WHERE mv.id IN (${Prisma.join(earlyAccess)})
+              ) as mea 
+              WHERE mo."id" = mea."id"
+            `;
           }
         }
       },
@@ -146,9 +170,12 @@ export const processScheduledPublishing = createJob(
       });
     }
 
-    const processedModelIds = scheduledModelVersions
-      .map((entity) => entity.extras?.modelId)
-      .filter(isDefined);
+    const processedModelIds = [
+      ...new Set([
+        ...scheduledModels.map((entity) => entity.id),
+        ...scheduledModelVersions.map((entity) => entity.extras?.modelId),
+      ]),
+    ].filter(isDefined);
     if (processedModelIds.length) await dataForModelsCache.bust(processedModelIds);
 
     await setLastRun();

@@ -14,13 +14,11 @@ import { Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import Link from 'next/link';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 const MAX_ARTICLES_DISPLAY = 32;
 export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
-  const { ref, inView } = useInView({
-    delay: 100,
-    triggerOnce: true,
-  });
+  const [ref, inView] = useInViewDynamic({ id: 'profile-article-section' });
   const { articles: _articles, isLoading } = useQueryArticles(
     {
       limit: MAX_ARTICLES_DISPLAY + 1,
@@ -45,32 +43,33 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
 
   return (
     <div ref={ref} className={isNullState ? undefined : classes.profileSection}>
-      {isLoading || !inView ? (
-        <ProfileSectionPreview />
-      ) : (
-        <ProfileSection
-          title="Most popular articles"
-          icon={<IconPencilMinus />}
-          action={
-            <Link href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`} passHref>
-              <Button
-                h={34}
-                component="a"
-                variant="subtle"
-                rightIcon={<IconArrowRight size={16} />}
-              >
-                <Text inherit> View all Articles</Text>
-              </Button>
-            </Link>
-          }
-        >
-          <ShowcaseGrid itemCount={articles.length} rows={1}>
-            {articles.map((article) => (
-              <ArticleCard data={article} aspectRatio="square" key={article.id} />
-            ))}
-          </ShowcaseGrid>
-        </ProfileSection>
-      )}
+      {inView &&
+        (isLoading ? (
+          <ProfileSectionPreview />
+        ) : (
+          <ProfileSection
+            title="Most popular articles"
+            icon={<IconPencilMinus />}
+            action={
+              <Link href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`} passHref>
+                <Button
+                  h={34}
+                  component="a"
+                  variant="subtle"
+                  rightIcon={<IconArrowRight size={16} />}
+                >
+                  <Text inherit> View all Articles</Text>
+                </Button>
+              </Link>
+            }
+          >
+            <ShowcaseGrid itemCount={articles.length} rows={1}>
+              {articles.map((article) => (
+                <ArticleCard data={article} aspectRatio="square" key={article.id} />
+              ))}
+            </ShowcaseGrid>
+          </ProfileSection>
+        ))}
     </div>
   );
 };

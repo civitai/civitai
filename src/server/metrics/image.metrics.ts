@@ -29,9 +29,9 @@ export const imageMetrics = createMetricProcessor({
       getCommentTasks(ctx),
       getCollectionTasks(ctx),
       getBuzzTasks(ctx),
-      getViewTasks(ctx),
+      // getViewTasks(ctx),
     ]);
-    const hasViewTasks = taskBatches[4].length > 0;
+    // const hasViewTasks = taskBatches[4].length > 0;
     log('imageMetrics update', taskBatches.flat().length, 'tasks');
     for (const tasks of taskBatches) await limitConcurrency(tasks, 5);
 
@@ -81,7 +81,7 @@ export const imageMetrics = createMetricProcessor({
       log('update metrics', i + 1, 'of', tasks.length, 'done');
     });
     await limitConcurrency(tasks, 3);
-    if (hasViewTasks) await setLastViewUpdate();
+    // if (hasViewTasks) await setLastViewUpdate();
 
     // Update the search index
     //---------------------------------------

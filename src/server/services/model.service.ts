@@ -20,9 +20,11 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
+import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
   GetModelVersionsSchema,
@@ -36,7 +38,11 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import {
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
@@ -53,12 +59,15 @@ import {
   ImagesForModelVersions,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getEarlyAccessDeadline, isEarlyAccess } from '~/server/utils/early-access-helpers';
+import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -68,8 +77,8 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { getS3Client } from '~/utils/s3-utils';
@@ -80,9 +89,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { logToAxiom } from '~/server/logging/client';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -219,6 +226,7 @@ export const getModelsRaw = async ({
 
   const includeDetails = !!include?.includes('details');
   const includeCosmetics = !!include?.includes('cosmetics');
+
   function ifDetails(sql: TemplateStringsArray) {
     return includeDetails ? Prisma.raw(sql[0]) : Prisma.empty;
   }
@@ -637,7 +645,9 @@ export const getModelsRaw = async ({
         }
 
         if (hidePrivateModels) {
-          modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
+          modelVersions = modelVersions.filter(
+            (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
+          );
         }
 
         // eject if no versions
@@ -1101,9 +1111,31 @@ export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUp
 export const deleteModelById = async ({
   id,
   userId,
+  isModerator,
 }: GetByIdInput & {
   userId: number;
+  isModerator?: boolean;
 }) => {
+  if (!isModerator) {
+    const versions = await dbRead.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true, meta: true },
+    });
+
+    if (
+      versions.some((v) => {
+        const meta = v.meta as ModelVersionMeta | null;
+        if (meta?.hadEarlyAccessPurchase) {
+          return true;
+        }
+      })
+    ) {
+      throw throwBadRequestError(
+        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
+      );
+    }
+  }
+
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.update({
       where: { id },
@@ -1227,14 +1259,25 @@ export const upsertModel = async (
     userId: number;
     meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
     isModerator?: boolean;
+    gallerySettings?: Partial<ModelGallerySettingsSchema>;
   }
 ) => {
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
-    input;
+  const {
+    id,
+    tagsOnModels,
+    userId,
+    templateId,
+    bountyId,
+    meta,
+    isModerator,
+    status,
+    gallerySettings,
+    ...data
+  } = input;
 
   // don't allow updating of locked properties
   if (!isModerator) {
@@ -1250,6 +1293,7 @@ export const upsertModel = async (
       data: {
         ...data,
         status,
+        gallerySettings,
         meta:
           bountyId || meta
             ? {
@@ -1429,6 +1473,9 @@ export const publishModelById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return model;
 };
@@ -1443,6 +1490,26 @@ export const unpublishModelById = async ({
   meta?: ModelMeta;
   user: SessionUser;
 }) => {
+  if (!user.isModerator) {
+    const versions = await dbRead.modelVersion.findMany({
+      where: { modelId: id },
+      select: { id: true, meta: true },
+    });
+
+    if (
+      versions.some((v) => {
+        const meta = v.meta as ModelVersionMeta | null;
+        if (meta?.hadEarlyAccessPurchase) {
+          return true;
+        }
+      })
+    ) {
+      throw throwBadRequestError(
+        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
+      );
+    }
+  }
+
   const model = await dbWrite.$transaction(
     async (tx) => {
       const unpublishedAt = new Date().toISOString();
@@ -1506,6 +1573,9 @@ export const unpublishModelById = async ({
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   // Remove all affected images from search index
   await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
 
@@ -2099,4 +2169,45 @@ export async function getModelsWithVersions({
     ),
     nextCursor,
   };
+}
+
+export async function copyGallerySettingsToAllModelsByUser({
+  settings,
+  userId,
+}: {
+  settings: Pick<ModelGallerySettingsSchema, 'level' | 'users' | 'tags'>;
+  userId: number;
+}) {
+  const result = await dbWrite.$transaction(async (tx) => {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
+    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+
+    const userSettings = user.settings as UserSettingsSchema;
+
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        settings: {
+          ...userSettings,
+          gallerySettings: { ...userSettings.gallerySettings, ...settings },
+        },
+      },
+    });
+    await tx.$executeRaw`
+      UPDATE "Model"
+      SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
+        'level', ${settings.level},
+        'users', ${JSON.stringify(settings.users || [])}::jsonb,
+        'tags', ${JSON.stringify(settings.tags || [])}::jsonb
+      )
+      WHERE "userId" = ${userId}
+    `;
+  });
+
+  const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
+  const modelIds = models.map((x) => x.id);
+
+  await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
+
+  return result;
 }

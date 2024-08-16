@@ -14,11 +14,36 @@ import {
   downloadGeneratedImagesByDate,
   orchestratorIntegrationDate,
 } from '~/server/common/constants';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { MarkerType } from '~/server/common/enums';
 
 export function Queue() {
+  const { filters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
+
+  let workflowTagsFilter = undefined;
+
+  switch (filters.marker) {
+    case MarkerType.Favorited:
+      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
+      break;
+
+    case MarkerType.Liked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
+      break;
+
+    case MarkerType.Disliked:
+      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
+      break;
+  }
+
   const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequests();
+    useGetTextToImageRequests({
+      tags: workflowTagsFilter,
+    });
 
   const { downloading } = useSchedulerDownloadingStore();
   const handleSetDownloading = () => useSchedulerDownloadingStore.setState({ downloading: true });
@@ -70,23 +95,33 @@ export function Queue() {
       <div className="flex h-full flex-col items-center justify-center gap-3">
         <Stack spacing="xs" align="center" py="16">
           <IconInbox size={64} stroke={1} />
-          <Stack spacing={0}>
-            <Text size="md" align="center">
-              The queue is empty
-            </Text>
-            <Text size="sm" color="dimmed">
-              Try{' '}
-              <Text
-                variant="link"
-                onClick={() => generationPanel.setView('generate')}
-                sx={{ cursor: 'pointer' }}
-                span
-              >
-                generating
-              </Text>{' '}
-              new images with our resources
-            </Text>
-          </Stack>
+          {filters.marker && (
+            <Stack spacing={0}>
+              <Text size={32} align="center">
+                No results found
+              </Text>
+              <Text align="center">{'Try adjusting your filters'}</Text>
+            </Stack>
+          )}
+          {!filters.marker && (
+            <Stack spacing={0}>
+              <Text size="md" align="center">
+                The queue is empty
+              </Text>
+              <Text size="sm" color="dimmed">
+                Try{' '}
+                <Text
+                  variant="link"
+                  onClick={() => generationPanel.setView('generate')}
+                  sx={{ cursor: 'pointer' }}
+                  span
+                >
+                  generating
+                </Text>{' '}
+                new images with our resources
+              </Text>
+            </Stack>
+          )}
         </Stack>
         {RetentionPolicyUpdate}
       </div>
@@ -121,9 +156,19 @@ export function Queue() {
         )} */}
       <div className="flex flex-col gap-2">
         {data.map((request) =>
-          request.steps.map((step) => (
-            <QueueItem key={request.id} id={request.id.toString()} request={request} step={step} />
-          ))
+          request.steps.map((step) => {
+            const { marker } = filters;
+
+            return (
+              <QueueItem
+                key={request.id}
+                id={request.id.toString()}
+                request={request}
+                step={step}
+                filter={{ marker }}
+              />
+            );
+          })
         )}
       </div>
       {hasNextPage ? (

@@ -20,7 +20,7 @@ import {
   Group,
 } from '@mantine/core';
 import ReactMarkdown from 'react-markdown';
-import { hashify } from '~/utils/string-helpers';
+import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
@@ -44,7 +44,6 @@ import {
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { useLoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -87,31 +86,17 @@ import {
   TextToImageWhatIfProvider,
   useTextToImageWhatIfContext,
 } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { clone } from 'lodash-es';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
-  const utils = trpc.useUtils();
-  const currentUser = useCurrentUser();
-
-  const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
-  const handleSetDefinitions = async () => {
-    await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
-    utils.generation.getWorkflowDefinitions.invalidate();
-  };
-
   return (
     <IsClient>
-      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
-        <div className="p-3">
-          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-        </div>
-      )} */}
-
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
           <GenerationFormContent />
@@ -152,6 +137,11 @@ export function GenerationFormContent() {
   features.draft = features.draft && featureFlags.draftMode;
 
   const { errors } = form.formState;
+
+  const { filters, setFilters } = useFiltersContext((state) => ({
+    filters: state.markers,
+    setFilters: state.setMarkerFilters,
+  }));
 
   function clearWarning() {
     setPromptWarning(null);
@@ -203,25 +193,36 @@ export function GenerationFormContent() {
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
   function handleSubmit(data: GenerationFormOutput) {
+    if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
 
-    let {
+    const {
       model,
       resources: additionalResources,
       vae,
-      remix,
+      remixOfId,
+      remixSimilarity,
       aspectRatio,
       civitaiTip = 0,
-      creatorTip = 0.25,
+      creatorTip: _creatorTip,
       ...params
     } = data;
+    let { creatorTip = 0.25 } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
+    const modelClone = clone(model);
 
-    const resources = [model, ...additionalResources, vae]
+    const isFlux = getIsFlux(params.baseModel);
+    if (isFlux) {
+      if (additionalResources.length === 0) creatorTip = 0;
+      if (params.fluxMode) {
+        const { version } = parseAIR(params.fluxMode);
+        modelClone.id = version;
+      }
+    }
+
+    const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
       .filter((x) => x.available !== false);
-    const isFlux = getIsFlux(params.baseModel);
-    if (isFlux) creatorTip = 0;
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -232,7 +233,7 @@ export function GenerationFormContent() {
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
             : undefined,
-          remix,
+          remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
       } catch (e) {
         const error = e as Error;
@@ -246,6 +247,10 @@ export function GenerationFormContent() {
     setPromptWarning(null);
     const totalCost = cost + creatorTip * cost + civitaiTip * cost;
     conditionalPerformTransaction(totalCost, performTransaction);
+
+    if (filters.marker) {
+      setFilters({ marker: undefined });
+    }
   }
 
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
@@ -287,7 +292,6 @@ export function GenerationFormContent() {
         {({ baseModel, fluxMode, draft }) => {
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
-          const hasAdditionalResources = !isFlux;
           const isDraft = isFlux
             ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
             : features.draft && !!draft;
@@ -416,105 +420,102 @@ export function GenerationFormContent() {
                               },
                             ],
                           }}
-                          hideVersion={!hasAdditionalResources}
+                          hideVersion={isFlux}
                           pb={
-                            !hasAdditionalResources &&
-                            (unstableResources.length || minorFlaggedResources.length)
+                            unstableResources.length || minorFlaggedResources.length
                               ? 'sm'
                               : undefined
                           }
                         />
-                        {hasAdditionalResources && (
-                          <Card.Section
-                            className={cx(
-                              { [classes.formError]: form.formState.errors.resources },
-                              'border-b-0 mt-3'
-                            )}
-                            withBorder
+                        <Card.Section
+                          className={cx(
+                            { [classes.formError]: form.formState.errors.resources },
+                            'border-b-0 mt-3'
+                          )}
+                          withBorder
+                        >
+                          <PersistentAccordion
+                            storeKey="generation-form-resources"
+                            classNames={{
+                              item: classes.accordionItem,
+                              control: classes.accordionControl,
+                              content: classes.accordionContent,
+                            }}
                           >
-                            <PersistentAccordion
-                              storeKey="generation-form-resources"
-                              classNames={{
-                                item: classes.accordionItem,
-                                control: classes.accordionControl,
-                                content: classes.accordionContent,
-                              }}
-                            >
-                              <Accordion.Item value="resources" className="border-b-0">
-                                <Accordion.Control
-                                  className={cx({
-                                    [classes.formError]: form.formState.errors.resources,
-                                  })}
-                                >
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1">
-                                      <Text size="sm" weight={590}>
-                                        Additional Resources
-                                      </Text>
-                                      {resources.length > 0 && (
-                                        <Badge className="font-semibold">
-                                          {resources.length}/{status.limits.resources}
-                                        </Badge>
-                                      )}
-
-                                      <Button
-                                        component="span"
-                                        compact
-                                        variant="light"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setOpened(true);
-                                        }}
-                                        radius="xl"
-                                        ml="auto"
-                                        disabled={atLimit}
-                                        classNames={{ inner: 'flex gap-1' }}
-                                      >
-                                        <IconPlus size={16} />
-                                        <Text size="sm" weight={500}>
-                                          Add
-                                        </Text>
-                                      </Button>
-                                    </div>
-
-                                    {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                                      <Text size="xs">
-                                        <Link href="/pricing" passHref>
-                                          <Anchor
-                                            color="yellow"
-                                            rel="nofollow"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Become a member
-                                          </Anchor>
-                                        </Link>{' '}
-                                        <Text inherit span>
-                                          to use more resources at once
-                                        </Text>
-                                      </Text>
+                            <Accordion.Item value="resources" className="border-b-0">
+                              <Accordion.Control
+                                className={cx({
+                                  [classes.formError]: form.formState.errors.resources,
+                                })}
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <Text size="sm" weight={590}>
+                                      Additional Resources
+                                    </Text>
+                                    {resources.length > 0 && (
+                                      <Badge className="font-semibold">
+                                        {resources.length}/{status.limits.resources}
+                                      </Badge>
                                     )}
+
+                                    <Button
+                                      component="span"
+                                      compact
+                                      variant="light"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpened(true);
+                                      }}
+                                      radius="xl"
+                                      ml="auto"
+                                      disabled={atLimit}
+                                      classNames={{ inner: 'flex gap-1' }}
+                                    >
+                                      <IconPlus size={16} />
+                                      <Text size="sm" weight={500}>
+                                        Add
+                                      </Text>
+                                    </Button>
                                   </div>
-                                </Accordion.Control>
-                                <Accordion.Panel>
-                                  <InputResourceSelectMultiple
-                                    name="resources"
-                                    limit={status.limits.resources}
-                                    buttonLabel="Add additional resource"
-                                    modalOpened={opened}
-                                    onCloseModal={() => setOpened(false)}
-                                    options={{
-                                      canGenerate: true,
-                                      resources:
-                                        getGenerationConfig(baseModel).additionalResourceTypes,
-                                    }}
-                                    hideButton
-                                  />
-                                </Accordion.Panel>
-                              </Accordion.Item>
-                            </PersistentAccordion>
-                          </Card.Section>
-                        )}
+
+                                  {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                                    <Text size="xs">
+                                      <Link href="/pricing" passHref>
+                                        <Anchor
+                                          color="yellow"
+                                          rel="nofollow"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          Become a member
+                                        </Anchor>
+                                      </Link>{' '}
+                                      <Text inherit span>
+                                        to use more resources at once
+                                      </Text>
+                                    </Text>
+                                  )}
+                                </div>
+                              </Accordion.Control>
+                              <Accordion.Panel>
+                                <InputResourceSelectMultiple
+                                  name="resources"
+                                  limit={status.limits.resources}
+                                  buttonLabel="Add additional resource"
+                                  modalOpened={opened}
+                                  onCloseModal={() => setOpened(false)}
+                                  options={{
+                                    canGenerate: true,
+                                    resources:
+                                      getGenerationConfig(baseModel).additionalResourceTypes,
+                                  }}
+                                  hideButton
+                                />
+                              </Accordion.Panel>
+                            </Accordion.Item>
+                          </PersistentAccordion>
+                        </Card.Section>
                         {unstableResources.length > 0 && (
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
@@ -561,16 +562,24 @@ export function GenerationFormContent() {
                 </Watch>
 
                 {isFlux && (
-                  <div className="flex flex-col gap-0.5">
-                    <Input.Label className="flex items-center gap-1">
-                      Model Mode{' '}
-                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                        {`Flux comes with 3 model variants: Schnell, Dev, and Pro. We've
-                        choosen names that we believe best align with their purpose.`}
-                      </InfoPopover>
-                    </Input.Label>
-                    <InputSegmentedControl name="fluxMode" data={fluxModeOptions} />
-                  </div>
+                  <Watch {...form} fields={['resources']}>
+                    {({ resources }) => (
+                      <div className="flex flex-col gap-0.5">
+                        <Input.Label className="flex items-center gap-1">
+                          Model Mode{' '}
+                          <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                            {`Flux comes with 3 model variants: Schnell, Dev, and Pro. We've
+                       choosen names that we believe best align with their purpose.`}
+                          </InfoPopover>
+                        </Input.Label>
+                        <InputSegmentedControl
+                          name="fluxMode"
+                          data={fluxModeOptions}
+                          disabled={!!resources?.length}
+                        />
+                      </div>
+                    )}
+                  </Watch>
                 )}
 
                 <div className="flex flex-col">
@@ -707,7 +716,7 @@ export function GenerationFormContent() {
                 </div>
 
                 {!isFlux && (
-                  <div className="my-2 flex justify-between gap-3">
+                  <div className="my-2 flex flex-wrap justify-between gap-3">
                     <InputSwitch
                       name="nsfw"
                       label="Mature content"
@@ -732,6 +741,9 @@ export function GenerationFormContent() {
                           </div>
                         }
                       />
+                    )}
+                    {featureFlags.experimentalGen && (
+                      <InputSwitch name="experimental" label="Experimental" labelPosition="left" />
                     )}
                   </div>
                 )}
@@ -1092,9 +1104,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel] = form.watch(['creatorTip', 'civitaiTip', 'baseModel']);
+  const [creatorTip, civitaiTip, baseModel, resources] = form.watch([
+    'creatorTip',
+    'civitaiTip',
+    'baseModel',
+    'resources',
+  ]);
   const isFlux = getIsFlux(baseModel);
-  const hasCreatorTip = !isFlux;
+  const hasCreatorTip = !isFlux || resources?.length > 0;
 
   useEffect(() => {
     if (data) {

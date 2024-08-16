@@ -1,5 +1,9 @@
 import { z } from 'zod';
-import { workflowQuerySchema, workflowIdSchema } from './../schema/orchestrator/workflows.schema';
+import {
+  workflowQuerySchema,
+  workflowIdSchema,
+  patchSchema,
+} from './../schema/orchestrator/workflows.schema';
 import {
   generateImageSchema,
   generateImageWhatIfSchema,
@@ -10,7 +14,10 @@ import {
 } from '~/server/services/orchestrator/textToImage/textToImage';
 import {
   cancelWorkflow,
+  deleteManyWorkflows,
   deleteWorkflow,
+  patchWorkflowTags,
+  patchWorkflows,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
 import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
@@ -22,8 +29,7 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { updateWorkflowStepSchema } from '~/server/services/orchestrator/orchestrator.schema';
-import { updateWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
+import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import dayjs from 'dayjs';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
@@ -67,35 +73,54 @@ export const orchestratorRouter = router({
   // #endregion
 
   // #region [steps]
-  steps: router({
-    update: orchestratorProcedure
-      .input(
-        z.object({
-          data: updateWorkflowStepSchema.array(),
-          updateType: z.enum(['feedback']).optional(),
-        })
-      )
-      .mutation(async ({ ctx, input }) => {
-        if (input.updateType === 'feedback') {
-          await Promise.all(
-            input.data.map(async (data) =>
-              Object.entries(data.metadata.images)
-                .filter(([, x]) => (x as any).feedback)
-                .map(([key]) =>
-                  generatorFeedbackReward.apply({
-                    userId: ctx.user.id,
-                    jobId: key,
-                  })
-                )
-            )
-          );
-        }
-        await updateWorkflowSteps({
-          input: input.data,
+  patch: orchestratorProcedure
+    .input(patchSchema)
+    .mutation(async ({ ctx, input: { workflows, steps, tags, remove } }) => {
+      // const toUpdate: { workflowId: string; patches: JsonPatchOperation[] }[] = [];
+      // if (!!steps?.length) {
+      //   for (const step of steps) {
+      //     toUpdate.push({
+      //       workflowId: step.workflowId,
+      //       patches: step.patches.map((patch) => ({
+      //         ...patch,
+      //         path: `/step/${step.stepName}/metadata/${patch.path}`,
+      //       })),
+      //     });
+      //   }
+      // }
+
+      if (!!workflows?.length) await patchWorkflows({ input: workflows, token: ctx.token });
+
+      // if (!!toUpdate.length) await patchWorkflows({ input: toUpdate, token: ctx.token });
+      if (!!remove?.length) await deleteManyWorkflows({ workflowIds: remove, token: ctx.token });
+      if (!!tags?.length) await patchWorkflowTags({ input: tags, token: ctx.token });
+      if (!!steps?.length) {
+        await patchWorkflowSteps({
+          input: steps.map((step) => ({
+            ...step,
+            patches: step.patches.map((patch) => ({ ...patch, path: `/metadata${patch.path}` })),
+          })),
           token: ctx.token,
         });
-      }),
-  }),
+        await Promise.all(
+          steps.map((step) =>
+            Object.values(step.patches)
+              // todo - add clickhouse tracking for user feedback/favorites
+              .filter((patch) => patch.path.includes('feedback'))
+              .map(async ({ op, path }) => {
+                if (op === 'add') {
+                  const parts = (path as string).split('/');
+                  const jobId = parts[parts.length - 2];
+                  await generatorFeedbackReward.apply({
+                    userId: ctx.user.id,
+                    jobId,
+                  });
+                }
+              })
+          )
+        );
+      }
+    }),
   // #endregion
 
   // #region [generated images]

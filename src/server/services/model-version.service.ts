@@ -1,48 +1,53 @@
-import { ModelStatus, ModelVersionEngagementType, Prisma, CommercialUse } from '@prisma/client';
+import { CommercialUse, ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
+import { SessionUser } from 'next-auth';
+import { env } from '~/env/server.mjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
-import { TRPCError } from '@trpc/server';
-import { SessionUser } from 'next-auth';
-import { BaseModel, BaseModelSetType, baseModelSets, constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { resourceDataCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
-  ModelVersionUpsertInput,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
+  ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
 import {
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+  modelsSearchIndex,
+} from '~/server/search-index';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
+import { hasEntityAccess } from '~/server/services/common.service';
+import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { createNotification } from '~/server/services/notification.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { updateModelLastVersionAt } from './model.service';
-import { isDefined } from '~/utils/type-guards';
-import { imagesSearchIndex, modelsSearchIndex } from '~/server/search-index';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import dayjs from 'dayjs';
-import { clickhouse } from '~/server/clickhouse/client';
-import { maxDate } from '~/utils/date-helpers';
-import { env } from '~/env/server.mjs';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { createNotification } from '~/server/services/notification.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import { resourceDataCache } from '~/server/redis/caches';
+import { maxDate } from '~/utils/date-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { updateModelLastVersionAt } from './model.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -124,6 +129,18 @@ export const toggleModelVersionEngagement = async ({
 
 export const toggleNotifyModelVersion = ({ id, userId }: GetByIdInput & { userId: number }) => {
   return toggleModelVersionEngagement({ userId, versionId: id, type: 'Notify' });
+};
+
+export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: number }) => {
+  return await dbRead.modelVersion.findMany({
+    where: {
+      earlyAccessEndsAt: { gt: new Date() },
+      model: {
+        userId,
+      },
+    },
+    select: { id: true },
+  });
 };
 
 export const upsertModelVersion = async ({
@@ -382,6 +399,24 @@ export const upsertModelVersion = async ({
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
   const version = await dbWrite.$transaction(async (tx) => {
+    const data = await tx.modelVersion.findFirstOrThrow({
+      where: { id },
+      select: {
+        id: true,
+        modelId: true,
+        status: true,
+        earlyAccessConfig: true,
+        meta: true,
+      },
+    });
+
+    const meta = data.meta as ModelVersionMeta;
+    if (meta?.hadEarlyAccessPurchase) {
+      throw throwBadRequestError(
+        'Cannot delete a model version that has had early access purchases.'
+      );
+    }
+
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
@@ -607,6 +642,9 @@ export const publishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
 
   return version;
 };
@@ -678,6 +716,10 @@ export const unpublishModelVersionById = async ({
   await imagesSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+
   await updateModelLastVersionAt({ id: version.model.id });
   await resourceDataCache.bust(version.id);
 
@@ -1058,7 +1100,7 @@ export const earlyAccessPurchase = async ({
     throw throwBadRequestError('You have already purchased early access for this model.');
   }
 
-  let buzzTransactionId;
+  let buzzTransactionId: string | undefined;
   const amount =
     type === 'download'
       ? (earlyAccesConfig.downloadPrice as number)
@@ -1071,61 +1113,82 @@ export const earlyAccessPurchase = async ({
       amount,
       type: TransactionType.Purchase,
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
+      details: { modelVersionId, type, earlyAccessPurchase: true },
     });
 
     buzzTransactionId = buzzTransaction.transactionId;
 
-    if (access.hasAccess) {
-      // Should only happen if the user purchased Generation but NOT download.
-      // Update entity access:
-      await dbWrite.entityAccess.update({
-        where: {
-          accessToId_accessToType_accessorId_accessorType: {
+    await dbWrite.$transaction(async (tx) => {
+      if (access.hasAccess) {
+        // Should only happen if the user purchased Generation but NOT download.
+        // Update entity access:
+        await tx.entityAccess.update({
+          where: {
+            accessToId_accessToType_accessorId_accessorType: {
+              accessToId: modelVersionId,
+              accessToType: 'ModelVersion',
+              accessorId: userId,
+              accessorType: 'User',
+            },
+          },
+          data: {
+            permissions: Math.max(
+              EntityAccessPermission.EarlyAccessDownload +
+                EntityAccessPermission.EarlyAccessGeneration,
+              access.permissions ?? 0
+            ),
+            meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
+          },
+        });
+      } else {
+        // Grant entity access:
+        await tx.entityAccess.create({
+          data: {
             accessToId: modelVersionId,
             accessToType: 'ModelVersion',
             accessorId: userId,
             accessorType: 'User',
+            permissions:
+              type === 'generation'
+                ? EntityAccessPermission.EarlyAccessGeneration
+                : EntityAccessPermission.EarlyAccessGeneration +
+                  EntityAccessPermission.EarlyAccessDownload,
+            meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
+            addedById: userId, // Since it's a purchase
           },
-        },
-        data: {
-          permissions: Math.max(
-            EntityAccessPermission.EarlyAccessDownload +
-              EntityAccessPermission.EarlyAccessGeneration,
-            access.permissions ?? 0
-          ),
-          meta: { ...(access.meta ?? {}), [`${type}-buzzTransactionId`]: buzzTransactionId },
-        },
-      });
-    } else {
-      // Grant entity access:
-      await dbWrite.entityAccess.create({
-        data: {
-          accessToId: modelVersionId,
-          accessToType: 'ModelVersion',
-          accessorId: userId,
-          accessorType: 'User',
-          permissions:
-            type === 'generation'
-              ? EntityAccessPermission.EarlyAccessGeneration
-              : EntityAccessPermission.EarlyAccessGeneration +
-                EntityAccessPermission.EarlyAccessDownload,
-          meta: { [`${type}-buzzTransactionId`]: buzzTransactionId },
-          addedById: userId, // Since it's a purchase
-        },
-      });
-    }
+        });
+      }
+
+      if (earlyAccessDonationGoal) {
+        // Create a donation record:
+        await tx.donation.create({
+          data: {
+            amount,
+            donationGoalId: earlyAccessDonationGoal.id,
+            userId,
+            buzzTransactionId: buzzTransactionId as string,
+          },
+        });
+      }
+
+      // Set model version early access purchase as true:
+      await tx.$queryRaw`
+        UPDATE "ModelVersion"
+        SET meta = jsonb_set(
+          COALESCE(meta, '{}'::jsonb),
+          '{hadEarlyAccessPurchase}',
+          to_jsonb(${true})
+        )
+        WHERE "id" = ${modelVersionId}; -- Your conditions here
+      `;
+    });
 
     if (earlyAccessDonationGoal) {
-      // Create a donation record:
-      await dbWrite.donation.create({
-        data: {
-          amount,
-          donationGoalId: earlyAccessDonationGoal.id,
-          userId,
-          buzzTransactionId,
-        },
-      });
+      await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
     }
+
+    // Ensures user gets access to the resource after purchasing.
+    await bustOrchestratorModelCache(modelVersionId, userId);
 
     return true;
   } catch (error) {

@@ -76,6 +76,7 @@ import {
   getUserPurchasedRewards,
   getUsers,
   getUserSettings,
+  getUsersWithSearch,
   isUsernamePermitted,
   setLeaderboardEligibility,
   setUserSetting,
@@ -131,7 +132,7 @@ export const getAllUsersHandler = async ({
     if (blockedUsers.length)
       input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
 
-    const users = await getUsers({
+    const users = await getUsersWithSearch({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
     });
@@ -267,23 +268,23 @@ export const completeOnboardingHandler = async ({
 
     switch (input.step) {
       case OnboardingSteps.TOS:
-        const { recaptchaToken } = input;
-        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+        // const { recaptchaToken } = input;
+        // if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-        const { score, reasons } = await createRecaptchaAssesment({
-          token: recaptchaToken,
-          recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
-        });
+        // const { score, reasons } = await createRecaptchaAssesment({
+        //   token: recaptchaToken,
+        //   recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
+        // });
 
-        if ((score || 0) < 0.5) {
-          if (reasons.length) {
-            throw throwAuthorizationError(
-              `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
-            );
-          } else {
-            throw throwAuthorizationError('We could not verify the authenticity of your request.');
-          }
-        }
+        // if ((score || 0) < 0.5) {
+        //   if (reasons.length) {
+        //     throw throwAuthorizationError(
+        //       `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
+        //     );
+        //   } else {
+        //     throw throwAuthorizationError('We could not verify the authenticity of your request.');
+        //   }
+        // }
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;

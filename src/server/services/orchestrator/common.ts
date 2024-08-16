@@ -112,12 +112,13 @@ export async function parseGenerateImageInput({
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
   if (isFlux && originalParams.fluxMode) {
-    const { version } = parseAIR(originalParams.fluxMode);
+    // const { version } = parseAIR(originalParams.fluxMode);
     originalParams.sampler = 'undefined';
-    originalResources = [{ id: version, strength: 1 }];
+    // originalResources = [{ id: version, strength: 1 }];
     originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
     originalParams.negativePrompt = '';
+    delete originalParams.clipSkip;
     if (originalParams.fluxMode === fluxModeOptions[0].value) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
@@ -152,7 +153,6 @@ export async function parseGenerateImageInput({
   const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
   if (!checkpoint)
     throw throwBadRequestError('A checkpoint is required to make a generation request');
-  console.log(getBaseModelSetType(checkpoint.baseModel));
   if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
     throw throwBadRequestError(
       `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
@@ -302,6 +302,7 @@ function combineResourcesWithInputResource(
   });
 }
 
+export type GeneratedImageResponseFormatted = AsyncReturnType<typeof formatGeneratedImageResponses>;
 export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
@@ -344,6 +345,7 @@ function getTextToImageAirs(inputs: TextToImageInput[]) {
   ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 
+export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
   workflowId: string;
   step: WorkflowStep;
@@ -463,10 +465,12 @@ export function formatTextToImageStep({
       nsfw: isNsfw,
       workflow: 'txt2img',
       //support using metadata params first (one of the quirks of draft mode makes this necessary)
-      clipSkip: metadata?.params?.clipSkip ?? input.clipSkip ?? generation.defaultValues.clipSkip,
-      steps: metadata?.params?.steps ?? input.steps ?? generation.defaultValues.steps,
-      cfgScale: metadata?.params?.cfgScale ?? input.cfgScale ?? generation.defaultValues.cfgScale,
-      sampler: metadata?.params?.sampler ?? sampler ?? generation.defaultValues.sampler,
+      clipSkip: metadata?.params?.clipSkip ?? input.clipSkip,
+      steps: metadata?.params?.steps ?? input.steps,
+      cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
+      sampler: metadata?.params?.sampler ?? sampler,
+
+      fluxMode: metadata?.params?.fluxMode,
     } as TextToImageParams,
     images,
     status: step.status,

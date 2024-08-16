@@ -7,9 +7,9 @@ import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
-import { imagesSearchIndex } from '~/server/search-index';
-import { updateImageTagIdsForImages } from '~/server/services/image.service';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
@@ -22,8 +22,8 @@ import {
   includesInappropriate,
   includesPoi,
 } from '~/utils/metadata/audit';
-import { signalClient } from '~/utils/signal-client';
 import { normalizeText } from '~/utils/normalize-text';
+import { signalClient } from '~/utils/signal-client';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
@@ -51,6 +51,7 @@ const schema = z.object({
   id: z.number(),
   isValid: z.boolean(),
   tags: tagSchema.array().nullish(),
+  hash: z.string().nullish(),
   vectors: z.array(z.number().array()).nullish(),
   status: z.nativeEnum(Status),
   source: z.nativeEnum(TagSource),
@@ -124,7 +125,40 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
-async function handleSuccess({ id, tags: incomingTags = [], source, context }: BodyProps) {
+// @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
+async function isBlocked(hash: string) {
+  return false;
+  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+    SELECT hash
+    FROM "BlockedImage"
+    WHERE hamming_distance(${hash}::bigint, "hash") < 5
+  `;
+
+  return matches.length > 0;
+}
+
+async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
+  if (hash && (await isBlocked(hash))) {
+    await dbWrite.image.update({
+      where: { id },
+      data: {
+        pHash: BigInt(hash),
+        ingestion: ImageIngestionStatus.Blocked,
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: 'Similar to blocked content',
+      },
+    });
+    return;
+  }
+
+  if (hash && source === TagSource.ImageHash) {
+    await dbWrite.image.update({
+      where: { id },
+      data: { pHash: BigInt(hash), updatedAt: new Date() },
+    });
+    return;
+  }
+
   if (!incomingTags) return;
 
   const image = await dbWrite.image.findUnique({
@@ -212,8 +246,10 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
       tagCache[tag.name] = { id: tag.id };
       if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
     }
+
     for (const tag of tags) {
       const cachedTag = tagCache[tag.tag];
+      if (!cachedTag) continue;
       tag.id = cachedTag.id;
       if (cachedTag.blocked) hasBlockedTag = true;
     }
@@ -398,7 +434,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
 
       if (ingestion === 'Scanned') {
         // Clear cached image tags after completing scans
-        await updateImageTagIdsForImages(id);
+        await tagIdsForImagesCache.refresh(id);
 
         const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
         const isProfilePicture = imageMetadata?.profilePicture === true;
@@ -411,6 +447,12 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context }: B
 
         // Update search index
         await imagesSearchIndex.queueUpdate([
+          {
+            id,
+            action: SearchIndexUpdateQueueAction.Update,
+          },
+        ]);
+        await imagesMetricsSearchIndex.queueUpdate([
           {
             id,
             action: SearchIndexUpdateQueueAction.Update,

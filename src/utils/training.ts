@@ -1,9 +1,12 @@
 import JSZip from 'jszip';
 import { constants } from '~/server/common/constants';
-import { IMAGE_MIME_TYPE, getMimeTypeFromExt } from '~/server/common/mime-types';
+import { getMimeTypeFromExt, IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { TrainingCost } from '~/server/schema/training.schema';
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+
+export const trainingBaseModelType = ['sd15', 'sdxl', 'flux'] as const;
+export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
 // Default costs have moved to `training.schema.ts`
 // Costs are now overridable via redis `system:features` hset `training:status` key.
@@ -13,11 +16,11 @@ export const calcEta = ({
   targetSteps: steps,
 }: {
   cost: TrainingCost;
-  baseModel: 'sd15' | 'sdxl';
+  baseModel: TrainingBaseModelType;
   targetSteps: number;
 }) => {
   if (!model) return;
-  if (model !== 'sd15' && model !== 'sdxl') {
+  if (!trainingBaseModelType.includes(model)) {
     model = 'sd15';
   }
 
@@ -34,11 +37,13 @@ export const calcBuzzFromEta = ({
   cost,
   eta,
   isCustom,
+  isFlux,
   isPriority,
 }: {
   cost: TrainingCost;
   eta: number | undefined;
   isCustom: boolean;
+  isFlux: boolean;
   isPriority: boolean;
 }) => {
   if (!eta) return cost.baseBuzz;
@@ -46,6 +51,7 @@ export const calcBuzzFromEta = ({
   const computedCost = eta * (cost.hourlyCost / 60) * constants.buzz.buzzDollarRatio;
   let buzz = Math.max(cost.baseBuzz, computedCost);
   if (isCustom) buzz += cost.customModelBuzz;
+  if (isFlux) buzz += cost.fluxBuzz;
   if (isPriority) buzz += Math.max(cost.priorityBuzz, cost.priorityBuzzPct * buzz);
   return Math.round(buzz);
 };
