@@ -35,6 +35,7 @@ import type {
   NsfwLevel,
   ImageIngestionStatus,
   MediaType,
+  BlockImageReason,
   ImageEngagementType,
   ImageOnModelType,
   TagTarget,
@@ -75,6 +76,8 @@ import type {
   RedeemableCodeType,
   ToolType,
   TechniqueType,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
 } from './enums';
 
 export type Account = {
@@ -376,6 +379,11 @@ export type ArticleStat = {
   tippedAmountCountMonth: Generated<number>;
   tippedAmountCountYear: Generated<number>;
   tippedAmountCountAllTime: Generated<number>;
+};
+export type BlockedImage = {
+  hash: string;
+  reason: Generated<BlockImageReason>;
+  createdAt: Generated<Timestamp>;
 };
 export type Bounty = {
   id: Generated<number>;
@@ -1113,6 +1121,23 @@ export type EntityCollaborator = {
   createdBy: number;
   lastMessageSentAt: Timestamp | null;
 };
+export type EntityMetric = {
+  entityType: EntityMetric_EntityType_Type;
+  entityId: number;
+  metricType: EntityMetric_MetricType_Type;
+  metricValue: Generated<number>;
+};
+export type EntityMetricImage = {
+  imageId: number;
+  reactionLike: number | null;
+  reactionHeart: number | null;
+  reactionLaugh: number | null;
+  reactionCry: number | null;
+  reactionTotal: number | null;
+  comment: number | null;
+  collection: number | null;
+  buzz: number | null;
+};
 export type File = {
   id: Generated<number>;
   name: string;
@@ -1145,6 +1170,7 @@ export type HomeBlock = {
 };
 export type Image = {
   id: Generated<number>;
+  pHash: string | null;
   name: string | null;
   url: string;
   userId: number;
@@ -1174,6 +1200,7 @@ export type Image = {
   ingestion: Generated<ImageIngestionStatus>;
   blockedFor: string | null;
   scanJobs: unknown | null;
+  sortAt: Generated<Timestamp>;
 };
 export type ImageConnection = {
   imageId: number;
@@ -2540,6 +2567,7 @@ export type DB = {
   ArticleReaction: ArticleReaction;
   ArticleReport: ArticleReport;
   ArticleStat: ArticleStat;
+  BlockedImage: BlockedImage;
   Bounty: Bounty;
   BountyBenefactor: BountyBenefactor;
   BountyEngagement: BountyEngagement;
@@ -2598,6 +2626,8 @@ export type DB = {
   DownloadHistory: DownloadHistory;
   EntityAccess: EntityAccess;
   EntityCollaborator: EntityCollaborator;
+  EntityMetric: EntityMetric;
+  EntityMetricImage: EntityMetricImage;
   File: File;
   GenerationCoverage: GenerationCoverage;
   GenerationServiceProvider: GenerationServiceProvider;

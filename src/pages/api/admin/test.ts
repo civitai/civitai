@@ -9,7 +9,7 @@ import { env } from '~/env/server.mjs';
 import { kyselyDbRead } from '~/server/kysely-db';
 import { sql } from 'kysely';
 import { UserRepository } from '~/server/repository/user.repository';
-import { ImageRepository } from '~/server/repository/image.repository';
+import { Image } from '~/server/repository/image.repository';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });

@@ -41,6 +41,7 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { getGenerationConfig } from '~/server/common/constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
+import { jsonArrayFrom, kyselyDbRead } from '~/server/kysely-db';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -260,21 +261,23 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
 
 // const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
 const getImageGenerationData = async (id: number) => {
-  const [image, imageResources] = await dbRead.$transaction([
-    dbRead.image.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        meta: true,
-        height: true,
-        width: true,
-      },
-    }),
-    dbRead.imageResource.findMany({
-      where: { imageId: id },
-      select: { imageId: true, modelVersionId: true, hash: true, strength: true },
-    }),
-  ]);
+  const image = await kyselyDbRead
+    .selectFrom('Image')
+    .select((eb) => [
+      'id',
+      'meta',
+      'height',
+      'width',
+      jsonArrayFrom(
+        eb
+          .selectFrom('ImageResource')
+          .select(['modelVersionId', 'hash', 'strength'])
+          .whereRef('ImageResource.imageId', '=', 'Image.id')
+      ).as('imageResources'),
+    ])
+    .where('id', '=', id)
+    .executeTakeFirst();
+
   if (!image) throw throwNotFoundError();
 
   const {
@@ -285,14 +288,36 @@ const getImageGenerationData = async (id: number) => {
     ...meta
   } = imageGenerationSchema.parse(image.meta);
 
-  const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
+  const versionIds = image.imageResources.map((x) => x.modelVersionId).filter(isDefined);
   const resourceData = await resourceDataCache.fetch(versionIds);
+
+  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  if (index > -1 && !resourceData[index].available) {
+    const checkpoint = resourceData[index];
+    const latestVersion = await kyselyDbRead
+      .selectFrom('ModelVersion as mv')
+      .select(['mv.id'])
+      .leftJoin('GenerationCoverage as gc', 'gc.modelVersionId', 'mv.id')
+      .where(({ and, eb }) =>
+        and([
+          eb('mv.modelId', '=', checkpoint.model.id),
+          eb('mv.availability', 'in', ['Public', 'EarlyAccess']),
+          eb('gc.covered', '=', true),
+        ])
+      )
+      .orderBy('index', 'asc')
+      .executeTakeFirst();
+    if (latestVersion) {
+      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+      if (newCheckpoint) resourceData[index] = newCheckpoint;
+    }
+  }
 
   const resources = formatGenerationResources(resourceData);
 
   // dedupe resources and add image resource strength/hashes
   const deduped = uniqBy(resources, 'id').map((resource) => {
-    const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+    const imageResource = image.imageResources.find((x) => x.modelVersionId === resource.id);
     return {
       ...resource,
       strength: imageResource?.strength ? imageResource.strength / 100 : 1,

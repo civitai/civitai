@@ -1,6 +1,6 @@
 import { SqlBool, Expression, InferResult, sql } from 'kysely';
 import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
-import { ImageRepository } from '~/server/repository/image.repository';
+import { Image } from '~/server/repository/image.repository';
 import { UserCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
 import { UserLinkModel, UserLinkRepository } from '~/server/repository/user-link.repository';
 import { UserRankRepository } from '~/server/repository/user-rank.repository';
@@ -32,7 +32,7 @@ export class UserRepository {
     return this.baseUserSelect().select((eb) => [
       'leaderboardShowcase',
       'image',
-      ImageRepository.findOneBaseImageByIdRef(eb.ref('User.profilePictureId')).as('profilePicture'),
+      Image.findOneBaseImageByIdRef(eb.ref('User.profilePictureId')).as('profilePicture'),
       UserCosmeticRepository.findManyByUserIdRef({ ref: eb.ref('User.id'), equipped: true }).as(
         'cosmetics'
       ),

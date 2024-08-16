@@ -3154,6 +3154,17 @@ model Donation {
   createdAt         DateTime     @default(now())
 }
 
+// model QueryLog {
+//   id   Int    @id @default(autoincrement())
+//   hash String @unique
+//   sql  String
+// }
+
+// model QueryParamsLog {
+//   hash String @id
+//   params Json
+// }
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

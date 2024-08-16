@@ -11,6 +11,7 @@ import {
 import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { jsonArrayFrom, jsonObjectFrom, kyselyDbRead, kyselyDbWrite } from '~/server/kysely-db';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
@@ -318,10 +319,36 @@ export const resourceDataCache = createCachedArray({
   idKey: 'id',
   lookupFn: async (ids) => {
     const dbResults = (
-      await dbWrite.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
-        select: generationResourceSelect,
-      })
+      await kyselyDbWrite
+        .selectFrom('ModelVersion')
+        .select((eb) => [
+          'id',
+          'name',
+          'trainedWords',
+          'index',
+          'baseModel',
+          'baseModelType',
+          'settings',
+          'availability',
+          'clipSkip',
+          'vaeId',
+          jsonObjectFrom(
+            eb
+              .selectFrom('GenerationCoverage')
+              .select(['covered'])
+              .whereRef('ModelVersion.id', '=', 'GenerationCoverage.modelVersionId')
+          ).as('generationCoverage'),
+          jsonObjectFrom(
+            eb
+              .selectFrom('Model')
+              .select(['id', 'name', 'type', 'nsfw', 'poi', 'minor', 'availability'])
+              .whereRef('ModelVersion.modelId', '=', 'Model.id')
+          )
+            .$notNull()
+            .as('model'),
+        ])
+        .where('id', 'in', ids)
+        .execute()
     ).map(({ generationCoverage, settings = {}, ...result }) => {
       const covered = generationCoverage?.covered ?? false;
       return removeEmpty({

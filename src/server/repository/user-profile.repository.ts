@@ -1,6 +1,6 @@
 import { InferResult } from 'kysely';
 import { kyselyDbRead } from '~/server/kysely-db';
-import { ImageRepository } from '~/server/repository/image.repository';
+import { Image } from '~/server/repository/image.repository';
 
 export type UserProfileModel = InferResult<(typeof UserProfileRepository)['userProfileSelect']>;
 
@@ -20,9 +20,7 @@ export class UserProfileRepository {
         'location',
         'nsfw',
         'userId',
-        ImageRepository.findOneFeedImageByIdRef(eb.ref('UserProfile.coverImageId')).as(
-          'coverImage'
-        ),
+        Image.findOneFeedImageByIdRef(eb.ref('UserProfile.coverImageId')).as('coverImage'),
       ]);
   }
   // #endregion

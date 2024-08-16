@@ -227,6 +227,12 @@ export const MediaType = {
   audio: 'audio',
 } as const;
 export type MediaType = (typeof MediaType)[keyof typeof MediaType];
+export const BlockImageReason = {
+  Ownership: 'Ownership',
+  CSAM: 'CSAM',
+  TOS: 'TOS',
+} as const;
+export type BlockImageReason = (typeof BlockImageReason)[keyof typeof BlockImageReason];
 export const ImageEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',
@@ -266,6 +272,7 @@ export const TagSource = {
   Rekognition: 'Rekognition',
   WD14: 'WD14',
   Computed: 'Computed',
+  ImageHash: 'ImageHash',
 } as const;
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
 export const PartnerPricingModel = {
@@ -516,3 +523,19 @@ export const TechniqueType = {
   Video: 'Video',
 } as const;
 export type TechniqueType = (typeof TechniqueType)[keyof typeof TechniqueType];
+export const EntityMetric_EntityType_Type = {
+  Image: 'Image',
+} as const;
+export type EntityMetric_EntityType_Type =
+  (typeof EntityMetric_EntityType_Type)[keyof typeof EntityMetric_EntityType_Type];
+export const EntityMetric_MetricType_Type = {
+  ReactionLike: 'ReactionLike',
+  ReactionHeart: 'ReactionHeart',
+  ReactionLaugh: 'ReactionLaugh',
+  ReactionCry: 'ReactionCry',
+  Comment: 'Comment',
+  Collection: 'Collection',
+  Buzz: 'Buzz',
+} as const;
+export type EntityMetric_MetricType_Type =
+  (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];

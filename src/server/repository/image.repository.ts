@@ -3,10 +3,10 @@ import { jsonObjectFrom, kyselyDbRead } from '~/server/kysely-db';
 import { ImageMetricRepository } from '~/server/repository/image-metric.repository';
 import { UserCosmeticRepository } from '~/server/repository/user-cosmetic.repository';
 
-export type ImageBaseModel = InferResult<(typeof ImageRepository)['baseImageSelect']>;
-export type ImageListModel = InferResult<(typeof ImageRepository)['feedImageSelect']>;
+export type ImageBaseModel = InferResult<(typeof Image)['baseImageSelect']>;
+export type ImageListModel = InferResult<(typeof Image)['feedImageSelect']>;
 
-export class ImageRepository {
+export class Image {
   // #region [select]
   private static get baseImageSelect() {
     return kyselyDbRead

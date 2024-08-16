@@ -9,10 +9,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { env } from '~/env/server.mjs';
-<<<<<<< HEAD
-=======
-import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
->>>>>>> main
+import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
@@ -69,9 +66,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
-import { profileImageSelect } from '~/server/selectors/image.selector';
-import { constants } from '~/server/common/constants';
 
 type UserSearchResult = {
   id: number;
