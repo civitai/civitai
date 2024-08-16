@@ -8,6 +8,9 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
+import utc from 'dayjs/plugin/utc';
+
+dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -47,8 +50,11 @@ export const createBountyInputSchema = z.object({
   currency: z.nativeEnum(Currency),
   expiresAt: z
     .date()
-    .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
-  startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    .min(
+      dayjs.utc().add(1, 'day').startOf('day').toDate(),
+      'Expiration date must come after the start date'
+    ),
+  startsAt: z.date().min(dayjs.utc().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
   type: z.nativeEnum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
