@@ -102,6 +102,7 @@ BEGIN
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     WHERE (irh.name IS NULL OR irh.name != 'vae')
       AND (m.id IS NULL OR m.status != 'Deleted')
+      AND irh.hash != 'E3B0C44298FC' -- Exclude empty hash
   ), image_resource_id AS (
     SELECT
       irh.id,
