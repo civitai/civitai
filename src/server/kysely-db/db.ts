@@ -44,7 +44,6 @@ function createKyselyDb(target: Target, log?: typeof logQuery) {
 }
 
 function logQuery(event: LogEvent, target: Target) {
-  if (isProd && event.queryDurationMillis < 2000) return;
   if (event.level === 'error') {
     if (!isProd) {
       console.error('Query failed : ', {
@@ -55,10 +54,8 @@ function logQuery(event: LogEvent, target: Target) {
       });
     }
   }
-  if (!isProd) {
+  if (event.queryDurationMillis > 250) {
     logQueryEventToDb(event);
-  } else {
-    // logToAxiom({ query, duration: event.queryDurationMillis, target }, 'db-logs');
   }
 }
 
