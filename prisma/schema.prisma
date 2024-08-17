@@ -3154,16 +3154,33 @@ model Donation {
   createdAt         DateTime     @default(now())
 }
 
-// model QueryLog {
-//   id   Int    @id @default(autoincrement())
-//   hash String @unique
-//   sql  String
-// }
+model QuerySqlLog {
+  id            Int                @id @default(autoincrement())
+  hash          String             @unique
+  sql           String
+  paramsLogs    QueryParamsLog[]
+  durationsLogs QueryDurationLog[]
+}
 
-// model QueryParamsLog {
-//   hash String @id
-//   params Json
-// }
+model QueryParamsLog {
+  id           Int                @id @default(autoincrement())
+  hash         String
+  params       Json
+  sqlId        Int
+  sql          QuerySqlLog        @relation(fields: [sqlId], references: [id], onDelete: Cascade)
+  durationLogs QueryDurationLog[]
+
+  @@unique([sqlId, hash])
+}
+
+model QueryDurationLog {
+  id       Int            @id @default(autoincrement())
+  duration Int
+  sqlId    Int
+  sql      QuerySqlLog    @relation(fields: [sqlId], references: [id], onDelete: Cascade)
+  paramsId Int
+  params   QueryParamsLog @relation(fields: [paramsId], references: [id], onDelete: Cascade)
+}
 
 /// @view
 model QuestionRank {

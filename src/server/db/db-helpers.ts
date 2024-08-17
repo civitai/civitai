@@ -249,3 +249,18 @@ export async function batchProcessor({
     };
   }, concurrency);
 }
+
+export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
+  let query = sql;
+  const parameters = params as string[];
+  for (let i = 0; i < parameters.length; i++) {
+    // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
+    const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
+    // If string, will quote - if bool or numeric, will not - does the job here
+    if (typeof parameters[i] === 'string')
+      parameters[i] = "'" + parameters[i].replace("'", "\\'") + "'";
+    //params[i] = JSON.stringify(params[i])
+    query = query.replace(re, parameters[i]);
+  }
+  return query;
+}

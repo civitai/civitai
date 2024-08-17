@@ -1,13 +1,12 @@
 import { DB } from './types'; // this is the Database interface we defined earlier
 import { Pool, types } from 'pg';
-import { Kysely, LogEvent, ParseJSONResultsPlugin, PostgresDialect, sql } from 'kysely';
+import { Kysely, LogEvent, ParseJSONResultsPlugin, PostgresDialect } from 'kysely';
 import { env } from '~/env/server.mjs';
 import fs from 'fs';
 import path from 'path';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import crypto from 'crypto';
-import { redis } from '~/server/redis/client';
 
 types.setTypeParser(types.builtins.NUMERIC, function (val) {
   return parseFloat(val);
@@ -26,13 +25,17 @@ type Target = keyof typeof targets;
 function createKyselyDb(target: Target, log?: typeof logQuery) {
   const dbUrl = targets[target];
   const dialect = new PostgresDialect({
-    pool: new Pool({
-      connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
-      ssl: {
-        rejectUnauthorized: true,
-        ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
-      },
-    }),
+    pool: !isProd
+      ? new Pool({
+          // connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+          // ssl: {
+          //   rejectUnauthorized: true,
+          //   ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
+          // },
+          connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+          ssl: { rejectUnauthorized: false },
+        })
+      : new Pool({ connectionString: dbUrl }),
   });
 
   return new Kysely<DB>({
@@ -42,50 +45,85 @@ function createKyselyDb(target: Target, log?: typeof logQuery) {
   });
 }
 
-async function logQuery(event: LogEvent, target: Target) {
-  // if (isProd && event.queryDurationMillis < 2000) return;
-  // if (event.level === 'error') {
-  //   //TODO
-  // }
-  // let query = event.query.sql;
-  // const parameters = event.query.parameters as string[];
-  // for (let i = 0; i < parameters.length; i++) {
-  //   // Negative lookahead for no more numbers, ie. replace $1 in '$1' but not '$11'
-  //   const re = new RegExp('\\$' + ((i as number) + 1) + '(?!\\d)', 'g');
-  //   // If string, will quote - if bool or numeric, will not - does the job here
-  //   if (typeof parameters[i] === 'string')
-  //     parameters[i] = "'" + parameters[i].replace("'", "\\'") + "'";
-  //   //params[i] = JSON.stringify(params[i])
-  //   query = query.replace(re, parameters[i]);
-  // }
-  // if (!isProd) {
-  //   // logDbEventToRedis(event);
-  // } else {
-  //   logToAxiom({ query, duration: event.queryDurationMillis, target }, 'db-logs');
-  // }
+function logQuery(event: LogEvent, target: Target) {
+  if (isProd && event.queryDurationMillis < 2000) return;
+  if (event.level === 'error') {
+    if (!isProd) {
+      console.error('Query failed : ', {
+        durationMs: event.queryDurationMillis,
+        error: event.error,
+        sql: event.query.sql,
+        params: event.query.parameters,
+      });
+    }
+  }
+  if (!isProd) {
+    logQueryEventToDb(event);
+  } else {
+    // logToAxiom({ query, duration: event.queryDurationMillis, target }, 'db-logs');
+  }
 }
 
 const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
 export const kyselyDbWrite = createKyselyDb('write', logQuery);
 export const kyselyDbRead = singleClient ? kyselyDbWrite : createKyselyDb('read', logQuery);
 
-const logDb = createKyselyDb('write');
+const logDb = createKyselyDb('write', (event, target) => {
+  if (event.level === 'error') {
+    if (!isProd) {
+      console.error('Query failed : ', {
+        durationMs: event.queryDurationMillis,
+        error: event.error,
+        sql: event.query.sql,
+        params: event.query.parameters,
+      });
+    }
+  } else {
+    if (!isProd) {
+      // console.log(combineSqlWithParams(event.query.sql, event.query.parameters));
+      // TODO - log link to view query details
+    }
+  }
+});
 
-// async function logDbEventToRedis(event: LogEvent) {
-//   const stringParams = JSON.stringify(event.query.parameters);
-//   const sqlHash = crypto.createHash('sha256').update(event.query.sql).digest('hex');
-//   const paramsHash = crypto.createHash('sha256').update(stringParams).digest('hex');
+async function logQueryEventToDb(event: LogEvent) {
+  const stringParams = JSON.stringify(event.query.parameters);
+  const sqlHash = crypto.createHash('sha256').update(event.query.sql).digest('hex');
+  const paramsHash = crypto.createHash('sha256').update(stringParams).digest('hex');
 
-//   const sqlKey = `db:sql:${sqlHash}`;
-//   const paramsKey = `db:sql:${sqlHash}:${paramsHash}`;
+  const { id: sqlId } = await logDb
+    .with('e', (db) =>
+      db
+        .insertInto('QuerySqlLog')
+        .values({ hash: sqlHash, sql: event.query.sql })
+        .onConflict((oc) => oc.doNothing())
+        .returning(['id'])
+    )
+    .selectFrom('e')
+    .selectAll()
+    .union(logDb.selectFrom('QuerySqlLog').select(['id']).where('hash', '=', sqlHash))
+    .executeTakeFirstOrThrow();
 
-//   const sqlCache = await redis.get(sqlKey);
-//   if (!sqlCache) await redis.set(sqlKey, JSON.stringify(event.query.sql));
+  const { id: paramsId } = await logDb
+    .with('e', (db) =>
+      db
+        .insertInto('QueryParamsLog')
+        .values({ sqlId, hash: paramsHash, params: JSON.stringify(event.query.parameters) })
+        .onConflict((oc) => oc.doNothing())
+        .returning(['id'])
+    )
+    .selectFrom('e')
+    .selectAll()
+    .union(
+      logDb
+        .selectFrom('QueryParamsLog')
+        .select(['id'])
+        .where(({ and, eb }) => and([eb('sqlId', '=', sqlId), eb('hash', '=', paramsHash)]))
+    )
+    .executeTakeFirstOrThrow();
 
-//   const paramsCache = await redis.get(paramsKey);
-//   const data = !paramsCache
-//     ? { params: event.query.parameters, duration: [] }
-//     : JSON.parse(paramsCache);
-//   data.duration.push(event.queryDurationMillis);
-//   await redis.set(paramsKey, JSON.stringify(data));
-// }
+  await logDb
+    .insertInto('QueryDurationLog')
+    .values({ sqlId, paramsId, duration: Math.round(event.queryDurationMillis) })
+    .execute();
+}

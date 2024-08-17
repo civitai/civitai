@@ -1896,6 +1896,23 @@ export type Purchase = {
   status: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type QueryDurationLog = {
+  id: Generated<number>;
+  duration: number;
+  sqlId: number;
+  paramsId: number;
+};
+export type QueryParamsLog = {
+  id: Generated<number>;
+  hash: string;
+  params: unknown;
+  sqlId: number;
+};
+export type QuerySqlLog = {
+  id: Generated<number>;
+  hash: string;
+  sql: string;
+};
 export type Question = {
   id: Generated<number>;
   userId: number;
@@ -2689,6 +2706,9 @@ export type DB = {
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
+  QueryDurationLog: QueryDurationLog;
+  QueryParamsLog: QueryParamsLog;
+  QuerySqlLog: QuerySqlLog;
   Question: Question;
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
