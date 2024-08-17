@@ -135,7 +135,7 @@ export default function ResourceSelectModal({
   }
 
   return (
-    <PageModal {...dialog} onClose={handleClose} fullScreen withCloseButton={false} padding={0}>
+    <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
       <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden">
         <ResourceSelectContext.Provider
           value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
@@ -158,7 +158,7 @@ export default function ResourceSelectModal({
           </InstantSearch>
         </ResourceSelectContext.Provider>
       </div>
-    </PageModal>
+    </Modal>
   );
 }
 
@@ -252,31 +252,28 @@ function ResourceHitList() {
     );
 
   return (
-    <ScrollArea id="resource-select-modal" className="flex-1 p-3">
-      <div className="flex flex-col gap-3">
-        {hiddenCount > 0 && (
-          <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
-        )}
+    // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
+    <div className="flex flex-col gap-3 p-3">
+      {hiddenCount > 0 && (
+        <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+      )}
 
-        <div className={classes.grid}>
-          {/* {models
-            .filter((model) => model.versions.length > 0)
-            .map((model, index) => createRenderElement(ResourceSelectCard, index, model))} */}
-          {models
-            .filter((model) => model.versions.length > 0)
-            .map((model) => (
-              <ResourceSelectCard key={model.id} data={model} />
-            ))}
-        </div>
-        {hits.length > 0 && !isLastPage && (
-          <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
-            <Center sx={{ height: 36 }} mt="md">
-              <Loader />
-            </Center>
-          </InViewLoader>
-        )}
+      <div className={classes.grid}>
+        {models
+          .filter((model) => model.versions.length > 0)
+          .map((model) => (
+            <ResourceSelectCard key={model.id} data={model} />
+          ))}
       </div>
-    </ScrollArea>
+      {hits.length > 0 && !isLastPage && (
+        <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
+          <Center sx={{ height: 36 }} my="md">
+            <Loader />
+          </Center>
+        </InViewLoader>
+      )}
+    </div>
+    // </ScrollArea>
   );
 }
 
@@ -284,7 +281,7 @@ const IMAGE_CARD_WIDTH = 450;
 
 function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
   const currentUser = useCurrentUser();
-  const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
+  // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
@@ -417,153 +414,153 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
 
   return (
     // Visually hide card if there are no versions
-    <TwCard ref={ref} className={clsx(classes.root, 'justify-between')} onClick={handleSelect}>
-      {inView && (
-        <>
-          {image && (
-            <ImageGuard2 image={image} connectType="model" connectId={data.id}>
-              {(safe) => {
-                return (
-                  <div className="relative overflow-hidden aspect-portrait">
-                    {safe ? (
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={width}
-                        placeholder="empty"
-                        className={classes.image}
-                        loading="lazy"
-                      />
-                    ) : (
-                      <MediaHash {...image} />
-                    )}
-                    <div className="absolute left-2 top-2 flex items-center gap-1">
-                      <ImageGuard2.BlurToggle />
+    <TwCard className={clsx(classes.root, 'justify-between')} onClick={handleSelect}>
+      {/* {inView && ( */}
+      <>
+        {image && (
+          <ImageGuard2 image={image} connectType="model" connectId={data.id}>
+            {(safe) => {
+              return (
+                <div className="relative overflow-hidden aspect-portrait">
+                  {safe ? (
+                    <EdgeMedia
+                      src={image.url}
+                      name={image.name ?? image.id.toString()}
+                      alt={image.name ?? undefined}
+                      type={image.type}
+                      width={width}
+                      placeholder="empty"
+                      className={classes.image}
+                      loading="lazy"
+                    />
+                  ) : (
+                    <MediaHash {...image} />
+                  )}
+                  <div className="absolute left-2 top-2 flex items-center gap-1">
+                    <ImageGuard2.BlurToggle />
+                    <Badge
+                      className={cx(classes.infoChip, classes.chip)}
+                      variant="light"
+                      radius="xl"
+                    >
+                      <Text color="white" size="xs" transform="capitalize">
+                        {getDisplayName(data.type)}
+                      </Text>
+                      {isSDXL && (
+                        <>
+                          <Divider orientation="vertical" />
+                          {isPony ? (
+                            <IconHorse size={16} strokeWidth={2.5} />
+                          ) : (
+                            <Text color="white" size="xs">
+                              XL
+                            </Text>
+                          )}
+                        </>
+                      )}
+                    </Badge>
+
+                    {(isNew || isUpdated) && (
                       <Badge
-                        className={cx(classes.infoChip, classes.chip)}
-                        variant="light"
+                        className={classes.chip}
+                        variant="filled"
                         radius="xl"
+                        sx={(theme) => ({
+                          backgroundColor: isUpdated
+                            ? '#1EBD8E'
+                            : theme.colors.blue[theme.fn.primaryShade()],
+                        })}
                       >
                         <Text color="white" size="xs" transform="capitalize">
-                          {getDisplayName(data.type)}
+                          {isUpdated ? 'Updated' : 'New'}
                         </Text>
-                        {isSDXL && (
-                          <>
-                            <Divider orientation="vertical" />
-                            {isPony ? (
-                              <IconHorse size={16} strokeWidth={2.5} />
-                            ) : (
-                              <Text color="white" size="xs">
-                                XL
-                              </Text>
-                            )}
-                          </>
-                        )}
                       </Badge>
-
-                      {(isNew || isUpdated) && (
-                        <Badge
-                          className={classes.chip}
-                          variant="filled"
-                          radius="xl"
-                          sx={(theme) => ({
-                            backgroundColor: isUpdated
-                              ? '#1EBD8E'
-                              : theme.colors.blue[theme.fn.primaryShade()],
-                          })}
-                        >
-                          <Text color="white" size="xs" transform="capitalize">
-                            {isUpdated ? 'Updated' : 'New'}
-                          </Text>
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="absolute right-2 top-2 flex flex-col gap-1">
-                      {contextMenuItems.length > 0 && (
-                        <Menu position="left-start" withArrow offset={-5}>
-                          <Menu.Target>
-                            <ActionIcon
-                              variant="transparent"
-                              p={0}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                              }}
-                            >
-                              <IconDotsVertical
-                                size={24}
-                                color="#fff"
-                                style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                              />
-                            </ActionIcon>
-                          </Menu.Target>
-                          <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                        </Menu>
-                      )}
-                      <CivitaiLinkManageButton
-                        modelId={data.id}
-                        modelName={data.name}
-                        modelType={data.type}
-                        hashes={data.hashes}
-                        noTooltip
-                        iconSize={16}
-                      >
-                        {({ color, onClick, icon, label }) => (
-                          <HoverActionButton
-                            onClick={onClick}
-                            label={label}
-                            size={30}
-                            color={color}
-                            variant="filled"
-                            keepIconOnHover
-                          >
-                            {icon}
-                          </HoverActionButton>
-                        )}
-                      </CivitaiLinkManageButton>
-                    </div>
+                    )}
                   </div>
-                );
-              }}
-            </ImageGuard2>
-          )}
+                  <div className="absolute right-2 top-2 flex flex-col gap-1">
+                    {contextMenuItems.length > 0 && (
+                      <Menu position="left-start" withArrow offset={-5}>
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="transparent"
+                            p={0}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                          >
+                            <IconDotsVertical
+                              size={24}
+                              color="#fff"
+                              style={{ filter: `drop-shadow(0 0 2px #000)` }}
+                            />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+                      </Menu>
+                    )}
+                    <CivitaiLinkManageButton
+                      modelId={data.id}
+                      modelName={data.name}
+                      modelType={data.type}
+                      hashes={data.hashes}
+                      noTooltip
+                      iconSize={16}
+                    >
+                      {({ color, onClick, icon, label }) => (
+                        <HoverActionButton
+                          onClick={onClick}
+                          label={label}
+                          size={30}
+                          color={color}
+                          variant="filled"
+                          keepIconOnHover
+                        >
+                          {icon}
+                        </HoverActionButton>
+                      )}
+                    </CivitaiLinkManageButton>
+                  </div>
+                </div>
+              );
+            }}
+          </ImageGuard2>
+        )}
 
-          <div className="flex flex-col gap-2 p-3">
-            <Text size="sm" weight={700} lineClamp={1} lh={1}>
-              {data.name}
-            </Text>
-            <Group noWrap position="apart">
-              {versions.length === 1 ? (
-                <span>{versions[0].name}</span>
-              ) : (
-                <Select
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  value={selected?.toString()}
-                  data={versions.map((version) => ({
-                    label: version.name,
-                    value: version.id.toString(),
-                  }))}
-                  onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
-                />
-              )}
-              <Button
+        <div className="flex flex-col gap-2 p-3">
+          <Text size="sm" weight={700} lineClamp={1} lh={1}>
+            {data.name}
+          </Text>
+          <Group noWrap position="apart">
+            {versions.length === 1 ? (
+              <span>{versions[0].name}</span>
+            ) : (
+              <Select
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  handleSelect();
                 }}
-              >
-                Select
-              </Button>
-            </Group>
-          </div>
-        </>
-      )}
+                value={selected?.toString()}
+                data={versions.map((version) => ({
+                  label: version.name,
+                  value: version.id.toString(),
+                }))}
+                onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
+              />
+            )}
+            <Button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSelect();
+              }}
+            >
+              Select
+            </Button>
+          </Group>
+        </div>
+      </>
+      {/* )} */}
     </TwCard>
   );
 }
