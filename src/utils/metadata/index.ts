@@ -32,7 +32,6 @@ export async function getMetadata(file: File) {
       exif.userComment = Int32Array.from(exif.UserComment);
     }
     setGlobalValue('exif', exif);
-    console.log('exif', exif);
 
     let metadata = {};
     try {
