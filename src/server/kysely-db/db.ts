@@ -25,17 +25,15 @@ type Target = keyof typeof targets;
 function createKyselyDb(target: Target, log?: typeof logQuery) {
   const dbUrl = targets[target];
   const dialect = new PostgresDialect({
-    pool: !isProd
-      ? new Pool({
-          // connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
-          // ssl: {
-          //   rejectUnauthorized: true,
-          //   ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
-          // },
-          connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
-          ssl: { rejectUnauthorized: false },
-        })
-      : new Pool({ connectionString: dbUrl }),
+    pool: new Pool({
+      // connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+      // ssl: {
+      //   rejectUnauthorized: true,
+      //   ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
+      // },
+      connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+      ssl: { rejectUnauthorized: false },
+    }),
   });
 
   return new Kysely<DB>({
