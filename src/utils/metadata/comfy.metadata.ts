@@ -1,7 +1,7 @@
 import { samplerMap } from '~/server/common/constants';
 import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
-import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
+import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
 import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -77,6 +77,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
   },
   parse: (exif) => {
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
+    setGlobalValue('nodeJson', prompt);
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
     const upscalers: string[] = [];

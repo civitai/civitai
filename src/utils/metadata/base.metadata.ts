@@ -1,3 +1,4 @@
+import { isProd } from '~/env/other';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 
 type MetadataProcessor = {
@@ -8,6 +9,12 @@ type MetadataProcessor = {
 
 export function createMetadataProcessor(processor: MetadataProcessor) {
   return processor;
+}
+
+export function setGlobalValue(key: string, value: any) {
+  if (isProd) return;
+  (window as Record<string, any>)[key] = value;
+  window.dispatchEvent(new Event('globalValueChange'));
 }
 
 export type SDResource = {
