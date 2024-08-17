@@ -1,7 +1,7 @@
 import { samplerMap } from '~/server/common/constants';
 import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { findKeyForValue } from '~/utils/map-helpers';
-import { createMetadataProcessor } from '~/utils/metadata/base.metadata';
+import { createMetadataProcessor, setGlobalValue } from '~/utils/metadata/base.metadata';
 import { fromJson } from '../json-helpers';
 import { decodeBigEndianUTF16 } from '~/utils/encoding-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -9,7 +9,10 @@ import { parseAIR } from '~/utils/string-helpers';
 const AIR_KEYS = ['ckpt_airs', 'lora_airs', 'embedding_airs'];
 
 function cleanBadJson(str: string) {
-  return str.replace(/\[NaN\]/g, '[]').replace(/\[Infinity\]/g, '[]');
+  return str
+    .replace(/\[NaN\]/g, '[]')
+    .replace(/NaN/g, '0')
+    .replace(/\[Infinity\]/g, '[]');
 }
 
 type CivitaiResource = {
@@ -74,6 +77,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
   },
   parse: (exif) => {
     const prompt = JSON.parse(cleanBadJson(exif.prompt as string)) as Record<string, ComfyNode>;
+    setGlobalValue('nodeJson', prompt);
     const samplerNodes: SamplerNode[] = [];
     const models: string[] = [];
     const upscalers: string[] = [];
@@ -120,7 +124,6 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       if (node.class_type == 'ControlNetLoader')
         controlNets.push(node.inputs.control_net_name as string);
     }
-    console.log(nodes);
     const customAdvancedSampler = nodes.find((x) => x.class_type == 'SamplerCustomAdvanced');
 
     const workflow = exif.workflow ? (JSON.parse(exif.workflow as string) as any) : undefined;
@@ -196,16 +199,27 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       processGuidance: if (guidanceNode?.class_type === 'BasicGuider') {
         // Get cfgScale
         const conditioningNode = guidanceNode.inputs.conditioning as ComfyNode;
-        if (conditioningNode?.class_type !== 'FluxGuidance') break processGuidance;
-        metadata.cfgScale = conditioningNode.inputs.guidance as number;
+        let textEncoderNode: ComfyNode | undefined;
+        if (conditioningNode?.class_type === 'CLIPTextEncode') {
+          textEncoderNode = conditioningNode;
+        } else if (conditioningNode?.class_type === 'FluxGuidance') {
+          textEncoderNode = conditioningNode.inputs.conditioning as ComfyNode;
+          metadata.cfgScale = conditioningNode.inputs.guidance as number;
+        }
 
         // Get prompt
-        const textEncoderNode = conditioningNode.inputs.conditioning as ComfyNode;
         if (textEncoderNode?.class_type !== 'CLIPTextEncode') break processGuidance;
-        if (typeof textEncoderNode.inputs.text === 'string')
+        if (typeof textEncoderNode.inputs.text === 'string') {
           metadata.prompt = textEncoderNode.inputs.text;
-        else if ((textEncoderNode.inputs.text as ComfyNode)?.class_type === 'String Literal')
-          metadata.prompt = (textEncoderNode.inputs.text as ComfyNode).inputs.string as string;
+          break processGuidance;
+        }
+
+        // Get prompt from node
+        const textNode = textEncoderNode.inputs.text as ComfyNode;
+        if (textNode?.class_type === 'ImpactWildcardProcessor') {
+          metadata.prompt = textNode.inputs.populated_text as string;
+        } else if (textNode?.class_type === 'String Literal')
+          metadata.prompt = textNode.inputs.string as string;
       }
 
       // Get steps

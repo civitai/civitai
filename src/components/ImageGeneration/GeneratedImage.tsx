@@ -357,6 +357,8 @@ export function GeneratedImage({
                   closeDelay={100}
                   transition="fade"
                   transitionDuration={150}
+                  withinPortal
+                  position="top"
                 >
                   <Menu.Target>
                     <ActionIcon size="md">
