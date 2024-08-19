@@ -51,7 +51,6 @@ export const isImageOwner = async ({
     select: { userId: true },
     where: { id: imageId },
   });
-  console.log(img);
 
   if (!img) return false;
   return img.userId === userId;

@@ -32,13 +32,13 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       const existedAtUnix = new Date().getTime();
 
       // find images in db
-      const existingImages = await dbWrite.$queryRaw<
-        { id: number; nsfwLevel: number; existedAtUnix: number }[]
-      >`
-        SELECT id, "nsfwLevel", ${existedAtUnix} as "existedAtUnix"
+      const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        SELECT id, "nsfwLevel"
         FROM "Image"
         WHERE id BETWEEN ${start} AND ${end}
       `;
+
+      const data = existingImages.map((i) => ({ ...i, existedAtUnix }));
 
       // TODO regular index too
 
@@ -46,7 +46,7 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
         // nb: if the images aren't there yet...they'll have sparse data
         await updateDocs({
           indexName: METRICS_IMAGES_SEARCH_INDEX,
-          documents: existingImages,
+          documents: data,
           // batchSize: queryBatch,
           client,
         });
