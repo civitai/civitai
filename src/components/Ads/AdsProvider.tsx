@@ -6,19 +6,17 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isProd } from '~/env/other';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import Head from 'next/head';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
 const AscendeumAdsContext = createContext<{
-  adsBlocked: boolean;
+  adsBlocked?: boolean;
   nsfw: boolean;
   nsfwOverride?: boolean;
   adsEnabled: boolean;
   username?: string;
-  isMember: boolean;
-  enabled: boolean;
   providers: readonly string[];
-  cookieConsent: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -28,15 +26,9 @@ export function useAdsContext() {
 }
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState(false);
+  const [adsBlocked, setAdsBlocked] = useState<boolean>();
   const currentUser = useCurrentUser();
-  const isMember = !!currentUser?.isMember;
-  // const enabled = env.NEXT_PUBLIC_ADS;
-  const enabled = false;
-  // const adsEnabled = enabled && !isMember;
-  const adsEnabled = (currentUser?.settings.allowAds ?? true) || !isMember;
-  // const { targeting: cookieConsent = false } = useConsentManager();
-  const cookieConsent = true;
+  const adsEnabled = (currentUser?.settings.allowAds ?? true) || !currentUser?.isMember;
 
   // keep track of generation panel views that are considered nsfw
   const nsfwOverride = useGenerationStore(({ view, opened }) => {
@@ -46,18 +38,17 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   // derived value from browsingMode and nsfwOverride
   const browsingLevel = useBrowsingLevelDebounced();
-  const nsfw = browsingLevel > NsfwLevel.PG;
+  const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
 
   const readyRef = useRef(false);
   useEffect(() => {
-    if (!readyRef.current && adsEnabled && cookieConsent) {
+    if (!readyRef.current && adsEnabled) {
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
-        // setAdsBlocked(blocked);
-        setAdsBlocked(!isProd ? true : blocked);
+        setAdsBlocked(blocked);
       });
     }
-  }, [adsEnabled, cookieConsent]);
+  }, [adsEnabled]);
 
   return (
     <AscendeumAdsContext.Provider
@@ -67,9 +58,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         adsEnabled,
         username: currentUser?.username,
         nsfwOverride,
-        isMember,
-        enabled,
-        cookieConsent,
         providers: adProviders,
       }}
     >

@@ -1,4 +1,5 @@
 import {
+  AdSizes,
   AnyAdSize,
   AscendeumAdUnit,
   AscendeumAdUnitType,
@@ -6,17 +7,21 @@ import {
   adSizeImageMap,
 } from '~/components/Ads/ads.utils';
 import { Center, Group, Paper, PaperProps, Text, createStyles } from '@mantine/core';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
-import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
-import { useStackingContext } from '~/components/Dialog/dialogStore';
+import { useIsLevelFocused, useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
 import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import clsx from 'clsx';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from 'react-intersection-observer';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 const useStyles = createStyles((theme) => ({
   root: { display: 'flex', flexDirection: 'column', background: 'none' },
@@ -40,8 +45,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
   const { classes, cx } = useStyles();
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { isCurrentStack } = useStackingContext();
-  const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent, username } =
-    useAdsContext();
+  const { adsBlocked, nsfwOverride, adsEnabled, providers, username } = useAdsContext();
   const containerWidth = useContainerWidth();
 
   // TODO - maybe consider the priority of each nsfw override flag. Which flags have the most priority?
@@ -70,7 +74,7 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
 
   const canRenderContent = inView && isCurrentStack;
   const showPlaceholderImage =
-    adsBlocked || !cookieConsent || !componentProps || !providers.includes(componentProps.type);
+    adsBlocked || !componentProps || !providers.includes(componentProps.type);
   const [width, height] = bidSizes[0].split('x').map(Number);
 
   const Content = (
@@ -129,6 +133,115 @@ export function Adunit<TAscendeum extends AscendeumAdUnitType>({
       {children ? children(Content) : Content}
     </Paper>
   );
+}
+
+export function DynamicAd() {
+  return (
+    <AdWrapper width={300} height={250}>
+      {({ isMobile }) =>
+        isMobile ? (
+          <pgs-ad data-pg-ad-spot="civitaicom47764"></pgs-ad>
+        ) : (
+          <pgs-ad data-pg-ad-spot="civitaicom47455"></pgs-ad>
+        )
+      }
+    </AdWrapper>
+  );
+}
+
+function AdWrapper({
+  children,
+  className,
+  width,
+  height,
+  style,
+  ...props
+}: Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
+  AdSizes & {
+    children: React.ReactNode | ((args: { isMobile: boolean }) => React.ReactNode);
+  }) {
+  const currentUser = useCurrentUser();
+  const node = useScrollAreaRef();
+  const isClient = useIsClient();
+  const { adsBlocked } = useAdsContext();
+  const isMobile =
+    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const focused = useIsLevelFocused();
+
+  const { ref, inView } = useInView({
+    root: node?.current,
+    rootMargin: isMobile ? '400px' : '200px',
+  });
+
+  return (
+    <div
+      ref={ref}
+      className={clsx('flex flex-col items-center justify-between', className)}
+      style={{ ...style, height: height + 20, width }}
+      {...props}
+    >
+      {isClient && inView && adsBlocked !== undefined && (
+        <>
+          {adsBlocked ? (
+            <NextLink href="/pricing" className="flex">
+              <Image
+                src={`/images/support-us/${width}x${height}.jpg`}
+                alt="Please support civitai and creators by disabling adblock"
+                width={width}
+                height={height}
+              />
+            </NextLink>
+          ) : (
+            <ImpressionTracker>
+              {typeof children === 'function' ? children({ isMobile }) : children}
+            </ImpressionTracker>
+          )}
+
+          <div className="flex w-full justify-between">
+            <Text
+              component={NextLink}
+              td="underline"
+              href="/pricing"
+              color="dimmed"
+              size="xs"
+              align="center"
+            >
+              Remove ads
+            </Text>
+
+            {currentUser && (
+              <Text
+                component={NextLink}
+                td="underline"
+                href={`/ad-feedback?Username=${currentUser.username}`}
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Feedback
+              </Text>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ImpressionTracker({ children }: { children: React.ReactNode }) {
+  const currentUser = useCurrentUser();
+  const node = useScrollAreaRef();
+
+  const { ref, inView } = useInView({
+    root: node?.current,
+    threshold: 0.5,
+  });
+
+  useEffect(() => {
+    console.log({ inView });
+  }, [inView]);
+
+  return <div ref={ref}>{children}</div>;
 }
 
 function AdPlaceholder({ size }: { size: string }) {

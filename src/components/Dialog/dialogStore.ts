@@ -64,6 +64,15 @@ export const useDialogStore = create<DialogStore>()(
   )
 );
 
+export function useIsLevelFocused() {
+  const levelRef = useRef<number>();
+  const level = useDialogStore((store) => store.dialogs.length);
+
+  if (!levelRef.current) levelRef.current = level;
+
+  return levelRef.current === level;
+}
+
 // used to track the modal stacking context (page modals).
 const useStackingContextStore = create<{
   stackingContext: number[];
