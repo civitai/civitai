@@ -21,10 +21,11 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
     if (recentlySeenIds === null) {
       throw new Error('SEEN_IMAGES redis key is null');
     }
-    if (!recentlySeenIds.length) return;
 
     const batches = chunk(recentlySeenIds, queryBatch);
     for (const batch of batches) {
+      if (!batch.length) continue;
+
       // find them in the db
       const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         SELECT id, "nsfwLevel"
