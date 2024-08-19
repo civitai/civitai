@@ -1,5 +1,6 @@
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -17,8 +18,10 @@ import {
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { createRecaptchaAssesment } from '~/server/recaptcha/client';
-import { getTransactionById } from '~/server/paddle/client';
+import { getPaddleSubscription, getTransactionById } from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { PaymentProvider } from '@prisma/client';
 
 export const createTransactionHandler = async ({
   ctx,
@@ -93,6 +96,35 @@ export const updateSubscriptionPlanHandler = async ({
       ...input,
       userId: ctx.user.id,
     });
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const getSubscriptionCancelManagementUrlHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const subscription = await getUserSubscription({ userId: ctx.user.id });
+    if (!subscription) {
+      throw throwNotFoundError('Subscription not found');
+    }
+
+    if (subscription.product.provider !== PaymentProvider.Paddle) {
+      throw throwBadRequestError('Current subscription is not managed by Paddle');
+    }
+
+    const paddleSubscription = await getPaddleSubscription({
+      subscriptionId: subscription.id,
+    });
+
+    if (!paddleSubscription) {
+      throw throwNotFoundError('Paddle subscription not found');
+    }
+
+    return paddleSubscription.managementUrls?.cancel;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

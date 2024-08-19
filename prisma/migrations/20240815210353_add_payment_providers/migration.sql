@@ -13,6 +13,10 @@ ALTER TABLE "Product" ADD COLUMN     "provider" "PaymentProvider" NOT NULL DEFAU
 -- AlterTable
 ALTER TABLE "Purchase" ADD COLUMN     "userId" INTEGER NOT NULL;
 
+-- AlterTable
+ALTER TABLE "Purchase" ALTER COLUMN "customerId" DROP NOT NULL;
+
+
 -- Update all the existing rows in the Purchase table to have the correct userId
 UPDATE "Purchase" p
 SET "userId" = u.id

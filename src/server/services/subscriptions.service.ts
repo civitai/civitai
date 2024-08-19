@@ -26,6 +26,7 @@ export const getPlans = async ({
       description: true,
       metadata: true,
       defaultPriceId: true,
+      provider: true,
       prices: {
         select: {
           id: true,

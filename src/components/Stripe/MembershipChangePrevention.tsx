@@ -29,6 +29,7 @@ import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PaymentProvider } from '@prisma/client';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -141,7 +142,7 @@ export const CancelMembershipFeedbackModal = () => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
-  const { vault, isLoading } = useQueryVault();
+  const { isLoading } = useQueryVault();
   const { trackAction } = useTrackEvent();
 
   return (
@@ -199,24 +200,100 @@ export const CancelMembershipFeedbackModal = () => {
   );
 };
 
+export const StripeCancelMembershipButton = ({
+  onClose,
+  hasUsedVaultStorage,
+}: {
+  onClose: () => void;
+  hasUsedVaultStorage: boolean;
+}) => {
+  const { mutate, isLoading: connectingToStripe } =
+    trpc.stripe.createCancelSubscriptionSession.useMutation({
+      async onSuccess({ url }) {
+        onClose();
+        Router.push(url);
+      },
+    });
+
+  return (
+    <Button
+      color="gray"
+      onClick={() => {
+        if (hasUsedVaultStorage) {
+          dialogStore.trigger({
+            component: VaultStorageDowngrade,
+            props: {
+              onContinue: () => {
+                mutate();
+              },
+            },
+          });
+        } else {
+          mutate();
+        }
+      }}
+      radius="xl"
+      loading={connectingToStripe}
+    >
+      Proceed to Cancel
+    </Button>
+  );
+};
+
+export const PaddleCancelMembershipButton = ({
+  onClose,
+  hasUsedVaultStorage,
+}: {
+  onClose: () => void;
+  hasUsedVaultStorage: boolean;
+}) => {
+  const { mutate, isLoading: connectingToStripe } =
+    trpc.paddle.getSubscriptionCancelManagementUrl.useMutation({
+      async onSuccess(url) {
+        if (url) {
+          onClose();
+          Router.push(url);
+        }
+      },
+    });
+
+  return (
+    <Button
+      color="gray"
+      onClick={() => {
+        if (hasUsedVaultStorage) {
+          dialogStore.trigger({
+            component: VaultStorageDowngrade,
+            props: {
+              onContinue: () => {
+                mutate();
+              },
+            },
+          });
+        } else {
+          mutate();
+        }
+      }}
+      radius="xl"
+      loading={connectingToStripe}
+    >
+      Proceed to Cancel
+    </Button>
+  );
+};
+
 export const CancelMembershipBenefitsModal = () => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
-  const { mutate, isLoading: connectingToStripe } =
-    trpc.stripe.createCancelSubscriptionSession.useMutation({
-      async onSuccess({ url }) {
-        handleClose();
-        Router.push(url);
-      },
-    });
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
+    useActiveSubscription();
 
   const product = subscription?.product;
   const details = product ? getPlanDetails(product, features) : null;
   const benefits = details?.benefits ?? [];
-  const hasUsedVaultStorage = vault && vault.usedStorageKb > 0;
+  const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
 
   return (
     <Modal {...dialog} size="md" title="You will lose the following if you cancel" radius="md">
@@ -232,27 +309,18 @@ export const CancelMembershipBenefitsModal = () => {
             </Paper>
           )}
           <Group grow>
-            <Button
-              color="gray"
-              onClick={() => {
-                if (hasUsedVaultStorage) {
-                  dialogStore.trigger({
-                    component: VaultStorageDowngrade,
-                    props: {
-                      onContinue: () => {
-                        mutate();
-                      },
-                    },
-                  });
-                } else {
-                  mutate();
-                }
-              }}
-              radius="xl"
-              loading={connectingToStripe}
-            >
-              Proceed to Cancel
-            </Button>
+            {subscriptionPaymentProvider === PaymentProvider.Stripe && (
+              <StripeCancelMembershipButton
+                onClose={handleClose}
+                hasUsedVaultStorage={hasUsedVaultStorage}
+              />
+            )}
+            {subscriptionPaymentProvider === PaymentProvider.Paddle && (
+              <PaddleCancelMembershipButton
+                onClose={handleClose}
+                hasUsedVaultStorage={hasUsedVaultStorage}
+              />
+            )}
             <Button color="blue" onClick={handleClose} radius="xl">
               Don&rsquo;t cancel plan
             </Button>

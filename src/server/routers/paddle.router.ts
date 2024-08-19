@@ -1,5 +1,6 @@
 import {
   createTransactionHandler,
+  getSubscriptionCancelManagementUrlHandler,
   processCompleteBuzzTransactionHandler,
   updateSubscriptionPlanHandler,
 } from '~/server/controllers/paddle.controller';
@@ -20,4 +21,7 @@ export const paddleRouter = router({
   updateSubscription: protectedProcedure
     .input(updateSubscriptionInputSchema)
     .mutation(updateSubscriptionPlanHandler),
+  getSubscriptionCancelManagementUrl: protectedProcedure.mutation(
+    getSubscriptionCancelManagementUrlHandler
+  ),
 });

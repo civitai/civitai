@@ -82,8 +82,9 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const querySchema = z.object({
-  downgraded: booleanString().optional(),
   tier: userTierSchema.optional(),
+  updated: booleanString().optional(),
+  downgraded: booleanString().optional(),
 });
 
 export default function UserMembership() {
@@ -97,6 +98,7 @@ export default function UserMembership() {
   const query = querySchema.safeParse(router.query);
   const isDrowngrade = query.success ? query.data?.downgraded : false;
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
+  const isUpdate = query.success ? query.data?.updated : false;
 
   if (subscriptionLoading || !subscription) {
     return (
@@ -125,6 +127,13 @@ export default function UserMembership() {
                   You have successfully downgraded your membership to the{' '}
                   {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan to
                   take effect. You may refresh the page to see the changes.
+                </Alert>
+              )}
+              {isUpdate && (
+                <Alert>
+                  Your membership has been successfully updated. It may take a few seconds for your
+                  new plan to take effect. If you don&rsquo;t see the changes after refreshing the
+                  page in a few minutes, please contact support.
                 </Alert>
               )}
               {subscription?.isBadState && (

@@ -21,7 +21,11 @@ export const useActiveSubscription = ({
       !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
 
-  return { subscription, subscriptionLoading: !isMember ? false : isLoading || isFetching };
+  return {
+    subscription,
+    subscriptionLoading: !isMember ? false : isLoading || isFetching,
+    subscriptionPaymentProvider: subscription?.product?.provider,
+  };
 };
 
 export const useCanUpgrade = () => {

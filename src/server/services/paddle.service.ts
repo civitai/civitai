@@ -252,7 +252,7 @@ export const upsertSubscription = async (
   const startingNewSubscription =
     isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
 
-  if (isCancelingSubscription && subscriptionNotification.canceledAt === null) {
+  if (isCancelingSubscription && subscriptionNotification.status === 'canceled') {
     // immediate cancel:
     log('upsertSubscription :: Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
@@ -282,9 +282,10 @@ export const upsertSubscription = async (
     productId: mainSubscriptionItem.price?.productId as string,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
     cancelAt: null,
-    canceledAt: subscriptionNotification.canceledAt
-      ? new Date(subscriptionNotification.canceledAt)
-      : null,
+    canceledAt:
+      subscriptionNotification.scheduledChange?.action === 'cancel'
+        ? new Date(subscriptionNotification.scheduledChange.effectiveAt)
+        : null,
     currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
       ? new Date(subscriptionNotification.currentBillingPeriod?.startsAt)
       : undefined,
@@ -433,17 +434,28 @@ export const updateSubscriptionPlan = async ({
   }
 
   try {
-    await updatePaddleSubscription({
-      subscriptionId: subscription.id,
-      items: [
-        {
-          priceId,
-          quantity: 1,
-        },
-      ],
-      prorationBillingMode: 'full_immediately',
-      onPaymentFailure: 'prevent_change',
-    });
+    if (
+      subscription.priceId === priceId &&
+      paddleSubscription.scheduledChange?.action === 'cancel'
+    ) {
+      // Treat as resume subscription:
+      await updatePaddleSubscription({
+        subscriptionId: subscription.id,
+        scheduledChange: null,
+      });
+    } else if (subscription.priceId !== priceId) {
+      await updatePaddleSubscription({
+        subscriptionId: subscription.id,
+        items: [
+          {
+            priceId,
+            quantity: 1,
+          },
+        ],
+        prorationBillingMode: 'full_immediately',
+        onPaymentFailure: 'prevent_change',
+      });
+    }
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
