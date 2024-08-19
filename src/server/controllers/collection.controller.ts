@@ -249,7 +249,7 @@ export const bulkSaveItemsHandler = async ({
       isModerator,
     });
 
-    const resp = await bulkSaveItems({ input: { ...input, userId }, permissions });
+    const resp = await bulkSaveItems({ input: { ...input, userId, isModerator }, permissions });
 
     for (const imgId of resp.imageIds) {
       await updateEntityMetric({
@@ -474,7 +474,7 @@ export const addSimpleImagePostHandler = async ({
       )
     );
     const imageIds = postImages.map((image) => image.id);
-    await bulkSaveItems({ input: { collectionId, imageIds, userId }, permissions });
+    await bulkSaveItems({ input: { collectionId, imageIds, userId, isModerator }, permissions });
 
     return {
       post,
