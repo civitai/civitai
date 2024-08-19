@@ -228,8 +228,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     Upgrade to {meta?.tier}
                   </Button>
                 ) : (
-                  <SubscribeButton priceId={priceId}>
-                    <Button radius="xl" {...btnProps} disabled={disabledDueToProvider}>
+                  <SubscribeButton priceId={priceId} disabled={disabledDueToProvider}>
+                    <Button radius="xl" {...btnProps}>
                       {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
                     </Button>
                   </SubscribeButton>

@@ -69,7 +69,9 @@ export default function Pricing() {
   const currentMembershipUnavailable =
     !!subscription &&
     !productsLoading &&
-    !(products ?? []).find((p) => p.id === subscription.product.id);
+    !(products ?? []).find((p) => p.id === subscription.product.id) &&
+    // Ensures we have products from the current provider.
+    (products ?? []).some((p) => p.provider === subscription.product.provider);
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
   const metadata = (subscription?.product?.metadata ?? {
@@ -148,6 +150,11 @@ export default function Pricing() {
                 <Text lh={1.2}>
                   You are still able to view and manage your subscription, but may not be able to
                   renew it soon.
+                </Text>
+
+                <Text lh={1.2}>
+                  You can still manage your subscription clicking{' '}
+                  <Anchor href="/user/membership">here</Anchor> to view your current benefits.
                 </Text>
               </Stack>
             </AlertWithIcon>

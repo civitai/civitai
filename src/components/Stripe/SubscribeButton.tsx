@@ -14,7 +14,7 @@ import { PaymentProvider } from '@prisma/client';
 import { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 
-function StripeSubscribeButton({ children, priceId, onSuccess }: Props) {
+function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
@@ -52,18 +52,18 @@ function StripeSubscribeButton({ children, priceId, onSuccess }: Props) {
         ? children({
             onClick: handleClick,
             loading: isLoading,
-            disabled: !isLoading && mutateCount > 0,
+            disabled: (!isLoading && mutateCount > 0) || disabled,
           })
         : cloneElement(children, {
             onClick: handleClick,
             loading: isLoading,
-            disabled: !isLoading && mutateCount > 0,
+            disabled: (!isLoading && mutateCount > 0) || disabled,
           })}
     </LoginPopover>
   );
 }
 
-function PaddleSubscribeButton({ children, priceId, onSuccess }: Props) {
+function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
@@ -134,18 +134,18 @@ function PaddleSubscribeButton({ children, priceId, onSuccess }: Props) {
         ? children({
             onClick: handleClick,
             loading: isLoading,
-            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading,
+            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading || disabled,
           })
         : cloneElement(children, {
             onClick: handleClick,
             loading: isLoading,
-            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading,
+            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading || disabled,
           })}
     </LoginPopover>
   );
 }
 
-export function SubscribeButton({ children, priceId, onSuccess }: Props) {
+export function SubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
   const { subscriptionPaymentProvider } = useActiveSubscription();
@@ -179,7 +179,7 @@ export function SubscribeButton({ children, priceId, onSuccess }: Props) {
 
   if (provider === PaymentProvider.Stripe) {
     return (
-      <StripeSubscribeButton priceId={priceId} onSuccess={onSuccess}>
+      <StripeSubscribeButton priceId={priceId} onSuccess={onSuccess} disabled={disabled}>
         {children}
       </StripeSubscribeButton>
     );
@@ -188,7 +188,7 @@ export function SubscribeButton({ children, priceId, onSuccess }: Props) {
   if (provider === PaymentProvider.Paddle) {
     // Default to Paddle:
     return (
-      <PaddleSubscribeButton priceId={priceId} onSuccess={onSuccess}>
+      <PaddleSubscribeButton priceId={priceId} onSuccess={onSuccess} disabled={disabled}>
         {children}
       </PaddleSubscribeButton>
     );
@@ -203,4 +203,5 @@ type Props = {
     | ((props: { onClick: () => void; disabled: boolean; loading: boolean }) => React.ReactElement);
   priceId: string;
   onSuccess?: () => void;
+  disabled?: boolean;
 };
