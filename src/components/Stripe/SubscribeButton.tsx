@@ -1,5 +1,5 @@
 import { useIsMutating } from '@tanstack/react-query';
-import { cloneElement } from 'react';
+import { cloneElement, useCallback, useEffect } from 'react';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { trpc } from '~/utils/trpc';
@@ -8,6 +8,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Button, Stack, Text } from '@mantine/core';
 import { openContextModal } from '@mantine/modals';
 import { showErrorNotification } from '~/utils/notifications';
+import { usePaddle } from '~/providers/PaddleProvider';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { PaymentProvider } from '@prisma/client';
+import { CheckoutEventsData } from '@paddle/paddle-js';
 
 export function SubscribeButton({
   children,
@@ -23,29 +27,54 @@ export function SubscribeButton({
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
-  const { mutate, isLoading } = trpc.stripe.createSubscriptionSession.useMutation({
-    async onSuccess({ sessionId, url }) {
-      await currentUser?.refresh();
-      await queryUtils.stripe.getUserSubscription.reset();
-      onSuccess?.();
-      if (url) Router.push(url);
-      else if (sessionId) {
-        const stripe = await getClientStripe();
-        if (!stripe) {
-          return;
+  const paymentProvider = usePaymentProvider();
+  const { paddle, emitter } = usePaddle();
+  const { mutate: stripeCreateSubscriptionSession, isLoading } =
+    trpc.stripe.createSubscriptionSession.useMutation({
+      async onSuccess({ sessionId, url }) {
+        await currentUser?.refresh();
+        await queryUtils.subscriptions.getUserSubscription.reset();
+        onSuccess?.();
+        if (url) Router.push(url);
+        else if (sessionId) {
+          const stripe = await getClientStripe();
+          if (!stripe) {
+            return;
+          }
+          await stripe.redirectToCheckout({ sessionId });
         }
-        await stripe.redirectToCheckout({ sessionId });
-      }
-    },
-    async onError(error) {
-      showErrorNotification({
-        title: 'Sorry, there was an error while trying to subscribe. Please try again later',
-        error: new Error(error.message),
-      });
-    },
-  });
+      },
+      async onError(error) {
+        showErrorNotification({
+          title: 'Sorry, there was an error while trying to subscribe. Please try again later',
+          error: new Error(error.message),
+        });
+      },
+    });
 
-  const handleClick = () => mutate({ priceId });
+  const handleClick = () => {
+    if (paymentProvider === PaymentProvider.Stripe) {
+      stripeCreateSubscriptionSession({ priceId });
+    }
+
+    if (paymentProvider === PaymentProvider.Paddle) {
+      paddle?.Checkout.open({
+        items: [
+          {
+            priceId,
+            quantity: 1,
+          },
+        ],
+        customer: {
+          email: currentUser?.email as string,
+        },
+        settings: {
+          showAddDiscounts: false,
+          theme: 'dark',
+        },
+      });
+    }
+  };
 
   const handleAddEmail = () => {
     openContextModal({
@@ -57,6 +86,26 @@ export function SubscribeButton({
       innerProps: {},
     });
   };
+
+  const trackCheckout = useCallback(
+    async (data?: CheckoutEventsData) => {
+      if (data?.items.some((item) => item.price_id === priceId)) {
+        // This price was purchased...:
+        await currentUser?.refresh();
+        onSuccess?.();
+      }
+    },
+    [priceId, currentUser, onSuccess]
+  );
+
+  useEffect(() => {
+    if (emitter && paymentProvider === PaymentProvider.Paddle) {
+      emitter.on('checkout.completed', trackCheckout);
+    }
+    return () => {
+      emitter?.off('checkout.completed', trackCheckout);
+    };
+  }, [emitter, priceId, paymentProvider, trackCheckout]);
 
   if (currentUser && !currentUser.email)
     return (

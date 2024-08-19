@@ -1,6 +1,12 @@
 import { Currency, PaymentProvider } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  handleLogError,
+  sleep,
+  throwBadRequestError,
+  throwNotFoundError,
+  withRetries,
+} from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -16,10 +22,22 @@ import {
   Transaction,
   ProductNotification,
   PriceNotification,
+  EventName,
+  SubscriptionNotification,
+  TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { number } from 'zod';
+import { getPlans } from '~/server/services/subscriptions.service';
+import { toDateTime } from '~/server/services/stripe.service';
+import { playfab } from '~/server/playfab/client';
+import {
+  SubscriptionProductMetadata,
+  subscriptionProductMetadataSchema,
+} from '~/server/schema/subscriptions.schema';
+import { getOrCreateVault } from '~/server/services/vault.service';
+import { prod } from '@tensorflow/tfjs';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -179,4 +197,205 @@ export const upsertPriceRecord = async (price: PriceNotification) => {
   }
 
   return priceData;
+};
+
+export const upsertSubscription = async (
+  subscriptionNotification: SubscriptionNotification,
+  eventDate: Date,
+  eventName: EventName
+) => {
+  const isUpdatingSubscription = eventName === EventName.SubscriptionUpdated;
+  const isCreatingSubscription = eventName === EventName.SubscriptionActivated;
+  const isCancelingSubscription = eventName === EventName.SubscriptionCanceled;
+
+  const subscriptionProducts = await getPlans({ paymentProvider: PaymentProvider.Paddle });
+
+  const mainSubscriptionItem = subscriptionNotification.items.find((i) => {
+    return i.status === 'active' && subscriptionProducts.some((p) => p.id === i.price?.productId);
+  });
+
+  if (!mainSubscriptionItem) {
+    throw throwNotFoundError('No active subscription product found');
+  }
+
+  if (isUpdatingSubscription) {
+    // We need to wait a bit to avoid race conditions
+    await sleep(5000);
+  }
+
+  const user = await dbWrite.user.findFirst({
+    where: { paddleCustomerId: subscriptionNotification.customerId },
+    select: {
+      id: true,
+      paddleCustomerId: true,
+      subscriptionId: true,
+      subscription: {
+        select: { updatedAt: true, status: true },
+      },
+    },
+  });
+
+  if (!user)
+    throw throwNotFoundError(
+      `User with customerId: ${subscriptionNotification.customerId} not found`
+    );
+
+  const userHasSubscription = !!user.subscriptionId;
+  const isSameSubscriptionItem = user.subscriptionId === subscriptionNotification.id;
+
+  const startingNewSubscription =
+    isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
+
+  log('Subscription event:', eventName);
+
+  if (isCancelingSubscription && subscriptionNotification.canceledAt === null) {
+    // immediate cancel:
+    log('Subscription canceled immediately');
+    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    await getMultipliersForUser(user.id, true);
+    await invalidateSession(user.id);
+    return;
+  }
+
+  if (startingNewSubscription) {
+    log('Subscription id changed, deleting old subscription');
+    if (user.subscriptionId) {
+      await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    }
+    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
+  } else if (userHasSubscription && isCreatingSubscription) {
+    log('Subscription already up to date');
+    return;
+  }
+
+  const data = {
+    id: subscriptionNotification.id,
+    userId: user.id,
+    metadata: subscriptionNotification.customData ?? {},
+    status: subscriptionNotification.status,
+    // as far as I can tell, there are never multiple items in this array
+    priceId: mainSubscriptionItem.price?.id as string,
+    productId: mainSubscriptionItem.price?.productId as string,
+    cancelAtPeriodEnd: isCancelingSubscription ? true : false,
+    cancelAt: null,
+    canceledAt: subscriptionNotification.canceledAt
+      ? new Date(subscriptionNotification.canceledAt)
+      : null,
+    currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
+      ? new Date(subscriptionNotification.currentBillingPeriod?.startsAt)
+      : undefined,
+    currentPeriodEnd: subscriptionNotification.currentBillingPeriod?.endsAt
+      ? new Date(subscriptionNotification.currentBillingPeriod?.endsAt)
+      : undefined,
+    createdAt: new Date(subscriptionNotification.createdAt),
+    endedAt: null,
+    updatedAt: eventDate,
+  };
+
+  await dbWrite.$transaction([
+    dbWrite.customerSubscription.upsert({
+      where: { id: data.id },
+      update: data,
+      create: {
+        ...data,
+        currentPeriodStart: new Date(
+          subscriptionNotification.currentBillingPeriod?.startsAt as string
+        ),
+        currentPeriodEnd: new Date(subscriptionNotification.currentBillingPeriod?.endsAt as string),
+      },
+    }),
+    dbWrite.user.update({
+      where: { id: user.id },
+      data: { subscriptionId: subscriptionNotification.id },
+    }),
+  ]);
+
+  if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
+    await playfab.trackEvent(user.id, {
+      eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
+      productId: data.productId,
+    });
+  }
+
+  const userVault = await dbRead.vault.findFirst({
+    where: { userId: user.id },
+  });
+
+  // Get Stripe details on the vault:
+  const product = await dbRead.product.findFirst({
+    where: { id: data.productId },
+  });
+
+  if (data.status === 'canceled' && userVault) {
+    await dbWrite.vault.update({
+      where: { userId: user.id },
+      data: {
+        storageKb: 0, // Reset storage to 0
+      },
+    });
+  } else if (data.status === 'active') {
+    const parsedMeta = subscriptionProductMetadataSchema.safeParse(product?.metadata);
+    const vault = userVault ? userVault : await getOrCreateVault({ userId: user.id });
+    if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {
+      await dbWrite.vault.update({
+        where: { userId: vault.userId },
+        data: {
+          storageKb: parsedMeta.data.vaultSizeKb,
+        },
+      });
+    }
+  }
+
+  await invalidateSession(user.id);
+  await getMultipliersForUser(user.id, true);
+};
+
+export const manageSubscriptionTransactionComplete = async (
+  transactionNotification: TransactionNotification
+) => {
+  if (!transactionNotification.subscriptionId) {
+    return;
+  }
+  // Check if user exists and has a customerId
+  // Use write db to avoid replication lag between webhook requests
+  const user = await dbWrite.user.findUniqueOrThrow({
+    where: { paddleCustomerId: transactionNotification.customerId as string },
+    select: { id: true, paddleCustomerId: true },
+  });
+
+  const purchases = transactionNotification.items.map((data) => ({
+    userId: user.id,
+    priceId: data.price?.id,
+    productId: data.price?.productId as string | undefined,
+    status: 'paid',
+  }));
+
+  await dbWrite.purchase.createMany({ data: purchases });
+
+  const plans = await getPlans({ paymentProvider: PaymentProvider.Paddle });
+
+  // Don't check for subscription active because there is a chance it hasn't been updated yet
+  const paidPlans = plans.filter((p) => {
+    return transactionNotification.items.some((i) => i.price?.productId === p.id);
+  });
+
+  if (paidPlans.length > 0) {
+    await withRetries(() => {
+      return Promise.all(
+        paidPlans.map(async (p) => {
+          const meta = p.metadata as SubscriptionProductMetadata;
+          const externalTransactionId = `transactionId:${transactionNotification.id}-product:${p.id}`;
+          return createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: user.id,
+            type: TransactionType.Purchase,
+            externalTransactionId,
+            amount: meta.monthlyBuzz ?? 3000, // assume a min of 3000.
+            description: `Membership bonus`,
+            details: { paddleTransactionId: transactionNotification.id, productId: p.id },
+          });
+        })
+      );
+    }).catch(handleLogError);
+  }
 };

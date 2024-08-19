@@ -10,12 +10,17 @@ import {
   ProductNotification,
   ProductCreatedEvent,
   PriceCreatedEvent,
+  SubscriptionActivatedEvent,
+  SubscriptionNotification,
+  TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import {
+  manageSubscriptionTransactionComplete,
   processCompleteBuzzTransaction,
   upsertPriceRecord,
   upsertProductRecord,
+  upsertSubscription,
 } from '~/server/services/paddle.service';
 
 // Stripe requires the raw body to construct the event.
@@ -40,6 +45,10 @@ const relevantEvents = new Set([
   EventName.ProductUpdated,
   EventName.PriceCreated,
   EventName.PriceUpdated,
+  // Let's try these main ones:
+  EventName.SubscriptionActivated,
+  EventName.SubscriptionUpdated,
+  EventName.SubscriptionCanceled,
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -66,7 +75,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
-    console.log(event.eventType);
     if (relevantEvents.has(event.eventType)) {
       try {
         switch (event.eventType) {
@@ -79,6 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             if (customData.type === 'buzzPurchase') {
               await processCompleteBuzzTransaction(event.data as Transaction);
+            } else if (data.subscriptionId) {
+              await manageSubscriptionTransactionComplete(event.data as TransactionNotification);
             }
 
             break;
@@ -92,6 +102,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.PriceUpdated: {
             const data = (event as PriceCreatedEvent).data;
             await upsertPriceRecord(data);
+            break;
+          }
+          case EventName.SubscriptionActivated:
+          case EventName.SubscriptionUpdated:
+          case EventName.SubscriptionCanceled: {
+            const data = event.data;
+            upsertSubscription(
+              data as SubscriptionNotification,
+              new Date(event.occurredAt),
+              event.eventType
+            );
             break;
           }
           default:

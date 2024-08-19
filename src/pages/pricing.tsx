@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { PlanCard, getPlanDetails } from '~/components/Stripe/PlanCard';
+import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import {
   IconCalendarDue,
   IconExclamationMark,
@@ -30,7 +30,7 @@ import {
 } from '@tabler/icons-react';
 import { DonateButton } from '~/components/Stripe/DonateButton';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PlanBenefitList, benefitIconSize } from '~/components/Stripe/PlanBenefitList';
+import { PlanBenefitList, benefitIconSize } from '~/components/Subscriptions/PlanBenefitList';
 import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
 import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
@@ -44,9 +44,10 @@ import {
   useActiveSubscription,
 } from '~/components/Stripe/memberships.util';
 import { formatDate } from '~/utils/date-helpers';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export default function Pricing() {
   const router = useRouter();
@@ -55,6 +56,7 @@ export default function Pricing() {
     returnUrl: string;
     reason: JoinRedirectReason;
   };
+  const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
 
@@ -70,8 +72,12 @@ export default function Pricing() {
     !(products ?? []).find((p) => p.id === subscription.product.id);
 
   const freePlanDetails = getPlanDetails(constants.freeMembershipDetails, features);
-  const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
+  const metadata = (subscription?.product?.metadata ?? {
+    tier: 'free',
+  }) as SubscriptionProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
+  const activeSubscriptionIsNotDefaultProvider =
+    subscription && subscription?.product?.provider !== paymentProvider;
 
   return (
     <>
@@ -122,6 +128,26 @@ export default function Pricing() {
                 <Text lh={1.2}>
                   Alternatively, click <Anchor href="/user/membership">here</Anchor> to view all
                   your benefits
+                </Text>
+              </Stack>
+            </AlertWithIcon>
+          )}
+          {activeSubscriptionIsNotDefaultProvider && (
+            <AlertWithIcon
+              color="red"
+              iconColor="red"
+              icon={<IconInfoTriangleFilled size={20} strokeWidth={2.5} />}
+              iconSize={28}
+              py={11}
+            >
+              <Stack spacing={0}>
+                <Text lh={1.2}>
+                  Uh oh! Your active subscription is not using our default payment provider. We are
+                  working on this issue and will notify you when it is resolved.
+                </Text>
+                <Text lh={1.2}>
+                  You are still able to view and manage your subscription, but may not be able to
+                  renew it soon.
                 </Text>
               </Stack>
             </AlertWithIcon>
@@ -271,6 +297,6 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ssg }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
-    await ssg?.stripe.getUserSubscription.prefetch();
+    await ssg?.subscriptions.getUserSubscription.prefetch();
   },
 });

@@ -14,13 +14,13 @@ import {
 import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -76,10 +76,13 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     );
   }
 
-  const subscriptionMetadata = subscription?.product?.metadata as ProductMetadata;
+  const subscriptionMetadata = subscription?.product?.metadata as SubscriptionProductMetadata;
 
   const targetPlan = products.find((product, index) => {
-    const metadata = (product?.metadata ?? { monthlyBuzz: 0, tier: 'free' }) as ProductMetadata;
+    const metadata = (product?.metadata ?? {
+      monthlyBuzz: 0,
+      tier: 'free',
+    }) as SubscriptionProductMetadata;
     if (
       subscription &&
       subscriptionMetadata &&
@@ -96,7 +99,7 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
     return null;
   }
 
-  const metadata = (targetPlan.metadata ?? {}) as ProductMetadata;
+  const metadata = (targetPlan.metadata ?? {}) as SubscriptionProductMetadata;
   const { image, benefits } = getPlanDetails(targetPlan, featureFlags);
 
   const targetTier = metadata.tier ?? 'free';

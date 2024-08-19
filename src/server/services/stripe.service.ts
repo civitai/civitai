@@ -28,56 +28,13 @@ import {
 } from './buzz.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { sleep } from '~/server/utils/concurrency-helpers';
+import {
+  SubscriptionProductMetadata,
+  subscriptionProductMetadataSchema,
+} from '~/server/schema/subscriptions.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('stripe', 'blue');
-
-export const getUserSubscription = async ({ userId }: Schema.GetUserSubscriptionInput) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
-    where: { userId },
-    select: {
-      id: true,
-      status: true,
-      cancelAtPeriodEnd: true,
-      cancelAt: true,
-      canceledAt: true,
-      currentPeriodStart: true,
-      currentPeriodEnd: true,
-      createdAt: true,
-      endedAt: true,
-      product: {
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          metadata: true,
-        },
-      },
-      price: {
-        select: {
-          id: true,
-          unitAmount: true,
-          interval: true,
-          intervalCount: true,
-          currency: true,
-          active: true,
-        },
-      },
-    },
-  });
-
-  if (!subscription)
-    throw throwNotFoundError(`Could not find subscription for user with id: ${userId}`);
-
-  return {
-    ...subscription,
-    price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
-    isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
-      subscription.status
-    ),
-  };
-};
-export type StripeSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
 export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) => {
   const stripe = await getServerStripe();
@@ -138,8 +95,8 @@ export const createSubscribeSession = async ({
   );
   const activeProduct = membershipProducts.find((p) => p.id === subscriptionItem?.price.product);
   const priceProduct = products.find((p) => p.id === price.product);
-  const oldTier = ((activeProduct?.metadata ?? {}) as Schema.ProductMetadata)?.tier;
-  const newTier = ((priceProduct?.metadata ?? {}) as Schema.ProductMetadata).tier;
+  const oldTier = ((activeProduct?.metadata ?? {}) as SubscriptionProductMetadata)?.tier;
+  const newTier = ((priceProduct?.metadata ?? {}) as SubscriptionProductMetadata).tier;
 
   const isUpgrade =
     activeSubscription &&
@@ -179,7 +136,7 @@ export const createSubscribeSession = async ({
       }
 
       const isFounder =
-        (activeProduct?.metadata as Schema.ProductMetadata)?.tier ===
+        (activeProduct?.metadata as SubscriptionProductMetadata)?.tier ===
         constants.memberships.founderDiscount.tier;
 
       const discounts = [];
@@ -530,7 +487,7 @@ export const upsertSubscription = async (
       },
     });
   } else if (data.status === 'active') {
-    const parsedMeta = Schema.productMetadataSchema.safeParse(product?.metadata);
+    const parsedMeta = subscriptionProductMetadataSchema.safeParse(product?.metadata);
     const vault = userVault ? userVault : await getOrCreateVault({ userId: user.id });
     if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {
       await dbWrite.vault.update({
@@ -684,7 +641,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       return;
     }
 
-    const billedProductMeta = (billedProduct?.metadata ?? {}) as Schema.ProductMetadata;
+    const billedProductMeta = (billedProduct?.metadata ?? {}) as SubscriptionProductMetadata;
     const mainPurchase = purchases.find((p) => p.productId === billedProduct?.id);
 
     if (!mainPurchase) {

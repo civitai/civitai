@@ -1,7 +1,7 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useActiveSubscription = ({
@@ -16,7 +16,7 @@ export const useActiveSubscription = ({
     data: subscription,
     isLoading,
     isFetching,
-  } = trpc.stripe.getUserSubscription.useQuery(undefined, {
+  } = trpc.subscriptions.getUserSubscription.useQuery(undefined, {
     enabled:
       !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
@@ -44,7 +44,7 @@ export const useCanUpgrade = () => {
     return false;
   }
 
-  const metadata = subscription?.product?.metadata as ProductMetadata;
+  const metadata = subscription?.product?.metadata as SubscriptionProductMetadata;
 
   return (
     constants.memberships.tierOrder.indexOf(metadata.tier) + 1 <

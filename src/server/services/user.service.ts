@@ -670,6 +670,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     isModerator: response.isModerator ?? undefined,
     deletedAt: response.deletedAt ?? undefined,
     customerId: response.customerId ?? undefined,
+    paddleCustomerId: response.paddleCustomerId ?? undefined,
     subscriptionId: response.subscriptionId ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,

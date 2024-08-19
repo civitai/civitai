@@ -10,37 +10,30 @@ import {
   Button,
   ButtonProps,
   ThemeIconVariant,
-  Tooltip,
-  Badge,
-  Alert,
   Box,
 } from '@mantine/core';
 import {
-  IconAdCircleOff,
   IconBolt,
   IconChevronDown,
   IconCloud,
-  IconVideo,
-  IconPhotoPlus,
   IconHexagon,
   IconHexagonPlus,
   IconList,
   IconPhotoAi,
-  IconInfoCircle,
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { benefitIconSize, BenefitItem, PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { CurrencyBadge } from '../Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import {
+  benefitIconSize,
+  BenefitItem,
+  PlanBenefitList,
+} from '~/components/Subscriptions/PlanBenefitList';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
-import type { StripeSubscription } from '~/server/services/stripe.service';
+import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { useState } from 'react';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { isDefined } from '~/utils/type-guards';
-import { abbreviateNumber, formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
@@ -51,13 +44,13 @@ import {
   DowngradeFeedbackModal,
   MembershipUpgradeModal,
 } from '~/components/Stripe/MembershipChangePrevention';
-import { IconX } from '@tabler/icons-react';
-import { formatDate } from '~/utils/date-helpers';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { NextLink } from '@mantine/next';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
-  subscription?: StripeSubscription | null;
+  subscription?: UserSubscription | null;
 };
 
 const subscribeBtnProps: Record<string, Partial<ButtonProps>> = {
@@ -84,8 +77,8 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const hasActiveSubscription = subscription?.status === 'active';
   const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
   const { classes } = useStyles();
-  const meta = (product.metadata ?? {}) as ProductMetadata;
-  const subscriptionMeta = (subscription?.product.metadata ?? {}) as ProductMetadata;
+  const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
+  const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
   const isUpgrade =
     hasActiveSubscription &&
     constants.memberships.tierOrder.indexOf(meta.tier) >
@@ -109,7 +102,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     ? subscribeBtnProps.downgrade
     : subscribeBtnProps.subscribe;
 
-  const metadata = (subscription?.product?.metadata ?? { tier: 'free' }) as ProductMetadata;
+  const metadata = (subscription?.product?.metadata ?? {
+    tier: 'free',
+  }) as SubscriptionProductMetadata;
   const appliesForDiscount =
     !isActivePlan && appliesForFounderDiscount(metadata?.tier) && features.membershipsV2;
 
@@ -191,11 +186,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             {priceId && (
               <>
                 {isActivePlan ? (
-                  <ManageSubscriptionButton>
-                    <Button radius="xl" {...btnProps}>
-                      Manage your Membership
-                    </Button>
-                  </ManageSubscriptionButton>
+                  <Button radius="xl" {...btnProps} component={NextLink} href="/user/membership">
+                    Manage your Membership
+                  </Button>
                 ) : isDowngrade ? (
                   <Button
                     radius="xl"
@@ -252,7 +245,7 @@ export const getPlanDetails: (
   product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
   features: FeatureAccess
 ) => PlanMeta = (product: Pick<SubscriptionPlan, 'metadata' | 'name'>, features: FeatureAccess) => {
-  const metadata = (product.metadata ?? {}) as ProductMetadata;
+  const metadata = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const planMeta = {
     name: product?.name ?? 'Supporter Tier',
     image:

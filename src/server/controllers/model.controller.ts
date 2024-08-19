@@ -757,6 +757,7 @@ export const getDownloadCommandHandler = async ({
       (isMod ||
         modelVersion?.model?.status === 'Published' ||
         modelVersion.model.userId === userId);
+
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();

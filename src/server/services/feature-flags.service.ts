@@ -76,6 +76,7 @@ const featureFlags = createFeatureFlags({
   creatorComp: ['user'],
   experimentalGen: ['mod'],
   imageIndex: ['granted'],
+  monetaryTransactions: ['public'], // Will be using for the safe site.
   customPaymentProvider: ['mod', 'dev'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

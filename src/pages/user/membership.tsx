@@ -25,21 +25,20 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '@mantine/next';
 import { trpc } from '~/utils/trpc';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import {
   IconDotsVertical,
   IconInfoCircle,
   IconInfoTriangleFilled,
   IconRotateClockwise,
 } from '@tabler/icons-react';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { constants } from '~/server/common/constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useRouter } from 'next/router';
 import { userTierSchema } from '~/server/schema/user.schema';
@@ -112,7 +111,6 @@ export default function UserMembership() {
   const price = subscription.price;
   const product = subscription.product;
   const { image, benefits } = getPlanDetails(subscription.product, features);
-  console.log(price);
 
   return (
     <>
@@ -222,9 +220,9 @@ export default function UserMembership() {
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
-                          <ManageSubscriptionButton>
+                          <StripeManageSubscriptionButton>
                             <Menu.Item>View Details</Menu.Item>
-                          </ManageSubscriptionButton>
+                          </StripeManageSubscriptionButton>
                           {!subscription?.canceledAt && (
                             <Menu.Item
                               onClick={() => {

@@ -15,7 +15,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { PlanCard } from '~/components/Stripe/PlanCard';
+import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

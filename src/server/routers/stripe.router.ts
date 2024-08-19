@@ -2,7 +2,6 @@ import {
   createCustomerHandler,
   createSubscriptionSessionHandler,
   createManageSubscriptionSessionHandler,
-  getUserSubscriptionHandler,
   createDonateSessionHandler,
   getBuzzPackagesHandler,
   createBuzzSessionHandler,
@@ -14,7 +13,6 @@ import { publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import * as Schema from '../schema/stripe.schema';
 
 export const stripeRouter = router({
-  getUserSubscription: publicProcedure.query(getUserSubscriptionHandler),
   createCustomer: protectedProcedure
     .input(Schema.createCustomerSchema)
     .mutation(createCustomerHandler),
