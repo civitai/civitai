@@ -31,9 +31,6 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
 
       const existedAtUnix = new Date().getTime();
 
-      // TODO temp, remove
-      console.log(`full-image-existence :: running ${start} - ${end}`);
-
       // find images in db
       const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         SELECT id, "nsfwLevel"
@@ -58,13 +55,11 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       start = end + 1;
     }
 
-    // TODO re-enable not exists check, but why are we missing the last 5 million?
-
     const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
     if (index) {
       const deleteFilters = [
         makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
-        // makeMeiliImageSearchFilter('existedAtUnix', `NOT EXISTS`),
+        makeMeiliImageSearchFilter('existedAtUnix', `NOT EXISTS`),
       ];
       await index.deleteDocuments({
         filter: `(${deleteFilters.join(' OR ')})`,
