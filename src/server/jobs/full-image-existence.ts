@@ -8,7 +8,7 @@ import { makeMeiliImageSearchFilter } from '~/server/services/image.service';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
-const queryBatch = 1e6;
+const queryBatch = 2e5;
 
 export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
@@ -57,12 +57,16 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
 
     const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
     if (index) {
+      const deleteFilters = [
+        makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+        makeMeiliImageSearchFilter('existedAtUnix', `NOT EXISTS`),
+      ];
       await index.deleteDocuments({
-        filter: makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+        filter: `(${deleteFilters.join(' OR ')})`,
       });
     }
 
-    // TODO if the above doesnt work...
+    // if the above doesnt work...
     // if (metricsSearchClient) {
     //   const filters: string[] = [];
     //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`));
