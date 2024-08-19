@@ -1505,7 +1505,7 @@ function strArray(arr: (string | number)[]) {
 }
 
 type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
-const makeMeiliImageSearchFilter = (
+export const makeMeiliImageSearchFilter = (
   field: MetricsImageFilterableAttribute,
   criteria: string
 ): MeiliImageFilter => {
@@ -1543,6 +1543,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // Filter
   //------------------------
   const filters: string[] = [];
+
+  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  if (lastExistedAt) {
+    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1648,24 +1653,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
+    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 
     const filtered = results.hits.filter((hit) => {
+      // check for good data
+      if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
     });
 
     // TODO maybe grab more if the number is now too low?
-
-    const metrics = {
-      hits: results.hits.length,
-      filtered: filtered.length,
-      total: results.estimatedTotalHits,
-      processingTimeMs: results.processingTimeMs,
-    };
     // console.log({ input: removeEmpty(input), request });
 
     let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
@@ -1704,6 +1705,24 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         },
       };
     });
+
+    redis.packed
+      .sAdd(
+        REDIS_KEYS.QUEUES.SEEN_IMAGES,
+        fullData.map((i) => i.id)
+      )
+      .catch((e) => {
+        const err = e as Error;
+        logToAxiom(
+          {
+            type: 'search-redis-error',
+            error: err.message,
+            cause: err.cause,
+            stack: err.stack,
+          },
+          'temp-search'
+        ).catch();
+      });
 
     return {
       data: fullData,

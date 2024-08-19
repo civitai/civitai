@@ -147,7 +147,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data',
+    RESOURCE_DATA: 'packed:generation:resource-data-2',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
@@ -186,8 +186,12 @@ export const REDIS_KEYS = {
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
   },
+  INDEX_UPDATES: {
+    IMAGE_METRIC: 'index-updates:image-metric',
+  },
   QUEUES: {
     BUCKETS: 'queues:buckets',
+    SEEN_IMAGES: 'queues:seen-images',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

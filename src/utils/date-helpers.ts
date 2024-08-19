@@ -70,12 +70,14 @@ export function toUtc(value: dayjs.ConfigType) {
   return dayjs.utc(value).toDate();
 }
 
-export function startOfDay(value: dayjs.ConfigType) {
-  return dayjs(value).startOf('day').toDate();
+export function startOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+  const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
+  return date.startOf('day').toDate();
 }
 
-export function endOfDay(value: dayjs.ConfigType) {
-  return dayjs(value).endOf('day').toDate();
+export function endOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+  const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
+  return date.endOf('day').toDate();
 }
 
 export function getDatesAsList(startDate: Date, endDate: Date, unit: dayjs.ManipulateType = 'day') {

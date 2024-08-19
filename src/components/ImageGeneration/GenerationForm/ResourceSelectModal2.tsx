@@ -414,7 +414,11 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
 
   return (
     // Visually hide card if there are no versions
-    <TwCard className={clsx(classes.root, 'justify-between')} onClick={handleSelect}>
+    <TwCard
+      className={clsx(classes.root, 'justify-between')}
+      onClick={handleSelect}
+      style={{ display: versions.length === 0 ? 'none' : undefined }}
+    >
       {/* {inView && ( */}
       <>
         {image && (
