@@ -1544,8 +1544,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   //------------------------
   const filters: string[] = [];
 
-  const lastExistedAt = ''; // TODO, either redis or pg job
-  filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  if (lastExistedAt) {
+    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1657,6 +1659,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       .search(null, request);
 
     const filtered = results.hits.filter((hit) => {
+      // check for good data
+      if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
@@ -1702,7 +1706,23 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       };
     });
 
-    // TODO set redis queue of fullData.ids, combine existing
+    redis.packed
+      .sAdd(
+        REDIS_KEYS.QUEUES.SEEN_IMAGES,
+        fullData.map((i) => i.id)
+      )
+      .catch((e) => {
+        const err = e as Error;
+        logToAxiom(
+          {
+            type: 'search-redis-error',
+            error: err.message,
+            cause: err.cause,
+            stack: err.stack,
+          },
+          'temp-search'
+        ).catch();
+      });
 
     return {
       data: fullData,

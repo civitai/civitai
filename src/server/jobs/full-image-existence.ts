@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { makeMeiliImageSearchFilter } from '~/server/services/image.service';
 import { createJob, getJobDate } from './job';
 
@@ -10,7 +11,9 @@ const jobName = 'full-image-existence';
 const queryBatch = 1e6;
 
 export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
-  const [lastRun, setLastRun] = await getJobDate(jobName);
+  const [, setLastRun] = await getJobDate(jobName);
+
+  const firstTime = new Date().getTime();
 
   try {
     // find bounds for images in the db
@@ -20,8 +23,6 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
         WHERE "postId" IS NOT NULL
     `;
     const { minId, maxId } = bounds[0];
-
-    const firstTime = new Date().getTime();
 
     // in batches...
     let start = minId;
@@ -39,8 +40,10 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
         WHERE id BETWEEN ${start} AND ${end}
       `;
 
+      // TODO regular index too
+
       if (existingImages.length) {
-        // TODO if the images aren't there yet...
+        // nb: if the images aren't there yet...they'll have sparse data
         await updateDocs({
           indexName: METRICS_IMAGES_SEARCH_INDEX,
           documents: existingImages,
@@ -79,7 +82,7 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
     //   }
     // }
 
-    // TODO set in redis or is this good enough?
+    await redis.set(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC, firstTime);
 
     await setLastRun();
   } catch (e) {
