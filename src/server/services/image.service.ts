@@ -1505,7 +1505,7 @@ function strArray(arr: (string | number)[]) {
 }
 
 type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
-const makeMeiliImageSearchFilter = (
+export const makeMeiliImageSearchFilter = (
   field: MetricsImageFilterableAttribute,
   criteria: string
 ): MeiliImageFilter => {
@@ -1651,6 +1651,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
+    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);

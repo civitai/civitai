@@ -2,6 +2,8 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { makeMeiliImageSearchFilter } from '~/server/services/image.service';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
@@ -18,6 +20,8 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
         WHERE "postId" IS NOT NULL
     `;
     const { minId, maxId } = bounds[0];
+
+    const firstTime = new Date().getTime();
 
     // in batches...
     let start = minId;
@@ -47,6 +51,33 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
 
       start = end + 1;
     }
+
+    const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
+    if (index) {
+      await index.deleteDocuments({
+        filter: makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+      });
+    }
+
+    // TODO if the above doesnt work...
+    // if (metricsSearchClient) {
+    //   const filters: string[] = [];
+    //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`));
+    //
+    //   let more = true;
+    //   let offset = 0;
+    //   while (more) {
+    //     const request: DocumentsQuery = {
+    //       filter: filters.join(' AND '),
+    //       limit: 1000,
+    //       offset,
+    //     };
+    //
+    //     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
+    //       .index(METRICS_IMAGES_SEARCH_INDEX)
+    //       .search(null, request);
+    //   }
+    // }
 
     // TODO set in redis or is this good enough?
 
