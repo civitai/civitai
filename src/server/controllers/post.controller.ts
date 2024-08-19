@@ -197,6 +197,7 @@ export const updatePostHandler = async ({
           metadata: collection.metadata as CollectionMetadataSchema,
           collectionId: collection.id,
           userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
           postIds,
           imageIds: images.map((i) => i.id),
         });
@@ -252,6 +253,7 @@ export const updatePostHandler = async ({
               postIds: [updatedPost.id],
               userId: ctx.user.id,
               tagId: collectionTagId,
+              isModerator: ctx.user.isModerator,
             },
             permissions,
           });

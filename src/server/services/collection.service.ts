@@ -264,7 +264,7 @@ export const getUserCollectionsWithPermissions = async <
     Prisma.sql`(
       ${SELECT}
       FROM "Collection" c
-      WHERE "userId" = ${userId} 
+      WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
 
     )`,
@@ -305,7 +305,7 @@ export const getUserCollectionsWithPermissions = async <
         ${SELECT}
         FROM "CollectionContributor" AS cc
         JOIN "Collection" AS c ON c."id" = cc."collectionId"
-        WHERE cc."userId" = ${userId} 
+        WHERE cc."userId" = ${userId}
           AND cc."permissions" && ARRAY[${Prisma.raw(
             (permissions || [permission]).map((p) => `'${p}'`).join(',')
           )}]::"CollectionContributorPermission"[]
@@ -472,6 +472,7 @@ export const saveItemInCollections = async ({
             metadata,
             collectionId,
             userId,
+            isModerator,
             [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
           });
         }
@@ -1425,6 +1426,7 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
+  isModerator,
   metadata,
   articleIds = [],
   modelIds = [],
@@ -1433,6 +1435,7 @@ export const validateContestCollectionEntry = async ({
 }: {
   collectionId: number;
   userId: number;
+  isModerator?: boolean;
   metadata?: CollectionMetadataSchema;
   articleIds?: number[];
   modelIds?: number[];
@@ -1458,7 +1461,7 @@ export const validateContestCollectionEntry = async ({
       },
     });
 
-    if (itemCount + savedItemsCount > metadata.maxItemsPerUser) {
+    if (itemCount + savedItemsCount > metadata.maxItemsPerUser && !isModerator) {
       throw throwBadRequestError(`You have reached the maximum number of items in collection`);
     }
   }
@@ -1621,10 +1624,11 @@ export const bulkSaveItems = async ({
     imageIds = [],
     postIds = [],
     tagId,
+    isModerator,
   },
   permissions,
 }: {
-  input: BulkSaveCollectionItemsInput & { userId: number };
+  input: BulkSaveCollectionItemsInput & { userId: number; isModerator?: boolean };
   permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
@@ -1664,6 +1668,7 @@ export const bulkSaveItems = async ({
       metadata,
       collectionId,
       userId,
+      isModerator,
       articleIds,
       modelIds,
       imageIds,
