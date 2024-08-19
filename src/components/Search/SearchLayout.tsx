@@ -222,14 +222,14 @@ export const useSearchLayoutStyles = createStyles((theme) => ({
   grid: {
     display: 'grid',
     gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    columnGap: theme.spacing.md,
+    gap: theme.spacing.md,
     gridTemplateRows: `auto 1fr`,
     overflow: 'hidden',
-    marginTop: -theme.spacing.md,
+    // marginTop: -theme.spacing.md,
 
-    '& > *': {
-      marginTop: theme.spacing.md,
-    },
+    // '& > *': {
+    //   marginTop: theme.spacing.md,
+    // },
   },
 
   filterButton: {

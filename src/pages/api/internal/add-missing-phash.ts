@@ -1,3 +1,4 @@
+import { chunk } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { ImageScanType } from '~/server/common/enums';
@@ -16,7 +17,7 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
   const input = schema.parse(req.query);
   const start = Date.now();
   await dataProcessor({
-    params: { batchSize: 1000, concurrency: 10, start: 0 },
+    params: { batchSize: 100000, concurrency: 10, start: 0 },
     runContext: {
       on: (event: 'close', listener: () => void) => {
         // noop
@@ -59,14 +60,16 @@ export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResp
 
       if (records.length === 0) return;
 
-      const consolePushKey = `Push: ${start} - ${end}`;
+      const consolePushKey = `Push: ${start} - ${end}: ${records.length}`;
       console.log(consolePushKey);
       console.time(consolePushKey);
-      await ingestImageBulk({
-        images: records,
-        scans: [ImageScanType.Hash],
-        lowPriority: true,
-      });
+      for (const batch of chunk(records, 1000)) {
+        await ingestImageBulk({
+          images: batch,
+          scans: [ImageScanType.Hash],
+          lowPriority: true,
+        });
+      }
       console.timeEnd(consolePushKey);
     },
   });

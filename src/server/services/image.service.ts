@@ -392,7 +392,7 @@ export const getImageById = async ({ id }: GetByIdInput) => {
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt
     FROM "Image"
     WHERE id = ${id}
   `;
@@ -497,18 +497,18 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  // if (!isProd || !callbackUrl) {
-  //   console.log('skip ingest');
-  //   await dbClient.image.updateMany({
-  //     where: { id: { in: imageIds } },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //     },
-  //   });
-  //   return true;
-  // }
+  if (!isProd || !callbackUrl) {
+    console.log('skip ingest');
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: {
+        scanRequestedAt,
+        scannedAt: scanRequestedAt,
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+    });
+    return true;
+  }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -544,10 +544,10 @@ export const ingestImageBulk = async ({
     }
   );
   if (response.status === 202) {
-    // await dbClient.image.updateMany({
-    //   where: { id: { in: imageIds } },
-    //   data: { scanRequestedAt },
-    // });
+    await dbClient.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { scanRequestedAt },
+    });
     return true;
   }
   return false;
@@ -1505,7 +1505,7 @@ function strArray(arr: (string | number)[]) {
 }
 
 type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
-const makeMeiliImageSearchFilter = (
+export const makeMeiliImageSearchFilter = (
   field: MetricsImageFilterableAttribute,
   criteria: string
 ): MeiliImageFilter => {
@@ -1543,6 +1543,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // Filter
   //------------------------
   const filters: string[] = [];
+
+  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  if (lastExistedAt) {
+    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1648,24 +1653,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
+    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 
     const filtered = results.hits.filter((hit) => {
+      // check for good data
+      if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel)) return true;
+      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
     });
 
     // TODO maybe grab more if the number is now too low?
-
-    const metrics = {
-      hits: results.hits.length,
-      filtered: filtered.length,
-      total: results.estimatedTotalHits,
-      processingTimeMs: results.processingTimeMs,
-    };
     // console.log({ input: removeEmpty(input), request });
 
     let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
@@ -1704,6 +1705,24 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         },
       };
     });
+
+    redis.packed
+      .sAdd(
+        REDIS_KEYS.QUEUES.SEEN_IMAGES,
+        fullData.map((i) => i.id)
+      )
+      .catch((e) => {
+        const err = e as Error;
+        logToAxiom(
+          {
+            type: 'search-redis-error',
+            error: err.message,
+            cause: err.cause,
+            stack: err.stack,
+          },
+          'temp-search'
+        ).catch();
+      });
 
     return {
       data: fullData,
@@ -2589,11 +2608,13 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const AND: Prisma.Sql[] = [
-    Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-      userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-    })`,
-  ];
+  const AND: Prisma.Sql[] = !isModerator
+    ? [
+        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+        })`,
+      ]
+    : [];
 
   if (!isModerator) {
     const needsReviewOr = [
@@ -2620,7 +2641,7 @@ export const getImagesByEntity = async ({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id
             AND ic."entityType" = ${type}
             AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
-        WHERE ${Prisma.join(AND, ' AND ')}
+        ${AND.length ? Prisma.sql`WHERE ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
     )
@@ -3839,6 +3860,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     modelType: ModelType;
     versionId: number;
     versionName: string;
+    baseModel: string;
   }>(Prisma.sql`
     SELECT
       ir.id,
@@ -3847,7 +3869,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
       m.name as "modelName",
       m.type as "modelType",
       mv.id as "versionId",
-      mv.name as "versionName"
+      mv.name as "versionName",
+      mv."baseModel" as "baseModel"
     FROM "ImageResource" ir
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m on mv."modelId" = m.id
@@ -3926,7 +3949,7 @@ export function addBlockedImage({
 }) {
   return dbWrite.$executeRaw`
     INSERT INTO "BlockedImage" (hash, reason)
-    VALUES (${hash}, '${reason}'::"BlockImageReason")
+    VALUES (${hash}, ${reason}::"BlockImageReason")
     ON CONFLICT DO NOTHING
   `;
 }

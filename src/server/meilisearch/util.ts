@@ -99,7 +99,7 @@ const onSearchIndexDocumentsCleanup = async ({
   if (ids) {
     console.log(`onSearchIndexDocumentsCleanup :: About to delete: ${ids.length} items...`);
 
-    const index = await getOrCreateIndex(indexName);
+    const index = await getOrCreateIndex(indexName, undefined, client);
 
     if (!index) {
       // If for some reason we don't get an index, abort the entire process
@@ -126,7 +126,7 @@ const onSearchIndexDocumentsCleanup = async ({
 
   // Only care for main index ID here. Technically, if this was working as a reset and using a SWAP,
   // we wouldn't encounter delete items.
-  const index = await getOrCreateIndex(indexName);
+  const index = await getOrCreateIndex(indexName, undefined, client);
 
   if (!index) {
     // If for some reason we don't get an index, abort the entire process

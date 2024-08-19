@@ -2,13 +2,14 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generationConfig } from '~/server/common/constants';
+import { generation, generationConfig } from '~/server/common/constants';
 import {
   TextToImageParams,
   generateImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   getBaseModelSetType,
+  getIsFlux,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
 } from '~/shared/constants/generation.constants';
@@ -16,6 +17,7 @@ import { trpc } from '~/utils/trpc';
 
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
+import { parseAIR } from '~/utils/string-helpers';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -44,14 +46,31 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params.height = size.height;
     }
 
-    return generateImageWhatIfSchema.parse({
-      resources: [defaultModel.id],
+    let modelId = defaultModel.id;
+    const isFlux = getIsFlux(watched.baseModel);
+    if (isFlux && watched.fluxMode) {
+      const { version } = parseAIR(watched.fluxMode);
+      modelId = version;
+    }
+
+    return {
+      resources: [modelId],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
-        ...params,
+        baseModel: params.baseModel,
+        sampler: params.sampler,
+        clipSkip: params.clipSkip,
+        steps: params.steps ?? generation.defaultValues.steps,
+        quantity: params.quantity,
+        draft: params.draft,
+        aspectRatio: params.aspectRatio,
+        width: params.width,
+        height: params.height,
+        upscale: params.upscale,
+        fluxMode: params.fluxMode,
         ...whatIfQueryOverrides,
       } as TextToImageParams,
-    });
+    };
   }, [watched, defaultModel.id]);
 
   useEffect(() => {

@@ -2,7 +2,7 @@ import { ActionIcon, Button, Container, Group, Stack, Text, Title } from '@manti
 import { IconPlus, IconTrash } from '@tabler/icons-react';
 import { MantineReactTable, MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
 import { useCallback, useMemo, useState } from 'react';
-import { openResourceSelectModal } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
+import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { Meta } from '~/components/Meta/Meta';
 import { Generation } from '~/server/services/generation/generation.types';

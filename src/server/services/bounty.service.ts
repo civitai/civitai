@@ -12,7 +12,7 @@ import { bountyRefundedEmail } from '~/server/email/templates';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { createEntityImages, updateEntityImages } from '~/server/services/image.service';
-import { decreaseDate, startOfDay, toUtc } from '~/utils/date-helpers';
+import { decreaseDate, startOfDay } from '~/utils/date-helpers';
 import { BountySort, BountyStatus, NsfwLevel } from '../common/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
@@ -161,8 +161,8 @@ export const createBounty = async ({
       break;
   }
 
-  const startsAt = startOfDay(toUtc(incomingStartsAt));
-  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+  const startsAt = startOfDay(incomingStartsAt, { utc: true });
+  const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -260,8 +260,8 @@ export const updateBountyById = async ({
   ...data
 }: UpdateBountyInput & { userId: number }) => {
   // Convert dates to UTC for storing
-  const startsAt = startOfDay(toUtc(incomingStartsAt));
-  const expiresAt = startOfDay(toUtc(incomingExpiresAt));
+  const startsAt = startOfDay(incomingStartsAt, { utc: true });
+  const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {

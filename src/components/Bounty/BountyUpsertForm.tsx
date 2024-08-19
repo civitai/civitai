@@ -6,7 +6,6 @@ import {
   Text,
   Title,
   Tooltip,
-  TooltipProps,
   SimpleGrid,
   Paper,
   ActionIcon,
@@ -67,7 +66,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
+import { dateWithoutTimezone, endOfDay, stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -76,13 +75,6 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -99,6 +91,14 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
+  .extend({
+    startsAt: z.coerce
+      .date()
+      .min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    expiresAt: z.coerce
+      .date()
+      .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+  })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
   })
@@ -213,8 +213,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
         ? dateWithoutTimezone(bounty.expiresAt)
-        : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : startOfDay(new Date()),
+        : dayjs().add(7, 'day').startOf('day').toDate(),
+      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : dayjs().startOf('day').toDate(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -297,14 +297,16 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     }
 
     const completedUploads = imageFiles.filter((file) => file.status === 'success');
-
     const filteredImages = bounty ? [...bountyImages, ...completedUploads] : completedUploads;
+    const { startsAt, expiresAt, ...rest } = data;
 
     const performTransaction = async () => {
       try {
         const result = await upsertBounty({
           ...bounty,
-          ...data,
+          ...rest,
+          startsAt: stripTime(startsAt),
+          expiresAt: stripTime(expiresAt),
           images: filteredImages,
         });
 
@@ -324,7 +326,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   };
 
   useEffect(() => {
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value, { name }) => {
       if (
         currentUser?.isModerator &&
         name &&

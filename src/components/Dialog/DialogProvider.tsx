@@ -31,10 +31,11 @@ const DialogProviderInner = ({
   const [opened, setOpened] = useState(false);
 
   const Dialog = dialog.component;
-  const onClose = () => {
+
+  function onClose() {
     dialog.options?.onClose?.();
     dialogStore.closeById(dialog.id);
-  };
+  }
 
   useEffect(() => {
     setTimeout(() => {

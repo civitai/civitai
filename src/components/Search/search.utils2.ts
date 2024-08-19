@@ -10,6 +10,8 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 
 import { ImageIngestionStatus } from '@prisma/client';
 import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
+import { createInfiniteHitsSessionStorageCache } from 'instantsearch.js/es/lib/infiniteHitsCache';
+import { InfiniteHitsCache } from 'instantsearch.js/es/connectors/infinite-hits/connectInfiniteHits';
 
 // #region [transformers]
 function handleOldImageTags(tags?: number[] | { id: number }[]) {
@@ -122,8 +124,11 @@ export function useHitsTransformed<T extends IndexName>() {
   });
 }
 
+const cache = createInfiniteHitsSessionStorageCache();
+
 export function useInfiniteHitsTransformed<T extends IndexName>() {
   return useInfiniteHits<SearchIndexDataMap[T][number]>({
     transformItems,
+    cache: cache as any,
   });
 }

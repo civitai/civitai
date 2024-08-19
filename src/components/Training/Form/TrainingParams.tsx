@@ -155,8 +155,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { default: 4, max: 4 } },
       pony: { all: { default: 5, max: 5 } },
       flux_dev: {
-        'x-flux': { default: 1, min: 1, max: 1, disabled: true },
-        kohya: { max: 6 },
+        'x-flux': { default: 1, max: 1, disabled: true },
+        kohya: { default: 4, max: 4 },
       },
     },
   },
@@ -231,7 +231,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: false,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
       },
     },
   },

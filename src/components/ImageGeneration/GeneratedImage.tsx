@@ -357,6 +357,8 @@ export function GeneratedImage({
                   closeDelay={100}
                   transition="fade"
                   transitionDuration={150}
+                  withinPortal
+                  position="top"
                 >
                   <Menu.Target>
                     <ActionIcon size="md">
@@ -472,6 +474,11 @@ const useStyles = createStyles((theme, _params, getRef) => {
       position: 'absolute',
       cursor: 'pointer',
       zIndex: 2,
+      alignItems: 'flex-end',
+
+      [theme.fn.smallerThan('xs')]: {
+        padding: 4,
+      },
     },
     iconBlocked: {
       [containerQuery.smallerThan(380)]: {
@@ -521,7 +528,10 @@ const useStyles = createStyles((theme, _params, getRef) => {
       padding: 4,
       transition: 'opacity .3s',
 
-      [theme.fn.smallerThan('sm')]: buttonBackground,
+      [`@container (max-width: 420px)`]: {
+        ...buttonBackground,
+        width: 68,
+      },
 
       ['button']: {
         opacity: 0,
@@ -530,7 +540,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
           opacity: 1,
         },
 
-        [theme.fn.smallerThan('sm')]: {
+        [`@container (max-width: 420px)`]: {
           opacity: 1,
         },
       },

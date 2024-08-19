@@ -91,6 +91,7 @@ import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { NoContent } from '~/components/NoContent/NoContent';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -341,6 +342,7 @@ export default function BountyEntryDetailsPage({
               ),
               centered: true,
               labels: { confirm: 'Delete', cancel: 'Cancel' },
+              confirmProps: { color: 'red' },
               onConfirm: () => {
                 deleteEntryMutation({ id: bountyEntry.id });
               },
@@ -664,8 +666,8 @@ export function BountyEntryCarousel({
   } | null;
 }) {
   const { images } = bountyEntry;
-  const { classes, cx } = useCarrouselStyles();
-  const queryUtils = trpc.useContext();
+  const { classes } = useCarrouselStyles();
+  const queryUtils = trpc.useUtils();
 
   const carouselNavigation = useCarouselNavigation({ items: images, onChange: onImageChange });
 
@@ -673,6 +675,14 @@ export function BountyEntryCarousel({
   useDidUpdate(() => {
     if (!isDeletingImage) queryUtils.bountyEntry.getById.invalidate({ id: bountyEntry?.id });
   }, [isDeletingImage]);
+
+  if (images.length === 0) {
+    return (
+      <Center h="100%">
+        <NoContent message="This entry has no images" />
+      </Center>
+    );
+  }
 
   const image = images[carouselNavigation.index];
 

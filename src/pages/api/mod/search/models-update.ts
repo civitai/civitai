@@ -53,7 +53,7 @@ const updateGenerationCoverage = (idOffset: number) =>
     const unavailableGenResources = await getUnavailableResources();
     const updateIndexReadyRecords = records
       .map(({ id, modelVersions }) => {
-        const [version] = modelVersions;
+        const [{ files, ...version }] = modelVersions;
         const canGenerate = modelVersions.some(
           (x) => x.generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1
         );

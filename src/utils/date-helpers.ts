@@ -1,6 +1,8 @@
 import dayjs from 'dayjs';
 import minMax from 'dayjs/plugin/minMax';
+import utc from 'dayjs/plugin/utc';
 dayjs.extend(minMax);
+dayjs.extend(utc);
 
 export function formatDate(value: dayjs.ConfigType, format = 'MMM D, YYYY', utc = false) {
   if (utc) return dayjs.utc(value).format(format);
@@ -68,12 +70,14 @@ export function toUtc(value: dayjs.ConfigType) {
   return dayjs.utc(value).toDate();
 }
 
-export function startOfDay(value: dayjs.ConfigType) {
-  return dayjs(value).startOf('day').toDate();
+export function startOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+  const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
+  return date.startOf('day').toDate();
 }
 
-export function endOfDay(value: dayjs.ConfigType) {
-  return dayjs(value).endOf('day').toDate();
+export function endOfDay(value: dayjs.ConfigType, opts?: { utc?: boolean }) {
+  const date = opts?.utc ? dayjs.utc(value) : dayjs(value);
+  return date.endOf('day').toDate();
 }
 
 export function getDatesAsList(startDate: Date, endDate: Date, unit: dayjs.ManipulateType = 'day') {
