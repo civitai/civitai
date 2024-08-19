@@ -119,7 +119,7 @@ class OrchestratorCaller extends HttpCaller {
   // }
 
   public deleteJobById({ id }: { id: string }) {
-    return this.delete(`/v1/consumer/jobs/${id}`);
+    return this.delete(`/v1/consumer/jobs/${id}?force=true`);
   }
 }
 

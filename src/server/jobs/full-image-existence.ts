@@ -8,7 +8,7 @@ import { makeMeiliImageSearchFilter } from '~/server/services/image.service';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
-const queryBatch = 1e6;
+const queryBatch = 2e5;
 
 export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
@@ -30,6 +30,9 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       const end = start + queryBatch;
 
       const existedAtUnix = new Date().getTime();
+
+      // TODO temp, remove
+      console.log(`full-image-existence :: running ${start} - ${end}`);
 
       // find images in db
       const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
@@ -55,14 +58,20 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       start = end + 1;
     }
 
+    // TODO re-enable not exists check, but why are we missing the last 5 million?
+
     const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
     if (index) {
+      const deleteFilters = [
+        makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+        // makeMeiliImageSearchFilter('existedAtUnix', `NOT EXISTS`),
+      ];
       await index.deleteDocuments({
-        filter: makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+        filter: `(${deleteFilters.join(' OR ')})`,
       });
     }
 
-    // TODO if the above doesnt work...
+    // if the above doesnt work...
     // if (metricsSearchClient) {
     //   const filters: string[] = [];
     //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`));
