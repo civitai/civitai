@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
 interface DialogSettings<TProps extends Record<string, unknown> = any> {
@@ -27,35 +28,40 @@ type DialogStore = {
 };
 
 export const useDialogStore = create<DialogStore>()(
-  immer((set, get) => ({
-    dialogs: [],
-    trigger: (args) => {
-      const dialog: Dialog = {
-        component: args.component,
-        props: args.props,
-        options: args.options,
-        id: args.id ?? Date.now(),
-        type: args.type ?? 'dialog',
-        target: args.target,
-      };
-      set((state) => {
-        const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
-        if (!exists) state.dialogs.push(dialog);
-      });
-    },
-    closeById: (id) =>
-      set((state) => {
-        state.dialogs = state.dialogs.filter((x) => x.id !== id);
-      }),
-    closeLatest: () =>
-      set((state) => {
-        state.dialogs.pop();
-      }),
-    closeAll: () =>
-      set((state) => {
-        state.dialogs = [];
-      }),
-  }))
+  devtools(
+    immer((set, get) => ({
+      dialogs: [],
+      trigger: (args) => {
+        const dialog: Dialog = {
+          component: args.component,
+          props: args.props,
+          options: args.options,
+          id: args.id ?? Date.now(),
+          type: args.type ?? 'dialog',
+          target: args.target,
+        };
+        set((state) => {
+          const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
+          if (!exists) {
+            state.dialogs.push(dialog);
+          }
+        });
+      },
+      closeById: (id) =>
+        set((state) => {
+          state.dialogs = state.dialogs.filter((x) => x.id !== id);
+        }),
+      closeLatest: () =>
+        set((state) => {
+          state.dialogs.pop();
+        }),
+      closeAll: () =>
+        set((state) => {
+          state.dialogs = [];
+        }),
+    })),
+    { name: 'dialog-store' }
+  )
 );
 
 // used to track the modal stacking context (page modals).

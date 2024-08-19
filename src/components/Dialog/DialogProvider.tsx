@@ -8,23 +8,25 @@ type DialogState = {
   zIndex: number;
   target?: string | HTMLElement;
   focused?: 'true';
+  level: number;
 };
 
 const DialogContext = createContext<DialogState>({
   opened: false,
   onClose: () => undefined,
   zIndex: 200,
+  level: 0,
 });
 export const useDialogContext = () => useContext(DialogContext);
 
 const DialogProviderInner = ({
   dialog,
   index,
-  focused,
+  level,
 }: {
   dialog: Dialog;
   index: number;
-  focused?: 'true';
+  level: number;
 }) => {
   const [opened, setOpened] = useState(false);
 
@@ -42,7 +44,7 @@ const DialogProviderInner = ({
 
   return (
     <DialogContext.Provider
-      value={{ opened, onClose, zIndex: 200 + index, target: dialog.target, focused }}
+      value={{ opened, onClose, zIndex: 200 + index, target: dialog.target, level }}
     >
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
@@ -55,13 +57,13 @@ export const DialogProvider = () => {
     <>
       {dialogs.map((dialog, i) => (
         <React.Fragment key={dialog.id.toString()}>
-          {createRenderElement(dialog, i, i === dialogs.length - 1 ? 'true' : undefined)}
+          {createRenderElement(dialog, i, dialogs.length)}
         </React.Fragment>
       ))}
     </>
   );
 };
 
-const createRenderElement = trieMemoize([WeakMap, {}, {}], (dialog, index, focused) => (
-  <DialogProviderInner dialog={dialog} index={index} focused={focused} />
+const createRenderElement = trieMemoize([WeakMap, {}, {}], (dialog, index, level) => (
+  <DialogProviderInner dialog={dialog} index={index} level={level} />
 ));
