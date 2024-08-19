@@ -11,14 +11,19 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
+import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
+import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
+import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import * as eventEngineJobs from '~/server/jobs/event-engine-work';
+import { fullImageExistence } from '~/server/jobs/full-image-existence';
 import { handleLongTrainings } from '~/server/jobs/handle-long-trainings';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
 import { Job } from '~/server/jobs/job';
 import { jobQueueJobs } from '~/server/jobs/job-queue';
 import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
@@ -28,6 +33,7 @@ import { processClubMembershipRecurringPayments } from '~/server/jobs/process-cl
 import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
+import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -44,15 +50,11 @@ import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
+import { updateUserScore } from '~/server/jobs/update-user-score';
+import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
-import { updateUserScore } from '~/server/jobs/update-user-score';
-import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
-import { logToAxiom } from '~/server/logging/client';
-import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
-import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
-import { confirmMutes } from '~/server/jobs/confirm-mutes';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -104,6 +106,8 @@ export const jobs: Job[] = [
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
   confirmMutes,
+  checkImageExistence,
+  fullImageExistence,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -1544,6 +1544,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   //------------------------
   const filters: string[] = [];
 
+  const lastExistedAt = ''; // TODO, either redis or pg job
+  filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
   else browsingLevel = onlySelectableLevels(browsingLevel);
@@ -1659,13 +1662,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     // TODO maybe grab more if the number is now too low?
-
-    const metrics = {
-      hits: results.hits.length,
-      filtered: filtered.length,
-      total: results.estimatedTotalHits,
-      processingTimeMs: results.processingTimeMs,
-    };
     // console.log({ input: removeEmpty(input), request });
 
     let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
@@ -1704,6 +1700,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         },
       };
     });
+
+    // TODO set redis queue of fullData.ids, combine existing
 
     return {
       data: fullData,
