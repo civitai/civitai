@@ -21,29 +21,36 @@ const targets = {
   write: env.DATABASE_URL,
 };
 
-type Target = keyof typeof targets;
-function createKyselyDb(target: Target, log?: typeof logQuery) {
-  const dbUrl = targets[target];
-  const dialect = new PostgresDialect({
-    pool: new Pool({
-      // connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
-      // ssl: {
-      //   rejectUnauthorized: true,
-      //   ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
-      // },
-      connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
-      ssl: { rejectUnauthorized: false },
-    }),
-  });
+// TODO - implement a lazy db connection
+
+function createDbConnection({ log, pool }: { log?: typeof logQuery; pool: Pool }) {
+  const dialect = new PostgresDialect({ pool });
 
   return new Kysely<DB>({
     dialect,
     plugins: [new ParseJSONResultsPlugin()],
-    log: (event) => log?.(event, target),
+    log: (event) => log?.(event),
   });
 }
 
-function logQuery(event: LogEvent, target: Target) {
+function createPool(target: keyof typeof targets) {
+  const dbUrl = targets[target];
+  return new Pool({
+    // connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+    // ssl: {
+    //   rejectUnauthorized: true,
+    //   ca: fs.readFileSync(path.resolve(process.cwd(), './ca-certificate.crt')).toString(),
+    // },
+    connectionString: dbUrl.substring(0, dbUrl.indexOf('?')),
+    ssl: { rejectUnauthorized: false },
+  });
+}
+
+const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
+const writePool = createPool('write');
+const readPool = singleClient ? writePool : createPool('read');
+
+function logQuery(event: LogEvent) {
   if (event.level === 'error') {
     if (!isProd) {
       console.error('Query failed : ', {
@@ -59,26 +66,27 @@ function logQuery(event: LogEvent, target: Target) {
   }
 }
 
-const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
-export const kyselyDbWrite = createKyselyDb('write', logQuery);
-export const kyselyDbRead = singleClient ? kyselyDbWrite : createKyselyDb('read', logQuery);
-
-const logDb = createKyselyDb('write', (event, target) => {
-  if (event.level === 'error') {
-    if (!isProd) {
-      console.error('Query failed : ', {
-        durationMs: event.queryDurationMillis,
-        error: event.error,
-        sql: event.query.sql,
-        params: event.query.parameters,
-      });
+export const kyselyDbWrite = createDbConnection({ pool: writePool, log: logQuery });
+export const kyselyDbRead = createDbConnection({ pool: readPool, log: logQuery });
+const logDb = createDbConnection({
+  pool: writePool,
+  log: (event) => {
+    if (event.level === 'error') {
+      if (!isProd) {
+        console.error('Query failed : ', {
+          durationMs: event.queryDurationMillis,
+          error: event.error,
+          sql: event.query.sql,
+          params: event.query.parameters,
+        });
+      }
+    } else {
+      if (!isProd) {
+        // console.log(combineSqlWithParams(event.query.sql, event.query.parameters));
+        // TODO - log link to view query details
+      }
     }
-  } else {
-    if (!isProd) {
-      // console.log(combineSqlWithParams(event.query.sql, event.query.parameters));
-      // TODO - log link to view query details
-    }
-  }
+  },
 });
 
 async function logQueryEventToDb(event: LogEvent) {
