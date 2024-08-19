@@ -368,12 +368,6 @@ export const upsertBountyHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    if (input.poi || (input.poi && input.nsfw)) {
-      throw throwBadRequestError(
-        'The creation of bounties intended to depict an actual person is prohibited.'
-      );
-    }
-
     const bounty = await upsertBounty({
       ...input,
       userId: ctx.user.id,
