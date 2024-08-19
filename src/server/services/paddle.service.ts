@@ -13,12 +13,16 @@ import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getOrCreateCustomer,
+  getPaddleSubscription,
+  updatePaddleSubscription,
   // updateTransaction,
 } from '~/server/paddle/client';
-import { TransactionCreateInput, TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import {
-  Product as PaddleProduct,
-  Price as PaddlePrice,
+  TransactionCreateInput,
+  TransactionMetadataSchema,
+  UpdateSubscriptionInputSchema,
+} from '~/server/schema/paddle.schema';
+import {
   Transaction,
   ProductNotification,
   PriceNotification,
@@ -28,16 +32,13 @@ import {
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { number } from 'zod';
 import { getPlans } from '~/server/services/subscriptions.service';
-import { toDateTime } from '~/server/services/stripe.service';
 import { playfab } from '~/server/playfab/client';
 import {
   SubscriptionProductMetadata,
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
-import { prod } from '@tensorflow/tfjs';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -204,6 +205,7 @@ export const upsertSubscription = async (
   eventDate: Date,
   eventName: EventName
 ) => {
+  log('upsertSubscription :: Event:', eventName);
   const isUpdatingSubscription = eventName === EventName.SubscriptionUpdated;
   const isCreatingSubscription = eventName === EventName.SubscriptionActivated;
   const isCancelingSubscription = eventName === EventName.SubscriptionCanceled;
@@ -215,12 +217,16 @@ export const upsertSubscription = async (
   });
 
   if (!mainSubscriptionItem) {
+    log('upsertSubscription :: No active subscription product found');
     throw throwNotFoundError('No active subscription product found');
   }
 
+  log('upsertSubscription :: main subscription item:', mainSubscriptionItem);
+
   if (isUpdatingSubscription) {
     // We need to wait a bit to avoid race conditions
-    await sleep(5000);
+    log('upsertSubscription :: waiting a few ms..');
+    await sleep(500);
   }
 
   const user = await dbWrite.user.findFirst({
@@ -246,11 +252,9 @@ export const upsertSubscription = async (
   const startingNewSubscription =
     isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
 
-  log('Subscription event:', eventName);
-
   if (isCancelingSubscription && subscriptionNotification.canceledAt === null) {
     // immediate cancel:
-    log('Subscription canceled immediately');
+    log('upsertSubscription :: Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
@@ -258,13 +262,13 @@ export const upsertSubscription = async (
   }
 
   if (startingNewSubscription) {
-    log('Subscription id changed, deleting old subscription');
+    log('upsertSubscription :: Subscription id changed, deleting old subscription');
     if (user.subscriptionId) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
   } else if (userHasSubscription && isCreatingSubscription) {
-    log('Subscription already up to date');
+    log('upsertSubscription :: Subscription already up to date');
     return;
   }
 
@@ -397,5 +401,57 @@ export const manageSubscriptionTransactionComplete = async (
         })
       );
     }).catch(handleLogError);
+  }
+};
+
+export const updateSubscriptionPlan = async ({
+  priceId,
+  userId,
+}: {
+  userId: number;
+} & UpdateSubscriptionInputSchema) => {
+  const subscription = await dbRead.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: {
+        in: ['active', 'trialing'],
+      },
+      product: {
+        provider: PaymentProvider.Paddle,
+      },
+    },
+  });
+
+  if (!subscription) {
+    throw throwNotFoundError('No active subscription found');
+  }
+
+  const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
+
+  if (!paddleSubscription) {
+    throw throwNotFoundError('No active subscription found on Paddle');
+  }
+
+  try {
+    await updatePaddleSubscription({
+      subscriptionId: subscription.id,
+      items: [
+        {
+          priceId,
+          quantity: 1,
+        },
+      ],
+      prorationBillingMode: 'full_immediately',
+      onPaymentFailure: 'prevent_change',
+    });
+
+    await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+
+    return true;
+  } catch (e) {
+    return new Error('Failed to update subscription');
   }
 };

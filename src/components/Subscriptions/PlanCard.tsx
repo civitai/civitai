@@ -36,7 +36,6 @@ import { isDefined } from '~/utils/type-guards';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { constants } from '~/server/common/constants';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';

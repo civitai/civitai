@@ -86,7 +86,9 @@ export const DowngradeFeedbackModal = ({
             ))}
           </Radio.Group>
           <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
-            Downgrade is immediate. You will lose your tier benefits as soon as you downgrade.
+            Downgrade is immediate and you will be charged instantly. You will lose your tier
+            benefits as soon as you downgrade, and will receive the buzz along the other benefits of
+            the downgraded tier.
           </AlertWithIcon>
           <Group grow>
             <SubscribeButton priceId={priceId} onSuccess={handleClose}>

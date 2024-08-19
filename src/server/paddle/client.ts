@@ -1,4 +1,9 @@
-import { CurrencyCode, Environment, Paddle } from '@paddle/paddle-node-sdk';
+import {
+  CurrencyCode,
+  Environment,
+  Paddle,
+  UpdateSubscriptionRequestBody,
+} from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
@@ -87,4 +92,18 @@ export const updateTransaction = ({
   return paddle.transactions.update(transactionId, {
     customData: metadata,
   });
+};
+
+export const getPaddleSubscription = ({ subscriptionId }: { subscriptionId: string }) => {
+  const paddle = getPaddle();
+  return paddle.subscriptions.get(subscriptionId);
+};
+
+export const updatePaddleSubscription = ({
+  subscriptionId,
+  ...data
+}: {
+  subscriptionId: string;
+} & UpdateSubscriptionRequestBody) => {
+  return paddle?.subscriptions.update(subscriptionId, data);
 };

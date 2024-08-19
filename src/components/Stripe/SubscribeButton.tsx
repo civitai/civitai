@@ -12,6 +12,7 @@ import { usePaddle } from '~/providers/PaddleProvider';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { PaymentProvider } from '@prisma/client';
 import { CheckoutEventsData } from '@paddle/paddle-js';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 
 export function SubscribeButton({
   children,
@@ -28,21 +29,39 @@ export function SubscribeButton({
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
   const paymentProvider = usePaymentProvider();
+  const { subscription, subscriptionLoading } = useActiveSubscription();
   const { paddle, emitter } = usePaddle();
-  const { mutate: stripeCreateSubscriptionSession, isLoading } =
-    trpc.stripe.createSubscriptionSession.useMutation({
-      async onSuccess({ sessionId, url }) {
+  const {
+    mutate: stripeCreateSubscriptionSession,
+    isLoading: isLoadingStripeCrateSubscriptionSession,
+  } = trpc.stripe.createSubscriptionSession.useMutation({
+    async onSuccess({ sessionId, url }) {
+      await currentUser?.refresh();
+      await queryUtils.subscriptions.getUserSubscription.reset();
+      onSuccess?.();
+      if (url) Router.push(url);
+      else if (sessionId) {
+        const stripe = await getClientStripe();
+        if (!stripe) {
+          return;
+        }
+        await stripe.redirectToCheckout({ sessionId });
+      }
+    },
+    async onError(error) {
+      showErrorNotification({
+        title: 'Sorry, there was an error while trying to subscribe. Please try again later',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const { mutate: paddleUpdateSubscription, isLoading: isLoadingPaddleUpdateSubscription } =
+    trpc.paddle.updateSubscription.useMutation({
+      async onSuccess() {
         await currentUser?.refresh();
         await queryUtils.subscriptions.getUserSubscription.reset();
         onSuccess?.();
-        if (url) Router.push(url);
-        else if (sessionId) {
-          const stripe = await getClientStripe();
-          if (!stripe) {
-            return;
-          }
-          await stripe.redirectToCheckout({ sessionId });
-        }
+        return Router.push('/user/membership');
       },
       async onError(error) {
         showErrorNotification({
@@ -52,27 +71,42 @@ export function SubscribeButton({
       },
     });
 
+  const isLoading = isLoadingStripeCrateSubscriptionSession || isLoadingPaddleUpdateSubscription;
+
   const handleClick = () => {
+    if (subscription && paymentProvider !== subscription.product.provider) {
+      showErrorNotification({
+        title: 'You already have an active subscription with a different provider',
+        error: new Error('You already have an active subscription with a different provider'),
+      });
+
+      return;
+    }
+
     if (paymentProvider === PaymentProvider.Stripe) {
       stripeCreateSubscriptionSession({ priceId });
     }
 
     if (paymentProvider === PaymentProvider.Paddle) {
-      paddle?.Checkout.open({
-        items: [
-          {
-            priceId,
-            quantity: 1,
+      if (subscription) {
+        paddleUpdateSubscription({ priceId });
+      } else {
+        paddle?.Checkout.open({
+          items: [
+            {
+              priceId,
+              quantity: 1,
+            },
+          ],
+          customer: {
+            email: currentUser?.email as string,
           },
-        ],
-        customer: {
-          email: currentUser?.email as string,
-        },
-        settings: {
-          showAddDiscounts: false,
-          theme: 'dark',
-        },
-      });
+          settings: {
+            showAddDiscounts: false,
+            theme: 'dark',
+          },
+        });
+      }
     }
   };
 
@@ -127,12 +161,12 @@ export function SubscribeButton({
         ? children({
             onClick: handleClick,
             loading: isLoading,
-            disabled: !isLoading && mutateCount > 0,
+            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading,
           })
         : cloneElement(children, {
             onClick: handleClick,
             loading: isLoading,
-            disabled: !isLoading && mutateCount > 0,
+            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading,
           })}
     </LoginPopover>
   );

@@ -26,3 +26,8 @@ export const transactionCreateSchema = z.object({
   metadata: transactionMetadataSchema.optional(),
   recaptchaToken: z.string(),
 });
+
+export type UpdateSubscriptionInputSchema = z.infer<typeof updateSubscriptionInputSchema>;
+export const updateSubscriptionInputSchema = z.object({
+  priceId: z.string(),
+});

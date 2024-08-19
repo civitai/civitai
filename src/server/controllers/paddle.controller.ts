@@ -7,8 +7,13 @@ import { Context } from '~/server/createContext';
 import {
   createTransaction,
   processCompleteBuzzTransaction,
+  updateSubscriptionPlan,
 } from '~/server/services/paddle.service';
-import { TransactionCreateInput, TransactionMetadataSchema } from '~/server/schema/paddle.schema';
+import {
+  TransactionCreateInput,
+  TransactionMetadataSchema,
+  UpdateSubscriptionInputSchema,
+} from '~/server/schema/paddle.schema';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { createRecaptchaAssesment } from '~/server/recaptcha/client';
@@ -74,4 +79,21 @@ export const processCompleteBuzzTransactionHandler = async ({
 
   // Process the transaction
   await processCompleteBuzzTransaction(transaction);
+};
+
+export const updateSubscriptionPlanHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: UpdateSubscriptionInputSchema;
+}) => {
+  try {
+    await updateSubscriptionPlan({
+      ...input,
+      userId: ctx.user.id,
+    });
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
 };
