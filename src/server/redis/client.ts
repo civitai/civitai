@@ -186,8 +186,12 @@ export const REDIS_KEYS = {
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
   },
+  INDEX_UPDATES: {
+    IMAGE_METRIC: 'index-updates:image-metric',
+  },
   QUEUES: {
     BUCKETS: 'queues:buckets',
+    SEEN_IMAGES: 'queues:seen-images',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

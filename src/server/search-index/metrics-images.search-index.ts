@@ -33,6 +33,7 @@ const filterableAttributes = [
   'nsfwLevel',
   'postId',
   'publishedAtUnix',
+  'existedAtUnix',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -185,6 +186,7 @@ const transformData = async ({
         techniqueIds: imageTechniques.map((t) => t.techniqueId),
         cosmetic: cosmetics[imageRecord.id] ?? null,
         publishedAtUnix: publishedAt?.getTime(),
+        existedAtUnix: new Date().getTime(),
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
