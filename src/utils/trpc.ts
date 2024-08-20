@@ -8,12 +8,23 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { showErrorNotification } from '~/utils/notifications';
 
+type RequestHeaders = {
+  'x-client-date': string;
+  'x-client': string;
+  'x-client-version'?: string;
+  'x-fingerprint'?: string;
+};
+
 const url = '/api/trpc';
-const headers = {
+const headers: RequestHeaders = {
   'x-client-version': process.env.version,
   'x-client-date': Date.now().toString(),
   'x-client': 'web',
 };
+if (typeof window !== 'undefined') {
+  const fingerprint = window.localStorage.getItem('fingerprint');
+  if (fingerprint) headers['x-fingerprint'] = fingerprint;
+}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
