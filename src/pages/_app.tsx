@@ -61,7 +61,6 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { DeviceFingerprint } from '~/components/DeviceFingerprint/DeviceFingerprint';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
