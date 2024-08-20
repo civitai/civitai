@@ -10,6 +10,7 @@ const AdsContext = createContext<{
   adsBlocked?: boolean;
   adsEnabled: boolean;
   username?: string;
+  isMember: boolean;
   providers: readonly string[];
 } | null>(null);
 
@@ -26,8 +27,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // derived value from browsingMode and nsfwOverride
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
-
-  const adsEnabled = ((currentUser?.allowAds ?? true) || !currentUser?.isMember) && !nsfw;
+  const isMember = currentUser?.isMember ?? false;
+  const adsEnabled = (currentUser?.allowAds || !isMember) && !nsfw;
 
   const readyRef = useRef(false);
   useEffect(() => {
@@ -46,6 +47,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         adsEnabled,
         username: currentUser?.username,
         providers: adProviders,
+        isMember,
       }}
     >
       {children}

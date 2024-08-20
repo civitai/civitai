@@ -155,7 +155,7 @@ function AdWrapper({
   const currentUser = useCurrentUser();
   const node = useScrollAreaRef();
   const isClient = useIsClient();
-  const { adsBlocked, adsEnabled } = useAdsContext();
+  const { adsBlocked, adsEnabled, isMember } = useAdsContext();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   // const focused = useIsLevelFocused();
@@ -188,22 +188,26 @@ function AdWrapper({
               />
             </NextLink>
           ) : (
-            <ImpressionTracker>
+            <ImpressionTracker className="w-full overflow-hidden">
               {typeof children === 'function' ? children({ isMobile }) : children}
             </ImpressionTracker>
           )}
 
           <div className="flex w-full justify-between">
-            <Text
-              component={NextLink}
-              td="underline"
-              href="/pricing"
-              color="dimmed"
-              size="xs"
-              align="center"
-            >
-              Remove ads
-            </Text>
+            {!isMember ? (
+              <Text
+                component={NextLink}
+                td="underline"
+                href="/pricing"
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Remove ads
+              </Text>
+            ) : (
+              <div />
+            )}
 
             {currentUser && (
               <Text
@@ -224,7 +228,7 @@ function AdWrapper({
   );
 }
 
-function ImpressionTracker({ children }: { children: React.ReactNode }) {
+function ImpressionTracker({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   const currentUser = useCurrentUser();
   const node = useScrollAreaRef();
 
@@ -235,10 +239,13 @@ function ImpressionTracker({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     console.log({ inView });
+    // TODO - add tracking for impressions - more than 1 second
+    // TODO - capture tracking when the component is no longer in view
+    // TODO - capture tracking on tab/window close if should capture
   }, [inView]);
 
   return (
-    <div ref={ref} className="w-full overflow-hidden">
+    <div ref={ref} {...props}>
       {children}
     </div>
   );
