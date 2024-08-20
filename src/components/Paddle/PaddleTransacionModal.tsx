@@ -1,24 +1,12 @@
-import {
-  Button,
-  Center,
-  Group,
-  Stack,
-  Text,
-  Divider,
-  Loader,
-  Title,
-  Modal,
-  CloseButton,
-  ModalProps,
-} from '@mantine/core';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Button, Center, Stack, Loader, Title, Modal, ModalProps } from '@mantine/core';
+import React, { useCallback, useEffect, useMemo } from 'react';
 
 import { useTrackEvent } from '../TrackView/track.utils';
 import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { usePaddleCheckout, usePaddleTransaction } from '~/components/Paddle/usePaddleCheckout';
+import { usePaddleTransaction } from '~/components/Paddle/usePaddleCheckout';
 import { CheckoutEventsData, CurrencyCode } from '@paddle/paddle-js';
 import { usePaddle } from '~/providers/PaddleProvider';
 
