@@ -1339,6 +1339,7 @@ export const getAllImagesIndex = async (
     excludedUserIds,
     excludeCrossPosts,
     hidden,
+    followed,
     //
     prioritizedUserIds, // TODO fix
     modelId, // TODO fix
@@ -1351,7 +1352,6 @@ export const getAllImagesIndex = async (
     periodMode,
     generation,
     includeBaseModel,
-    followed,
     pending,
     collectionTagId,
     headers,
@@ -1386,6 +1386,7 @@ export const getAllImagesIndex = async (
     excludedUserIds,
     excludeCrossPosts,
     hidden,
+    followed,
     prioritizedUserIds,
     // userIds: userIds,
     currentUserId,
@@ -1488,6 +1489,7 @@ type ImageSearchInput = {
   period?: MetricTimeframe;
   browsingLevel?: NsfwLevel;
   hidden?: boolean;
+  followed?: boolean;
   sort?: ImageSort;
   limit?: number;
   page?: number;
@@ -1546,6 +1548,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     excludedUserIds,
     excludeCrossPosts,
     hidden,
+    followed,
     reviewId, // missing
     modelId, // missing
     prioritizedUserIds,
@@ -1569,6 +1572,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const imageIds = hiddenImages.map((x) => x.imageId);
     if (imageIds.length) {
       filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
+    } else {
+      return { data: [], total: 0 };
+    }
+  }
+
+  // could throw authorization error here
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
     } else {
       return { data: [], total: 0 };
     }
