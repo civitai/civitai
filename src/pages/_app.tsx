@@ -173,7 +173,6 @@ function MyApp(props: CustomAppProps) {
                                                         <StripeSetupSuccessProvider />
                                                         <DialogProvider />
                                                         <RoutedDialogProvider />
-                                                        <DeviceFingerprint />
                                                       </CustomModalsProvider>
                                                     </ChatContextProvider>
                                                   </BaseLayout>
