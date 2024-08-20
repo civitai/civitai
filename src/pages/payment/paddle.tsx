@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { CheckoutEventsData } from '@paddle/paddle-js';
-import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
+import { IconCancel, IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -60,20 +60,13 @@ export default function CompletePaddlePaymentTransaction() {
   // Only run once - otherwise we'll get an infinite loop
   useEffect(() => {
     if (paddle && transactionId && currentUser) {
-      paddle.Checkout.open({
-        settings: {
-          theme: 'dark',
-        },
-        transactionId: transactionId,
-      });
-
       emitter.on('checkout.completed', onCheckoutComplete);
       emitter.on('checkout.closed', onCheckoutClosed);
     }
 
     return () => {
-      emitter.off('checkout.completed', onCheckoutComplete);
-      emitter.off('checkout.closed', onCheckoutClosed);
+      emitter?.off('checkout.completed', onCheckoutComplete);
+      emitter?.off('checkout.closed', onCheckoutClosed);
     };
   }, [transactionId, paddle, currentUser, emitter, onCheckoutComplete, onCheckoutClosed]);
 
@@ -85,32 +78,27 @@ export default function CompletePaddlePaymentTransaction() {
     <>
       <Meta title="Successful Payment | Civitai" deIndex />
       <Container size="xs" mb="lg">
-        <Stack>
-          <Alert radius="sm" color="green" sx={{ zIndex: 10 }}>
-            <Group spacing="xs" noWrap position="center">
-              <ThemeIcon color="green" size="lg">
-                <IconCircleCheck />
-              </ThemeIcon>
-              <Title order={2}>Complete your Payment</Title>
-            </Group>
-          </Alert>
+        <Stack align="center">
+          <Title order={1} align="center" mb="xl">
+            Complete your Payment
+          </Title>
           {!closed && !success && (
             <Center>
               <Loader />
             </Center>
           )}
           {closed && !success && (
-            <Alert radius="sm" color="red">
-              <Group spacing="xs" noWrap position="center">
-                <ThemeIcon color="red" size="lg">
-                  <IconCircleCheck />
-                </ThemeIcon>
-                <Title order={2}>Payment Cancelled</Title>
-              </Group>
-              <Text size="lg" align="center">
-                You may refresh the page if you wish to try again.
+            <Stack align="center">
+              <IconCancel color="red" size={32} />
+              <Title order={3} align="center">
+                Looks like you canceled the payment
+              </Title>
+              <Text align="center">
+                We were unable to complete your transaction process because you canceled the
+                payment.
               </Text>
-            </Alert>
+              <Text>You may refresh the page if you wish to try again.</Text>
+            </Stack>
           )}
           {success && (
             <>
