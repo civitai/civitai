@@ -81,8 +81,6 @@ export default function Pricing() {
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
-  console.log(paymentProvider, subscription);
-
   return (
     <>
       <Meta

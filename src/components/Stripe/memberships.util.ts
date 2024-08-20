@@ -38,7 +38,6 @@ export const useCanUpgrade = () => {
   const features = useFeatureFlags();
 
   if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {
-    console.log('wa wa');
     return false;
   }
 
