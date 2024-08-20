@@ -162,7 +162,7 @@ function AdWrapper({
 
   const { ref, inView } = useInView({
     root: node?.current,
-    rootMargin: isMobile ? '400px' : '200px',
+    rootMargin: '200%',
   });
 
   if (!adsEnabled) return null;
