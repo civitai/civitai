@@ -52,12 +52,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import {
-  deleteImageById,
-  getAllImages,
-  ImagesInfiniteModel,
-  ingestImage,
-} from '~/server/services/image.service';
+import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import {
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
@@ -269,7 +264,7 @@ export const getUserCollectionsWithPermissions = async <
     Prisma.sql`(
       ${SELECT}
       FROM "Collection" c
-      WHERE "userId" = ${userId} 
+      WHERE "userId" = ${userId}
         ${AND.length > 0 ? Prisma.sql`AND ${Prisma.join(AND, ',')}` : Prisma.sql``}
 
     )`,
@@ -310,7 +305,7 @@ export const getUserCollectionsWithPermissions = async <
         ${SELECT}
         FROM "CollectionContributor" AS cc
         JOIN "Collection" AS c ON c."id" = cc."collectionId"
-        WHERE cc."userId" = ${userId} 
+        WHERE cc."userId" = ${userId}
           AND cc."permissions" && ARRAY[${Prisma.raw(
             (permissions || [permission]).map((p) => `'${p}'`).join(',')
           )}]::"CollectionContributorPermission"[]
@@ -477,6 +472,7 @@ export const saveItemInCollections = async ({
             metadata,
             collectionId,
             userId,
+            isModerator,
             [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
           });
         }
@@ -644,6 +640,16 @@ export const upsertCollection = async ({
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
 
+    // nb - if we ever allow a cover image on create, copy this logic below
+    // TODO commenting this out - other users can manage collections
+    // const coverImgId = imageId ?? image?.id;
+    // if (isDefined(coverImgId)) {
+    //   const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverImgId });
+    //   if (!isImgOwner) {
+    //     throw throwAuthorizationError('Invalid cover image');
+    //   }
+    // }
+
     const updated = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.collection.update({
         select: {
@@ -676,6 +682,7 @@ export const upsertCollection = async ({
                       meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
                       userId,
                       resources: undefined,
+                      id: undefined,
                     },
                   },
                 }
@@ -774,14 +781,22 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
-    // Delete image if it was removed
-    if (currentCollection.image && !input.image) {
-      await deleteImageById({ id: currentCollection.image.id });
-    }
+    // nb: doing this will delete a user's own image
+    // if (currentCollection.image && !input.image) {
+    //   const isOwner = await isImageOwner({
+    //     userId,
+    //     isModerator,
+    //     imageId: currentCollection.image.id,
+    //   });
+    //   if (isOwner) {
+    //     await deleteImageById({ id: currentCollection.image.id });
+    //   }
+    // }
 
     return updated;
   }
 
+  // TODO allow cover image
   const collection = await dbWrite.collection.create({
     select: { id: true, image: { select: { id: true, url: true } } },
     data: {
@@ -841,6 +856,8 @@ export const updateCollectionCoverImage = async ({
   if (!permission.manage) {
     return;
   }
+
+  // TODO if necessary, check image ownership here
 
   const updated = await dbWrite.collection.update({
     select: { id: true, image: { select: { id: true, url: true, ingestion: true, type: true } } },
@@ -1409,6 +1426,7 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
 export const validateContestCollectionEntry = async ({
   collectionId,
   userId,
+  isModerator,
   metadata,
   articleIds = [],
   modelIds = [],
@@ -1417,6 +1435,7 @@ export const validateContestCollectionEntry = async ({
 }: {
   collectionId: number;
   userId: number;
+  isModerator?: boolean;
   metadata?: CollectionMetadataSchema;
   articleIds?: number[];
   modelIds?: number[];
@@ -1442,7 +1461,7 @@ export const validateContestCollectionEntry = async ({
       },
     });
 
-    if (itemCount + savedItemsCount > metadata.maxItemsPerUser) {
+    if (itemCount + savedItemsCount > metadata.maxItemsPerUser && !isModerator) {
       throw throwBadRequestError(`You have reached the maximum number of items in collection`);
     }
   }
@@ -1605,10 +1624,11 @@ export const bulkSaveItems = async ({
     imageIds = [],
     postIds = [],
     tagId,
+    isModerator,
   },
   permissions,
 }: {
-  input: BulkSaveCollectionItemsInput & { userId: number };
+  input: BulkSaveCollectionItemsInput & { userId: number; isModerator?: boolean };
   permissions: CollectionContributorPermissionFlags;
 }) => {
   const collection = await dbRead.collection.findUnique({
@@ -1648,6 +1668,7 @@ export const bulkSaveItems = async ({
       metadata,
       collectionId,
       userId,
+      isModerator,
       articleIds,
       modelIds,
       imageIds,

@@ -2,7 +2,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generationConfig } from '~/server/common/constants';
+import { generation, generationConfig } from '~/server/common/constants';
 import {
   TextToImageParams,
   generateImageWhatIfSchema,
@@ -53,14 +53,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       modelId = version;
     }
 
-    return generateImageWhatIfSchema.parse({
+    return {
       resources: [modelId],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,
         ...whatIfQueryOverrides,
       } as TextToImageParams,
-    });
+    };
   }, [watched, defaultModel.id]);
 
   useEffect(() => {

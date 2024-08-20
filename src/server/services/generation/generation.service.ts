@@ -288,6 +288,24 @@ const getImageGenerationData = async (id: number) => {
   const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
   const resourceData = await resourceDataCache.fetch(versionIds);
 
+  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  if (index > -1 && !resourceData[index].available) {
+    const checkpoint = resourceData[index];
+    const latestVersion = await dbRead.modelVersion.findFirst({
+      where: {
+        modelId: checkpoint.model.id,
+        availability: { in: ['Public', 'EarlyAccess'] },
+        generationCoverage: { covered: true },
+      },
+      select: { id: true },
+      orderBy: { index: 'asc' },
+    });
+    if (latestVersion) {
+      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+      if (newCheckpoint) resourceData[index] = newCheckpoint;
+    }
+  }
+
   const resources = formatGenerationResources(resourceData);
 
   // dedupe resources and add image resource strength/hashes

@@ -7,12 +7,10 @@ import {
   Prisma,
   TagTarget,
 } from '@prisma/client';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-
-import { ArticleSort, NsfwLevel } from '~/server/common/enums';
+import { ArticleSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
@@ -21,15 +19,22 @@ import {
   UpsertArticleInput,
 } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { createImage, deleteImageById } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
+import { amIBlockedByUser } from '~/server/services/user.service';
+import { isImageOwner } from '~/server/services/util.service';
 import {
   throwAuthorizationError,
   throwDbError,
@@ -40,12 +45,6 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
-import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
-import { createImage, deleteImageById } from '~/server/services/image.service';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
 
 type ArticleRaw = {
   id: number;
@@ -646,11 +645,19 @@ export const upsertArticle = async ({
   ...data
 }: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
   try {
+    // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;
-    if (coverImage && !coverImage.id) {
-      const result = await createImage({ ...coverImage, userId });
-      coverId = result.id;
+    if (coverImage) {
+      if (!coverId) {
+        const result = await createImage({ ...coverImage, userId });
+        coverId = result.id;
+      } else {
+        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
+        if (!isImgOwner) {
+          throw throwAuthorizationError('Invalid cover image');
+        }
+      }
     }
 
     if (!id) {
@@ -765,7 +772,10 @@ export const upsertArticle = async ({
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
-      await deleteImageById({ id: article.coverId });
+      const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
+      if (isImgOwner) {
+        await deleteImageById({ id: article.coverId });
+      }
     }
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);

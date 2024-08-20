@@ -26,7 +26,14 @@ const featureFlags = createFeatureFlags({
     toggleable: true,
     default: true,
     displayName: 'Image Generation',
-    description: `Generate images with any supported AI resource. This is a beta feature, so please report any issues you find!`,
+    description: `Generate images with any supported AI resource.`,
+    availability: ['public'],
+  },
+  largerGenerationImages: {
+    toggleable: true,
+    default: false,
+    displayName: 'Larger Images in Generator',
+    description: `Images displayed in the generator will be larger on small screens`,
     availability: ['public'],
   },
   enhancedSearch: ['public'],
@@ -75,7 +82,7 @@ const featureFlags = createFeatureFlags({
   donationGoals: ['public'],
   creatorComp: ['user'],
   experimentalGen: ['mod'],
-  imageIndex: ['granted'],
+  imageIndex: ['granted', 'mod'],
   monetaryTransactions: ['public'], // Will be using for the safe site.
   customPaymentProvider: ['mod', 'dev'],
 });

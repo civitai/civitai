@@ -238,7 +238,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
       SELECT
         t."imageId",
         tf.timeframe,
-        ${snippets.timeframeSum('c."createdAt"')}
+        ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
@@ -267,7 +267,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
       SELECT
         "imageId",
         tf.timeframe,
-        ${snippets.timeframeSum('ci."createdAt"')}
+        ${snippets.timeframeSum('ci."createdAt"')} "collectedCount"
       FROM "CollectionItem" ci
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."imageId" IN (${ids})

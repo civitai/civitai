@@ -8,6 +8,8 @@ import { BountySort, BountyStatus } from '../common/enums';
 import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
+import utc from 'dayjs/plugin/utc';
+dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
 export const getInfiniteBountySchema = infiniteQuerySchema.merge(
@@ -45,10 +47,15 @@ export const createBountyInputSchema = z.object({
     .min(constants.bounties.minCreateAmount)
     .max(constants.bounties.maxCreateAmount),
   currency: z.nativeEnum(Currency),
-  expiresAt: z
+  expiresAt: z.coerce
     .date()
-    .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
-  startsAt: z.date().min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    .min(
+      dayjs.utc().add(1, 'day').startOf('day').toDate(),
+      'Expiration date must come after the start date'
+    ),
+  startsAt: z.coerce
+    .date()
+    .min(dayjs.utc().startOf('day').toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
   type: z.nativeEnum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),
@@ -83,8 +90,8 @@ export const updateBountyInputSchema = createBountyInputSchema
   })
   .extend({
     id: z.number(),
-    startsAt: z.date(),
-    expiresAt: z
+    startsAt: z.coerce.date(),
+    expiresAt: z.coerce
       .date()
       .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
     lockedProperties: z.string().array().optional(),
@@ -93,8 +100,8 @@ export const updateBountyInputSchema = createBountyInputSchema
 export type UpsertBountyInput = z.infer<typeof upsertBountyInputSchema>;
 export const upsertBountyInputSchema = createBountyInputSchema.extend({
   id: z.number().optional(),
-  startsAt: z.date(),
-  expiresAt: z.date(),
+  startsAt: z.string(),
+  expiresAt: z.string(),
   lockedProperties: z.string().array().optional(),
 });
 

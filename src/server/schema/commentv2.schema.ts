@@ -34,7 +34,7 @@ export type UpsertCommentV2Input = z.infer<typeof upsertCommentv2Schema>;
 export const upsertCommentv2Schema = commentConnectorSchema.extend({
   id: z.number().optional(),
   content: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br'],
+    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
   }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),

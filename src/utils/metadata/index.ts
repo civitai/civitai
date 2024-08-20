@@ -10,6 +10,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { constants } from '~/server/common/constants';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
+import { setGlobalValue } from '~/utils/metadata/base.metadata';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
@@ -30,12 +31,14 @@ export async function getMetadata(file: File) {
       // @ts-ignore - this is a hack to not have to rework our downstream code
       exif.userComment = Int32Array.from(exif.UserComment);
     }
+    setGlobalValue('exif', exif);
 
     let metadata = {};
     try {
       const { parse } = Object.values(parsers).find((x) => x.canParse(exif)) ?? {};
       if (parse) metadata = parse(exif);
-    } catch (e: any) { //eslint-disable-line
+    } catch (e: any) {
+      //eslint-disable-line
       console.error('Error parsing metadata', e);
     }
     const result = imageMetaSchema.safeParse(metadata);

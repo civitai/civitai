@@ -37,6 +37,8 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
   prepareBatches: async ({ ch }, lastUpdatedAt) => {
     if (!ch) return { batchSize: 0, startId: 0, endId: 0, updateIds: [] };
 
+    // TODO somehow check for postId existence, otherwise there are lots of unused rows
+
     lastUpdatedAt ??= new Date(1723528353000);
     const ids = await ch.$query<{ id: number }>`
       SELECT

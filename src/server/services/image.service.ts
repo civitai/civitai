@@ -392,7 +392,7 @@ export const getImageById = async ({ id }: GetByIdInput) => {
 
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
+    SELECT id, url, type, width, height, meta->>'prompt' as prompt
     FROM "Image"
     WHERE id = ${id}
   `;
@@ -1505,7 +1505,7 @@ function strArray(arr: (string | number)[]) {
 }
 
 type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
-const makeMeiliImageSearchFilter = (
+export const makeMeiliImageSearchFilter = (
   field: MetricsImageFilterableAttribute,
   criteria: string
 ): MeiliImageFilter => {
@@ -1543,6 +1543,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // Filter
   //------------------------
   const filters: string[] = [];
+
+  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  if (lastExistedAt) {
+    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1607,12 +1612,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
-  // TODO remove, this is for 6/21 dev
+  // nb: this is for dev
   if (!isProd) {
     filters.push(
       makeMeiliImageSearchFilter(
         'sortAtUnix',
-        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+        `<= ${new Date('2024-08-17T22:32:08.749Z').getTime()}`
       )
     );
   }
@@ -1648,24 +1653,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   };
 
   try {
+    // TODO switch to DocumentsResults, DocumentsResults and .getDocuments, no search
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
 
     const filtered = results.hits.filter((hit) => {
+      // check for good data
+      if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || isModerator;
     });
 
     // TODO maybe grab more if the number is now too low?
-
-    const metrics = {
-      hits: results.hits.length,
-      filtered: filtered.length,
-      total: results.estimatedTotalHits,
-      processingTimeMs: results.processingTimeMs,
-    };
     // console.log({ input: removeEmpty(input), request });
 
     let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
@@ -1704,6 +1705,26 @@ async function getImagesFromSearch(input: ImageSearchInput) {
         },
       };
     });
+
+    if (fullData.length) {
+      redis.packed
+        .sAdd(
+          REDIS_KEYS.QUEUES.SEEN_IMAGES,
+          fullData.map((i) => i.id)
+        )
+        .catch((e) => {
+          const err = e as Error;
+          logToAxiom(
+            {
+              type: 'search-redis-error',
+              error: err.message,
+              cause: err.cause,
+              stack: err.stack,
+            },
+            'temp-search'
+          ).catch();
+        });
+    }
 
     return {
       data: fullData,
@@ -2589,11 +2610,13 @@ export const getImagesByEntity = async ({
     return [];
   }
 
-  const AND: Prisma.Sql[] = [
-    Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
-      userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
-    })`,
-  ];
+  const AND: Prisma.Sql[] = !isModerator
+    ? [
+        Prisma.sql`(i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"${
+          userId ? Prisma.sql` OR i."userId" = ${userId}` : Prisma.sql``
+        })`,
+      ]
+    : [];
 
   if (!isModerator) {
     const needsReviewOr = [
@@ -2620,7 +2643,7 @@ export const getImagesByEntity = async ({
         JOIN "ImageConnection" ic ON ic."imageId" = i.id
             AND ic."entityType" = ${type}
             AND ic."entityId" IN (${Prisma.join(ids ? ids : [id])})
-        WHERE ${Prisma.join(AND, ' AND ')}
+        ${AND.length ? Prisma.sql`WHERE ${Prisma.join(AND, ' AND ')}` : Prisma.empty}
       ) ranked
       WHERE ranked.row_num <= ${imagesPerId}
     )

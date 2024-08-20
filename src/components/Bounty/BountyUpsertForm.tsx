@@ -6,7 +6,6 @@ import {
   Text,
   Title,
   Tooltip,
-  TooltipProps,
   SimpleGrid,
   Paper,
   ActionIcon,
@@ -67,7 +66,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
+import { dateWithoutTimezone, endOfDay, stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -76,13 +75,6 @@ import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
 import { InfoPopover } from '../InfoPopover/InfoPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-
-const tooltipProps: Partial<TooltipProps> = {
-  maw: 300,
-  multiline: true,
-  position: 'bottom',
-  withArrow: true,
-};
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -99,8 +91,21 @@ const bountyEntryModeDescription: Record<BountyEntryMode, string> = {
 
 const formSchema = upsertBountyInputSchema
   .omit({ images: true })
+  .extend({
+    startsAt: z.coerce
+      .date()
+      .min(dayjs().startOf('day').toDate(), 'Start date must be in the future'),
+    expiresAt: z.coerce
+      .date()
+      .min(dayjs().add(1, 'day').startOf('day').toDate(), 'Expiration date must be in the future'),
+  })
+  .refine((data) => data.poi !== true, {
+    message: 'The creation of bounties intended to depict an actual person is prohibited',
+    path: ['poi'],
+  })
   .refine((data) => !(data.nsfw && data.poi), {
     message: 'Mature content depicting actual people is not permitted.',
+    path: ['nsfw'],
   })
   .refine((data) => data.startsAt < data.expiresAt, {
     message: 'Start date must be before expiration date',
@@ -186,6 +191,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
   const [bountyImages, setBountyImages] = useState<BountyGetById['images']>(bounty?.images ?? []);
+  const [imagesError, setImagesError] = useState('');
 
   const handleDropImages = async (droppedFiles: File[]) => {
     for (const file of droppedFiles) {
@@ -213,8 +219,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
       files: (bounty?.files as BaseFileSchema[]) ?? [],
       expiresAt: bounty
         ? dateWithoutTimezone(bounty.expiresAt)
-        : dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : startOfDay(new Date()),
+        : dayjs().add(7, 'day').startOf('day').toDate(),
+      startsAt: bounty ? dateWithoutTimezone(bounty.startsAt) : dayjs().startOf('day').toDate(),
       details: bounty?.details ?? { baseModel: 'SD 1.5' },
       ownRights:
         !!bounty &&
@@ -281,6 +287,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   const images = [...bountyImages, ...imageFiles];
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
+    setImagesError('');
+
     if (
       data.entryLimit &&
       bounty &&
@@ -297,14 +305,20 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     }
 
     const completedUploads = imageFiles.filter((file) => file.status === 'success');
-
     const filteredImages = bounty ? [...bountyImages, ...completedUploads] : completedUploads;
+    const { startsAt, expiresAt, ...rest } = data;
+
+    if (filteredImages.length === 0) {
+      return setImagesError('At least one example image must be uploaded');
+    }
 
     const performTransaction = async () => {
       try {
         const result = await upsertBounty({
           ...bounty,
-          ...data,
+          ...rest,
+          startsAt: stripTime(startsAt),
+          expiresAt: stripTime(expiresAt),
           images: filteredImages,
         });
 
@@ -324,7 +338,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
   };
 
   useEffect(() => {
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value, { name }) => {
       if (
         currentUser?.isModerator &&
         name &&
@@ -453,6 +467,8 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   label="Example Images"
                   description="Please add at least 1 reference image to your bounty. This will serve as a reference point for Hunters and will also be used as your cover image."
                   descriptionProps={{ mb: 5 }}
+                  error={imagesError}
+                  classNames={{ error: 'mt-1.5' }}
                   withAsterisk
                 >
                   <ImageDropzone
@@ -858,12 +874,12 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   />
                 </Paper>
               )}
-              {hasPoiInNsfw && (
+              {poi && (
                 <AlertWithIcon color="red" pl={10} iconColor="red" icon={<IconExclamationMark />}>
                   <Text>
-                    Mature content depicting actual people is not permitted. Please revise the
-                    content of this listing to ensure no actual person is depicted in an mature
-                    context out of respect for the individual.
+                    {hasPoiInNsfw
+                      ? 'Mature content depicting actual people is not permitted. Please revise the content of this listing to ensure no actual person is depicted in an mature context out of respect for the individual.'
+                      : 'The creation of bounties intended to depict an actual person is prohibited. Please revise the content of this listing to ensure no actual person is depicted out of respect for the individual.'}
                   </Text>
                 </AlertWithIcon>
               )}
@@ -904,13 +920,13 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
             <BuzzTransactionButton
               loading={upserting}
               type="submit"
-              disabled={hasPoiInNsfw}
+              disabled={poi || hasPoiInNsfw}
               label="Save"
               buzzAmount={unitAmount}
               color="yellow.7"
             />
           ) : (
-            <Button loading={upserting} type="submit" disabled={hasPoiInNsfw}>
+            <Button loading={upserting} type="submit" disabled={poi || hasPoiInNsfw}>
               Save
             </Button>
           )}

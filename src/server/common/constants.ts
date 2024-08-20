@@ -14,7 +14,7 @@ import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client.mjs';
 import { ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { GenerationResource } from '~/shared/constants/generation.constants';
+import type { GenerationResource } from '~/shared/constants/generation.constants';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 

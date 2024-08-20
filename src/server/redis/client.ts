@@ -14,6 +14,7 @@ export interface CustomRedisClient extends RedisClientType {
     setNX<T>(key: string, value: T): Promise<void>;
     sAdd<T>(key: string, values: T[]): Promise<void>;
     sRemove<T>(key: string, value: T): Promise<void>;
+    sPop<T>(key: string, count: number): Promise<T[]>;
     sMembers<T>(key: string): Promise<T[]>;
     hGet<T>(key: string, hashKey: string): Promise<T | null>;
     hSet<T>(key: string, hashKey: string, value: T): Promise<void>;
@@ -82,6 +83,11 @@ function getCache(legacyMode = false) {
       await client.sAdd(key, values.map(pack));
     },
 
+    async sPop<T>(key: string, count: number): Promise<T[]> {
+      const packedValues = await client.sPop(commandOptions({ returnBuffers: true }), key, count);
+      return packedValues.map((value) => unpack(value));
+    },
+
     async sRemove<T>(key: string, value: T): Promise<void> {
       await client.sRem(key, pack(value));
     },
@@ -147,7 +153,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data',
+    RESOURCE_DATA: 'packed:generation:resource-data-2',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
@@ -186,8 +192,12 @@ export const REDIS_KEYS = {
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
   },
+  INDEX_UPDATES: {
+    IMAGE_METRIC: 'index-updates:image-metric',
+  },
   QUEUES: {
     BUCKETS: 'queues:buckets',
+    SEEN_IMAGES: 'queues:seen-images',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

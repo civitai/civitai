@@ -36,6 +36,7 @@ import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
+import { NextLink } from '@mantine/next';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -186,6 +187,7 @@ export default function UserBuzzDashboard() {
               )}
             </Stack>
           </Paper>
+          <Text mt={-16} size="sm" mb="xs" align="right">Still looking for ways to get more Buzz? Consider posting to the <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">Buzz Beggars Board</Text>.</Text>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward />}
