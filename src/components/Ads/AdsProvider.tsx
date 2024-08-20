@@ -3,6 +3,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import Script from 'next/script';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
@@ -56,8 +57,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && (
         <>
-          <Head>
-            <script src="https://cmp.uniconsent.com/v2/stub.min.js" async />
+          {/* <Head>
+            <script src="https://cmp.uniconsent.com/v2/stub.min.js" />
             <script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
             <script
               id="ads-start"
@@ -99,7 +100,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
               }}
             />
-          </Head>
+          </Head> */}
           <div id="uniconsent-config" />
         </>
       )}
