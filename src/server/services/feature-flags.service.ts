@@ -83,7 +83,7 @@ const featureFlags = createFeatureFlags({
   creatorComp: ['user'],
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
-  customPaymentProvider: ['public'],
+  customPaymentProvider: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
