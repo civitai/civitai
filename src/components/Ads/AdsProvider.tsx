@@ -57,6 +57,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {adsEnabled && (
         <>
           <Head>
+            <script src="https://cmp.uniconsent.com/v2/stub.min.js" async />
+            <script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
             <script
               id="ads-start"
               type="text/javascript"
@@ -97,8 +99,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
               }}
             />
-            <script src="https://cmp.uniconsent.com/v2/stub.min.js" async />
-            <script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
           </Head>
           <div id="uniconsent-config" />
         </>
