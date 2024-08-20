@@ -200,7 +200,11 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled }: Prop
 type Props = {
   children:
     | React.ReactElement
-    | ((props: { onClick: () => void; disabled: boolean; loading: boolean }) => React.ReactElement);
+    | ((props: {
+        onClick: () => void;
+        disabled?: boolean;
+        loading: boolean;
+      }) => React.ReactElement);
   priceId: string;
   onSuccess?: () => void;
   disabled?: boolean;

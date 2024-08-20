@@ -6,7 +6,8 @@ import { getPlans, getUserSubscription } from '~/server/services/subscriptions.s
 
 export const getPlansHandler = async ({ input }: { input: GetPlansSchema }) => {
   return await getPlans({
-    paymentProvider: input.paymentProvider ?? (env.DEFAULT_PAYMENT_PROVIDER as PaymentProvider),
+    paymentProvider:
+      input.paymentProvider ?? (env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER as PaymentProvider),
   });
 };
 

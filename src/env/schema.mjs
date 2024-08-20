@@ -7,6 +7,7 @@ import {
   stringToArray,
 } from '~/utils/zod-helpers';
 
+ 
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -167,7 +168,6 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
-  DEFAULT_PAYMENT_PROVIDER: z.enum(['Stripe', 'Paddle']).default('Stripe'),
   TIER_METADATA_KEY: z.string().default('tier'),
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
@@ -213,7 +213,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PADDLE_TOKEN: z.string().optional(),
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
-  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: z.string().default('Stripe'),
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: z.enum(['Stripe', 'Paddle']).default('Stripe'),
 });
 
 /**
@@ -253,5 +253,6 @@ export const clientEnv = {
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
-  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER ?? 'stripe',
+  // Default to Stripe in case the env var is not set
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
 };
