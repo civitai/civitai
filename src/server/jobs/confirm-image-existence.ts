@@ -11,13 +11,17 @@ import { createJob, getJobDate } from './job';
 
 const jobName = 'check-image-existence';
 const queryBatch = 2000;
+const popLimit = queryBatch * 5;
 
 export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
 
   try {
     // get list of ids of recently seen images from redis
-    const recentlySeenIds = await redis.packed.get<number[]>(REDIS_KEYS.QUEUES.SEEN_IMAGES);
+    const recentlySeenIds = await redis.packed.sPop<number>(
+      REDIS_KEYS.QUEUES.SEEN_IMAGES,
+      popLimit
+    );
     if (recentlySeenIds === null) {
       throw new Error('SEEN_IMAGES redis key is null');
     }

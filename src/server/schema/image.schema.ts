@@ -5,13 +5,13 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
-import dayjs from 'dayjs';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -312,6 +312,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
+    useIndex: z.boolean().optional().default(false),
   })
   .transform((value) => {
     if (value.withTags) {

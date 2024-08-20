@@ -19,7 +19,7 @@ import {
   bulkAddBlockedImages,
   bulkRemoveBlockedImages,
   deleteImageById,
-  getAllImagesPost,
+  getAllImagesIndex,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -245,15 +245,19 @@ export const setTosViolationHandler = async ({
 // #region [new handlers]
 export const getInfiniteImagesHandler = async ({
   input,
-  ctx,
+  ctx: { user },
 }: {
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
+  const features = getFeatureFlags({ user });
+  const fetchFn = features.imageIndex && input.useIndex ? getAllImagesIndex : getAllImages;
+  // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
+
   try {
-    return await getAllImages({
+    return await fetchFn({
       ...input,
-      user: ctx.user,
+      user,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
     });
@@ -277,7 +281,7 @@ const getReactionTotals = (post: ImagesAsPostModel) => {
 };
 
 export type ImagesAsPostModel = AsyncReturnType<typeof getImagesAsPostsInfiniteHandler>['items'][0];
-type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesPost>['items'][number];
+type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items'][number];
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
@@ -288,7 +292,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const features = getFeatureFlags({ user });
-    const fetchFn = features.imageIndex ? getAllImagesPost : getAllImages;
+    const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
     // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true
       ? ImageResultSearchIndex
@@ -382,6 +386,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const review = reviews.find((review) => review.userId === user.id);
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
+      // TODO we can probably replace this with publishedAt
       let publishedAt: Date | undefined = image.sortAt;
       if (features.imageIndex && !(image as ImageResultSearchIndex).published)
         publishedAt = undefined;
