@@ -102,7 +102,6 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
         },
         settings: {
           showAddDiscounts: false,
-          theme: 'dark',
         },
       });
     }

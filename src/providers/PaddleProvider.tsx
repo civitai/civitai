@@ -58,6 +58,11 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         environment: 'sandbox',
         token: env.NEXT_PUBLIC_PADDLE_TOKEN,
         eventCallback,
+        checkout: {
+          settings: {
+            theme: 'dark',
+          },
+        },
       }).then((paddleInstance: Paddle | undefined) => {
         if (paddleInstance) {
           setPaddle(paddleInstance);

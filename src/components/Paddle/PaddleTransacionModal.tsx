@@ -49,9 +49,6 @@ export const PaddleTransacionModal = ({ unitAmount, currency, onSuccess }: Props
     if (transactionId) {
       try {
         paddle.Checkout.open({
-          settings: {
-            theme: 'dark',
-          },
           transactionId,
         });
 
