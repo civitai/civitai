@@ -173,7 +173,7 @@ function AdWrapper({
     <Component
       ref={ref}
       className={clsx('flex flex-col items-center justify-between', className)}
-      style={{ ...style, height: height + 20, width }}
+      style={{ ...style, minHeight: height + 20, minWidth: width }}
       {...props}
     >
       {isClient && inView && adsBlocked !== undefined && (
