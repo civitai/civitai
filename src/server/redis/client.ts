@@ -14,6 +14,7 @@ export interface CustomRedisClient extends RedisClientType {
     setNX<T>(key: string, value: T): Promise<void>;
     sAdd<T>(key: string, values: T[]): Promise<void>;
     sRemove<T>(key: string, value: T): Promise<void>;
+    sPop<T>(key: string, count: number): Promise<T[]>;
     sMembers<T>(key: string): Promise<T[]>;
     hGet<T>(key: string, hashKey: string): Promise<T | null>;
     hSet<T>(key: string, hashKey: string, value: T): Promise<void>;
@@ -80,6 +81,11 @@ function getCache(legacyMode = false) {
 
     async sAdd<T>(key: string, values: T[]): Promise<void> {
       await client.sAdd(key, values.map(pack));
+    },
+
+    async sPop<T>(key: string, count: number): Promise<T[]> {
+      const packedValues = await client.sPop(commandOptions({ returnBuffers: true }), key, count);
+      return packedValues.map((value) => unpack(value));
     },
 
     async sRemove<T>(key: string, value: T): Promise<void> {
