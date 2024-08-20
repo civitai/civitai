@@ -113,6 +113,7 @@ export const whatIfQueryOverrides = {
   // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
+  remixSimilarity: 1,
 };
 
 export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {

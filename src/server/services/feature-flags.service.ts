@@ -82,7 +82,7 @@ const featureFlags = createFeatureFlags({
   donationGoals: ['public'],
   creatorComp: ['user'],
   experimentalGen: ['mod'],
-  imageIndex: ['granted'],
+  imageIndex: ['granted', 'mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

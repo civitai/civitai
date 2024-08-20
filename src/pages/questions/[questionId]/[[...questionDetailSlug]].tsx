@@ -94,6 +94,7 @@ export default function QuestionPage(
 
   const isModerator = user?.isModerator ?? false;
   const isOwner = user?.id === question?.user.id;
+  if (!isModerator) return <NotFound />;
 
   if (questionsLoading)
     return (

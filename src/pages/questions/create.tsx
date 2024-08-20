@@ -1,7 +1,12 @@
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { QuestionForm } from '~/components/Questions/QuestionForm';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export default function QuestionCreate() {
+  const currentUser = useCurrentUser();
+  if (!currentUser?.isModerator) return <NotFound />;
+
   return <QuestionForm />;
 }
 

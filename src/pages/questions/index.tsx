@@ -6,6 +6,7 @@ import { Questions } from '~/components/Questions/Questions.Provider';
 import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { env } from '~/env/client.mjs';
+import { NotFound } from '~/components/AppLayout/NotFound';
 
 // export const getServerSideProps = createServerSideProps({
 //   useSSG: true,
@@ -38,6 +39,7 @@ const openModal = () =>
 export default function QuestionsList() {
   const currentUser = useCurrentUser();
   const isMuted = currentUser?.muted ?? false;
+  if (!currentUser?.isModerator) return <NotFound />;
 
   return (
     <>
