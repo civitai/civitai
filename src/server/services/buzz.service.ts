@@ -1,10 +1,13 @@
 import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
+import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { logToAxiom } from '~/server/logging/client';
 import { userMultipliersCache } from '~/server/redis/caches';
 import {
   BuzzAccountType,
@@ -31,15 +34,13 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import dayjs from 'dayjs';
-import { logToAxiom } from '~/server/logging/client';
 
 type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
   return withRetries(
     async () => {
-      logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing');
+      if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );
@@ -68,12 +69,14 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
 export function getMultipliersForUserCache(userIds: number[]) {
   return userMultipliersCache.fetch(userIds);
 }
+
 export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
   return multipliers[userId];
 }
+
 export function deleteMultipliersForUserCache(userId: number) {
   return userMultipliersCache.bust(userId);
 }
@@ -343,6 +346,7 @@ export async function createBuzzTransactionMany(
 }
 
 const MAX_RETRIES = 3;
+
 export async function completeStripeBuzzTransaction({
   amount,
   stripePaymentIntentId,
@@ -484,6 +488,7 @@ type AccountSummaryRecord = {
   balance: number;
   lifetimeBalance: number;
 };
+
 export async function getAccountSummary({
   accountIds,
   accountType = 'User',
@@ -605,6 +610,7 @@ export type BuzzClaimResult =
     }
   | { status: 'available'; details: BuzzClaimDetails; claimId: string }
   | { status: 'claimed'; details: BuzzClaimDetails; claimedAt: Date };
+
 export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
   const claimable = await dbRead.buzzClaim.findUnique({
     where: { key: id },
@@ -688,6 +694,7 @@ type EarnPotential = {
 };
 const CREATOR_COMP_PERCENT = 0.25;
 const TIP_PERCENT = 0.25;
+
 export async function getEarnPotential({ userId, username }: GetEarnPotentialSchema) {
   if (!clickhouse) return;
   if (!userId && !username) return;

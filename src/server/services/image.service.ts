@@ -1612,12 +1612,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
-  // TODO remove, this is for 6/21 dev
+  // nb: this is for dev
   if (!isProd) {
     filters.push(
       makeMeiliImageSearchFilter(
         'sortAtUnix',
-        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+        `<= ${new Date('2024-08-17T22:32:08.749Z').getTime()}`
       )
     );
   }
@@ -1706,23 +1706,25 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       };
     });
 
-    redis.packed
-      .sAdd(
-        REDIS_KEYS.QUEUES.SEEN_IMAGES,
-        fullData.map((i) => i.id)
-      )
-      .catch((e) => {
-        const err = e as Error;
-        logToAxiom(
-          {
-            type: 'search-redis-error',
-            error: err.message,
-            cause: err.cause,
-            stack: err.stack,
-          },
-          'temp-search'
-        ).catch();
-      });
+    if (fullData.length) {
+      redis.packed
+        .sAdd(
+          REDIS_KEYS.QUEUES.SEEN_IMAGES,
+          fullData.map((i) => i.id)
+        )
+        .catch((e) => {
+          const err = e as Error;
+          logToAxiom(
+            {
+              type: 'search-redis-error',
+              error: err.message,
+              cause: err.cause,
+              stack: err.stack,
+            },
+            'temp-search'
+          ).catch();
+        });
+    }
 
     return {
       data: fullData,
