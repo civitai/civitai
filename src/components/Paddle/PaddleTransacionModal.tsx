@@ -38,7 +38,6 @@ export const PaddleTransacionModal = ({ unitAmount, currency, onSuccess }: Props
   const onCheckoutComplete = useCallback(
     (data?: CheckoutEventsData) => {
       if (transactionId && data?.transaction_id === transactionId) {
-        console.log('WE DID IT!');
         onSuccess?.(transactionId as string);
         dialog.onClose();
       }
