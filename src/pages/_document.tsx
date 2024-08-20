@@ -11,7 +11,7 @@ export default class _Document extends Document {
     return (
       <Html>
         <Head />
-        <Script strategy="beforeInteractive" src="https://cmp.uniconsent.com/v2/stub.min.js" />
+        {/* <Script strategy="beforeInteractive" src="https://cmp.uniconsent.com/v2/stub.min.js" />
         <Script
           strategy="beforeInteractive"
           src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js"
@@ -58,7 +58,7 @@ export default class _Document extends Document {
               });
             `,
           }}
-        />
+        /> */}
 
         <body>
           <Main />

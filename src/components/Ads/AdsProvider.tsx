@@ -57,7 +57,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && (
         <>
-          {/* <Head>
+          <Head>
             <script src="https://cmp.uniconsent.com/v2/stub.min.js" />
             <script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
             <script
@@ -100,7 +100,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
               }}
             />
-          </Head> */}
+          </Head>
           <div id="uniconsent-config" />
         </>
       )}
