@@ -42,8 +42,7 @@ import { SessionUser } from 'next-auth';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { Adunit } from '~/components/Ads/AdUnit';
+import { ModelAndImagePageAdUnit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -1232,7 +1231,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          <Adunit {...adsRegistry.modelVersionDetail} showRemoveAds />
+          <ModelAndImagePageAdUnit />
         </Stack>
       </ContainerGrid.Col>
 

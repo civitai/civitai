@@ -1,26 +1,20 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-
-import { NsfwLevel } from '~/server/common/enums';
-import { useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isProd } from '~/env/other';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
-const AscendeumAdsContext = createContext<{
+const AdsContext = createContext<{
   adsBlocked?: boolean;
-  nsfw: boolean;
-  nsfwOverride?: boolean;
   adsEnabled: boolean;
   username?: string;
   providers: readonly string[];
 } | null>(null);
 
 export function useAdsContext() {
-  const context = useContext(AscendeumAdsContext);
+  const context = useContext(AdsContext);
   if (!context) throw new Error('missing AdsProvider');
   return context;
 }
@@ -28,17 +22,12 @@ export function useAdsContext() {
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState<boolean>();
   const currentUser = useCurrentUser();
-  const adsEnabled = (currentUser?.settings.allowAds ?? true) || !currentUser?.isMember;
-
-  // keep track of generation panel views that are considered nsfw
-  const nsfwOverride = useGenerationStore(({ view, opened }) => {
-    if (!opened) return;
-    else if (view === 'queue' || view === 'feed') return true;
-  });
 
   // derived value from browsingMode and nsfwOverride
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
+
+  const adsEnabled = ((currentUser?.allowAds ?? true) || !currentUser?.isMember) && !nsfw;
 
   const readyRef = useRef(false);
   useEffect(() => {
@@ -51,13 +40,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   }, [adsEnabled]);
 
   return (
-    <AscendeumAdsContext.Provider
+    <AdsContext.Provider
       value={{
         adsBlocked,
-        nsfw,
         adsEnabled,
         username: currentUser?.username,
-        nsfwOverride,
         providers: adProviders,
       }}
     >
@@ -111,7 +98,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           <div id="uniconsent-config" />
         </>
       )}
-    </AscendeumAdsContext.Provider>
+    </AdsContext.Provider>
   );
 }
 

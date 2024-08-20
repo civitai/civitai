@@ -711,7 +711,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     tier,
     permissions,
     memberInBadState,
-    settings: userSettings.success ? { allowAds: userSettings.data.allowAds } : {},
+    allowAds: userSettings.success ? userSettings.data.allowAds : undefined,
     // feedbackToken,
   };
 };

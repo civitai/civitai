@@ -35,7 +35,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { adWatchedReward } from '~/server/rewards';
+// import { adWatchedReward } from '~/server/rewards';
 import { generateSecretHash } from '~/server/utils/key-generator';
 
 type AccountType = 'User';
@@ -832,32 +832,33 @@ export async function claimWatchedAdReward({
   userId,
   ip,
 }: ClaimWatchedAdRewardInput & { userId: number; ip?: string }) {
-  const rewardDetails = await adWatchedReward.getUserRewardDetails(userId);
-  if (!rewardDetails) return false;
+  throw new Error('claimWatchedAdReward not implemented');
+  // const rewardDetails = await adWatchedReward.getUserRewardDetails(userId);
+  // if (!rewardDetails) return false;
 
-  const awardedPercent =
-    rewardDetails.cap && rewardDetails.awarded !== -1
-      ? rewardDetails.awarded / rewardDetails.cap
-      : 0;
-  if (awardedPercent >= 1) return false;
+  // const awardedPercent =
+  //   rewardDetails.cap && rewardDetails.awarded !== -1
+  //     ? rewardDetails.awarded / rewardDetails.cap
+  //     : 0;
+  // if (awardedPercent >= 1) return false;
 
-  const token = generateSecretHash(key);
-  const match = await dbRead.adToken.findFirst({
-    where: { token, userId },
-    select: { expiresAt: true, createdAt: true },
-  });
-  // if token doesn't exist or is expired, it's invalid
-  if (!match || (match.expiresAt && match.expiresAt < new Date())) return false;
+  // const token = generateSecretHash(key);
+  // const match = await dbRead.adToken.findFirst({
+  //   where: { token, userId },
+  //   select: { expiresAt: true, createdAt: true },
+  // });
+  // // if token doesn't exist or is expired, it's invalid
+  // if (!match || (match.expiresAt && match.expiresAt < new Date())) return false;
 
-  // if token was created less than 15 seconds ago, it's invalid
-  const now = new Date();
-  if (now.getTime() - match.createdAt.getTime() < 15000) return false;
+  // // if token was created less than 15 seconds ago, it's invalid
+  // const now = new Date();
+  // if (now.getTime() - match.createdAt.getTime() < 15000) return false;
 
-  // await adWatchedReward.apply({ token, userId }, ip);
-  await dbWrite.adToken.update({
-    where: { token },
-    data: { expiresAt: new Date() },
-  });
+  // // await adWatchedReward.apply({ token, userId }, ip);
+  // await dbWrite.adToken.update({
+  //   where: { token },
+  //   data: { expiresAt: new Date() },
+  // });
 
-  return true;
+  // return true;
 }

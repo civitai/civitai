@@ -26,7 +26,7 @@ interface ExtendedUser {
   referral?: { id: number }; // client only
   memberInBadState?: boolean;
   meta?: UserMeta;
-  settings: Pick<UserSettingsSchema, 'allowAds'>;
+  allowAds?: boolean;
   // TODO.briant - clean up user session data
   /*
     remove `deletedAt` from session user data

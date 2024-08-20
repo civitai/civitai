@@ -56,8 +56,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { Adunit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -1028,7 +1026,6 @@ export default function ModelDetailsV2({
         (!model.locked ? (
           <Container size="xl" my="xl">
             <Stack spacing="md">
-              {model.hasSuggestedResources && <Adunit {...adsRegistry.modelDetailSectionDivider} />}
               <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                 <Group spacing="xs">
                   <Title order={2}>Discussion</Title>
