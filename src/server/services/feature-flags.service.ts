@@ -76,14 +76,14 @@ const featureFlags = createFeatureFlags({
   buzzWithdrawalTransfer: ['granted'],
   vault: ['mod'],
   draftMode: ['mod'],
-  membershipsV2: ['mod'],
+  membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
   donationGoals: ['public'],
   creatorComp: ['user'],
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
-  customPaymentProvider: ['mod', 'dev'],
+  customPaymentProvider: ['public'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

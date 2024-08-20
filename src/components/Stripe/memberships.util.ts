@@ -30,13 +30,15 @@ export const useActiveSubscription = ({
 
 export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
+    useActiveSubscription();
   const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
     {}
   );
   const features = useFeatureFlags();
 
   if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {
+    console.log('wa wa');
     return false;
   }
 
@@ -44,7 +46,9 @@ export const useCanUpgrade = () => {
     return true;
   }
 
-  if (products.length <= 1) {
+  const availableProducts = products.filter((p) => p.provider === subscriptionPaymentProvider);
+
+  if (availableProducts.length <= 1) {
     return false;
   }
 

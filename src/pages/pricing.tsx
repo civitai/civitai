@@ -56,12 +56,12 @@ export default function Pricing() {
     returnUrl: string;
     reason: JoinRedirectReason;
   };
-  const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
   const redirectReason = joinRedirectReasons[reason];
+  const paymentProvider = usePaymentProvider();
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
-  const { subscription, subscriptionLoading } = useActiveSubscription({
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
 
@@ -79,7 +79,9 @@ export default function Pricing() {
   }) as SubscriptionProductMetadata;
   const appliesForDiscount = features.membershipsV2 && appliesForFounderDiscount(metadata.tier);
   const activeSubscriptionIsNotDefaultProvider =
-    subscription && subscription?.product?.provider !== paymentProvider;
+    subscription && subscriptionPaymentProvider !== paymentProvider;
+
+  console.log(paymentProvider, subscription);
 
   return (
     <>

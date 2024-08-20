@@ -64,51 +64,54 @@ export const usePaddleTransaction = ({
   };
 };
 
-export const usePaddleCheckout = ({
-  transactionId,
-  containerName = 'checkout-container',
-  onPaymentSuccess,
-}: {
-  onPaymentSuccess?: (transactionId: string) => Promise<void>;
-  transactionId?: string;
-  containerName?: string;
-}) => {
-  const { paddle, emitter } = usePaddle();
-  const theme = useMantineTheme();
+// TODO.Remove: Ended up using their overlay checkout. Will leave this here for now just in case
+// We wanna roll it back, but prob. not ever needed again.
+//
+// export const usePaddleCheckout = ({
+//   transactionId,
+//   containerName = 'checkout-container',
+//   onPaymentSuccess,
+// }: {
+//   onPaymentSuccess?: (transactionId: string) => Promise<void>;
+//   transactionId?: string;
+//   containerName?: string;
+// }) => {
+//   const { paddle, emitter } = usePaddle();
+//   const theme = useMantineTheme();
 
-  const trackTransaction = useCallback(
-    (data?: CheckoutEventsData) => {
-      if (transactionId && data?.transaction_id === transactionId) {
-        onPaymentSuccess?.(transactionId as string);
-      }
-    },
-    [transactionId, onPaymentSuccess]
-  );
+//   const trackTransaction = useCallback(
+//     (data?: CheckoutEventsData) => {
+//       if (transactionId && data?.transaction_id === transactionId) {
+//         onPaymentSuccess?.(transactionId as string);
+//       }
+//     },
+//     [transactionId, onPaymentSuccess]
+//   );
 
-  useEffect(() => {
-    if (transactionId) {
-      try {
-        paddle.Checkout.open({
-          settings: {
-            displayMode: 'inline',
-            frameTarget: containerName,
-            frameInitialHeight: 450, // Recommended by paddle
-            frameStyle: `width: 100%; min-width: 312px; background-color: transparent; border: none; font-family: ${theme.fontFamily};`,
-            theme: theme.colorScheme === 'dark' ? 'dark' : 'light',
-          },
-          transactionId,
-        });
+//   useEffect(() => {
+//     if (transactionId) {
+//       try {
+//         paddle.Checkout.open({
+//           settings: {
+//             displayMode: 'inline',
+//             frameTarget: containerName,
+//             frameInitialHeight: 450, // Recommended by paddle
+//             frameStyle: `width: 100%; min-width: 312px; background-color: transparent; border: none; font-family: ${theme.fontFamily};`,
+//             theme: theme.colorScheme === 'dark' ? 'dark' : 'light',
+//           },
+//           transactionId,
+//         });
 
-        emitter.on('checkout.completed', trackTransaction);
-      } catch (err) {
-        console.error(err);
-      }
-    }
+//         emitter.on('checkout.completed', trackTransaction);
+//       } catch (err) {
+//         console.error(err);
+//       }
+//     }
 
-    return () => {
-      emitter.off('checkout.completed', trackTransaction);
-    };
-  }, [transactionId, paddle, containerName]);
+//     return () => {
+//       emitter.off('checkout.completed', trackTransaction);
+//     };
+//   }, [transactionId, paddle, containerName]);
 
-  return {};
-};
+//   return {};
+// };

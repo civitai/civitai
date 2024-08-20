@@ -5,6 +5,8 @@ import { EventEmitter } from '~/utils/eventEmitter';
 
 type PaddleEventEmitter = {
   'checkout.completed': CheckoutEventsData | undefined;
+  'checkout.closed': undefined;
+  'checkout.loaded': undefined;
 };
 
 const PaddleContext = createContext<
@@ -22,13 +24,23 @@ export const usePaddle = () => {
 
 export function PaddleProvider({ children }: { children: React.ReactNode }) {
   const [paddle, setPaddle] = useState<Paddle>();
-  const emitter = useRef<EventEmitter<{ 'checkout.completed': CheckoutEventsData | undefined }>>();
+  const emitter = useRef<
+    EventEmitter<{
+      'checkout.completed': CheckoutEventsData | undefined;
+      'checkout.closed': undefined;
+      'checkout.loaded': undefined;
+    }>
+  >();
   const eventCallback = useCallback(
     (e: PaddleEventData) => {
-      // console.log(e);
       if (e.name === 'checkout.completed') {
-        // console.log('checkout completed', e.data, emitter.current);
         emitter.current?.emit(e.name, e.data);
+      }
+      if (e.name === 'checkout.closed') {
+        emitter.current?.emit(e.name, undefined);
+      }
+      if (e.name === 'checkout.loaded') {
+        emitter.current?.emit(e.name, undefined);
       }
     },
     [emitter]
@@ -39,6 +51,8 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
     if (env.NEXT_PUBLIC_PADDLE_TOKEN) {
       emitter.current = new EventEmitter<{
         'checkout.completed': CheckoutEventsData | undefined;
+        'checkout.closed': undefined;
+        'checkout.loaded': undefined;
       }>();
       initializePaddle({
         environment: 'sandbox',

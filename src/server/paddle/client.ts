@@ -55,6 +55,7 @@ export const createBuzzTransaction = async ({
   return paddle.transactions.create({
     customData: metadata,
     customerId: customerId,
+
     items: [
       {
         quantity: 1,
@@ -70,6 +71,10 @@ export const createBuzzTransaction = async ({
             currencyCode: currency as CurrencyCode,
           },
           description: `Purchase of ${buzzAmount} Buzz`,
+          quantity: {
+            maximum: 1,
+            minimum: 1,
+          },
         },
       },
     ],
