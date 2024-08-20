@@ -57,17 +57,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       resources: [modelId],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
-        baseModel: params.baseModel,
-        sampler: params.sampler,
-        clipSkip: params.clipSkip,
-        steps: params.steps ?? generation.defaultValues.steps,
-        quantity: params.quantity,
-        draft: params.draft,
-        aspectRatio: params.aspectRatio,
-        width: params.width,
-        height: params.height,
-        upscale: params.upscale,
-        fluxMode: params.fluxMode,
+        ...params,
         ...whatIfQueryOverrides,
       } as TextToImageParams,
     };
