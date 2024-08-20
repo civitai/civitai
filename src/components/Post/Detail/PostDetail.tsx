@@ -81,7 +81,7 @@ export function PostDetailContent({ postId }: Props) {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages({ postId, pending: true, browsingLevel: undefined });
+  } = useQueryImages({ postId, pending: true });
   const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
   const { collectionItems = [] } = usePostContestCollectionDetails(
     { id: postId },
@@ -105,6 +105,8 @@ export function PostDetailContent({ postId }: Props) {
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
+
+  console.log(images.map((x) => x.nsfwLevel));
 
   const meta = (
     <Meta
