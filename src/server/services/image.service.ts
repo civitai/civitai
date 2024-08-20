@@ -1640,9 +1640,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
-  if (notPublished && isModerator) {
-    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-  } else if (!isModerator) {
+  if (isModerator) {
+    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+    // else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+  } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
     if (currentUserId) {
