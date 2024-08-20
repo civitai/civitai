@@ -1,0 +1,45 @@
+ WITH stats_timeframe AS (
+         SELECT m."bountyId",
+            m.timeframe,
+            COALESCE(m."favoriteCount", 0) AS "favoriteCount",
+            COALESCE(m."trackCount", 0) AS "trackCount",
+            COALESCE(m."entryCount", 0) AS "entryCount",
+            COALESCE(m."benefactorCount", 0) AS "benefactorCount",
+            COALESCE(m."unitAmountCount", 0) AS "unitAmountCount",
+            COALESCE(m."commentCount", 0) AS "commentCount"
+           FROM "BountyMetric" m
+          GROUP BY m."bountyId", m.timeframe
+        )
+ SELECT stats_timeframe."bountyId",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."favoriteCount", NULL::integer)) AS "favoriteCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."favoriteCount", NULL::integer)) AS "favoriteCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."favoriteCount", NULL::integer)) AS "favoriteCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."favoriteCount", NULL::integer)) AS "favoriteCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."favoriteCount", NULL::integer)) AS "favoriteCountAllTime",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."trackCount", NULL::integer)) AS "trackCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."trackCount", NULL::integer)) AS "trackCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."trackCount", NULL::integer)) AS "trackCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."trackCount", NULL::integer)) AS "trackCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."trackCount", NULL::integer)) AS "trackCountAllTime",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."entryCount", NULL::integer)) AS "entryCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."entryCount", NULL::integer)) AS "entryCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."entryCount", NULL::integer)) AS "entryCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."entryCount", NULL::integer)) AS "entryCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."entryCount", NULL::integer)) AS "entryCountAllTime",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."benefactorCount", NULL::integer)) AS "benefactorCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."benefactorCount", NULL::integer)) AS "benefactorCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."benefactorCount", NULL::integer)) AS "benefactorCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."benefactorCount", NULL::integer)) AS "benefactorCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."benefactorCount", NULL::integer)) AS "benefactorCountAllTime",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."unitAmountCount", NULL::integer)) AS "unitAmountCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."unitAmountCount", NULL::integer)) AS "unitAmountCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."unitAmountCount", NULL::integer)) AS "unitAmountCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."unitAmountCount", NULL::integer)) AS "unitAmountCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."unitAmountCount", NULL::integer)) AS "unitAmountCountAllTime",
+    max(iif((stats_timeframe.timeframe = 'Day'::"MetricTimeframe"), stats_timeframe."commentCount", NULL::integer)) AS "commentCountDay",
+    max(iif((stats_timeframe.timeframe = 'Week'::"MetricTimeframe"), stats_timeframe."commentCount", NULL::integer)) AS "commentCountWeek",
+    max(iif((stats_timeframe.timeframe = 'Month'::"MetricTimeframe"), stats_timeframe."commentCount", NULL::integer)) AS "commentCountMonth",
+    max(iif((stats_timeframe.timeframe = 'Year'::"MetricTimeframe"), stats_timeframe."commentCount", NULL::integer)) AS "commentCountYear",
+    max(iif((stats_timeframe.timeframe = 'AllTime'::"MetricTimeframe"), stats_timeframe."commentCount", NULL::integer)) AS "commentCountAllTime"
+   FROM stats_timeframe
+  GROUP BY stats_timeframe."bountyId";

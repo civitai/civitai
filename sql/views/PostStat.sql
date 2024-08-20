@@ -1,0 +1,51 @@
+ WITH timeframe_stats AS (
+         SELECT p.id AS "postId",
+            COALESCE(mm."heartCount", 0) AS "heartCount",
+            COALESCE(mm."likeCount", 0) AS "likeCount",
+            0 AS "dislikeCount",
+            COALESCE(mm."laughCount", 0) AS "laughCount",
+            COALESCE(mm."cryCount", 0) AS "cryCount",
+            COALESCE(mm."commentCount", 0) AS "commentCount",
+            tf.timeframe
+           FROM (("Post" p
+             CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf)
+             LEFT JOIN "PostMetric" mm ON (((mm."postId" = p.id) AND (mm.timeframe = tf.timeframe))))
+        )
+ SELECT ts."postId",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."heartCount", NULL::integer)) AS "heartCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."heartCount", NULL::integer)) AS "heartCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."heartCount", NULL::integer)) AS "heartCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."heartCount", NULL::integer)) AS "heartCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."heartCount", NULL::integer)) AS "heartCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."likeCount", NULL::integer)) AS "likeCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."likeCount", NULL::integer)) AS "likeCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."likeCount", NULL::integer)) AS "likeCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."likeCount", NULL::integer)) AS "likeCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."likeCount", NULL::integer)) AS "likeCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."dislikeCount", NULL::integer)) AS "dislikeCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."dislikeCount", NULL::integer)) AS "dislikeCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."dislikeCount", NULL::integer)) AS "dislikeCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."dislikeCount", NULL::integer)) AS "dislikeCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."dislikeCount", NULL::integer)) AS "dislikeCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."laughCount", NULL::integer)) AS "laughCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."laughCount", NULL::integer)) AS "laughCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."laughCount", NULL::integer)) AS "laughCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."laughCount", NULL::integer)) AS "laughCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."laughCount", NULL::integer)) AS "laughCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."cryCount", NULL::integer)) AS "cryCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."cryCount", NULL::integer)) AS "cryCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."cryCount", NULL::integer)) AS "cryCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."cryCount", NULL::integer)) AS "cryCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."cryCount", NULL::integer)) AS "cryCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), ts."commentCount", NULL::integer)) AS "commentCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), ts."commentCount", NULL::integer)) AS "commentCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), ts."commentCount", NULL::integer)) AS "commentCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), ts."commentCount", NULL::integer)) AS "commentCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), ts."commentCount", NULL::integer)) AS "commentCountAllTime",
+    max(iif((ts.timeframe = 'Day'::"MetricTimeframe"), (((ts."heartCount" + ts."likeCount") + ts."cryCount") + ts."laughCount"), NULL::integer)) AS "reactionCountDay",
+    max(iif((ts.timeframe = 'Week'::"MetricTimeframe"), (((ts."heartCount" + ts."likeCount") + ts."cryCount") + ts."laughCount"), NULL::integer)) AS "reactionCountWeek",
+    max(iif((ts.timeframe = 'Month'::"MetricTimeframe"), (((ts."heartCount" + ts."likeCount") + ts."cryCount") + ts."laughCount"), NULL::integer)) AS "reactionCountMonth",
+    max(iif((ts.timeframe = 'Year'::"MetricTimeframe"), (((ts."heartCount" + ts."likeCount") + ts."cryCount") + ts."laughCount"), NULL::integer)) AS "reactionCountYear",
+    max(iif((ts.timeframe = 'AllTime'::"MetricTimeframe"), (((ts."heartCount" + ts."likeCount") + ts."cryCount") + ts."laughCount"), NULL::integer)) AS "reactionCountAllTime"
+   FROM timeframe_stats ts
+  GROUP BY ts."postId";

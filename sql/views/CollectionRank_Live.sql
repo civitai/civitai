@@ -1,0 +1,17 @@
+ SELECT "CollectionStat"."collectionId",
+    row_number() OVER (ORDER BY "CollectionStat"."followerCountDay" DESC, "CollectionStat"."itemCountDay" DESC, "CollectionStat"."collectionId") AS "followerCountDayRank",
+    row_number() OVER (ORDER BY "CollectionStat"."followerCountWeek" DESC, "CollectionStat"."itemCountWeek" DESC, "CollectionStat"."collectionId") AS "followerCountWeekRank",
+    row_number() OVER (ORDER BY "CollectionStat"."followerCountMonth" DESC, "CollectionStat"."itemCountMonth" DESC, "CollectionStat"."collectionId") AS "followerCountMonthRank",
+    row_number() OVER (ORDER BY "CollectionStat"."followerCountYear" DESC, "CollectionStat"."itemCountYear" DESC, "CollectionStat"."collectionId") AS "followerCountYearRank",
+    row_number() OVER (ORDER BY "CollectionStat"."followerCountAllTime" DESC, "CollectionStat"."itemCountAllTime" DESC, "CollectionStat"."collectionId") AS "followerCountAllTimeRank",
+    row_number() OVER (ORDER BY "CollectionStat"."itemCountDay" DESC, "CollectionStat"."followerCountDay" DESC, "CollectionStat"."collectionId") AS "itemCountDayRank",
+    row_number() OVER (ORDER BY "CollectionStat"."itemCountWeek" DESC, "CollectionStat"."followerCountWeek" DESC, "CollectionStat"."collectionId") AS "itemCountWeekRank",
+    row_number() OVER (ORDER BY "CollectionStat"."itemCountMonth" DESC, "CollectionStat"."followerCountMonth" DESC, "CollectionStat"."collectionId") AS "itemCountMonthRank",
+    row_number() OVER (ORDER BY "CollectionStat"."itemCountYear" DESC, "CollectionStat"."followerCountYear" DESC, "CollectionStat"."collectionId") AS "itemCountYearRank",
+    row_number() OVER (ORDER BY "CollectionStat"."itemCountAllTime" DESC, "CollectionStat"."followerCountAllTime" DESC, "CollectionStat"."collectionId") AS "itemCountAllTimeRank",
+    row_number() OVER (ORDER BY "CollectionStat"."contributorCountDay" DESC, "CollectionStat"."followerCountDay" DESC, "CollectionStat"."collectionId") AS "contributorCountDayRank",
+    row_number() OVER (ORDER BY "CollectionStat"."contributorCountWeek" DESC, "CollectionStat"."followerCountWeek" DESC, "CollectionStat"."collectionId") AS "contributorCountWeekRank",
+    row_number() OVER (ORDER BY "CollectionStat"."contributorCountMonth" DESC, "CollectionStat"."followerCountMonth" DESC, "CollectionStat"."collectionId") AS "contributorCountMonthRank",
+    row_number() OVER (ORDER BY "CollectionStat"."contributorCountYear" DESC, "CollectionStat"."followerCountYear" DESC, "CollectionStat"."collectionId") AS "contributorCountYearRank",
+    row_number() OVER (ORDER BY "CollectionStat"."contributorCountAllTime" DESC, "CollectionStat"."followerCountAllTime" DESC, "CollectionStat"."collectionId") AS "contributorCountAllTimeRank"
+   FROM "CollectionStat";

@@ -1,0 +1,55 @@
+ WITH timeframe_stats AS (
+         SELECT m."bountyId",
+            m."favoriteCount",
+            m."trackCount",
+            m."entryCount",
+            m."benefactorCount",
+            m."unitAmountCount",
+            m."commentCount",
+            (((m."favoriteCount" + m."trackCount") + m."entryCount") + m."benefactorCount") AS "engagementCount",
+            m.timeframe
+           FROM "BountyMetric" m
+        ), timeframe_rank AS (
+         SELECT timeframe_stats."bountyId",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."favoriteCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "favoriteCountRank",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."trackCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "trackCountRank",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."entryCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "entryCountRank",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."benefactorCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "benefactorCountRank",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."unitAmountCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "unitAmountCountRank",
+            row_number() OVER (PARTITION BY timeframe_stats.timeframe ORDER BY COALESCE(timeframe_stats."commentCount", 0) DESC, COALESCE(timeframe_stats."engagementCount", 0) DESC, timeframe_stats."bountyId" DESC) AS "commentCountRank",
+            timeframe_stats.timeframe
+           FROM timeframe_stats
+        )
+ SELECT timeframe_rank."bountyId",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."favoriteCountRank", NULL::bigint)) AS "favoriteCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."favoriteCountRank", NULL::bigint)) AS "favoriteCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."favoriteCountRank", NULL::bigint)) AS "favoriteCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."favoriteCountRank", NULL::bigint)) AS "favoriteCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."favoriteCountRank", NULL::bigint)) AS "favoriteCountAllTimeRank",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."trackCountRank", NULL::bigint)) AS "trackCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."trackCountRank", NULL::bigint)) AS "trackCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."trackCountRank", NULL::bigint)) AS "trackCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."trackCountRank", NULL::bigint)) AS "trackCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."trackCountRank", NULL::bigint)) AS "trackCountAllTimeRank",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."entryCountRank", NULL::bigint)) AS "entryCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."entryCountRank", NULL::bigint)) AS "entryCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."entryCountRank", NULL::bigint)) AS "entryCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."entryCountRank", NULL::bigint)) AS "entryCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."entryCountRank", NULL::bigint)) AS "entryCountAllTimeRank",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."benefactorCountRank", NULL::bigint)) AS "benefactorCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."benefactorCountRank", NULL::bigint)) AS "benefactorCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."benefactorCountRank", NULL::bigint)) AS "benefactorCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."benefactorCountRank", NULL::bigint)) AS "benefactorCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."benefactorCountRank", NULL::bigint)) AS "benefactorCountAllTimeRank",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."unitAmountCountRank", NULL::bigint)) AS "unitAmountCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."unitAmountCountRank", NULL::bigint)) AS "unitAmountCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."unitAmountCountRank", NULL::bigint)) AS "unitAmountCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."unitAmountCountRank", NULL::bigint)) AS "unitAmountCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."unitAmountCountRank", NULL::bigint)) AS "unitAmountCountAllTimeRank",
+    max(iif((timeframe_rank.timeframe = 'Day'::"MetricTimeframe"), timeframe_rank."commentCountRank", NULL::bigint)) AS "commentCountDayRank",
+    max(iif((timeframe_rank.timeframe = 'Week'::"MetricTimeframe"), timeframe_rank."commentCountRank", NULL::bigint)) AS "commentCountWeekRank",
+    max(iif((timeframe_rank.timeframe = 'Month'::"MetricTimeframe"), timeframe_rank."commentCountRank", NULL::bigint)) AS "commentCountMonthRank",
+    max(iif((timeframe_rank.timeframe = 'Year'::"MetricTimeframe"), timeframe_rank."commentCountRank", NULL::bigint)) AS "commentCountYearRank",
+    max(iif((timeframe_rank.timeframe = 'AllTime'::"MetricTimeframe"), timeframe_rank."commentCountRank", NULL::bigint)) AS "commentCountAllTimeRank"
+   FROM timeframe_rank
+  GROUP BY timeframe_rank."bountyId";
