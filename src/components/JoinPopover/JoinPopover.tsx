@@ -83,7 +83,7 @@ export function JoinPopover({
       e.stopPropagation();
       e.preventDefault();
       e.nativeEvent.stopImmediatePropagation();
-      children.props[trigger]?.();
+      children.props[trigger]?.(e);
     },
   });
 }
