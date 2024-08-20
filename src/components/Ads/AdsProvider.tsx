@@ -29,10 +29,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
   const adsEnabled = (currentUser?.allowAds || !isMember) && !nsfw;
+  useEffect(() => console.log({ adsEnabled }), [adsEnabled]);
+  useEffect(() => console.log({ adsBlocked }), [adsBlocked]);
 
-  const readyRef = useRef(false);
+  const readyRef = useRef<boolean>();
   useEffect(() => {
     if (!readyRef.current && adsEnabled) {
+      console.log('check ads blocked');
       readyRef.current = true;
       checkAdsBlocked((blocked) => {
         setAdsBlocked(blocked);
