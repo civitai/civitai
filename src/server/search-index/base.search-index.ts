@@ -23,7 +23,7 @@ import {
 } from '~/server/search-index/utils/taskQueue';
 import { createLogger } from '~/utils/logging';
 
-const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
+const DEFAULT_UPDATE_INTERVAL = 30 * 1000;
 const logger = createLogger(`search-index-processor`);
 
 type SearchIndexContext = {
