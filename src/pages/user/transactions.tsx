@@ -24,7 +24,6 @@ import {
   GetUserBuzzTransactionsSchema,
   TransactionType,
 } from '~/server/schema/buzz.schema';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -51,9 +50,8 @@ const defaultFilters = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.buzz) {
+  resolver: async ({ session, features }) => {
+    if (!features?.buzz) {
       return { notFound: true };
     }
   },

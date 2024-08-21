@@ -99,11 +99,11 @@ export function useFileUpload() {
         });
         xhr.addEventListener('error', () => {
           updateTrackedFile({ status: 'error' });
-          resolve('upload error');
+          reject('upload error');
         });
         xhr.addEventListener('abort', () => {
           setFiles((state) => state.filter((x) => x.url !== id));
-          resolve(false);
+          reject(false);
         });
         xhr.open('PUT', uploadURL);
         xhr.send(file);

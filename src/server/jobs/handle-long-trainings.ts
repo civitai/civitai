@@ -12,7 +12,7 @@ import { createJob, getJobDate } from './job';
 
 const SUBMITTED_CHECK_INTERVAL = 10;
 const PROCESSING_CHECK_INTERVAL = 45;
-const REJECTED_CHECK_INTERVAL = 4 * 60;
+const REJECTED_CHECK_INTERVAL = 24 * 60; // 1 day in the queue
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'handle-long-trainings', type: 'error', ...data }, 'webhooks').catch();
@@ -56,6 +56,7 @@ async function handleJob({
   modelId,
   modelName,
   modelVersionName,
+  userId,
   userEmail,
   userUsername,
   status,
@@ -111,7 +112,6 @@ async function handleJob({
     }
   }
 
-  // we could put || status === 'Processing' here, but let's leave it out for now
   if (status === 'Submitted') {
     // - if it's not in the queue after 10 minutes, resubmit it
     if (minsDiff > SUBMITTED_CHECK_INTERVAL) {
@@ -134,6 +134,15 @@ async function handleJob({
   if (status === 'Processing') {
     // - if it hasn't gotten an update in a while, mark failed
     if (minsDiff > PROCESSING_CHECK_INTERVAL) {
+      const queueResponse = await getOrchestratorCaller(submittedAt).getJobById({ id: jobId });
+      // If we found it in the queue, we're good
+      if (
+        queueResponse.ok &&
+        queueResponse.data?.serviceProviders &&
+        !isEmpty(queueResponse.data?.serviceProviders)
+      )
+        return true;
+
       log(`Have not received an update in allotted time (${minsDiff} mins) - failing.`);
       await updateStatus('Failed');
       return await refund();
@@ -156,9 +165,7 @@ async function handleJob({
 
   async function requeueTraining() {
     try {
-      log(`Resubmitting training request`);
-      // TODO need userId here?
-      await createTrainingRequest({ modelVersionId });
+      await createTrainingRequest({ modelVersionId, userId });
       log(`Resubmitted training request`);
       return true;
     } catch (e) {
@@ -182,16 +189,20 @@ async function handleJob({
       return;
     }
 
-    log(`Refunding transaction`);
     try {
       await withRetries(async () =>
         refundTransaction(transactionId, 'Refund due to a long-running/failed training job.')
       );
+      log(`Refunded transaction`);
     } catch (e) {
       log(`Error refunding transaction - need to manually refund.`);
       return;
     }
-    log(`Refunded transaction`);
+
+    if (jobId) {
+      getOrchestratorCaller(submittedAt).deleteJobById({ id: jobId }).catch();
+      log(`Canceled job in orchestrator`);
+    }
 
     return true;
   }
@@ -229,6 +240,7 @@ type TrainingRunResult = {
   modelId: number;
   modelName: string;
   modelVersionName: string;
+  userId: number;
   userEmail: string;
   userUsername: string;
   updated: string;
@@ -246,6 +258,7 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
            m.id                as                                                      "modelId",
            m.name              as                                                      "modelName",
            mv.name             as                                                      "modelVersionName",
+           u.id                as                                                      "userId",
            u.email             as                                                      "userEmail",
            u.username          as                                                      "userUsername",
            mv."trainingStatus" as                                                      status,

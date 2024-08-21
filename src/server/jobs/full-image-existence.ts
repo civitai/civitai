@@ -2,13 +2,11 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { makeMeiliImageSearchFilter } from '~/server/services/image.service';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
-const queryBatch = 1e6;
+const queryBatch = 2e5;
 
 export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
@@ -55,35 +53,19 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       start = end + 1;
     }
 
-    const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
-    if (index) {
-      await index.deleteDocuments({
-        filter: makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
-      });
-    }
-
-    // TODO if the above doesnt work...
-    // if (metricsSearchClient) {
-    //   const filters: string[] = [];
-    //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`));
-    //
-    //   let more = true;
-    //   let offset = 0;
-    //   while (more) {
-    //     const request: DocumentsQuery = {
-    //       filter: filters.join(' AND '),
-    //       limit: 1000,
-    //       offset,
-    //     };
-    //
-    //     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
-    //       .index(METRICS_IMAGES_SEARCH_INDEX)
-    //       .search(null, request);
-    //   }
+    // nb: disabling deletes, this can cause problems, and we have a filter in place
+    // const index = await getOrCreateIndex(METRICS_IMAGES_SEARCH_INDEX, undefined, client);
+    // if (index) {
+    //   const deleteFilters = [
+    //     makeMeiliImageSearchFilter('existedAtUnix', `< ${firstTime}`),
+    //     makeMeiliImageSearchFilter('existedAtUnix', `NOT EXISTS`),
+    //   ];
+    //   await index.deleteDocuments({
+    //     filter: `(${deleteFilters.join(' OR ')})`,
+    //   });
     // }
 
     await redis.set(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC, firstTime);
-
     await setLastRun();
   } catch (e) {
     const error = e as Error;

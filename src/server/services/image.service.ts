@@ -1314,7 +1314,7 @@ export const getAllImages = async (
   };
 };
 
-export const getAllImagesPost = async (
+export const getAllImagesIndex = async (
   input: GetInfiniteImagesOutput & {
     user?: SessionUser;
     headers?: Record<string, string>;
@@ -1330,7 +1330,7 @@ export const getAllImagesPost = async (
     include,
     types,
     fromPlatform,
-    // baseModels, // doesn't make sense to do this here
+    baseModels,
     tools,
     techniques,
     tags,
@@ -1338,7 +1338,10 @@ export const getAllImagesPost = async (
     withMeta: hasMeta,
     excludedUserIds,
     excludeCrossPosts,
+    hidden,
+    followed,
     //
+    prioritizedUserIds, // TODO fix
     modelId, // TODO fix
     reviewId, // TODO - remove, not in use...true?
     username, // TODO - query by `userId` instead
@@ -1348,10 +1351,7 @@ export const getAllImagesPost = async (
     postId,
     periodMode,
     generation,
-    prioritizedUserIds,
     includeBaseModel,
-    hidden,
-    followed,
     pending,
     collectionTagId,
     headers,
@@ -1373,7 +1373,7 @@ export const getAllImagesPost = async (
     browsingLevel,
     fromPlatform,
     hasMeta,
-    // baseModels,
+    baseModels,
     postIds,
     period,
     tools,
@@ -1385,6 +1385,9 @@ export const getAllImagesPost = async (
     offset,
     excludedUserIds,
     excludeCrossPosts,
+    hidden,
+    followed,
+    prioritizedUserIds,
     // userIds: userIds,
     currentUserId,
     isModerator: user?.isModerator,
@@ -1433,6 +1436,7 @@ export const getAllImagesPost = async (
       createdAt: sr.sortAt,
       metadata: { width: sr.width, height: sr.height },
       published: !!publishedAtUnix,
+      publishedAt: !publishedAtUnix ? undefined : sr.sortAt,
       //
       user: {
         id: sr.userId,
@@ -1444,6 +1448,7 @@ export const getAllImagesPost = async (
       },
       reactions,
       // TODO fix below
+      availability: Availability.Public,
       tags: [], // needed?
       name: null, // leave
       generationProcess: null, // deprecated
@@ -1483,21 +1488,24 @@ type ImageSearchInput = {
   postIds?: number[];
   period?: MetricTimeframe;
   browsingLevel?: NsfwLevel;
+  hidden?: boolean;
+  followed?: boolean;
   sort?: ImageSort;
   limit?: number;
   page?: number;
   offset?: number;
-  // Unsupported
   tags?: number[];
   techniques?: number[];
   tools?: number[];
-  userIds?: number | number[];
-  modelId?: number;
-  reviewId?: number;
   excludedUserIds?: number[];
   excludeCrossPosts?: boolean;
   currentUserId?: number;
   isModerator?: boolean;
+  // Unhandled
+  prioritizedUserIds?: number[];
+  userIds?: number | number[];
+  modelId?: number;
+  reviewId?: number;
 };
 
 function strArray(arr: (string | number)[]) {
@@ -1510,6 +1518,13 @@ export const makeMeiliImageSearchFilter = (
   criteria: string
 ): MeiliImageFilter => {
   return `${field} ${criteria}`;
+};
+type MeiliImageSort = `${MetricsImageSortableAttribute}:${'asc' | 'desc'}`;
+export const makeMeiliImageSearchSort = (
+  field: MetricsImageSortableAttribute,
+  criteria: 'asc' | 'desc'
+): MeiliImageSort => {
+  return `${field}:${criteria}`;
 };
 
 async function getImagesFromSearch(input: ImageSearchInput) {
@@ -1530,19 +1545,51 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     isModerator,
     postIds,
     currentUserId,
-    reviewId, // missing
-    modelId, // missing
     excludedUserIds,
     excludeCrossPosts,
+    hidden,
+    followed,
+    reviewId, // missing
+    modelId, // missing
+    prioritizedUserIds,
     limit,
     offset,
     page,
   } = input;
   let { userIds, browsingLevel } = input;
 
+  const sorts: MeiliImageSort[] = [];
+  const filters: string[] = [];
+
   // Filter
   //------------------------
-  const filters: string[] = [];
+  if (hidden) {
+    if (!currentUserId) throw throwAuthorizationError();
+    const hiddenImages = await dbRead.imageEngagement.findMany({
+      where: { userId: currentUserId, type: 'Hide' },
+      select: { imageId: true },
+    });
+    const imageIds = hiddenImages.map((x) => x.imageId);
+    if (imageIds.length) {
+      filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
+    } else {
+      return { data: [], total: 0 };
+    }
+  }
+
+  // could throw authorization error here
+  if (currentUserId && followed) {
+    const followedUsers = await dbRead.userEngagement.findMany({
+      where: { userId: currentUserId, type: 'Follow' },
+      select: { targetUserId: true },
+    });
+    const userIds = followedUsers.map((x) => x.targetUserId);
+    if (userIds.length) {
+      filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+    } else {
+      return { data: [], total: 0 };
+    }
+  }
 
   const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
   if (lastExistedAt) {
@@ -1570,12 +1617,33 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
 
+  /*
+  // TODO this won't work, can't do custom sort
+  if (prioritizedUserIds?.length) {
+    // TODO why do this?
+    // if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+
+    // If system user, show community images
+    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1) {
+      sorts.push(makeMeiliImageSearchSort('index', 'asc'))
+      // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`
+    } else {
+      // For everyone else, only show their images.
+      filters.push(makeMeiliImageSearchFilter('userId', `IN [${prioritizedUserIds.join(',')}]`));
+      sorts.push(makeMeiliImageSearchSort('postedToId', 'asc'));
+      sorts.push(makeMeiliImageSearchSort('index', 'asc'));
+      // orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
+    }
+  }
+  */
+
   if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
-  if (notPublished && isModerator) {
-    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-  } else if (!isModerator) {
+  if (isModerator) {
+    if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
+    // else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+  } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
     if (currentUserId) {
@@ -1612,12 +1680,12 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
-  // TODO remove, this is for 6/21 dev
+  // nb: this is for dev
   if (!isProd) {
     filters.push(
       makeMeiliImageSearchFilter(
         'sortAtUnix',
-        `<= ${new Date('2024-06-21T20:42:00.000Z').getTime()}`
+        `<= ${new Date('2024-08-17T22:32:08.749Z').getTime()}`
       )
     );
   }
@@ -1627,8 +1695,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId,
     modelId,
     userIds,
+    prioritizedUserIds,
   };
-  if (reviewId || modelId || userIds) {
+  if (reviewId || modelId || userIds || prioritizedUserIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
     logToAxiom(
       { type: 'cant-use-search', input: JSON.stringify(missingKeys) },
@@ -1638,15 +1707,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   // Sort
   //------------------------
-  let searchSort: `${MetricsImageSortableAttribute}:${'asc' | 'desc'}` = 'sortAt:desc';
-  if (sort === ImageSort.MostComments) searchSort = 'commentCount:desc';
-  else if (sort === ImageSort.MostReactions) searchSort = 'reactionCount:desc';
-  else if (sort === ImageSort.MostCollected) searchSort = 'collectedCount:desc';
-  else if (sort === ImageSort.Oldest) searchSort = 'sortAt:asc';
+
+  let searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
+  if (sort === ImageSort.MostComments)
+    searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
+  else if (sort === ImageSort.MostReactions)
+    searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
+  else if (sort === ImageSort.MostCollected)
+    searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
+  else if (sort === ImageSort.Oldest) searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
+  sorts.push(searchSort);
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
-    sort: [searchSort],
+    sort: sorts,
     limit: limit ?? 100,
     offset,
     page,
@@ -1706,23 +1780,25 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       };
     });
 
-    redis.packed
-      .sAdd(
-        REDIS_KEYS.QUEUES.SEEN_IMAGES,
-        fullData.map((i) => i.id)
-      )
-      .catch((e) => {
-        const err = e as Error;
-        logToAxiom(
-          {
-            type: 'search-redis-error',
-            error: err.message,
-            cause: err.cause,
-            stack: err.stack,
-          },
-          'temp-search'
-        ).catch();
-      });
+    if (fullData.length) {
+      redis.packed
+        .sAdd(
+          REDIS_KEYS.QUEUES.SEEN_IMAGES,
+          fullData.map((i) => i.id)
+        )
+        .catch((e) => {
+          const err = e as Error;
+          logToAxiom(
+            {
+              type: 'search-redis-error',
+              error: err.message,
+              cause: err.cause,
+              stack: err.stack,
+            },
+            'temp-search'
+          ).catch();
+        });
+    }
 
     return {
       data: fullData,

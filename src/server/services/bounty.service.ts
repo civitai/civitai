@@ -370,6 +370,12 @@ export const upsertBounty = async ({
       userId,
     });
   } else {
+    if (data.poi || (data.poi && data.nsfw)) {
+      throw throwBadRequestError(
+        'The creation of bounties intended to depict an actual person is prohibited.'
+      );
+    }
+
     const createInput = await createBountyInputSchema.parseAsync({ ...data });
     return createBounty({ ...createInput, userId });
   }
