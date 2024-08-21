@@ -173,6 +173,9 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
+  SERVER_DOMAIN_GREEN: z.string().optional(),
+  SERVER_DOMAIN_BLUE: z.string().optional(),
+  SERVER_DOMAIN_RED: z.string().optional(),
 });
 
 /**

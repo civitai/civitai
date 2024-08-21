@@ -217,7 +217,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-  const flags = getFeatureFlags({ user: session?.user });
+  const flags = getFeatureFlags({ user: session?.user, req: { url } });
 
   // Pass this via the request so we can use it in SSR
   if (session) {

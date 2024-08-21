@@ -1,12 +1,22 @@
 import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
+import { env } from '~/env/server.mjs';
 import { getDisplayName } from '~/utils/string-helpers';
 
 // --------------------------
 // Feature Availability
 // --------------------------
-const featureAvailability = ['dev', 'mod', 'public', 'user', 'member', 'granted'] as const;
+const envAvailability = ['dev'] as const;
+const serverAvailability = ['green', 'blue', 'red'] as const;
+type ServerAvailability = (typeof serverAvailability)[number];
+const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted'] as const;
+type RoleAvailability = (typeof roleAvailablity)[number];
+const featureAvailability = [
+  ...envAvailability,
+  ...serverAvailability,
+  ...roleAvailablity,
+] as const;
 const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
@@ -90,14 +100,43 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 // Logic
 // --------------------------
-export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
+const serverDomainMap: Record<ServerAvailability, string | undefined> = {
+  green: env.SERVER_DOMAIN_GREEN,
+  blue: env.SERVER_DOMAIN_BLUE,
+  red: env.SERVER_DOMAIN_RED,
+};
+
+type FeatureAccessContext = { user?: SessionUser; req?: { url?: string } };
+export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessContext) => {
   const { availability } = featureFlags[key];
-  const devRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+
+  // Check environment availability
+  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+
+  // Check server availability
+  let serverRequirement = false;
+  const availableServers = availability.filter((x) =>
+    serverAvailability.includes(x as ServerAvailability)
+  );
+  if (!availableServers.length || !req?.url) serverRequirement = true;
+  else {
+    for (const server of availableServers) {
+      const domain = serverDomainMap[server as ServerAvailability];
+      if (!domain) continue;
+      if (req.url.includes(domain)) {
+        serverRequirement = true;
+        break;
+      }
+    }
+  }
+
+  // Check granted access
   const grantedAccess = availability.includes('granted')
     ? !!user?.permissions?.includes(key)
     : false;
 
-  const roles = availability.filter((x) => x !== 'dev');
+  // Check role availability
+  const roles = availability.filter((x) => roleAvailablity.includes(x as RoleAvailability));
   let roleAccess = roles.length === 0 || roles.includes('public');
   if (!roleAccess && roles.length !== 0 && !!user) {
     if (roles.includes('user')) roleAccess = true;
@@ -105,14 +144,14 @@ export const hasFeature = (key: FeatureFlagKey, user?: SessionUser) => {
     else if (!!user.tier && user.tier != 'free' && roles.includes('member')) roleAccess = true; // Gives access to any tier
   }
 
-  return devRequirement && (grantedAccess || roleAccess);
+  return envRequirement && serverRequirement && (grantedAccess || roleAccess);
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;
-export const getFeatureFlags = ({ user }: { user?: SessionUser }) => {
+export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    acc[key] = hasFeature(key, user);
+    acc[key] = hasFeature(key, ctx);
     return acc;
   }, {} as FeatureAccess);
 };

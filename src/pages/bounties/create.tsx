@@ -8,7 +8,7 @@ import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ session, ctx, features }) => {
-    if (!features.bounties) return { notFound: true };
+    if (!features?.bounties) return { notFound: true };
 
     if (!session)
       return {
