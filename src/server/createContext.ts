@@ -4,8 +4,6 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
-import { parseBrowsingMode } from '~/server/utils/server-side-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -29,7 +27,7 @@ export const createContext = async ({
   const acceptableOrigin = isProd
     ? origins.some((o) => req.headers.referer?.startsWith(o)) ?? false
     : true;
-  const { browsingLevel, showNsfw } = parseBrowsingMode(req.cookies, session);
+  // const { browsingLevel, showNsfw } = parseBrowsingMode(req.cookies, session);
   const track = new Tracker(req, res);
   const cache: CacheSettings | null = {
     browserTTL: session?.user ? 0 : 60,
@@ -41,8 +39,6 @@ export const createContext = async ({
 
   return {
     user: session?.user,
-    browsingLevel,
-    showNsfw,
     acceptableOrigin,
     track,
     ip,
@@ -55,8 +51,8 @@ export const createContext = async ({
 export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
   user: undefined,
   acceptableOrigin: true,
-  browsingLevel: publicBrowsingLevelsFlag,
-  showNsfw: false,
+  // browsingLevel: publicBrowsingLevelsFlag,
+  // showNsfw: false,
   track: new Tracker(req, res),
   ip: requestIp.getClientIp(req) ?? '',
   cache: {

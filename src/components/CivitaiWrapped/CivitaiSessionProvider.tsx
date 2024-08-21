@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserMeta } from '~/server/schema/user.schema';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -15,6 +16,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   const { data, update } = useSession();
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
+  const { canViewNsfw } = useFeatureFlags();
 
   const value = useMemo(() => {
     if (!data?.user) return null;
@@ -24,10 +26,14 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       isMember: data.user.tier != null,
       memberInBadState: data.user.memberInBadState,
       refresh: update,
-      ...browsingModeState,
-      blurNsfw: !Flags.intersection(browsingModeState.browsingLevel, nsfwBrowsingLevelsFlag)
-        ? true
-        : browsingModeState.blurNsfw,
+      ...(!canViewNsfw
+        ? { showNsfw: false, blurNsfw: true, browsingLevel: 1 }
+        : {
+            ...browsingModeState,
+            blurNsfw: !Flags.intersection(browsingModeState.browsingLevel, nsfwBrowsingLevelsFlag)
+              ? true
+              : browsingModeState.blurNsfw,
+          }),
     };
   }, [data?.expires, update, browsingModeState]); // eslint-disable-line
 
