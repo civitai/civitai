@@ -21,10 +21,6 @@ const headers: RequestHeaders = {
   'x-client-date': Date.now().toString(),
   'x-client': 'web',
 };
-if (typeof window !== 'undefined') {
-  const fingerprint = window.localStorage.getItem('fingerprint');
-  if (fingerprint) headers['x-fingerprint'] = fingerprint;
-}
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,6 +39,19 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   };
 };
 
+/**
+ * Get headers for each request
+ * @see https://trpc.io/docs/v10/client/headers
+ */
+function getHeaders() {
+  if (typeof window === 'undefined') return headers;
+
+  return {
+    ...headers,
+    'x-fingerprint': window.localStorage.getItem('fingerprint') ?? undefined,
+  };
+}
+
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
@@ -59,10 +68,10 @@ export const trpc = createTRPCNext<AppRouter>({
           // do not batch post requests
           condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
           // when condition is true, use normal request
-          true: httpLink({ url, headers }),
+          true: httpLink({ url, headers: getHeaders }),
           // when condition is false, use batching
           // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-          false: httpLink({ url, headers }), // Let's disable batching for now
+          false: httpLink({ url, headers: getHeaders }), // Let's disable batching for now
         }),
       ],
     };
