@@ -146,6 +146,11 @@ const start = async (port: MessagePort) => {
       emitterOffHandlers.forEach((fn) => fn());
       port.close();
     } else if (data.type === 'ping') emitter.emit('pong', undefined);
+    else if (data.type === 'send') {
+      console.log('sending', data.target, data.args);
+      connection?.send(data.target, data.args);
+    }
+
     // on ad:impression
     // connection?.send('ad:impression', {userId: 1, deviceId: '', adId: '', duration: 1})
   };

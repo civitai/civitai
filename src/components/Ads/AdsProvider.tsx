@@ -29,9 +29,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
-  const adsEnabled = (currentUser?.allowAds || !isMember) && !nsfw;
-  useEffect(() => console.log({ adsEnabled }), [adsEnabled]);
-  useEffect(() => console.log({ adsBlocked }), [adsBlocked]);
+  const adsEnabled = currentUser?.allowAds || !isMember;
 
   const readyRef = useRef<boolean>();
   useEffect(() => {
@@ -48,7 +46,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     <AdsContext.Provider
       value={{
         adsBlocked,
-        adsEnabled,
+        adsEnabled: adsEnabled && !nsfw,
         username: currentUser?.username,
         providers: adProviders,
         isMember,

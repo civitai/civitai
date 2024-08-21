@@ -97,6 +97,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         console.error({ type: 'SignalsProvider :: signal service error', message });
       },
     });
+
   const { data } = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!session.data?.user,
   });

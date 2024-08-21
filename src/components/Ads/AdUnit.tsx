@@ -23,6 +23,7 @@ import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 
 const useStyles = createStyles((theme) => ({
   root: { display: 'flex', flexDirection: 'column', background: 'none' },
@@ -231,6 +232,10 @@ function AdWrapper({
 function ImpressionTracker({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   const currentUser = useCurrentUser();
   const node = useScrollAreaRef();
+  const { worker } = useSignalContext();
+  const enterViewRef = useRef<Date>();
+  const exitViewRef = useRef<Date>();
+  const impressionTrackedRef = useRef<boolean>();
 
   const { ref, inView } = useInView({
     root: node?.current,
@@ -238,11 +243,36 @@ function ImpressionTracker({ children, ...props }: React.HTMLAttributes<HTMLDivE
   });
 
   useEffect(() => {
-    console.log({ inView });
-    // TODO - add tracking for impressions - more than 1 second
-    // TODO - capture tracking when the component is no longer in view
-    // TODO - capture tracking on tab/window close if should capture
+    if (inView) {
+      enterViewRef.current = new Date();
+      console.log(enterViewRef.current);
+    } else exitViewRef.current = new Date();
   }, [inView]);
+
+  useEffect(() => {
+    function trackImpression() {
+      const enterDate = enterViewRef.current;
+      const exitDate = exitViewRef.current ?? new Date();
+      if (worker && enterDate && currentUser && !impressionTrackedRef.current) {
+        const diff = exitDate.getTime() - enterDate.getTime();
+        if (diff < 1000) return;
+        impressionTrackedRef.current = true;
+        worker.send('recordAdImpression', {
+          userId: currentUser.id,
+          duration: diff,
+          deviceId: 'undefined', // TODO
+          adId: 'undefined', // TODO
+        });
+      }
+    }
+
+    window.addEventListener('beforeunload', trackImpression);
+
+    return () => {
+      trackImpression();
+      window.removeEventListener('beforeunload', trackImpression);
+    };
+  }, []);
 
   return (
     <div ref={ref} {...props}>
