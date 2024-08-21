@@ -1,8 +1,9 @@
 import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isDev } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/client.mjs';
 import { getDisplayName } from '~/utils/string-helpers';
+import { IncomingHttpHeaders } from 'http';
 
 // --------------------------
 // Feature Availability
@@ -94,6 +95,9 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   imageIndexFeed: ['granted', 'mod'],
+  isGreen: ['public', 'green'],
+  isBlue: ['public', 'blue'],
+  isRed: ['public', 'red'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
@@ -101,14 +105,21 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // Logic
 // --------------------------
 const serverDomainMap: Record<ServerAvailability, string | undefined> = {
-  green: env.SERVER_DOMAIN_GREEN,
-  blue: env.SERVER_DOMAIN_BLUE,
-  red: env.SERVER_DOMAIN_RED,
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 
-type FeatureAccessContext = { user?: SessionUser; req?: { url?: string } };
+type FeatureAccessContext = {
+  user?: SessionUser;
+  req?: {
+    headers: IncomingHttpHeaders;
+    // url?: string;
+  };
+};
 export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessContext) => {
   const { availability } = featureFlags[key];
+  const host = req?.headers.host;
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
@@ -118,12 +129,12 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
   );
-  if (!availableServers.length || !req?.url) serverRequirement = true;
+  if (!availableServers.length || !host) serverRequirement = true;
   else {
     for (const server of availableServers) {
       const domain = serverDomainMap[server as ServerAvailability];
       if (!domain) continue;
-      if (req.url.includes(domain)) {
+      if (host.includes(domain)) {
         serverRequirement = true;
         break;
       }
