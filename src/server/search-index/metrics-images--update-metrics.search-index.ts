@@ -34,7 +34,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
   jobName: `${INDEX_ID}_metrics`,
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
-  resetInMainIndex: true,
+  partial: true,
   prepareBatches: async ({ ch }, lastUpdatedAt) => {
     if (!ch) return { batchSize: 0, startId: 0, endId: 0, updateIds: [] };
 

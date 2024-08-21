@@ -15,8 +15,8 @@ async function queueUpdate({
   }
 }
 
-async function getQueue(indexName: string, action: SearchIndexUpdateQueueAction) {
-  return await checkoutQueue(`${indexName}:${action}`);
+async function getQueue(indexName: string, action: SearchIndexUpdateQueueAction, readOnly = false) {
+  return await checkoutQueue(`${indexName}:${action}`, false, readOnly);
 }
 
 async function clearQueue(indexName: string) {
