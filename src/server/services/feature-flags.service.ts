@@ -167,6 +167,21 @@ export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   }, {} as FeatureAccess);
 };
 
+export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
+  const obj = {} as FeatureAccess & { features: FeatureAccess };
+  for (const key in featureFlags) {
+    Object.defineProperty(obj, key, {
+      get() {
+        if (!obj.features) {
+          obj.features = getFeatureFlags(ctx);
+        }
+        return obj.features[key as keyof FeatureAccess];
+      },
+    });
+  }
+  return obj as FeatureAccess;
+}
+
 export const toggleableFeatures = Object.entries(featureFlags)
   .filter(([, value]) => value.toggleable)
   .map(([key, value]) => ({
