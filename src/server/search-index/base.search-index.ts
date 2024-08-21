@@ -66,8 +66,8 @@ type SearchIndexProcessor = {
   workerCount?: number;
   pullSteps?: number;
   client?: MeiliSearch | null;
-  resetInMainIndex?: boolean;
   jobName?: string;
+  partial?: boolean;
 };
 
 const processSearchIndexTask = async (
@@ -178,8 +178,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     primaryKey = 'id',
     maxQueueSize,
     workerCount = 10,
-    resetInMainIndex,
     jobName,
+    partial,
   } = processor;
 
   return {
@@ -221,11 +221,13 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       const queuedUpdates = await SearchIndexUpdate.getQueue(
         indexName,
-        SearchIndexUpdateQueueAction.Update
+        SearchIndexUpdateQueueAction.Update,
+        partial ? true : false // readOnly
       );
       const queuedDeletes = await SearchIndexUpdate.getQueue(
         indexName,
-        SearchIndexUpdateQueueAction.Delete
+        SearchIndexUpdateQueueAction.Delete,
+        partial ? true : false // readOnly
       );
 
       const newItemsTasks = Math.ceil((endId - startId) / batchSize);
@@ -279,7 +281,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       await Promise.all(workers);
 
-      if (queuedDeletes.content.length > 0) {
+      if (queuedDeletes.content.length > 0 && !partial) {
         await onSearchIndexDocumentsCleanup({
           indexName,
           ids: queuedDeletes.content,
@@ -291,11 +293,13 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       await queuedUpdates.commit();
       await queuedDeletes.commit();
 
-      // await onIndexUpdate(ctx);
       // Use the start time as the time of update
       // Should  help avoid missed items during the run
       // of the index.
-      await setLastUpdate(now);
+      if (!partial || jobName) {
+        // Partial indexes should not update the last update time
+        await setLastUpdate(now);
+      }
     },
     /**
      * Resets an entire index by using its swap counterpart.
@@ -307,14 +311,14 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // In order to swap, the base index must exist. because of this, we need to create or get it.
       await getOrCreateIndex(indexName, { primaryKey }, processor.client);
       const swapIndexName = `${indexName}_NEW`;
-      if (!resetInMainIndex) {
+      if (!partial) {
         await setup({ indexName: swapIndexName });
       }
 
       const ctx = {
         db: dbRead,
         pg: pgDbRead,
-        indexName: resetInMainIndex ? indexName : swapIndexName,
+        indexName: partial ? indexName : swapIndexName,
         jobContext,
         logger,
       };
@@ -348,13 +352,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       });
 
       await Promise.all(workers);
-      if (!resetInMainIndex) {
+      if (!partial) {
         // Finally, perform the swap:
         await swapIndex({ indexName, swapIndexName, client: processor.client });
+        // Clear update queue since our index should be brand new:
+        await SearchIndexUpdate.clearQueue(indexName);
       }
-      // Clear update queue since our index should be brand new:
-      await SearchIndexUpdate.clearQueue(indexName);
-      // console.log({ batchSize, startId, endId });
     },
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
@@ -378,7 +381,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
           .filter((i) => i.action === SearchIndexUpdateQueueAction.Delete)
           .map(({ id }) => id);
 
-        if (deleteIds.length > 0) {
+        if (deleteIds.length > 0 && !partial) {
           await onSearchIndexDocumentsCleanup({
             indexName,
             ids: deleteIds,
