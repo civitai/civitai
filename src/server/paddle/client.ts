@@ -1,6 +1,7 @@
 import {
   CurrencyCode,
   Environment,
+  ITransactionItemWithPriceId,
   Paddle,
   UpdateSubscriptionRequestBody,
 } from '@paddle/paddle-node-sdk';
@@ -44,18 +45,19 @@ export const createBuzzTransaction = async ({
   buzzAmount,
   currency = 'USD',
   metadata,
+  includedItems,
 }: {
   customerId: string;
   unitAmount: number;
   buzzAmount: number;
   currency: string;
   metadata?: TransactionMetadataSchema;
+  includedItems?: ITransactionItemWithPriceId[];
 }) => {
   const paddle = getPaddle();
   return paddle.transactions.create({
     customData: metadata,
     customerId: customerId,
-
     items: [
       {
         quantity: 1,
@@ -64,19 +66,22 @@ export const createBuzzTransaction = async ({
             name: `${buzzAmount} Buzz`,
             // TODO: This must be requested onto Paddle as digital-goods
             taxCategory: 'standard',
+            imageUrl: '',
           },
           taxMode: 'account_setting',
           unitPrice: {
             amount: unitAmount.toString(),
             currencyCode: currency as CurrencyCode,
           },
-          description: `Purchase of ${buzzAmount} Buzz`,
+          name: `One-time payment for ${buzzAmount} Buzz`,
+          description: `Purchase of ${buzzAmount}`,
           quantity: {
             maximum: 1,
             minimum: 1,
           },
         },
       },
+      ...(includedItems ?? []),
     ],
   });
 };

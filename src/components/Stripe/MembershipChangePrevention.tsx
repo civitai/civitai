@@ -247,15 +247,20 @@ export const PaddleCancelMembershipButton = ({
   onClose: () => void;
   hasUsedVaultStorage: boolean;
 }) => {
-  const { mutate, isLoading: connectingToStripe } =
-    trpc.paddle.getSubscriptionCancelManagementUrl.useMutation({
-      async onSuccess(url) {
-        if (url) {
-          onClose();
-          Router.push(url);
-        }
-      },
-    });
+  const { mutate, isLoading: connectingToStripe } = trpc.paddle.cancelSubscription.useMutation({
+    async onSuccess({ url, canceled }) {
+      if (url) {
+        onClose();
+        Router.push(url);
+      } else if (canceled) {
+        onClose();
+        showSuccessNotification({
+          title: 'You have been successfully downgraded to our Free tier.',
+          message: 'You will no longer be billed for your subscription',
+        });
+      }
+    },
+  });
 
   return (
     <Button
@@ -386,7 +391,14 @@ export const VaultStorageDowngrade = ({
             </Text>
           </Stack>
           <Group grow>
-            <Button color="gray" onClick={onContinue} radius="xl">
+            <Button
+              color="gray"
+              onClick={() => {
+                onContinue();
+                handleClose();
+              }}
+              radius="xl"
+            >
               {continueLabel}
             </Button>
             <Button color="blue" onClick={handleClose} radius="xl">

@@ -22,6 +22,7 @@ import {
   upsertProductRecord,
   upsertSubscription,
 } from '~/server/services/paddle.service';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -95,6 +96,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.ProductCreated:
           case EventName.ProductUpdated: {
             const data = (event as ProductCreatedEvent).data;
+            const meta = data.customData as SubscriptionProductMetadata;
+            if (!meta?.tier) {
+              return;
+            }
+
             await upsertProductRecord(data);
             break;
           }

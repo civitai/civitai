@@ -46,6 +46,7 @@ import { z } from 'zod';
 import { capitalize } from 'lodash-es';
 import { booleanString } from '~/utils/zod-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -112,6 +113,8 @@ export default function UserMembership() {
 
   const price = subscription.price;
   const product = subscription.product;
+  const meta = product?.metadata as SubscriptionProductMetadata;
+  const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
 
   return (
@@ -171,7 +174,7 @@ export default function UserMembership() {
                       <Stack spacing={0}>
                         {product && (
                           <Text weight={600} size={20}>
-                            {product.name}
+                            {isFree ? 'Free' : product.name}
                           </Text>
                         )}
                         {price && (

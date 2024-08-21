@@ -78,6 +78,36 @@ export const createTransaction = async ({
     throw throwBadRequestError('We were unable to get or create a paddle customer');
   }
 
+  const subscription = await dbRead.customerSubscription.findUnique({
+    where: {
+      userId: user.id,
+      status: {
+        in: ['active', 'trialing'],
+      },
+    },
+    select: { id: true },
+  });
+  const products = await dbRead.product.findMany({
+    where: {
+      provider: PaymentProvider.Paddle,
+    },
+    include: {
+      prices: {
+        where: {
+          active: true,
+        },
+      },
+    },
+  });
+
+  const productsToIncludeWithTransactions = products.filter((p) => {
+    const parsedMeta = subscriptionProductMetadataSchema.safeParse(p.metadata);
+    console.log(parsedMeta, p.prices.length > 0);
+    return parsedMeta.success && parsedMeta.data.includeWithTransaction && p.prices.length > 0;
+  });
+
+  console.log(productsToIncludeWithTransactions);
+
   const transaction = await createPaddleBuzzTransaction({
     customerId,
     unitAmount,
@@ -89,6 +119,13 @@ export const createTransaction = async ({
       buzzAmount: unitAmount * 10, // 10x
       userId: user.id,
     },
+    // Only included if the user has no subscriptions so we can tie them up.
+    includedItems: !subscription
+      ? productsToIncludeWithTransactions.map((p) => ({
+          priceId: p.prices[0].id,
+          quantity: 1,
+        }))
+      : undefined,
   });
 
   return {
@@ -166,6 +203,14 @@ export const upsertProductRecord = async (product: ProductNotification) => {
 export const upsertPriceRecord = async (price: PriceNotification) => {
   const priceMeta = (price.customData ?? {}) as { default?: boolean };
 
+  const product = await dbRead.product.findFirst({
+    where: { id: price.productId },
+  });
+
+  if (!product) {
+    return; // Don't add anything
+  }
+
   const priceData = {
     id: price.id,
     productId: price.productId,
@@ -210,7 +255,10 @@ export const upsertSubscription = async (
   const isCreatingSubscription = eventName === EventName.SubscriptionActivated;
   const isCancelingSubscription = eventName === EventName.SubscriptionCanceled;
 
-  const subscriptionProducts = await getPlans({ paymentProvider: PaymentProvider.Paddle });
+  const subscriptionProducts = await getPlans({
+    paymentProvider: PaymentProvider.Paddle,
+    includeFree: true, // User might be activating a free membership.
+  });
 
   const mainSubscriptionItem = subscriptionNotification.items.find((i) => {
     return i.status === 'active' && subscriptionProducts.some((p) => p.id === i.price?.productId);
@@ -255,7 +303,7 @@ export const upsertSubscription = async (
   if (isCancelingSubscription && subscriptionNotification.status === 'canceled') {
     // immediate cancel:
     log('upsertSubscription :: Subscription canceled immediately');
-    await dbWrite.customerSubscription.delete({ where: { id: user.subscriptionId as string } });
+    await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
     return;
@@ -263,7 +311,7 @@ export const upsertSubscription = async (
 
   if (startingNewSubscription) {
     log('upsertSubscription :: Subscription id changed, deleting old subscription');
-    if (user.subscriptionId) {
+    if (user.subscriptionId && user?.subscription) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
@@ -275,7 +323,7 @@ export const upsertSubscription = async (
   const data = {
     id: subscriptionNotification.id,
     userId: user.id,
-    metadata: subscriptionNotification.customData ?? {},
+    metadata: {},
     status: subscriptionNotification.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: mainSubscriptionItem.price?.id as string,

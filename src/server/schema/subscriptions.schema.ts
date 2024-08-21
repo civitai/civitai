@@ -18,12 +18,16 @@ export const subscriptionProductMetadataSchema = z
     badge: z.string().optional(),
     monthlyBuzz: z.coerce.number().positive().optional(),
     animatedBadge: booleanString().optional(),
-    badgeType: z.enum(['none', 'static', 'animated']),
-    tier: z.enum(['founder', 'bronze', 'silver', 'gold']),
+    badgeType: z.enum(['none', 'static', 'animated']).default('none'),
+    tier: z.enum(['free', 'founder', 'bronze', 'silver', 'gold']),
     generationLimit: z.coerce.number().positive().optional(),
     quantityLimit: z.coerce.number().positive().optional(),
     queueLimit: z.coerce.number().positive().optional(),
     rewardsMultiplier: z.coerce.number().positive().default(1),
     purchasesMultiplier: z.coerce.number().positive().default(1),
+
+    // Makes it so that we include it when creating a paddle transaction.
+    // Used for Save Details only.
+    includeWithTransaction: booleanString().optional(),
   })
   .passthrough();

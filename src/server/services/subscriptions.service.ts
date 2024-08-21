@@ -1,7 +1,10 @@
 import { PaymentProvider } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
-import { GetUserSubscriptionInput } from '~/server/schema/subscriptions.schema';
+import {
+  GetUserSubscriptionInput,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
@@ -11,8 +14,10 @@ const log = createLogger('subscriptions', 'blue');
 
 export const getPlans = async ({
   paymentProvider = PaymentProvider.Stripe,
+  includeFree = false,
 }: {
   paymentProvider?: PaymentProvider;
+  includeFree?: boolean;
 }) => {
   const products = await dbRead.product.findMany({
     where: {
@@ -47,7 +52,10 @@ export const getPlans = async ({
   // Only show the default price for a subscription product
   return products
     .filter(({ metadata }) => {
-      return env.TIER_METADATA_KEY ? !!(metadata as any)?.[env.TIER_METADATA_KEY] : true;
+      return env.TIER_METADATA_KEY
+        ? !!(metadata as any)?.[env.TIER_METADATA_KEY] &&
+            ((metadata as any)?.[env.TIER_METADATA_KEY] !== 'free' || includeFree)
+        : true;
     })
     .map((product) => {
       const prices = product.prices.map((x) => ({ ...x, unitAmount: x.unitAmount ?? 0 }));
@@ -102,12 +110,15 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
   if (!subscription)
     throw throwNotFoundError(`Could not find subscription for user with id: ${userId}`);
 
+  const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
+
   return {
     ...subscription,
     price: { ...subscription.price, unitAmount: subscription.price.unitAmount ?? 0 },
     isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
       subscription.status
     ),
+    tier: productMeta?.[env.TIER_METADATA_KEY] ?? 'free',
   };
 };
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;

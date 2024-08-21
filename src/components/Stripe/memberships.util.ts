@@ -21,10 +21,13 @@ export const useActiveSubscription = ({
       !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
 
+  const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
+
   return {
     subscription,
     subscriptionLoading: !isMember ? false : isLoading || isFetching,
     subscriptionPaymentProvider: subscription?.product?.provider,
+    isFreeTier: !subscription || meta?.tier === 'free',
   };
 };
 

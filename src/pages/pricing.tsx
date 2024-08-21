@@ -61,14 +61,16 @@ export default function Pricing() {
   const paymentProvider = usePaymentProvider();
 
   const { data: products, isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery({});
-  const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
-    checkWhenInBadState: true,
-  });
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
+    useActiveSubscription({
+      checkWhenInBadState: true,
+    });
 
   const isLoading = productsLoading || subscriptionLoading;
   const currentMembershipUnavailable =
     !!subscription &&
     !productsLoading &&
+    !isFreeTier &&
     !(products ?? []).find((p) => p.id === subscription.product.id) &&
     // Ensures we have products from the current provider.
     (products ?? []).some((p) => p.provider === subscription.product.provider);
@@ -234,7 +236,7 @@ export default function Pricing() {
                           $0
                         </Text>
                       </Group>
-                      {subscription ? (
+                      {!isFreeTier ? (
                         <Button
                           radius="xl"
                           color="gray"

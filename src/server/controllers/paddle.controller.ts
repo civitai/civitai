@@ -20,8 +20,9 @@ import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { createRecaptchaAssesment } from '~/server/recaptcha/client';
 import { getPaddleSubscription, getTransactionById } from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 import { PaymentProvider } from '@prisma/client';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 export const createTransactionHandler = async ({
   ctx,
@@ -101,11 +102,7 @@ export const updateSubscriptionPlanHandler = async ({
   }
 };
 
-export const getSubscriptionCancelManagementUrlHandler = async ({
-  ctx,
-}: {
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const cancelSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const subscription = await getUserSubscription({ userId: ctx.user.id });
     if (!subscription) {
@@ -124,7 +121,33 @@ export const getSubscriptionCancelManagementUrlHandler = async ({
       throw throwNotFoundError('Paddle subscription not found');
     }
 
-    return paddleSubscription.managementUrls?.cancel;
+    const plans = await getPlans({
+      includeFree: true,
+      paymentProvider: PaymentProvider.Paddle,
+    });
+
+    const freePlan = plans.find((p) => {
+      const meta = p.metadata as SubscriptionProductMetadata;
+      return meta?.tier === 'free';
+    });
+
+    if (!freePlan || (!freePlan.defaultPriceId && !freePlan.prices.length)) {
+      // Cancel through paddle as we don't have a Free plan for whatever reason.
+      return {
+        url: paddleSubscription.managementUrls?.cancel,
+        canceled: false,
+      };
+    }
+
+    await updateSubscriptionPlan({
+      userId: ctx.user.id,
+      priceId: freePlan.defaultPriceId ?? freePlan.prices[0].id,
+    });
+
+    return {
+      url: undefined,
+      canceled: true,
+    };
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

@@ -307,7 +307,7 @@ export const constants = {
   },
   supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
   memberships: {
-    tierOrder: ['founder', 'bronze', 'silver', 'gold'],
+    tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
       founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
       bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
