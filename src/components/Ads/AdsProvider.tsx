@@ -3,7 +3,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import Script from 'next/script';
 import { isProd } from '~/env/other';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -56,7 +55,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-      {adsEnabled && (
+      {adsEnabled && isProd && (
         <>
           <Head>
             <script src="https://cmp.uniconsent.com/v2/stub.min.js" />
