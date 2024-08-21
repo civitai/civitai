@@ -17,8 +17,7 @@ export function generateSecretHash(key: string) {
 
 export function encryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
   // Create a cipher using the key and IV
-  const ivBuffer = Buffer.from(iv, 'hex');
-  const cipher = createCipheriv('aes-256-cbc', Buffer.from(key, 'hex'), ivBuffer);
+  const cipher = createCipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
 
   // Encrypt the text
   let encrypted = cipher.update(text, 'utf-8', 'hex');
