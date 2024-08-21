@@ -10,23 +10,23 @@ import {
   Stack,
 } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { generationPanel } from '~/store/generation.store';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ImageSort } from '~/server/common/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import {
   ExplainHiddenImages,
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ImageSort } from '~/server/common/enums';
+import { generationPanel } from '~/store/generation.store';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const useStyles = createStyles((theme) => ({
   control: {

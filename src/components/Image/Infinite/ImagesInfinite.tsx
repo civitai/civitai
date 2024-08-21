@@ -52,6 +52,7 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   nextPageLoaderOptions?: IntersectionOptions;
+  useIndex?: boolean;
 };
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -71,6 +72,7 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   nextPageLoaderOptions,
+  useIndex,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
@@ -80,7 +82,7 @@ export function ImagesInfiniteContent({
   const browsingLevel = useBrowsingLevelDebounced();
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryImages(
-      { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
+      { ...debouncedFilters, browsingLevel, include: ['cosmetics'], useIndex },
       { keepPreviousData: true }
     );
 

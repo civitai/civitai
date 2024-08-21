@@ -106,7 +106,7 @@ export const useCFUploadStore = create<StoreProps>()(
           const { id, uploadURL: url } = data;
 
           const xhr = new XMLHttpRequest();
-          const xhrResult = await new Promise<boolean>((resolve) => {
+          const xhrResult = await new Promise<boolean>((resolve, reject) => {
             let uploadStart = Date.now();
 
             // allow abort of xhr request
@@ -143,11 +143,11 @@ export const useCFUploadStore = create<StoreProps>()(
             });
             xhr.addEventListener('error', () => {
               updateFile(uuid, { status: 'error' });
-              resolve(false);
+              reject(false);
             });
             xhr.addEventListener('abort', () => {
               updateFile(uuid, { status: 'aborted' });
-              resolve(false);
+              reject(false);
             });
             xhr.open('PUT', url, true);
             xhr.send(file);

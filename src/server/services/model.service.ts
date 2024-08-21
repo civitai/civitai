@@ -215,6 +215,7 @@ export const getModelsRaw = async ({
     modelVersionIds,
     browsingLevel,
     excludedUserIds,
+    collectionTagId,
   } = input;
 
   let pending = input.pending;
@@ -461,7 +462,9 @@ export const getModelsRaw = async ({
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."modelId" = m."id"
         AND ci."collectionId" = ${collectionId}
-        AND ${Prisma.join(collectionItemModelsAND, ' AND ')})`
+        AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
+        ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}
+      )`
     );
 
     isPrivate = !permissions.publicCollection;

@@ -49,7 +49,7 @@ export function createMultipartUpload({
 
       const parts: { ETag: string; PartNumber: number }[] = [];
       const uploadPart = (url: string, i: number) =>
-        new Promise<UploadStatus>((resolve) => {
+        new Promise<UploadStatus>((resolve, reject) => {
           let eTag = '';
           const start = (i - 1) * FILE_CHUNK_SIZE;
           const end = i * FILE_CHUNK_SIZE;
@@ -75,11 +75,11 @@ export function createMultipartUpload({
           });
           xhr.addEventListener('error', () => {
             fileUpload.dispatch('error', undefined);
-            resolve('error');
+            reject('error');
           });
           xhr.addEventListener('abort', () => {
             fileUpload.dispatch('abort', undefined);
-            resolve('aborted');
+            reject('aborted');
           });
           xhr.addEventListener('load', () => {
             eTag = xhr.getResponseHeader('ETag') ?? '';

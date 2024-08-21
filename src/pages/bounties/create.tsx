@@ -1,6 +1,5 @@
 import { Container, Text } from '@mantine/core';
 
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -8,9 +7,8 @@ import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
-    const features = getFeatureFlags({ user: session?.user });
-    if (!features.bounties) return { notFound: true };
+  resolver: async ({ session, ctx, features }) => {
+    if (!features?.bounties) return { notFound: true };
 
     if (!session)
       return {

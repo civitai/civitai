@@ -616,7 +616,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                       <Text weight={590}>
                         With the selected dates, your bounty will expire{' '}
                         <Text weight="bold" color="red.5" span>
-                          <DaysFromNow date={endOfDay(expiresAt)} inUtc />
+                          <DaysFromNow date={stripTime(expiresAt)} inUtc />
                         </Text>
                         . All times are in{' '}
                         <Text weight="bold" color="red.5" span>
@@ -892,14 +892,14 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
               </Text>
               <List size="xs" spacing={8}>
                 <List.Item>
-                  For Bounty Example images, they should either be:
-                  <List size="xs" spacing={4}>
-                    <List.Item>AI Generated, or</List.Item>
-                    <List.Item>Non-mature (SFW) if real people images.</List.Item>
-                  </List>
+                  <b>Real People Images</b>: Images of real people are not permitted.
                 </List.Item>
                 <List.Item>
-                  Bounties cannot be used to farm reviews or image posts on your resources.
+                  <b>AI-Generated Images</b>: Only AI-generated images are allowed.
+                </List.Item>
+                <List.Item>
+                  <b>Review Farming</b>: Bounties cannot be used to solicit reviews or encourage
+                  image posts on your resources.
                 </List.Item>
                 <List.Item>
                   <ContentPolicyLink />

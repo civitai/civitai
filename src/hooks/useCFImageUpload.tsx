@@ -94,7 +94,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       );
     }
 
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       let uploadStart = Date.now();
       xhr.upload.addEventListener('loadstart', () => {
         uploadStart = Date.now();
@@ -129,11 +129,11 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       });
       xhr.addEventListener('error', () => {
         updateFile({ status: 'error' });
-        resolve(false);
+        reject(false);
       });
       xhr.addEventListener('abort', () => {
         updateFile({ status: 'aborted' });
-        resolve(false);
+        reject(false);
       });
       xhr.open('PUT', url);
       xhr.send(file);

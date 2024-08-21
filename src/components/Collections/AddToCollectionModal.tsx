@@ -231,6 +231,7 @@ function CollectionListForm({
                           />
                           {selectedItem && collection.tags?.length > 0 && (
                             <Select
+                              withinPortal
                               withAsterisk
                               placeholder="Select a tag for your entry in the contest"
                               size="xs"
@@ -313,6 +314,7 @@ function CollectionListForm({
                             />
                             {selectedItem && collection.tags?.length > 0 && (
                               <Select
+                                withinPortal
                                 withAsterisk
                                 placeholder="Select a tag for your entry in the contest"
                                 size="xs"
