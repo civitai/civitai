@@ -248,7 +248,10 @@ export class Tracker {
     const fingerprint = new Fingerprint(this.actor.fingerprint ?? '');
     const actorMeta = skipActorMeta
       ? { userId: this.actor.userId }
-      : { ...this.actor, fingerprint: fingerprint.value };
+      : {
+          ...this.actor,
+          fingerprint: this.actor.userId === fingerprint.userId ? fingerprint.value : 'unknown',
+        };
 
     const data = {
       ...actorMeta,
