@@ -17,7 +17,7 @@ export const upsertArticleHandler = async ({
   try {
     const categories = await getCategoryTags('article');
     const adminOnlyCategories = categories.filter((category) => category.adminOnly);
-    const features = getFeatureFlags({ user: ctx.user });
+    const features = getFeatureFlags(ctx);
     const includesAdminOnlyTag = input.tags?.some(
       (tag) => adminOnlyCategories.findIndex((category) => category.name === tag.name) !== -1
     );
