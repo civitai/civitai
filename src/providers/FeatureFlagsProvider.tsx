@@ -101,10 +101,5 @@ export const FeatureFlagsProvider = ({
 }) => {
   const [flags] = useState(initialFlags);
 
-  useEffect(() => {
-    const { isGreen, isBlue, isRed } = flags;
-    console.log({ isGreen, isBlue, isRed });
-  }, []);
-
   return <FeatureFlagsCtx.Provider value={flags}>{children}</FeatureFlagsCtx.Provider>;
 };
