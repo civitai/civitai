@@ -64,7 +64,7 @@ export const usePaddleTransaction = ({
   };
 };
 
-// TODO.Remove: Ended up using their overlay checkout. Will leave this here for now just in case
+// TODORemove: Ended up using their overlay checkout. Will leave this here for now just in case
 // We wanna roll it back, but prob. not ever needed again.
 //
 // export const usePaddleCheckout = ({

@@ -439,8 +439,12 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
         )}
 
         <Alert>
-          Please note you will be charged immediately for your upgrade and will get access to all
-          benefits:.
+          <Stack>
+            <Text>
+              Please note you will be charged immediately to the card we have in file for your
+              upgrade and will get access to all benefits of the new plan.
+            </Text>
+          </Stack>
         </Alert>
         <Group grow>
           <SubscribeButton priceId={priceId} onSuccess={handleClose}>

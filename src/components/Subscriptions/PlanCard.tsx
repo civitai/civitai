@@ -238,7 +238,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             )}
           </Stack>
           {benefits && <PlanBenefitList benefits={benefits} />}
-          {product.description && <Text>{product.description}</Text>}
         </Stack>
       </Stack>
     </Card>
