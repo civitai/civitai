@@ -106,8 +106,6 @@ export function PostDetailContent({ postId }: Props) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
 
-  console.log(images.map((x) => x.nsfwLevel));
-
   const meta = (
     <Meta
       title={(post?.title ?? `Image post by ${post?.user.username}`) + ' | Civitai'}

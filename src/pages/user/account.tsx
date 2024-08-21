@@ -21,7 +21,7 @@ import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 
 export default function Account({ providers }: Props) {
-  const { apiKeys, buzz } = useFeatureFlags();
+  const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
   return (
@@ -41,7 +41,7 @@ export default function Account({ providers }: Props) {
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />
-          <ModerationCard />
+          {canViewNsfw && <ModerationCard />}
           <AccountsCard providers={providers} />
           <StripeConnectCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}

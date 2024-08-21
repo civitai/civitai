@@ -840,7 +840,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              <BrowsingModeIcon />
+              {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
