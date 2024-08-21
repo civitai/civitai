@@ -24,15 +24,17 @@ export async function addToQueue(key: string, ids: number | number[] | Set<numbe
   await redis.sAdd(targetBucket, content);
 }
 
-export async function checkoutQueue(key: string, isMerge = false) {
+export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
   if (!isMerge) await waitForMerge(key);
 
   // Get the current buckets
   const currentBuckets = await getBucketNames(key);
 
-  // Append new bucket
-  const newBucket = getNewBucket(key);
-  await redis.hSet(REDIS_KEYS.QUEUES.BUCKETS, key, [newBucket, ...currentBuckets].join(','));
+  if (!readOnly) {
+    // Append new bucket
+    const newBucket = getNewBucket(key);
+    await redis.hSet(REDIS_KEYS.QUEUES.BUCKETS, key, [newBucket, ...currentBuckets].join(','));
+  }
 
   // Fetch the content of the current buckets
   const content = new Set<number>();
@@ -46,6 +48,9 @@ export async function checkoutQueue(key: string, isMerge = false) {
   return {
     content: [...content],
     commit: async () => {
+      if (readOnly) {
+        return; // Nothing to commit.
+      }
       // Remove the reference to the processed buckets
       const existingBuckets = await getBucketNames(key);
       const newBuckets = existingBuckets.filter((bucket) => !currentBuckets.includes(bucket));
