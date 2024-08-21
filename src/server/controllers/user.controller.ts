@@ -671,8 +671,7 @@ export const toggleFollowUserHandler = async ({
     if (result) {
       await firstDailyFollowReward.apply(
         { followingId: input.targetUserId, userId },
-        ip,
-        userId === fingerprint?.userId ? fingerprint.value : undefined
+        { ip, fingerprint }
       );
       ctx.track
         .userEngagement({

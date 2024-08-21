@@ -326,8 +326,7 @@ export const setTosViolationHandler = async ({
     for (const report of affectedReports) {
       reportAcceptedReward.apply(
         { userId: report.userId, reportId: report.id },
-        ip,
-        report.userId === fingerprint?.userId ? fingerprint?.value : undefined
+        { ip, fingerprint }
       );
     }
 

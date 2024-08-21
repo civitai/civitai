@@ -6,7 +6,7 @@ import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
 import { parseBrowsingMode } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getDeviceFingerprint } from '~/server/utils/request-helpers';
+import { Fingerprint } from '~/server/utils/fingerprint';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -39,7 +39,7 @@ export const createContext = async ({
     canCache: true,
     skip: false,
   };
-  const fingerprint = getDeviceFingerprint(req);
+  const fingerprint = new Fingerprint((req.headers['x-fingerprint'] as string) ?? '');
 
   return {
     user: session?.user,
@@ -69,7 +69,7 @@ export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => (
     canCache: true,
     skip: false,
   },
-  fingerprint: getDeviceFingerprint(req),
+  fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
   res,
   req,
 });

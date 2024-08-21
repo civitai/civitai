@@ -117,8 +117,7 @@ export const orchestratorRouter = router({
                       userId: user.id,
                       jobId,
                     },
-                    ip,
-                    user.id === fingerprint?.userId ? fingerprint.value : undefined
+                    { ip, fingerprint }
                   );
                 }
               })

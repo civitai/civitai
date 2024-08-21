@@ -386,11 +386,7 @@ export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullab
   try {
     const { ip, fingerprint, user } = ctx;
     const { id: userId } = user;
-    await dailyBoostReward.apply(
-      { userId },
-      ip,
-      userId === fingerprint?.userId ? fingerprint?.value : undefined
-    );
+    await dailyBoostReward.apply({ userId }, { ip, fingerprint });
   } catch (error) {
     const parsedError = getTRPCErrorFromUnknown(error);
     handleLogError(parsedError);
