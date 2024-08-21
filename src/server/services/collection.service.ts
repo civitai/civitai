@@ -651,6 +651,19 @@ export const upsertCollection = async ({
     // }
 
     const updated = await dbWrite.$transaction(async (tx) => {
+      if (tags) {
+        // Attempt to run this first, collides with create/connect
+        await tx.tagsOnCollection.deleteMany({
+          where: {
+            collectionId: id,
+
+            tagId: {
+              notIn: tags.filter(isTag).map((x) => x.id),
+            },
+          },
+        });
+      }
+
       const updated = await tx.collection.update({
         select: {
           id: true,
@@ -689,11 +702,6 @@ export const upsertCollection = async ({
             : undefined,
           tags: tags
             ? {
-                deleteMany: {
-                  tagId: {
-                    notIn: tags.filter(isTag).map((x) => x.id),
-                  },
-                },
                 connectOrCreate: tags.filter(isTag).map((tag) => ({
                   where: { tagId_collectionId: { tagId: tag.id, collectionId: id as number } },
                   create: { tagId: tag.id },
