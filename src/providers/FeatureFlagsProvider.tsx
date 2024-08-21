@@ -1,7 +1,7 @@
 import { useLocalStorage } from '@mantine/hooks';
 import produce from 'immer';
 import { useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { toggleableFeatures } from '~/server/services/feature-flags.service';
 import { showErrorNotification } from '~/utils/notifications';
@@ -100,5 +100,6 @@ export const FeatureFlagsProvider = ({
   flags: FeatureAccess;
 }) => {
   const [flags] = useState(initialFlags);
+
   return <FeatureFlagsCtx.Provider value={flags}>{children}</FeatureFlagsCtx.Provider>;
 };
