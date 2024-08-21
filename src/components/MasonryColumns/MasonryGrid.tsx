@@ -61,8 +61,8 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <TwCard>
-                <div className="mb-auto flex flex-col gap-2">
+              <TwCard className="border p-2 shadow">
+                <div className="mb-auto flex flex-col items-center gap-2">
                   <Image
                     src={`/images/logo_${theme.colorScheme}_mode.png`}
                     alt="Civitai logo"
@@ -76,6 +76,7 @@ export function MasonryGrid<TData>({
                     compact
                     color="green"
                     variant="outline"
+                    className="w-24"
                   >
                     <Text weight={500}>Do It</Text>
                     <IconCaretRightFilled size={16} />

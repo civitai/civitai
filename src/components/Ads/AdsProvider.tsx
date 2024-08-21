@@ -4,6 +4,7 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import Script from 'next/script';
+import { isProd } from '~/env/other';
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
@@ -34,11 +35,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const readyRef = useRef<boolean>();
   useEffect(() => {
     if (!readyRef.current && adsEnabled) {
-      console.log('check ads blocked');
       readyRef.current = true;
-      checkAdsBlocked((blocked) => {
-        setAdsBlocked(blocked);
-      });
+      if (!isProd) setAdsBlocked(true);
+      else {
+        checkAdsBlocked((blocked) => {
+          setAdsBlocked(blocked);
+        });
+      }
     }
   }, [adsEnabled]);
 
