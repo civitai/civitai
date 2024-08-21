@@ -49,6 +49,7 @@ export const getServerProxySSGHelpers = async (
       res: null as any,
       cache: null as any,
       req: null as any,
+      fingerprint: null as any,
     },
     transformer: superjson,
   });

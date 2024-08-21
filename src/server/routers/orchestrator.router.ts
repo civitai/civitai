@@ -88,6 +88,7 @@ export const orchestratorRouter = router({
       //     });
       //   }
       // }
+      const { ip, fingerprint, user } = ctx;
 
       if (!!workflows?.length) await patchWorkflows({ input: workflows, token: ctx.token });
 
@@ -111,10 +112,14 @@ export const orchestratorRouter = router({
                 if (op === 'add') {
                   const parts = (path as string).split('/');
                   const jobId = parts[parts.length - 2];
-                  await generatorFeedbackReward.apply({
-                    userId: ctx.user.id,
-                    jobId,
-                  });
+                  await generatorFeedbackReward.apply(
+                    {
+                      userId: user.id,
+                      jobId,
+                    },
+                    ip,
+                    user.id === fingerprint?.userId ? fingerprint.value : undefined
+                  );
                 }
               })
           )

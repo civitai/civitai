@@ -159,7 +159,7 @@ export const setTosViolationHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { user } = ctx;
+    const { user, ip, fingerprint } = ctx;
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
@@ -188,7 +188,11 @@ export const setTosViolationHandler = async ({
     });
     // Reward users for accepted reports
     for (const report of affectedReports) {
-      reportAcceptedReward.apply({ userId: report.userId, reportId: report.id }, '');
+      reportAcceptedReward.apply(
+        { userId: report.userId, reportId: report.id },
+        ip,
+        report.userId === fingerprint?.userId ? fingerprint.value : undefined
+      );
     }
 
     await createNotification({

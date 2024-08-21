@@ -160,7 +160,7 @@ export function createBuzzEvent<T>({
     return toAward;
   };
 
-  const apply = async (input: T, ip?: string, fingerprint?: string) => {
+  const apply = async (input: T, ip?: string, fingerprint?: string | null) => {
     if (!clickhouse) return;
     const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
     if (!definedKey) return;
@@ -380,7 +380,7 @@ export type BuzzEventLog = BuzzEventKey & {
   multiplier?: number;
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
-  fingerprint?: string;
+  fingerprint?: string | null;
   version?: number;
   transactionDetails?: string;
 };

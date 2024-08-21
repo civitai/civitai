@@ -18,6 +18,8 @@ import { ProhibitedSources } from '~/server/schema/user.schema';
 import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { decryptText } from '~/server/utils/key-generator';
+import { getDeviceFingerprint } from '~/server/utils/request-helpers';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -217,7 +219,7 @@ export class Tracker {
     if (req && res) {
       this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
       this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
-      this.actor.fingerprint = (req.headers['x-fingerprint'] as string) ?? this.actor.fingerprint;
+
       this.session = getServerAuthSession({ req, res }).then((session) => {
         this.actor.userId = session?.user?.id ?? this.actor.userId;
         return this.actor.userId;
@@ -235,6 +237,11 @@ export class Tracker {
           'clickhouse'
         ).catch();
       });
+
+      const compositeFingerprint = getDeviceFingerprint(req);
+      if (compositeFingerprint && compositeFingerprint.userId === this.actor.userId) {
+        this.actor.fingerprint = compositeFingerprint.value;
+      }
     }
   }
 

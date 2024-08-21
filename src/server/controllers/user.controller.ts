@@ -665,10 +665,15 @@ export const toggleFollowUserHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { ip, fingerprint, user } = ctx;
+    const { id: userId } = user;
     const result = await toggleFollowUser({ ...input, userId });
     if (result) {
-      await firstDailyFollowReward.apply({ followingId: input.targetUserId, userId });
+      await firstDailyFollowReward.apply(
+        { followingId: input.targetUserId, userId },
+        ip,
+        userId === fingerprint?.userId ? fingerprint.value : undefined
+      );
       ctx.track
         .userEngagement({
           type: 'Follow',
