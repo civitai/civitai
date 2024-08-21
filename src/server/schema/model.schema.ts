@@ -103,6 +103,7 @@ export const getAllModelsSchema = baseQuerySchema
     fileFormats: z.enum(constants.modelFileFormats).array().optional(),
     clubId: z.number().optional(),
     pending: z.boolean().optional(),
+    collectionTagId: z.number().optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

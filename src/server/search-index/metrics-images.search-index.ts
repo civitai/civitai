@@ -246,16 +246,15 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
+    const batchLogKey =
+      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length;
     const where = [
       batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
         ? Prisma.raw(`i.id BETWEEN ${batch.startId} AND ${batch.endId}`)
         : undefined,
     ].filter(isDefined);
-    logger(
-      `PullData :: Pulling data for batch`,
-      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
-    );
+    logger(`PullData :: Pulling data for batch`, batchLogKey);
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
@@ -308,10 +307,15 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       : [];
     const result = prevData as Record<string, any>;
     const batches = chunk(imageIds, 1000);
+    let i = 0;
     let noMoreSteps = false;
 
     for (const batch of batches) {
+      i++;
+      const subBatchLogKey = `${i} of ${batches.length}`;
+
       if (step === 1) {
+        logger(`Pulling metrics`, batchLogKey, subBatchLogKey);
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    SUM(if(
@@ -331,6 +335,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 2) {
+        logger(`Pulling tags`, batchLogKey, subBatchLogKey);
         // Pull tags:
         const cacheImageTags = await tagIdsForImagesCache.fetch(batch);
 
@@ -340,7 +345,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 3) {
-        // Tools and techniqaues
+        logger(`Pulling techs and tools`, batchLogKey, subBatchLogKey);
+        // Tools and techs
 
         const tools: ImageTool[] = await db.imageTool.findMany({
           select: {
@@ -366,6 +372,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 4) {
+        logger(`Pulling cosmetics`, batchLogKey, subBatchLogKey);
         // Cosmetics:
 
         const cosmetics = await getCosmeticsForEntity({
@@ -379,6 +386,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 5) {
+        logger(`Pulling versions`, batchLogKey, subBatchLogKey);
         // Model versions & baseModel:
 
         const modelVersions = await db.$queryRaw<ModelVersions[]>`

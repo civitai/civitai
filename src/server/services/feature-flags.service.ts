@@ -84,6 +84,7 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   canViewNsfw: [],
+  imageIndexFeed: ['granted', 'mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
