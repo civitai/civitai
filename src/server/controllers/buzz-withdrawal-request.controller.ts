@@ -87,7 +87,7 @@ export function updateBuzzWithdrawalRequestHandler({
       [BuzzWithdrawalRequestStatus.Reverted, BuzzWithdrawalRequestStatus.Transferred].some(
         (s) => s === input.status
       ) &&
-      !hasFeature('buzzWithdrawalTransfer', ctx.user)
+      !hasFeature('buzzWithdrawalTransfer', ctx)
     ) {
       // Ensure this user has permission to do this:
       throw throwAuthorizationError('You do not have permission to perform this action');

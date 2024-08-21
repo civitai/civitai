@@ -1039,8 +1039,11 @@ export const getModelsWithImagesAndModelVersions = async ({
         }
         const versionImages = modelVersionImages[version.id]?.images ?? [];
         const filteredImages = excludedTagIds
-          ? versionImages.filter((x) => !excludedTagIds?.includes(x.id))
+          ? versionImages.filter(
+              (x) => x.tags && x.tags.every((id) => !excludedTagIds.includes(id))
+            )
           : versionImages;
+
         const showImageless =
           (user?.isModerator || model.user.id === user?.id) &&
           (input.user || input.username || includeDrafts);
