@@ -128,7 +128,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       if (blocked) throw throwNotFoundError();
     }
 
-    const features = getFeatureFlags({ user: ctx.user });
+    const features = getFeatureFlags(ctx);
     const filteredVersions = model.modelVersions.filter((version) => {
       const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
       if (isOwner) return true;
