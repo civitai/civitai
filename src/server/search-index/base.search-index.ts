@@ -67,6 +67,7 @@ type SearchIndexProcessor = {
   pullSteps?: number;
   client?: MeiliSearch | null;
   resetInMainIndex?: boolean;
+  jobName?: string;
 };
 
 const processSearchIndexTask = async (
@@ -78,11 +79,14 @@ const processSearchIndexTask = async (
   let logDetails: any = '';
   if (task.index !== undefined && task.total) logDetails = `${task.index + 1} of ${task.total}`;
   if (task.currentStep !== undefined) logDetails += ` - ${task.currentStep + 1} of ${task.steps}`;
-  context.logger(`processSearchIndexTask :: ${type} :: Processing task`, logDetails);
+  context.logger(
+    `processSearchIndexTask :: ${type} :: ${processor.indexName} :: Processing task`,
+    logDetails
+  );
 
   try {
     if (type === 'pull') {
-      context.logger('processSearchIndexTask :: pull :: Processing task');
+      context.logger(`processSearchIndexTask :: pull :: ${processor.indexName} :: Processing task`);
       const start = (task.start ??= Date.now());
       const t = task as PullTask;
       const activeStep = t.currentStep ?? 0;
@@ -102,7 +106,7 @@ const processSearchIndexTask = async (
       if (!pulledData) {
         // We don't need to do anything if no data was pulled.
         context.logger(
-          'processSearchIndexTask :: pull :: No data pulled. Marking as done.',
+          `processSearchIndexTask :: pull :: ${processor.indexName} :: No data pulled. Marking as done.`,
           start ? (Date.now() - start) / 1000 : 'unknown duration'
         );
         return 'done';
@@ -125,7 +129,9 @@ const processSearchIndexTask = async (
         } as TransformTask;
       }
     } else if (type === 'transform') {
-      context.logger('processSearchIndexTask :: transform :: Processing task');
+      context.logger(
+        `processSearchIndexTask :: transform :: ${processor.indexName} :: Processing task`
+      );
       const { data, start } = task as TransformTask;
       const transformedData = processor.transformData ? await processor.transformData(data) : data;
       return {
@@ -136,11 +142,11 @@ const processSearchIndexTask = async (
         data: transformedData,
       } as PushTask;
     } else if (type === 'push') {
-      context.logger('processSearchIndexTask :: Push :: Processing task');
+      context.logger(`processSearchIndexTask :: Push :: ${processor.indexName} :: Processing task`);
       const { data, start } = task as PushTask;
       await processor.pushData(context, data);
       context.logger(
-        'processSearchIndexTask :: Push :: Done',
+        `processSearchIndexTask :: Push :: ${processor.indexName} :: Done`,
         start ? (Date.now() - start) / 1000 : 'unknown duration'
       );
 
@@ -151,10 +157,13 @@ const processSearchIndexTask = async (
     }
     return 'error';
   } catch (e) {
-    console.error(`processSearchIndexTask :: ${type} :: Error`, e);
+    console.error(`processSearchIndexTask :: ${type} :: ${processor.indexName} :: Error`, e);
     return 'error';
   } finally {
-    context.logger(`processSearchIndexTask :: ${type} :: Done`, logDetails);
+    context.logger(
+      `processSearchIndexTask :: ${type} :: ${processor.indexName} :: Done`,
+      logDetails
+    );
   }
 };
 
@@ -170,13 +179,14 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     maxQueueSize,
     workerCount = 10,
     resetInMainIndex,
+    jobName,
   } = processor;
 
   return {
     indexName,
     async update(jobContext: JobContext) {
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
-        `searchIndex:${indexName.toLowerCase()}`
+        `searchIndex:${(jobName ?? indexName).toLowerCase()}`
       );
       const ctx = {
         db: dbWrite,
@@ -192,7 +202,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       if (!shouldUpdate) {
         console.log(
-          'createSearchIndexUpdateProcessor :: update :: Job does not require updating yet.'
+          `createSearchIndexUpdateProcessor :: update :: ${indexName} :: Job does not require updating yet.`
         );
         return;
       }
@@ -200,10 +210,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // Run update
       const now = new Date();
       const queue = new TaskQueue('pull', maxQueueSize);
-      logger(`createSearchIndexUpdateProcessor :: update :: About to prepare batches...`);
+      logger(
+        `createSearchIndexUpdateProcessor :: update :: ${indexName} :: About to prepare batches...`
+      );
       const { batchSize, startId = 0, endId, updateIds } = await prepareBatches(ctx, lastUpdatedAt);
       logger(
-        `createSearchIndexUpdateProcessor :: update :: Index last update at ${lastUpdatedAt}`,
+        `createSearchIndexUpdateProcessor :: update :: ${indexName} :: Index last update at ${lastUpdatedAt}`,
         { batchSize, startId, endId, updateIds }
       );
 
@@ -353,7 +365,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       }
 
       console.log(
-        `createSearchIndexUpdateProcessor :: ${indexName} :: updateSync :: Called with ${items.length} items`
+        `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );
       const queue = new TaskQueue('pull', maxQueueSize);
       const batches = chunk(items, 500);

@@ -23,7 +23,7 @@ type OldTrainingRow = {
 
 export const deleteOldTrainingData = createJob(
   'delete-old-training-data',
-  '5 13 * * *',
+  '5 11 * * *',
   async () => {
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                         as mf_id,

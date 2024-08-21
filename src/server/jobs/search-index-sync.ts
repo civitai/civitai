@@ -1,5 +1,5 @@
-import { createJob, JobContext, UNRUNNABLE_JOB_CRON } from './job';
 import * as searchIndex from '~/server/search-index';
+import { createJob, JobContext, UNRUNNABLE_JOB_CRON } from './job';
 
 const searchIndexSets = {
   models: searchIndex.modelsSearchIndex,
@@ -21,7 +21,7 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   images: '*/20 * * * *',
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
-  imageMetrics: '*/5 * * * *',
+  imageMetrics: '*/1 * * * *',
   imageMetricsUpdateMetrics: '*/1 * * * *',
 };
 

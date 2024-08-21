@@ -31,6 +31,7 @@ type Metrics = {
 export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpdateProcessor({
   workerCount: 1,
   indexName: INDEX_ID,
+  jobName: `${INDEX_ID}_metrics`,
   setup: onIndexSetup,
   maxQueueSize: 20, // Avoids hogging too much memory.
   resetInMainIndex: true,
