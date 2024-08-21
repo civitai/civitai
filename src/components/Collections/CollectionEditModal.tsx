@@ -205,26 +205,23 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
-                    {/* TODO: We probably want to make this compatible with other collection types. */}
-                    {data?.collection?.type === CollectionType.Image && (
-                      <InputTags
-                        name="tags"
-                        label={
-                          <Group spacing={4} noWrap>
-                            <Input.Label>Tags</Input.Label>
-                            <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
-                              <Text>
-                                When submitting items to this collection, users will be able to tag
-                                their submission with one of the provided tag. This will make
-                                filtering and searching these entries much easier. At the moment,
-                                only 1 tag per item is allowed.
-                              </Text>
-                            </InfoPopover>
-                          </Group>
-                        }
-                        target={[TagTarget.Collection]}
-                      />
-                    )}
+                    <InputTags
+                      name="tags"
+                      label={
+                        <Group spacing={4} noWrap>
+                          <Input.Label>Tags</Input.Label>
+                          <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
+                            <Text>
+                              When submitting items to this collection, users will be able to tag
+                              their submission with one of the provided tag. This will make
+                              filtering and searching these entries much easier. At the moment, only
+                              1 tag per item is allowed.
+                            </Text>
+                          </InfoPopover>
+                        </Group>
+                      }
+                      target={[TagTarget.Collection]}
+                    />
                   </>
                 )}
               </>
