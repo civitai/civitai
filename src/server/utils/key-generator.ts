@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
 import { env } from '~/env/server.mjs';
 
 /**
@@ -13,4 +13,26 @@ export function generateKey(length = 32) {
  */
 export function generateSecretHash(key: string) {
   return createHash('sha512').update(`${key}${env.NEXTAUTH_SECRET}`).digest('hex');
+}
+
+export function encryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
+  // Create a cipher using the key and IV
+  const cipher = createCipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
+
+  // Encrypt the text
+  let encrypted = cipher.update(text, 'utf-8', 'hex');
+  encrypted += cipher.final('hex');
+
+  return encrypted;
+}
+
+export function decryptText({ text, key, iv }: { text: string; key: string; iv: string }) {
+  // Create a decipher using the key and extracted IV
+  const decipher = createDecipheriv('aes-256-cbc', Buffer.from(key, 'hex'), Buffer.from(iv, 'hex'));
+
+  // Decrypt the text
+  let decrypted = decipher.update(text, 'hex', 'utf-8');
+  decrypted += decipher.final('utf-8');
+
+  return decrypted;
 }

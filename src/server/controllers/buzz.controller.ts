@@ -384,7 +384,9 @@ export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<
 
 export const claimDailyBoostRewardHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    await dailyBoostReward.apply({ userId: ctx.user.id }, ctx.ip);
+    const { ip, fingerprint, user } = ctx;
+    const { id: userId } = user;
+    await dailyBoostReward.apply({ userId }, { ip, fingerprint });
   } catch (error) {
     const parsedError = getTRPCErrorFromUnknown(error);
     handleLogError(parsedError);
