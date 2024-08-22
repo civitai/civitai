@@ -58,9 +58,10 @@ export function throwDbError(error: unknown) {
       cause: error,
     });
 
+  const e = error as Error;
   throw new TRPCError({
     code: 'INTERNAL_SERVER_ERROR',
-    message: 'An unexpected error ocurred, please try again later',
+    message: e.message ?? 'An unexpected error ocurred, please try again later',
     cause: error,
   });
 }
@@ -83,7 +84,7 @@ export const handleTRPCError = (error: Error): TRPCError => {
     else
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
-        message: 'An unexpected error ocurred, please try again later',
+        message: error.message ?? 'An unexpected error ocurred, please try again later',
         cause: error,
       });
   } else {

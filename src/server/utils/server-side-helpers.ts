@@ -66,7 +66,8 @@ export function createServerSideProps<P>({
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
       (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
-    const flags = (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user });
+    const flags =
+      (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user, req: context.req });
     const { browsingLevel, showNsfw } = parseBrowsingMode(context.req.cookies, session);
 
     const ssg =

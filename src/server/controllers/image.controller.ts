@@ -248,12 +248,13 @@ export const setTosViolationHandler = async ({
 // #region [new handlers]
 export const getInfiniteImagesHandler = async ({
   input,
-  ctx: { user },
+  ctx,
 }: {
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
-  const features = getFeatureFlags({ user });
+  const { user } = ctx;
+  const features = getFeatureFlags(ctx);
   const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
   // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
 
@@ -288,13 +289,14 @@ type ImageResultSearchIndex = AsyncReturnType<typeof getAllImagesIndex>['items']
 type ImageResultDB = AsyncReturnType<typeof getAllImages>['items'][number];
 export const getImagesAsPostsInfiniteHandler = async ({
   input: { limit, cursor, hidden, ...input },
-  ctx: { user },
+  ctx,
 }: {
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
   try {
-    const features = getFeatureFlags({ user });
+    const { user } = ctx;
+    const features = getFeatureFlags(ctx);
     const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
     // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true

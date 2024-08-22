@@ -18,7 +18,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { hideNotification, showNotification } from '@mantine/notifications';
 import produce from 'immer';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export const getBountyCurrency = (bounty?: {
   id: number;

@@ -22,42 +22,42 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
       REDIS_KEYS.QUEUES.SEEN_IMAGES,
       popLimit
     );
-    if (recentlySeenIds === null) {
-      throw new Error('SEEN_IMAGES redis key is null');
-    }
+    if (recentlySeenIds && recentlySeenIds.length) {
+      const batches = chunk(recentlySeenIds, queryBatch);
+      for (const batch of batches) {
+        if (!batch.length) continue;
 
-    const batches = chunk(recentlySeenIds, queryBatch);
-    for (const batch of batches) {
-      if (!batch.length) continue;
+        // find them in the db
+        const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+          SELECT id, "nsfwLevel"
+          FROM "Image"
+          WHERE id in (${Prisma.join(batch)})
+        `;
+        const existingImagesIds = existingImages.map((i) => i.id);
 
-      // find them in the db
-      const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        SELECT id, "nsfwLevel"
-        FROM "Image"
-        WHERE id in (${Prisma.join(batch)})
-      `;
-      const existingImagesIds = existingImages.map((i) => i.id);
+        // delete ids that don't exist, or update ones that are blocked
+        const deleteIds = batch.filter((id) => !existingImagesIds.includes(id));
+        const updateData = existingImages.filter((i) =>
+          [NsfwLevel.Blocked, 0].includes(i.nsfwLevel)
+        );
 
-      // delete ids that don't exist, or update ones that are blocked
-      const deleteIds = batch.filter((id) => !existingImagesIds.includes(id));
-      const updateIds = existingImages.filter((i) => [NsfwLevel.Blocked, 0].includes(i.nsfwLevel));
+        // TODO regular index too
 
-      // TODO regular index too
-
-      // we could pull this outside the batch if we need
-      if (deleteIds.length) {
-        await onSearchIndexDocumentsCleanup({
-          indexName: METRICS_IMAGES_SEARCH_INDEX,
-          ids: deleteIds,
-          client,
-        });
-      }
-      if (updateIds.length) {
-        await updateDocs({
-          indexName: METRICS_IMAGES_SEARCH_INDEX,
-          documents: existingImages,
-          client,
-        });
+        // we could pull this outside the batch if we need
+        if (deleteIds.length) {
+          await onSearchIndexDocumentsCleanup({
+            indexName: METRICS_IMAGES_SEARCH_INDEX,
+            ids: deleteIds,
+            client,
+          });
+        }
+        if (updateData.length) {
+          await updateDocs({
+            indexName: METRICS_IMAGES_SEARCH_INDEX,
+            documents: updateData,
+            client,
+          });
+        }
       }
     }
 

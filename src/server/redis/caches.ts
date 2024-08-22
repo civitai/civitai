@@ -23,6 +23,7 @@ import { CachedObject, createCachedArray, createCachedObject } from '~/server/ut
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
+const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];
@@ -61,11 +62,7 @@ export const tagIdsForImagesCache = createCachedObject<{
 
       let canAdd = true;
       if (source === TagSource.Rekognition && hasWD[imageIdStr as keyof typeof hasWD]) {
-        if (
-          tag.type !== TagType.Moderation &&
-          tag.name &&
-          !constants.imageTags.styles.includes(tag.name)
-        ) {
+        if (tag.type !== TagType.Moderation && tag.name && !alwaysIncludeTags.includes(tag.name)) {
           canAdd = false;
         }
       }

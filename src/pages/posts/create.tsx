@@ -10,7 +10,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconLock } from '@tabler/icons-react';
+import { IconAlertCircle, IconLock } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
@@ -117,10 +117,14 @@ export default createPage(
     return (
       <Container size="xs" className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <BackButton url={backButtonUrl} />
-          <Title>
-            {displayReview ? 'Create a Review' : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
-          </Title>
+          <div className="flex items-center gap-2">
+            <BackButton url={backButtonUrl} />
+            <Title>
+              {displayReview
+                ? 'Create a Review'
+                : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
+            </Title>
+          </div>
           <FeatureIntroductionHelpButton
             feature="post-create"
             contentSlug={['feature-introduction', 'post-images']}
@@ -203,6 +207,10 @@ export default createPage(
             )}
           </UserResourceReviewComposite>
         )}
+        <AlertWithIcon icon={<IconAlertCircle />}>
+          There may be a short delay before your uploaded media appears in the Model Gallery and
+          Image Feeds. Please allow a few minutes for your media to become visible after posting.
+        </AlertWithIcon>
         {!displayReview && (
           <Text size="xs" color="dimmed">
             Our site is mostly used for sharing AI generated content. You can start generating
