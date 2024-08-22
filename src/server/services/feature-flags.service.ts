@@ -94,11 +94,11 @@ const featureFlags = createFeatureFlags({
   creatorComp: ['user'],
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
-  canViewNsfw: [],
   imageIndexFeed: ['granted', 'mod'],
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
+  canViewNsfw: [],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
@@ -135,7 +135,7 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
     for (const server of availableServers) {
       const domain = serverDomainMap[server as ServerAvailability];
       if (!domain) continue;
-      if (host.includes(domain)) {
+      if (host === domain) {
         serverRequirement = true;
         break;
       }

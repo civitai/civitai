@@ -125,8 +125,9 @@ export const useCivitaiSessionContext = () => {
   if (!context) throw new Error('missing CivitaiSessionContext');
   const { state, subscribe } = context;
 
-  const proxy = useRef(
-    new Proxy(
+  const proxy = useRef<object>();
+  if (!proxy.current)
+    proxy.current = new Proxy(
       {},
       {
         get(_, key: keyof CivitaiSessionUser) {
@@ -134,8 +135,7 @@ export const useCivitaiSessionContext = () => {
           return state?.[key];
         },
       }
-    )
-  );
+    );
 
   useEffect(() => {
     const unsubscribe = subscribe((key) => {

@@ -99,7 +99,7 @@ export const serverSchema = z.object({
   DELIVERY_WORKER_TOKEN: z.string().optional(),
   PLAYFAB_TITLE_ID: z.string().optional(),
   PLAYFAB_SECRET_KEY: z.string().optional(),
-  TRPC_ORIGINS: commaDelimitedStringArray().optional(),
+  TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   CANNY_SECRET: z.string().optional(),
   ORCHESTRATOR_ENDPOINT: z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
