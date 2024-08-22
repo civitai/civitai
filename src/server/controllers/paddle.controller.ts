@@ -6,13 +6,15 @@ import {
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import {
-  createTransaction,
+  createBuzzPurchaseTransaction,
   processCompleteBuzzTransaction,
+  purchaseBuzzWithSubscription,
   updateSubscriptionPlan,
 } from '~/server/services/paddle.service';
 import {
   TransactionCreateInput,
   TransactionMetadataSchema,
+  TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
@@ -24,7 +26,7 @@ import { getPlans, getUserSubscription } from '~/server/services/subscriptions.s
 import { PaymentProvider } from '@prisma/client';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
-export const createTransactionHandler = async ({
+export const createBuzzPurchaseTransactionHandler = async ({
   ctx,
   input,
 }: {
@@ -56,7 +58,7 @@ export const createTransactionHandler = async ({
     }
 
     const user = { id: ctx.user.id, email: ctx.user.email as string };
-    return await createTransaction({ user, ...input });
+    return await createBuzzPurchaseTransaction({ user, ...input });
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
@@ -148,6 +150,54 @@ export const cancelSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<
       url: undefined,
       canceled: true,
     };
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const getManagementUrlsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const urls: Record<string, string | null | undefined> = {
+      updatePaymentMethod: null,
+    };
+
+    const subscription = await getUserSubscription({ userId: ctx.user.id });
+    if (!subscription) {
+      return urls;
+    }
+
+    if (subscription.product.provider !== PaymentProvider.Paddle) {
+      return urls;
+    }
+
+    const paddleSubscription = await getPaddleSubscription({
+      subscriptionId: subscription.id,
+    });
+
+    if (!paddleSubscription) {
+      return urls;
+    }
+
+    urls.updatePaymentMethod = paddleSubscription.managementUrls?.updatePaymentMethod;
+    // Cancel through paddle as we don't have a Free plan for whatever reason.
+    return urls;
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const purchaseBuzzWithSubscriptionHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: TransactionWithSubscriptionCreateInput;
+}) => {
+  try {
+    return await purchaseBuzzWithSubscription({
+      userId: ctx.user.id,
+      ...input,
+    });
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

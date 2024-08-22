@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -30,6 +30,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { PaymentProvider } from '@prisma/client';
+import { showSuccessNotification } from '~/utils/notifications';
+import { useMutatePaddle } from '~/components/Paddle/util';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -247,20 +249,23 @@ export const PaddleCancelMembershipButton = ({
   onClose: () => void;
   hasUsedVaultStorage: boolean;
 }) => {
-  const { mutate, isLoading: connectingToStripe } = trpc.paddle.cancelSubscription.useMutation({
-    async onSuccess({ url, canceled }) {
-      if (url) {
-        onClose();
-        Router.push(url);
-      } else if (canceled) {
-        onClose();
-        showSuccessNotification({
-          title: 'You have been successfully downgraded to our Free tier.',
-          message: 'You will no longer be billed for your subscription',
-        });
-      }
-    },
-  });
+  const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
+  const handleCancelSubscription = () => {
+    cancelSubscription({
+      onSuccess: ({ url, canceled }) => {
+        if (url) {
+          onClose();
+          Router.push(url);
+        } else if (canceled) {
+          onClose();
+          showSuccessNotification({
+            title: 'You have been successfully downgraded to our Free tier.',
+            message: 'You will no longer be billed for your subscription',
+          });
+        }
+      },
+    });
+  };
 
   return (
     <Button
@@ -271,16 +276,16 @@ export const PaddleCancelMembershipButton = ({
             component: VaultStorageDowngrade,
             props: {
               onContinue: () => {
-                mutate();
+                handleCancelSubscription();
               },
             },
           });
         } else {
-          mutate();
+          handleCancelSubscription();
         }
       }}
       radius="xl"
-      loading={connectingToStripe}
+      loading={cancelingSubscription}
     >
       Proceed to Cancel
     </Button>

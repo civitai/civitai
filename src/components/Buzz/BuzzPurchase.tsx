@@ -37,79 +37,7 @@ import { useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { PaddleTransacionModal } from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-
-const useStyles = createStyles((theme) => ({
-  chipGroup: {
-    gap: theme.spacing.md,
-
-    '& > *': {
-      width: '100%',
-    },
-
-    [containerQuery.smallerThan('sm')]: {
-      gap: theme.spacing.md,
-    },
-  },
-
-  // Chip styling
-  chipLabel: {
-    padding: `${theme.spacing.sm}px ${theme.spacing.md}px`,
-    height: 'auto',
-    width: '100%',
-    borderRadius: theme.radius.md,
-
-    '&[data-variant="filled"]': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    },
-
-    '&[data-checked]': {
-      border: `2px solid ${theme.colors.accent[5]}`,
-      color: theme.colors.accent[5],
-      padding: `${theme.spacing.sm}px ${theme.spacing.md}px`,
-
-      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      },
-    },
-  },
-
-  chipCheckmark: {
-    display: 'none',
-  },
-
-  chipDisabled: {
-    opacity: 0.3,
-  },
-
-  // Accordion styling
-  accordionItem: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-
-    '&:first-of-type, &:first-of-type>[data-accordion-control]': {
-      borderTopLeftRadius: theme.radius.md,
-      borderTopRightRadius: theme.radius.md,
-    },
-
-    '&:last-of-type, &:last-of-type>[data-accordion-control]': {
-      borderBottomLeftRadius: theme.radius.md,
-      borderBottomRightRadius: theme.radius.md,
-    },
-
-    '&[data-active="true"]': {
-      border: `1px solid ${theme.colors.accent[5]}`,
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    },
-  },
-
-  // Icon styling
-  buzzIcon: {
-    filter: `drop-shadow(0 0 2px ${theme.colors.accent[5]})`,
-
-    '&:not(:first-of-type)': {
-      marginLeft: -4,
-    },
-  },
-}));
+import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -224,9 +152,9 @@ const BuzzPurchasePaymentButton = ({
           <Stack>
             <Text>
               You are about to purchase{' '}
-              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} /> for a total of{' '}
-              <CurrencyBadge currency={Currency.USD} unitAmount={unitAmount} />
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={buzzAmount} />
             </Text>
+            <Text>Please fill in your data and complete your purchase.</Text>
           </Stack>
         ),
         successMessage,
@@ -271,7 +199,7 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   ...props
 }: Props) => {
-  const { classes, cx, theme } = useStyles();
+  const { classes, cx, theme } = useBuzzButtonStyles();
   const canUpgradeMembership = useCanUpgrade();
 
   const currentUser = useCurrentUser();
@@ -549,7 +477,7 @@ export const BuzzPurchase = ({
 const iconSizesRatio = [1, 1.3, 1.6];
 
 const BuzzTierIcon = ({ tier }: { tier: number }) => {
-  const { classes } = useStyles();
+  const { classes } = useBuzzButtonStyles();
 
   return (
     <Group spacing={-4} noWrap>

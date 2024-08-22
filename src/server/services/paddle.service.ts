@@ -12,14 +12,17 @@ import { createLogger } from '~/utils/logging';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   createBuzzTransaction as createPaddleBuzzTransaction,
+  getCustomerLatestTransaction,
   getOrCreateCustomer,
   getPaddleSubscription,
+  subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
   // updateTransaction,
 } from '~/server/paddle/client';
 import {
   TransactionCreateInput,
   TransactionMetadataSchema,
+  TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
 import {
@@ -57,7 +60,22 @@ export const createCustomer = async ({ id, email }: { id: number; email: string 
   }
 };
 
-export const createTransaction = async ({
+const getBuzzTransactionMetadata = ({
+  unitAmount,
+  userId,
+}: {
+  unitAmount: number;
+  userId: number;
+}): TransactionMetadataSchema => {
+  return {
+    type: 'buzzPurchase',
+    unitAmount: unitAmount,
+    buzzAmount: unitAmount * 10, // 10x
+    userId,
+  };
+};
+
+export const createBuzzPurchaseTransaction = async ({
   unitAmount,
   currency = Currency.USD,
   customerId,
@@ -102,23 +120,15 @@ export const createTransaction = async ({
 
   const productsToIncludeWithTransactions = products.filter((p) => {
     const parsedMeta = subscriptionProductMetadataSchema.safeParse(p.metadata);
-    console.log(parsedMeta, p.prices.length > 0);
     return parsedMeta.success && parsedMeta.data.includeWithTransaction && p.prices.length > 0;
   });
-
-  console.log(productsToIncludeWithTransactions);
 
   const transaction = await createPaddleBuzzTransaction({
     customerId,
     unitAmount,
     buzzAmount: unitAmount * 10, // 10x
     currency,
-    metadata: {
-      type: 'buzzPurchase',
-      unitAmount: unitAmount,
-      buzzAmount: unitAmount * 10, // 10x
-      userId: user.id,
-    },
+    metadata: getBuzzTransactionMetadata({ unitAmount, userId: user.id }),
     // Only included if the user has no subscriptions so we can tie them up.
     includedItems: !subscription
       ? productsToIncludeWithTransactions.map((p) => ({
@@ -167,12 +177,48 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
       paddleTransactionId: transaction.id,
     },
   });
+};
 
-  // TODO: Ask paddle guys if it's possible to update customData after transaction completed.
-  //  await updateTransaction({
-  //   transactionId: transaction.id,
-  //   metadata: { ...meta, buzzTransactionId: buzzTransaction.transactionId },
-  // });
+export const purchaseBuzzWithSubscription = async ({
+  unitAmount,
+  currency = Currency.USD,
+  userId,
+}: TransactionWithSubscriptionCreateInput & {
+  userId: number;
+}) => {
+  const subscription = await dbRead.customerSubscription.findUnique({
+    where: {
+      userId,
+      status: {
+        in: ['active', 'trialing'],
+      },
+    },
+    select: { id: true },
+  });
+
+  if (!subscription) {
+    throw throwBadRequestError('No active subscription found');
+  }
+
+  const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
+
+  if (!paddleSubscription) {
+    throw throwBadRequestError('No active subscription found on Paddle');
+  }
+
+  await subscriptionBuzzOneTimeCharge({
+    subscriptionId: subscription.id,
+    unitAmount,
+    buzzAmount: unitAmount * 10, // 10x
+    currency,
+    metadata: getBuzzTransactionMetadata({ unitAmount, userId }),
+  });
+
+  const transaction = await getCustomerLatestTransaction({
+    customerId: paddleSubscription.customerId,
+  });
+
+  return transaction?.id;
 };
 
 export const upsertProductRecord = async (product: ProductNotification) => {

@@ -27,6 +27,13 @@ export const transactionCreateSchema = z.object({
   recaptchaToken: z.string(),
 });
 
+export type TransactionWithSubscriptionCreateInput = z.infer<
+  typeof transactionWithSubscriptionCreateSchema
+>;
+export const transactionWithSubscriptionCreateSchema = transactionCreateSchema.omit({
+  recaptchaToken: true,
+});
+
 export type UpdateSubscriptionInputSchema = z.infer<typeof updateSubscriptionInputSchema>;
 export const updateSubscriptionInputSchema = z.object({
   priceId: z.string(),

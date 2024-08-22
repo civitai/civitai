@@ -1,17 +1,10 @@
-import { CheckoutEventsData, CurrencyCode } from '@paddle/paddle-js';
-import { useEffect, useState, useCallback, useRef } from 'react';
-import {
-  RECAPTCHA_ACTIONS,
-  STRIPE_PROCESSING_AWAIT_TIME,
-  STRIPE_PROCESSING_CHECK_INTERVAL,
-} from '~/server/common/constants';
-import { usePaddle } from '~/providers/PaddleProvider';
+import { CurrencyCode } from '@paddle/paddle-js';
+import { useState, useCallback } from 'react';
+import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
-import { useDebouncer } from '~/utils/debouncer';
 import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
-import { useMantineTheme } from '@mantine/core';
 
-export const usePaddleTransaction = ({
+export const usePaddleBuzzTransaction = ({
   unitAmount,
   currency = 'USD',
 }: {
@@ -20,12 +13,11 @@ export const usePaddleTransaction = ({
 }) => {
   const [transactionId, setTransactionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const createTransactionMutation = trpc.paddle.createTrasaction.useMutation();
+  const [isLoading, setIsLoading] = useState(false);
+  const createTransactionMutation = trpc.paddle.createBuzzPurchaseTransaction.useMutation();
   const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.PADDLE_TRANSACTION);
-  const debouncer = useDebouncer(300);
 
-  const createTransaction = useCallback(async () => {
+  const getTransaction = useCallback(async () => {
     if (createTransactionMutation.isLoading) return;
 
     setTransactionId(null);
@@ -53,14 +45,11 @@ export const usePaddleTransaction = ({
     }
   }, [unitAmount, currency, getToken]);
 
-  useEffect(() => {
-    debouncer(() => createTransaction());
-  }, [createTransaction, debouncer]);
-
   return {
     transactionId,
     isLoading,
     error,
+    getTransaction,
   };
 };
 

@@ -13,6 +13,7 @@ import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { PaymentProvider } from '@prisma/client';
 import { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { useMutatePaddle } from '~/components/Paddle/util';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
@@ -70,25 +71,28 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const { paddle, emitter } = usePaddle();
 
-  const { mutate: paddleUpdateSubscription, isLoading } =
-    trpc.paddle.updateSubscription.useMutation({
-      async onSuccess() {
-        await currentUser?.refresh();
-        await queryUtils.subscriptions.getUserSubscription.reset();
-        onSuccess?.();
-        return Router.push('/user/membership?updated=true');
-      },
-      async onError(error) {
-        showErrorNotification({
-          title: 'Sorry, there was an error while trying to subscribe. Please try again later',
-          error: new Error(error.message),
-        });
-      },
-    });
+  const { updateSubscription: paddleUpdateSubscription, updatingSubscription: isLoading } =
+    useMutatePaddle();
 
   const handleClick = () => {
     if (subscription) {
-      paddleUpdateSubscription({ priceId });
+      paddleUpdateSubscription(
+        { priceId },
+        {
+          onSuccess: async () => {
+            await currentUser?.refresh();
+            await queryUtils.subscriptions.getUserSubscription.reset();
+            onSuccess?.();
+            return Router.push('/user/membership?updated=true');
+          },
+          onError: (error) => {
+            showErrorNotification({
+              title: 'Sorry, there was an error while trying to subscribe. Please try again later',
+              error: new Error(error.message),
+            });
+          },
+        }
+      );
     } else {
       paddle?.Checkout.open({
         items: [
