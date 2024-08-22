@@ -159,7 +159,6 @@ const BuzzPurchasePaymentButton = ({
         ),
         successMessage,
         onSuccess: async (transactionId) => {
-          // Do nothing atm.
           await processCompleteBuzzTransaction({ id: transactionId });
         },
       },

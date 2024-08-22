@@ -346,12 +346,19 @@ export const upsertSubscription = async (
   const startingNewSubscription =
     isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
 
-  if (isCancelingSubscription && subscriptionNotification.status === 'canceled') {
+  if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
     log('upsertSubscription :: Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
+    await dbWrite.vault.update({
+      where: { userId: user.id },
+      data: {
+        storageKb: 0, // Reset storage to 0
+      },
+    });
+
     return;
   }
 
@@ -425,14 +432,7 @@ export const upsertSubscription = async (
     where: { id: data.productId },
   });
 
-  if (data.status === 'canceled' && userVault) {
-    await dbWrite.vault.update({
-      where: { userId: user.id },
-      data: {
-        storageKb: 0, // Reset storage to 0
-      },
-    });
-  } else if (data.status === 'active') {
+  if (data.status === 'active') {
     const parsedMeta = subscriptionProductMetadataSchema.safeParse(product?.metadata);
     const vault = userVault ? userVault : await getOrCreateVault({ userId: user.id });
     if (parsedMeta.success && vault.storageKb !== parsedMeta.data.vaultSizeKb) {

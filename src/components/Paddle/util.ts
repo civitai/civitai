@@ -1,3 +1,4 @@
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import {
   TransactionCreateInput,
@@ -43,5 +44,18 @@ export const useMutatePaddle = () => {
     cancelingSubscription: cancelSubscriptionMutation.isLoading,
     purchaseBuzzWithSubscription: handlePurchaseBuzzWithSubscription,
     purchasingBuzzWithSubscription: purchaseBuzzWithSubscription.isLoading,
+  };
+};
+
+export const useSubscriptionManagementUrls = (data: { enabled?: boolean } = { enabled: true }) => {
+  const currentUser = useCurrentUser();
+  const { data: managementUrls, ...rest } = trpc.paddle.getManagementUrls.useQuery(undefined, {
+    enabled: !!currentUser && data?.enabled,
+    trpc: { context: { skipBatch: true } },
+  });
+
+  return {
+    managementUrls,
+    ...rest,
   };
 };

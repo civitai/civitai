@@ -157,30 +157,53 @@ export const cancelSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<
 
 export const getManagementUrlsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const urls: Record<string, string | null | undefined> = {
+    const urls: {
+      updatePaymentMethod: string | null | undefined;
+      freeSubscriptionPriceId: string | null | undefined;
+    } = {
       updatePaymentMethod: null,
+      freeSubscriptionPriceId: null,
     };
 
-    const subscription = await getUserSubscription({ userId: ctx.user.id });
-    if (!subscription) {
-      return urls;
-    }
-
-    if (subscription.product.provider !== PaymentProvider.Paddle) {
-      return urls;
-    }
-
-    const paddleSubscription = await getPaddleSubscription({
-      subscriptionId: subscription.id,
+    const plans = await getPlans({
+      includeFree: true,
+      paymentProvider: PaymentProvider.Paddle,
     });
 
-    if (!paddleSubscription) {
-      return urls;
+    const freePlan = plans.find((p) => {
+      const meta = p.metadata as SubscriptionProductMetadata;
+      return meta?.tier === 'free';
+    });
+
+    if (freePlan && freePlan.prices.length) {
+      urls.freeSubscriptionPriceId = freePlan.prices[0].id;
     }
 
-    urls.updatePaymentMethod = paddleSubscription.managementUrls?.updatePaymentMethod;
-    // Cancel through paddle as we don't have a Free plan for whatever reason.
-    return urls;
+    try {
+      const subscription = await getUserSubscription({ userId: ctx.user.id });
+      if (!subscription) {
+        return urls;
+      }
+
+      if (subscription.product.provider !== PaymentProvider.Paddle) {
+        return urls;
+      }
+
+      const paddleSubscription = await getPaddleSubscription({
+        subscriptionId: subscription.id,
+      });
+
+      if (!paddleSubscription) {
+        return urls;
+      }
+
+      urls.updatePaymentMethod = paddleSubscription.managementUrls?.updatePaymentMethod;
+      // Cancel through paddle as we don't have a Free plan for whatever reason.
+      return urls;
+    } catch (e) {
+      // Ignore error and assume subscription was not found.
+      return urls;
+    }
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

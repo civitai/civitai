@@ -127,7 +127,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         return res.status(200).json({ received: true });
       } catch (error: any) {
-        console.log('ERROOOR', error);
         return res.status(400).send({
           error: error.message,
         });
