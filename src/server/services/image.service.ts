@@ -1418,10 +1418,16 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, userCosmetics, profilePictures] = await Promise.all([
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics] = await Promise.all([
     await getBasicDataForUsers(userIds),
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('cosmetics')
+      ? await getCosmeticsForEntity({
+          ids: imageIds,
+          entity: 'Image',
+        })
+      : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1447,6 +1453,7 @@ export const getAllImagesIndex = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
+      cosmetic: imageCosmetics?.[sr.id] ?? null,
       // TODO fix below
       availability: Availability.Public,
       tags: [], // needed?
