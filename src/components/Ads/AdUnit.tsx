@@ -24,6 +24,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { useDeviceFingerprint } from '~/hooks/useDeviceFingerprint';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
   AdSizes & {
@@ -124,6 +125,7 @@ function ImpressionTracker({
   const currentUser = useCurrentUser();
   const node = useScrollAreaRef();
   const { worker } = useSignalContext();
+  const { fingerprint } = useDeviceFingerprint();
   const enterViewRef = useRef<Date>();
   const impressionTrackedRef = useRef<boolean>();
   const trackImpressionRef = useRef<VoidFunction>();
@@ -138,7 +140,7 @@ function ImpressionTracker({
         worker.send('recordAdImpression', {
           userId: currentUser.id,
           duration: diff,
-          fingerprint: 'undefined', // TODO.manuel - encrypted version
+          fingerprint,
           adId,
         });
       }
