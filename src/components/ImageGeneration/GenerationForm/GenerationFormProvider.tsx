@@ -339,6 +339,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (name === 'resources') {
         if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
           form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
+          form.setValue('workflow', 'txt2img');
         }
       }
     });
