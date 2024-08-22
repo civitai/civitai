@@ -23,7 +23,7 @@ import { CachedObject, createCachedArray, createCachedObject } from '~/server/ut
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-const alwaysIncludeTags = [...constants.imageTags.styles, 'man', 'men', 'woman', 'women'];
+const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
   imageId: number;
   tags: number[];
