@@ -308,6 +308,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
     notPublished: z.coerce.boolean().optional(),
+    notScheduled: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
