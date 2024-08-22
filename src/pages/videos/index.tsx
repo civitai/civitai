@@ -31,6 +31,7 @@ export default function VideosPage() {
               filters={{ ...filters, types: ['video'] }}
               showEof
               showAds
+              useIndex
             />
           </IsClient>
         </Stack>

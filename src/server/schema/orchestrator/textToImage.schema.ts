@@ -21,7 +21,10 @@ export const textToImageParamsSchema = z.object({
   seed: z.coerce.number().min(0).max(generation.maxValues.seed).optional(),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100),
-  quantity: z.coerce.number().min(1).max(20),
+  quantity: z.coerce
+    .number()
+    .max(20)
+    .transform((val) => (val <= 0 ? 1 : val)),
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),

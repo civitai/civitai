@@ -12,7 +12,7 @@ const schema = z.object({
 export default AuthedEndpoint(async function handler(req, res, user) {
   if (req.method !== 'GET') return res.status(405).send('Method Not Allowed');
 
-  const features = getFeatureFlags({ user });
+  const features = getFeatureFlags({ user, req });
   if (!features || !features.impersonation) return res.status(401).send('Unauthorized');
 
   const result = schema.safeParse(req.query);

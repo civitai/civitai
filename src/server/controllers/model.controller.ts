@@ -128,7 +128,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       if (blocked) throw throwNotFoundError();
     }
 
-    const features = getFeatureFlags({ user: ctx.user });
+    const features = getFeatureFlags(ctx);
     const filteredVersions = model.modelVersions.filter((version) => {
       const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
       if (isOwner) return true;
@@ -686,7 +686,7 @@ export const getDownloadCommandHandler = async ({
   ctx,
 }: {
   input: GetDownloadSchema;
-  ctx: Context;
+  ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const fileWhere: Prisma.ModelFileWhereInput = {};
@@ -735,8 +735,21 @@ export const getDownloadCommandHandler = async ({
       },
       orderBy: { index: 'asc' },
     });
-
     if (!modelVersion) throw throwNotFoundError();
+
+    const [access] = await hasEntityAccess({
+      entityType: 'ModelVersion',
+      entityIds: [modelVersion.id],
+      userId: ctx.user.id,
+    });
+    if (
+      !access ||
+      !access.hasAccess ||
+      (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0
+    ) {
+      throw throwAuthorizationError();
+    }
+
     const { model, files } = modelVersion;
     const castedFiles = files as Array<
       Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }

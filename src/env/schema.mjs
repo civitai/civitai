@@ -68,6 +68,7 @@ export const serverSchema = z.object({
   S3_IMAGE_UPLOAD_REGION: z.string().optional(),
   S3_IMAGE_UPLOAD_ENDPOINT: z.string().url().optional(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
+  S3_IMAGE_UPLOAD_OVERRIDE: z.string().optional(),
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
   S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
@@ -172,6 +173,8 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
+  FINGERPRINT_SECRET: z.string().length(64).optional(),
+  FINGERPRINT_IV: z.string().length(32).optional(),
 });
 
 /**
@@ -209,6 +212,9 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
+  NEXT_PUBLIC_SERVER_DOMAIN_GREEN: z.string().optional(),
+  NEXT_PUBLIC_SERVER_DOMAIN_BLUE: z.string().optional(),
+  NEXT_PUBLIC_SERVER_DOMAIN_RED: z.string().optional(),
 });
 
 /**
@@ -247,4 +253,7 @@ export const clientEnv = {
   NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
+  NEXT_PUBLIC_SERVER_DOMAIN_GREEN: process.env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  NEXT_PUBLIC_SERVER_DOMAIN_BLUE: process.env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  NEXT_PUBLIC_SERVER_DOMAIN_RED: process.env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };

@@ -233,6 +233,7 @@ export default function ModelDetailsV2({
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
+  // TODO change this to just grab one image, since that's all it's used for
   const { images: versionImages, isLoading: loadingImages } = useQueryImages(
     {
       modelVersionId: latestVersion?.id,

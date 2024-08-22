@@ -15,6 +15,7 @@ import {
   IconWand,
   IconHeart,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useState, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -25,6 +26,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
+import { TwCard } from '~/components/TwCard/TwCard';
 import images from '~/pages/api/v1/images';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
@@ -226,33 +228,32 @@ export function GeneratedImage({
   const { params } = step;
 
   return (
-    <div
+    <TwCard
       ref={ref}
-      className={`size-full shadow-inner card ${classes.imageWrapper}`}
+      className={classes.imageWrapper}
       style={{ aspectRatio: params.width / params.height }}
     >
       {inView && (
         <>
           <div
-            className={`flex flex-1 cursor-pointer flex-col items-center justify-center`}
+            className="relative flex flex-1 cursor-pointer flex-col items-center justify-center"
             onClick={handleImageClick}
             onMouseDown={(e) => {
               if (e.button === 1) return handleAuxClick();
             }}
           >
-            <div className={classes.innerGlow} />
             {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
             <img
               ref={imageRef}
               alt=""
               src={image.url}
-              style={{ zIndex: 2, width: '100%' }}
               onDragStart={(e) => {
                 if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               }}
             />
+            <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          <label className="absolute left-3 top-3 z-10">
+          <label className="absolute left-3 top-3 ">
             <Checkbox
               className={classes.checkbox}
               checked={selected}
@@ -263,7 +264,7 @@ export function GeneratedImage({
           </label>
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
-              <div className="absolute right-3 top-3 z-10">
+              <div className="absolute right-3 top-3">
                 <ActionIcon variant="transparent">
                   <IconDotsVertical
                     size={26}
@@ -337,68 +338,68 @@ export function GeneratedImage({
             </Menu.Dropdown>
           </Menu>
 
-          <Group className={classes.info} w="100%" position="apart">
-            <Group spacing={4} className={classes.actionsWrapper}>
-              <ActionIcon
-                size="md"
-                className={buttonState.favorite ? classes.favoriteButton : undefined}
-                variant={buttonState.favorite ? 'light' : undefined}
-                color={buttonState.favorite ? 'red' : undefined}
-                onClick={() => handleToggleFavorite(!buttonState.favorite)}
-              >
-                <IconHeart size={16} />
-              </ActionIcon>
+          <Group spacing={4} className={clsx(classes.actionsWrapper, 'absolute bottom-2 left-2')}>
+            <ActionIcon
+              size="md"
+              className={buttonState.favorite ? classes.favoriteButton : undefined}
+              variant={buttonState.favorite ? 'light' : undefined}
+              color={buttonState.favorite ? 'red' : undefined}
+              onClick={() => handleToggleFavorite(!buttonState.favorite)}
+            >
+              <IconHeart size={16} />
+            </ActionIcon>
 
-              {!!img2imgWorkflows?.length && canRemix && (
-                <Menu
-                  zIndex={400}
-                  trigger="hover"
-                  openDelay={100}
-                  closeDelay={100}
-                  transition="fade"
-                  transitionDuration={150}
-                  withinPortal
-                  position="top"
-                >
-                  <Menu.Target>
-                    <ActionIcon size="md">
-                      <IconWand size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown className={classes.improveMenu}>
-                    {img2imgWorkflows?.map((workflow) => (
-                      <Menu.Item
-                        key={workflow.key}
-                        onClick={() => {
-                          if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
-                          else handleSelectWorkflow(workflow.key);
-                        }}
-                      >
-                        {workflow.name}
-                      </Menu.Item>
-                    ))}
-                  </Menu.Dropdown>
-                </Menu>
-              )}
-
-              <ActionIcon
-                size="md"
-                variant={buttonState.feedback === 'liked' ? 'light' : undefined}
-                color={buttonState.feedback === 'liked' ? 'green' : undefined}
-                onClick={() => handleToggleFeedback('liked')}
+            {!!img2imgWorkflows?.length && canRemix && (
+              <Menu
+                zIndex={400}
+                trigger="hover"
+                openDelay={100}
+                closeDelay={100}
+                transition="fade"
+                transitionDuration={150}
+                withinPortal
+                position="top"
               >
-                <IconThumbUp size={16} />
-              </ActionIcon>
+                <Menu.Target>
+                  <ActionIcon size="md">
+                    <IconWand size={16} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown className={classes.improveMenu}>
+                  {img2imgWorkflows?.map((workflow) => (
+                    <Menu.Item
+                      key={workflow.key}
+                      onClick={() => {
+                        if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
+                        else handleSelectWorkflow(workflow.key);
+                      }}
+                    >
+                      {workflow.name}
+                    </Menu.Item>
+                  ))}
+                </Menu.Dropdown>
+              </Menu>
+            )}
 
-              <ActionIcon
-                size="md"
-                variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
-                color={buttonState.feedback === 'disliked' ? 'red' : undefined}
-                onClick={() => handleToggleFeedback('disliked')}
-              >
-                <IconThumbDown size={16} />
-              </ActionIcon>
-            </Group>
+            <ActionIcon
+              size="md"
+              variant={buttonState.feedback === 'liked' ? 'light' : undefined}
+              color={buttonState.feedback === 'liked' ? 'green' : undefined}
+              onClick={() => handleToggleFeedback('liked')}
+            >
+              <IconThumbUp size={16} />
+            </ActionIcon>
+
+            <ActionIcon
+              size="md"
+              variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
+              color={buttonState.feedback === 'disliked' ? 'red' : undefined}
+              onClick={() => handleToggleFeedback('disliked')}
+            >
+              <IconThumbDown size={16} />
+            </ActionIcon>
+          </Group>
+          <div className="absolute bottom-2 right-2">
             <ImageMetaPopover
               meta={step.params}
               zIndex={constants.imageGeneration.drawerZIndex + 1}
@@ -414,10 +415,10 @@ export function GeneratedImage({
                 />
               </ActionIcon>
             </ImageMetaPopover>
-          </Group>
+          </div>
         </>
       )}
-    </div>
+    </TwCard>
   );
 }
 
@@ -448,52 +449,10 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 
   return {
-    checkboxLabel: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      padding: theme.spacing.xs,
-      cursor: 'pointer',
-    },
     checkbox: {
       '& input:checked': {
         borderColor: theme.white,
       },
-    },
-    menuTarget: {
-      position: 'absolute',
-      top: 0,
-      right: 0,
-      padding: theme.spacing.xs,
-      cursor: 'pointer',
-    },
-    info: {
-      bottom: 0,
-      right: 0,
-      padding: theme.spacing.xs,
-      position: 'absolute',
-      cursor: 'pointer',
-      zIndex: 2,
-      alignItems: 'flex-end',
-
-      [theme.fn.smallerThan('xs')]: {
-        padding: 4,
-      },
-    },
-    iconBlocked: {
-      [containerQuery.smallerThan(380)]: {
-        display: 'none',
-      },
-    },
-    mistake: {
-      [containerQuery.largerThan(380)]: {
-        marginTop: theme.spacing.sm,
-      },
-    },
-    blockedMessage: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
     },
     imageWrapper: {
       background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
@@ -502,25 +461,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
         opacity: 1,
         transition: 'opacity .3s',
       },
-    },
-    centeredAbsolute: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-    innerGlow: {
-      display: 'block',
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: '100%',
-      height: '100%',
-      boxShadow: 'inset 0px 0px 2px 1px rgba(255,255,255,0.2)',
-      borderRadius: theme.radius.sm,
-      pointerEvents: 'none',
-      zIndex: 10,
     },
     actionsWrapper: {
       ref: thumbActionRef,
@@ -545,7 +485,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
         },
       },
     },
-
     favoriteButton: {
       ref: favoriteButtonRef,
       background: 'rgba(240, 62, 62, 0.5)',

@@ -29,7 +29,7 @@ export default function ImagesPage() {
         <Stack spacing="xs">
           <IsClient>
             <ImageCategories />
-            <ImagesInfinite showEof showAds />
+            <ImagesInfinite showEof showAds useIndex />
           </IsClient>
         </Stack>
       </MasonryContainer>

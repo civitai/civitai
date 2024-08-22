@@ -281,7 +281,11 @@ export function QueueItem({
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
 
-            <div className={cx(classes.grid, {[classes.asSidebar]: !features.largerGenerationImages})}>
+            <div
+              className={cx(classes.grid, {
+                [classes.asSidebar]: !features.largerGenerationImages,
+              })}
+            >
               {images.map((image) => (
                 <GeneratedImage key={image.id} image={image} request={request} step={step} />
               ))}

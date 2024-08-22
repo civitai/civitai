@@ -6,7 +6,6 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 100000;
@@ -141,7 +140,6 @@ type ImageTechnique = {
   techniqueId: number;
 };
 
-type ImageCosmetics = Awaited<ReturnType<typeof getCosmeticsForEntity>>;
 type ImageTags = Awaited<ReturnType<typeof tagIdsForImagesCache.fetch>>;
 
 const transformData = async ({
@@ -150,7 +148,6 @@ const transformData = async ({
   metrics,
   tools,
   techniques,
-  cosmetics,
   modelVersions,
 }: {
   images: SearchBaseImage[];
@@ -158,7 +155,6 @@ const transformData = async ({
   metrics: Metrics[];
   tools: ImageTool[];
   techniques: ImageTechnique[];
-  cosmetics: ImageCosmetics;
   modelVersions: ModelVersions[];
 }) => {
   const records = images
@@ -184,7 +180,6 @@ const transformData = async ({
         modelVersionIds,
         toolIds: imageTools.map((t) => t.toolId),
         techniqueIds: imageTechniques.map((t) => t.techniqueId),
-        cosmetic: cosmetics[imageRecord.id] ?? null,
         publishedAtUnix: publishedAt?.getTime(),
         existedAtUnix: new Date().getTime(),
         sortAtUnix: imageRecord.sortAt.getTime(),
@@ -204,7 +199,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
-  pullSteps: 6,
+  pullSteps: 5,
   prepareBatches: async ({ db, pg, jobContext }, lastUpdatedAt) => {
     const lastUpdateIso = lastUpdatedAt?.toISOString();
     const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
@@ -246,16 +241,15 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
+    const batchLogKey =
+      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length;
     const where = [
       batch.type === 'update' ? Prisma.sql`i.id IN (${Prisma.join(batch.ids)})` : undefined,
       batch.type === 'new'
         ? Prisma.raw(`i.id BETWEEN ${batch.startId} AND ${batch.endId}`)
         : undefined,
     ].filter(isDefined);
-    logger(
-      `PullData :: Pulling data for batch`,
-      batch.type === 'new' ? `${batch.startId} - ${batch.endId}` : batch.ids.length
-    );
+    logger(`PullData :: Pulling data for batch`, batchLogKey);
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
@@ -308,10 +302,15 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       : [];
     const result = prevData as Record<string, any>;
     const batches = chunk(imageIds, 1000);
+    let i = 0;
     let noMoreSteps = false;
 
     for (const batch of batches) {
+      i++;
+      const subBatchLogKey = `${i} of ${batches.length}`;
+
       if (step === 1) {
+        logger(`Pulling metrics`, batchLogKey, subBatchLogKey);
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    SUM(if(
@@ -331,6 +330,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 2) {
+        logger(`Pulling tags`, batchLogKey, subBatchLogKey);
         // Pull tags:
         const cacheImageTags = await tagIdsForImagesCache.fetch(batch);
 
@@ -340,7 +340,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 3) {
-        // Tools and techniqaues
+        logger(`Pulling techs and tools`, batchLogKey, subBatchLogKey);
+        // Tools and techs
 
         const tools: ImageTool[] = await db.imageTool.findMany({
           select: {
@@ -366,19 +367,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 4) {
-        // Cosmetics:
-
-        const cosmetics = await getCosmeticsForEntity({
-          ids: batch,
-          entity: 'Image',
-        });
-
-        result.cosmetics ??= {};
-        Object.assign(result.cosmetics, cosmetics);
-        continue;
-      }
-
-      if (step === 5) {
+        logger(`Pulling versions`, batchLogKey, subBatchLogKey);
         // Model versions & baseModel:
 
         const modelVersions = await db.$queryRaw<ModelVersions[]>`

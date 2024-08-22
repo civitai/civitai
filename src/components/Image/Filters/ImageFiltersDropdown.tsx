@@ -106,6 +106,7 @@ export function ImageFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
+    (mergedFilters.notScheduled ? 1 : 0) +
     (!!mergedFilters.tools?.length ? 1 : 0) +
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
@@ -118,6 +119,7 @@ export function ImageFiltersDropdown({
       hidden: false,
       fromPlatform: false,
       notPublished: false,
+      notScheduled: false,
       tools: [],
       techniques: [],
       period: MetricTimeframe.AllTime,
@@ -250,6 +252,15 @@ export function ImageFiltersDropdown({
               onChange={(checked) => handleChange({ notPublished: checked })}
             >
               Not Published
+            </Chip>
+          )}
+          {isModerator && (
+            <Chip
+              {...chipProps}
+              checked={mergedFilters.notScheduled}
+              onChange={(checked) => handleChange({ notScheduled: checked })}
+            >
+              Not Scheduled
             </Chip>
           )}
         </Group>

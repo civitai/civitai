@@ -267,3 +267,6 @@ export const userMeta = z.object({
   scores: userScoreMetaSchema.optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
+
+export type ComputeDeviceFingerprintInput = z.infer<typeof computeDeviceFingerprintSchema>;
+export const computeDeviceFingerprintSchema = z.object({ fingerprint: z.string() });

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
+import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
@@ -15,7 +16,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { constants } from '~/server/common/constants';
 
 export const imagesQueryParamSchema = z
   .object({
@@ -46,6 +46,7 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    notScheduled: booleanString(),
     tools: numericStringArray(),
     collectionTagId: numericString(),
     baseModels: z

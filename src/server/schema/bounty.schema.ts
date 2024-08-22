@@ -9,6 +9,7 @@ import { infiniteQuerySchema } from './base.schema';
 import { baseFileSchema } from './file.schema';
 import { tagSchema } from './tag.schema';
 import utc from 'dayjs/plugin/utc';
+import { stripTime } from '~/utils/date-helpers';
 dayjs.extend(utc);
 
 export type GetInfiniteBountySchema = z.infer<typeof getInfiniteBountySchema>;
@@ -50,12 +51,12 @@ export const createBountyInputSchema = z.object({
   expiresAt: z.coerce
     .date()
     .min(
-      dayjs.utc().add(1, 'day').startOf('day').toDate(),
+      dayjs.utc(stripTime(new Date())).add(1, 'day').toDate(),
       'Expiration date must come after the start date'
     ),
   startsAt: z.coerce
     .date()
-    .min(dayjs.utc().startOf('day').toDate(), 'Start date must be in the future'),
+    .min(dayjs.utc(stripTime(new Date())).toDate(), 'Start date must be in the future'),
   mode: z.nativeEnum(BountyMode),
   type: z.nativeEnum(BountyType),
   details: bountyDetailsSchema.passthrough().partial().optional(),

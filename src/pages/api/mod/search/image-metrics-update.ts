@@ -6,7 +6,6 @@ import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { withRetries } from '~/server/utils/errorHandling';
 
 const BATCH_SIZE = 100000;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;

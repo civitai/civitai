@@ -49,6 +49,7 @@ export const getServerProxySSGHelpers = async (
       res: null as any,
       cache: null as any,
       req: null as any,
+      fingerprint: null as any,
     },
     transformer: superjson,
   });
@@ -65,7 +66,8 @@ export function createServerSideProps<P>({
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
       (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
-    const flags = (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user });
+    const flags =
+      (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user, req: context.req });
     const { browsingLevel, showNsfw } = parseBrowsingMode(context.req.cookies, session);
 
     const ssg =

@@ -63,6 +63,7 @@ import {
   toggleFavoriteInput,
   updateBrowsingModeSchema,
   setLeaderboardEligbilitySchema,
+  computeDeviceFingerprintSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -73,6 +74,7 @@ import {
   getUserBookmarkedArticles,
   toggleBookmarkedArticle,
   updateUserById,
+  computeFingerprint,
   requestAdToken,
 } from '~/server/services/user.service';
 import {
@@ -183,5 +185,10 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
+  computeFingerprint: protectedProcedure
+    .input(computeDeviceFingerprintSchema)
+    .mutation(({ input, ctx }) =>
+      computeFingerprint({ fingerprint: input.fingerprint, userId: ctx.user.id })
+    ),
   requestAdToken: protectedProcedure.mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),
 });

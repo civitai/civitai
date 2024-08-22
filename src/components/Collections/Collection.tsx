@@ -102,6 +102,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         sort,
         period: MetricTimeframe.AllTime,
         collectionId: collection.id,
+        collectionTagId: query.collectionTagId,
       }
     : {
         ...query,
@@ -129,6 +130,27 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
             </Group>
             <CategoryTags />
           </>
+        )}
+        {isContestCollection && collection.tags.length > 0 && (
+          <Select
+            label="Collection Categories"
+            value={query.collectionTagId?.toString() ?? 'all'}
+            onChange={(x) =>
+              set({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
+            }
+            placeholder="All"
+            data={[
+              {
+                value: 'all',
+                label: 'All',
+              },
+              ...collection.tags.map((tag) => ({
+                value: tag.id.toString(),
+                label: toPascalCase(tag.name),
+              })),
+            ]}
+            clearable
+          />
         )}
         <ModelsInfinite
           filters={{
