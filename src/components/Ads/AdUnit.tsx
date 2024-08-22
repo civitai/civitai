@@ -138,7 +138,7 @@ function ImpressionTracker({
         worker.send('recordAdImpression', {
           userId: currentUser.id,
           duration: diff,
-          deviceId: 'undefined', // TODO
+          fingerprint: 'undefined', // TODO.manuel - encrypted version
           adId,
         });
       }
@@ -161,6 +161,7 @@ function ImpressionTracker({
     window.addEventListener('beforeunload', handler);
 
     return () => {
+      handler();
       window.removeEventListener('beforeunload', handler);
     };
   }, []);
