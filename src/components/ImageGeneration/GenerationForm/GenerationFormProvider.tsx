@@ -180,6 +180,8 @@ function formatGenerationData(data: GenerationData): PartialFormData {
       )
         return false;
       const baseModelSetKey = getBaseModelSetType(resource.baseModel);
+      console.log({ baseModelSetKey, baseModel });
+      if (baseModelSetKey !== baseModel) return false;
       return config.additionalResourceTypes.some((x) => {
         const modelTypeMatches = x.type === resource.modelType;
         const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
@@ -188,6 +190,8 @@ function formatGenerationData(data: GenerationData): PartialFormData {
       });
     })
     .slice(0, 9);
+
+  console.log({ resources });
 
   return {
     ...params,
@@ -274,7 +278,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
           });
 
-          setValues(runType === 'remix' ? data : removeEmpty(data));
+          setValues(
+            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources }
+          );
           break;
       }
 
