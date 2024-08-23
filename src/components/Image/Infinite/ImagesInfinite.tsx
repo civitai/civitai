@@ -27,7 +27,8 @@ type ImageFilters = {
   modelVersionId?: number;
   postId?: number;
   collectionId?: number;
-  username?: string;
+  // username?: string;
+  userId?: number;
   reviewId?: number;
   prioritizedUserIds?: number[];
   period?: MetricTimeframe;
@@ -40,6 +41,7 @@ type ImageFilters = {
   fromPlatform?: boolean;
   pending?: boolean;
   tools?: number[];
+  techniques?: number[];
   baseModels?: GetInfiniteImagesInput['baseModels'];
 };
 

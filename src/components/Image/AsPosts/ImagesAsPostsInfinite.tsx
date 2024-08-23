@@ -37,7 +37,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -224,7 +224,7 @@ export default function ImagesAsPostsInfinite({
                 )}
                 <Group ml="auto" spacing={8}>
                   <SortFilter type="modelImages" variant="button" />
-                  <ImageFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
+                  <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
                   <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                     <ActionIcon
                       radius="xl"

@@ -7,7 +7,6 @@ import {
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
-  MetricTimeframe,
   ModelType,
   Prisma,
   ReportReason,
@@ -43,7 +42,7 @@ import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
@@ -554,51 +553,51 @@ export const ingestImageBulk = async ({
 };
 
 // #region [new service methods]
-export function applyUserPreferencesSql(
-  AND: Prisma.Sql[],
-  {
-    excludedUserIds,
-    excludedImageIds,
-    excludedTagIds,
-    userId,
-    hidden,
-  }: UserPreferencesInput & { userId?: number; hidden?: boolean }
-) {
-  // Exclude specific users
-  if (excludedUserIds?.length)
-    AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
-
-  // Exclude specific images
-  if (excludedImageIds?.length) {
-    AND.push(
-      hidden
-        ? Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds)})`
-        : Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`
-    );
-  }
-
-  // Exclude specific tags
-  if (excludedTagIds?.length) {
-    const OR = [
-      Prisma.join(
-        [
-          Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
-          Prisma.sql`NOT EXISTS (
-          SELECT 1 FROM "TagsOnImage" toi
-          WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
-            ...new Set(excludedTagIds),
-          ])}) AND NOT toi.disabled
-        )`,
-        ],
-        ' AND '
-      ),
-    ];
-    if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
-    AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
-  }
-
-  return AND;
-}
+// export function applyUserPreferencesSql(
+//   AND: Prisma.Sql[],
+//   {
+//     excludedUserIds,
+//     excludedImageIds,
+//     excludedTagIds,
+//     userId,
+//     hidden,
+//   }: UserPreferencesInput & { userId?: number; hidden?: boolean }
+// ) {
+//   // Exclude specific users
+//   if (excludedUserIds?.length)
+//     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+//
+//   // Exclude specific images
+//   if (excludedImageIds?.length) {
+//     AND.push(
+//       hidden
+//         ? Prisma.sql`i."id" IN (${Prisma.join(excludedImageIds)})`
+//         : Prisma.sql`i."id" NOT IN (${Prisma.join(excludedImageIds)})`
+//     );
+//   }
+//
+//   // Exclude specific tags
+//   if (excludedTagIds?.length) {
+//     const OR = [
+//       Prisma.join(
+//         [
+//           Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+//           Prisma.sql`NOT EXISTS (
+//           SELECT 1 FROM "TagsOnImage" toi
+//           WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
+//             ...new Set(excludedTagIds),
+//           ])}) AND NOT toi.disabled
+//         )`,
+//         ],
+//         ' AND '
+//       ),
+//     ];
+//     if (userId) OR.push(Prisma.sql`i."userId" = ${userId}`);
+//     AND.push(Prisma.sql`(${Prisma.join(OR, ' OR ')})`);
+//   }
+//
+//   return AND;
+// }
 
 type GetAllImagesRaw = {
   id: number;
@@ -663,7 +662,7 @@ export const getAllImages = async (
     modelId,
     modelVersionId,
     imageId, // TODO - remove, not in use
-    username, // TODO - query by `userId` instead
+    userId: targetUserId,
     period,
     periodMode,
     tags,
@@ -671,8 +670,8 @@ export const getAllImages = async (
     reviewId,
     prioritizedUserIds,
     include,
-    excludeCrossPosts,
-    reactions, // TODO - remove, not in use
+    // excludeCrossPosts,
+    reactions,
     ids,
     includeBaseModel,
     types,
@@ -693,8 +692,8 @@ export const getAllImages = async (
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
-  const cacheTags: string[] = [];
-  let cacheTime = CacheTTL.xs;
+  // const cacheTags: string[] = [];
+  // let cacheTime = CacheTTL.xs;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
@@ -708,14 +707,6 @@ export const getAllImages = async (
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
 
-  // Filter to specific user content
-  let targetUserId: number | undefined; // [x]
-  if (username) {
-    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
-    if (!targetUser) throw new Error('User not found');
-    targetUserId = targetUser.id;
-  }
-
   if (hidden) {
     if (!userId) throw throwAuthorizationError();
     const hiddenImages = await dbRead.imageEngagement.findMany({
@@ -724,7 +715,7 @@ export const getAllImages = async (
     });
     const imageIds = hiddenImages.map((x) => x.imageId);
     if (imageIds.length) {
-      cacheTime = 0;
+      // cacheTime = 0;
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
       return { items: [], nextCursor: undefined };
@@ -773,29 +764,29 @@ export const getAllImages = async (
     if (reviewId) {
       joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
       AND.push(Prisma.sql`re."id" = ${reviewId}`);
-      cacheTime = 0;
+      // cacheTime = 0;
     } else if (modelVersionId) {
       AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-modelVersion:${modelVersionId}`);
+      // cacheTime = CacheTTL.day;
+      // cacheTags.push(`images-modelVersion:${modelVersionId}`);
     } else if (modelId) {
       joins.push(`JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`);
       AND.push(Prisma.sql`mv."modelId" = ${modelId}`);
-      cacheTime = CacheTTL.day;
-      cacheTags.push(`images-model:${modelId}`);
+      // cacheTime = CacheTTL.day;
+      // cacheTags.push(`images-model:${modelId}`);
     }
   }
 
-  // [x]
+  // [x] TODO remove
   if (targetUserId) {
-    WITH.push(
-      Prisma.sql`collaboratingPosts AS (
-        SELECT "entityId" id FROM "EntityCollaborator"
-        WHERE "userId" = ${targetUserId}
-          AND "entityType" = 'Post'
-          AND "status" = 'Approved'
-        )`
-    );
+    // WITH.push(
+    //   Prisma.sql`collaboratingPosts AS (
+    //     SELECT "entityId" id FROM "EntityCollaborator"
+    //     WHERE "userId" = ${targetUserId}
+    //       AND "entityType" = 'Post'
+    //       AND "status" = 'Approved'
+    //     )`
+    // );
 
     AND.push(
       // TOOD: Due to performance reasons we cannot add this here yet. Will need to revise with other teams.
@@ -803,7 +794,7 @@ export const getAllImages = async (
       Prisma.sql`u."id" = ${targetUserId}`
     );
     // Don't cache self queries
-    cacheTime = 0;
+    // cacheTime = 0;
     // if (targetUserId !== userId) {
     //   cacheTime = CacheTTL.day;
     //   cacheTags.push(`images-user:${targetUserId}`);
@@ -819,7 +810,7 @@ export const getAllImages = async (
     });
     const userIds = followedUsers.map((x) => x.targetUserId);
     if (userIds.length) {
-      cacheTime = 0;
+      // cacheTime = 0;
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
     }
   }
@@ -871,7 +862,7 @@ export const getAllImages = async (
     const displayOwnedItems = userId
       ? ` OR (ci."status" <> 'REJECTED' AND ci."addedById" = ${userId})`
       : '';
-    if (userId) cacheTime = 0;
+    // if (userId) cacheTime = 0;
     const useRandomCursor = cursor && sort === ImageSort.Random;
 
     WITH.push(
@@ -920,7 +911,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`i."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
   }
 
-  const isGallery = modelId || modelVersionId || reviewId || username;
+  const isGallery = modelId || modelVersionId || reviewId || userId;
   if (postId && !modelId) {
     // a post image query won't include modelId
     orderBy = `i."index"`;
@@ -1006,7 +997,7 @@ export const getAllImages = async (
   }
 
   if (userId && !!reactions?.length) {
-    cacheTime = 0;
+    // cacheTime = 0;
     AND.push(
       Prisma.sql`EXISTS (
         SELECT 1
@@ -1314,85 +1305,68 @@ export const getAllImages = async (
   };
 };
 
-export const getAllImagesIndex = async (
-  input: GetInfiniteImagesOutput & {
-    user?: SessionUser;
-    headers?: Record<string, string>;
-  }
-) => {
-  const {
-    user,
-    limit,
-    cursor,
-    postIds,
-    modelVersionId,
-    period,
-    include,
-    types,
-    fromPlatform,
-    baseModels,
-    tools,
-    techniques,
-    tags,
-    notPublished,
-    notScheduled,
-    withMeta: hasMeta,
-    excludedUserIds,
-    excludeCrossPosts,
-    hidden,
-    followed,
-    //
-    prioritizedUserIds, // TODO fix
-    modelId, // TODO fix
-    reviewId, // TODO - remove, not in use...true?
-    username, // TODO - query by `userId` instead
-    collectionId, // TODO - call this from separate method?
-    ids,
-    skip,
-    postId,
-    periodMode,
-    generation,
-    includeBaseModel,
-    pending,
-    collectionTagId,
-    headers,
-    excludedTagIds,
-    withTags,
-    imageId, // TODO - remove, not in use
-    reactions, // TODO - remove, not in use
-  } = input;
-  const { sort, browsingLevel } = input;
+// TODO see if GetInfiniteImagesOutput type can be changed
+type GetAllImagesInput = GetInfiniteImagesOutput & {
+  user?: SessionUser;
+  headers?: Record<string, string>; // TODO needed?
+};
 
-  // include: [ 'cosmetics', 'tagIds', 'profilePictures' ]
+// TODO split this into image-index.service because this file is a giant
+export const getAllImagesIndex = async (input: GetAllImagesInput) => {
+  // const {
+  //   user,
+  //   limit,
+  //   cursor,
+  //   postIds,
+  //   modelVersionId,
+  //   period,
+  //   include,
+  //   types,
+  //   fromPlatform,
+  //   baseModels,
+  //   tools,
+  //   techniques,
+  //   tags,
+  //   notPublished,
+  //   notScheduled,
+  //   withMeta: hasMeta,
+  //   excludedUserIds,
+  //   excludeCrossPosts,
+  //   hidden,
+  //   followed,
+  //   //
+  //   prioritizedUserIds, // TODO fix
+  //   modelId, // TODO fix
+  //   reviewId, // TODO - remove, not in use...true?
+  //   // username, // TODO - query by `userId` instead
+  //   userId,
+  //   collectionId, // TODO - call this from separate method?
+  //   ids,
+  //   skip,
+  //   postId,
+  //   periodMode,
+  //   generation,
+  //   includeBaseModel,
+  //   pending,
+  //   collectionTagId,
+  //   headers,
+  //   excludedTagIds,
+  //   withTags,
+  //   imageId, // TODO - remove, not in use
+  //   // reactions, // we don't have reaction data
+  // } = input;
+  // const { sort, browsingLevel } = input;
 
-  const offset = cursor as number | undefined;
+  const { include, user } = input;
+  const offset = input.cursor as number | undefined;
+
   const currentUserId = user?.id;
 
   const { data: searchResultsTmp, total: searchTotal } = await getImagesFromSearch({
-    modelVersionId,
-    types,
-    browsingLevel,
-    fromPlatform,
-    hasMeta,
-    baseModels,
-    postIds,
-    period,
-    tools,
-    techniques,
-    tags,
-    notPublished,
-    notScheduled,
-    sort,
-    limit,
-    offset,
-    excludedUserIds,
-    excludeCrossPosts,
-    hidden,
-    followed,
-    prioritizedUserIds,
-    // userIds: userIds,
+    ...input,
     currentUserId,
     isModerator: user?.isModerator,
+    offset,
   });
 
   const searchResults = await filterOutDeleted(searchResultsTmp);
@@ -1474,7 +1448,7 @@ export const getAllImagesIndex = async (
   });
 
   let nextCursor: number | undefined;
-  const lastImg = (offset ?? 0) + limit;
+  const lastImg = (offset ?? 0) + input.limit;
   // - using >= just in case the total estimate is rounding
   if (searchTotal && searchTotal >= lastImg) {
     nextCursor = lastImg;
@@ -1487,36 +1461,6 @@ export const getAllImagesIndex = async (
 };
 
 const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}`;
-type ImageSearchInput = {
-  modelVersionId?: number;
-  types?: MediaType[];
-  hasMeta?: boolean;
-  fromPlatform?: boolean;
-  notPublished?: boolean;
-  notScheduled?: boolean;
-  baseModels?: string[];
-  postIds?: number[];
-  period?: MetricTimeframe;
-  browsingLevel?: NsfwLevel;
-  hidden?: boolean;
-  followed?: boolean;
-  sort?: ImageSort;
-  limit?: number;
-  page?: number;
-  offset?: number;
-  tags?: number[];
-  techniques?: number[];
-  tools?: number[];
-  excludedUserIds?: number[];
-  excludeCrossPosts?: boolean;
-  currentUserId?: number;
-  isModerator?: boolean;
-  // Unhandled
-  prioritizedUserIds?: number[];
-  userIds?: number | number[];
-  modelId?: number;
-  reviewId?: number;
-};
 
 function strArray(arr: (string | number)[]) {
   return arr.map((x) => `'${x}'`).join(',');
@@ -1537,6 +1481,12 @@ export const makeMeiliImageSearchSort = (
   return `${field}:${criteria}`;
 };
 
+type ImageSearchInput = GetAllImagesInput & {
+  currentUserId?: number;
+  isModerator?: boolean;
+  offset?: number;
+};
+
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], total: 0 };
 
@@ -1544,10 +1494,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     sort,
     modelVersionId,
     types,
-    hasMeta,
+    withMeta,
     fromPlatform,
     notPublished,
     notScheduled,
+    userId,
     tags,
     tools,
     techniques,
@@ -1565,9 +1516,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     prioritizedUserIds,
     limit,
     offset,
-    page,
+    //
+    // TODO check the unused stuff in here
   } = input;
-  let { userIds, browsingLevel } = input;
+  let { browsingLevel } = input;
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
@@ -1648,7 +1600,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   */
 
-  if (hasMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   if (isModerator) {
@@ -1674,11 +1626,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
-  if (userIds) {
-    userIds = Array.isArray(userIds) ? userIds : [userIds];
-    filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
-  }
-  if (excludedUserIds)
+  // TODO why were we doing this at all?
+  // if (userIds) {
+  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
+  //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
+  // }
+
+  if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
+  else if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
@@ -1692,24 +1647,20 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
-  // nb: this is for dev
+  // nb: this is for dev 08-19
   if (!isProd) {
-    filters.push(
-      makeMeiliImageSearchFilter(
-        'sortAtUnix',
-        `<= ${new Date('2024-08-17T22:32:08.749Z').getTime()}`
-      )
-    );
+    filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
   }
 
+  // TODO log more of these
   // Log properties we don't support yet
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cantProcess: Record<string, any> = {
     reviewId,
     modelId,
-    userIds,
     prioritizedUserIds,
   };
-  if (reviewId || modelId || userIds || prioritizedUserIds) {
+  if (reviewId || modelId || prioritizedUserIds) {
     const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
     logToAxiom(
       { type: 'cant-use-search', input: JSON.stringify(missingKeys) },
@@ -1730,12 +1681,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   else if (sort === ImageSort.Oldest) searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
   sorts.push(searchSort);
 
+  console.log(filters);
+
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
     limit: limit ?? 100,
     offset,
-    page,
   };
 
   try {
@@ -2320,9 +2272,9 @@ export const getImagesForModelVersion = async ({
   `;
   const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
 
-  const remainingModelVersionIds = modelVersionIds.filter(
-    (x) => !images.some((i) => i.modelVersionId === x)
-  );
+  // const remainingModelVersionIds = modelVersionIds.filter(
+  //   (x) => !images.some((i) => i.modelVersionId === x)
+  // );
 
   // if (remainingModelVersionIds.length) {
   //   const communityImages = await dbRead.$queryRaw<ImagesForModelVersions[]>`
@@ -2399,15 +2351,15 @@ export async function deleteImagesForModelVersionCache(modelVersionId: number) {
 
 export const getImagesForPosts = async ({
   postIds,
-  excludedIds,
-  user,
-  coverOnly = true,
+  // excludedIds,
+  // coverOnly = true,
   browsingLevel,
+  user,
   pending,
 }: {
   postIds: number | number[];
-  excludedIds?: number[];
-  coverOnly?: boolean;
+  // excludedIds?: number[];
+  // coverOnly?: boolean;
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
@@ -2565,32 +2517,32 @@ export const removeImageResource = async ({ id }: GetByIdInput) => {
   }
 };
 
-export function applyModRulesSql(
-  AND: Prisma.Sql[],
-  { userId, publishedOnly = true }: { userId?: number; publishedOnly?: boolean }
-) {
-  // Hide images that need review
-  const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
-  // Hide images that aren't published
-  const publishedOr = publishedOnly ? [Prisma.sql`p."publishedAt" < now()`] : [];
+// export function applyModRulesSql(
+//   AND: Prisma.Sql[],
+//   { userId, publishedOnly = true }: { userId?: number; publishedOnly?: boolean }
+// ) {
+//   // Hide images that need review
+//   const needsReviewOr = [Prisma.sql`i."needsReview" IS NULL`];
+//   // Hide images that aren't published
+//   const publishedOr = publishedOnly ? [Prisma.sql`p."publishedAt" < now()`] : [];
+//
+//   if (userId) {
+//     const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
+//     needsReviewOr.push(belongsToUser);
+//
+//     if (publishedOnly) {
+//       publishedOr.push(belongsToUser);
+//     }
+//   }
+//
+//   AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
+//
+//   if (publishedOr.length > 0) {
+//     AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
+//   }
+// }
 
-  if (userId) {
-    const belongsToUser = Prisma.sql`i."userId" = ${userId}`;
-    needsReviewOr.push(belongsToUser);
-
-    if (publishedOnly) {
-      publishedOr.push(belongsToUser);
-    }
-  }
-
-  AND.push(Prisma.sql`(${Prisma.join(needsReviewOr, ' OR ')})`);
-
-  if (publishedOr.length > 0) {
-    AND.push(Prisma.sql`(${Prisma.join(publishedOr, ' OR ')})`);
-  }
-}
-
-export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
+// export type GetIngestionResultsProps = AsyncReturnType<typeof getIngestionResults>;
 export const getIngestionResults = async ({ ids, userId }: { ids: number[]; userId?: number }) => {
   const images = await dbRead.image.findMany({
     where: { id: { in: ids } },
@@ -3527,7 +3479,7 @@ async function removeNameReference(images: number[]) {
       await dbRead.$queryRaw<NameReference[]>`
         SELECT
           toi."imageId",
-          t.id "tagId",
+          t.id as "tagId",
           t.name
         FROM "TagsOnImage" toi
         JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
@@ -3690,9 +3642,9 @@ export async function getImageRatingRequests({
     WITH CTE_Requests AS (
       SELECT
         DISTINCT ON (irr."imageId") irr."imageId" as id,
-        MIN(irr."createdAt") "createdAt",
+        MIN(irr."createdAt") as "createdAt",
         COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
-        COALESCE(SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END))::INT "ownerVote",
+        SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
         i.url,
         i."nsfwLevel",
         i."nsfwLevelLocked",

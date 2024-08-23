@@ -17,6 +17,10 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
+const imageSections = ['images', 'reactions'] as const;
+export type ImageSections = (typeof imageSections)[number];
+
+export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
   .object({
     modelId: numericString(),
@@ -24,6 +28,7 @@ export const imagesQueryParamSchema = z
     postId: numericString(),
     collectionId: numericString(),
     username: z.coerce.string().transform(postgresSlugify),
+    // userId: numericString(),
     prioritizedUserIds: numericStringArray(),
     limit: numericString(),
     period: z.nativeEnum(MetricTimeframe),
@@ -41,13 +46,14 @@ export const imagesQueryParamSchema = z
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
     withMeta: booleanString(),
-    section: z.enum(['images', 'reactions']),
+    section: z.enum(imageSections),
     hidden: booleanString(),
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
     notScheduled: booleanString(),
     tools: numericStringArray(),
+    techniques: numericStringArray(),
     collectionTagId: numericString(),
     baseModels: z
       .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
@@ -58,7 +64,8 @@ export const imagesQueryParamSchema = z
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
-export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'videos'>) => {
+// could have userImages and userVideo
+export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
 

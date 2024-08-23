@@ -3,39 +3,39 @@ import {
   Alert,
   Badge,
   Box,
+  createStyles,
   Group,
   Loader,
   Stack,
   Text,
-  createStyles,
-  Tooltip,
   ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { ImageIngestionStatus } from '@prisma/client';
-import { IconInfoCircle, IconBrush, IconAlertTriangle, IconClock2 } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { generationPanel } from '~/store/generation.store';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { useInView } from '~/hooks/useInView';
-import { useImageStore } from '~/store/image.store';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { generationPanel } from '~/store/generation.store';
+import { useImageStore } from '~/store/image.store';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -59,7 +59,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const showVotes = !!tags?.length && isScanned;
 
   const onSite = image.onSite;
-  const notPublished = image.publishedAt === null;
+  const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
   const shouldAnimate = shouldAnimateByDefault({

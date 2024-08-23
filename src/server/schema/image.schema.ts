@@ -10,7 +10,6 @@ import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
-import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
 
 const stringToNumber = z.coerce.number().optional();
@@ -286,7 +285,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     modelVersionId: z.number().optional(),
     imageId: z.number().optional(),
     reviewId: z.number().optional(),
-    username: zc.usernameValidationSchema.optional(),
+    // username: zc.usernameValidationSchema.optional(),
+    userId: z.number().optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     prioritizedUserIds: z.array(z.number()).optional(),

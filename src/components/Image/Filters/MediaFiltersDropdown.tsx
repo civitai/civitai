@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Button,
   ButtonProps,
   Chip,
@@ -12,14 +13,13 @@ import {
   ScrollArea,
   Stack,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { MediaType, MetricTimeframe } from '@prisma/client';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
+import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
-import { useImageQueryParams } from '~/components/Image/image.utils';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
-import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -66,12 +66,15 @@ const useStyles = createStyles((theme) => ({
   indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function ImageFiltersDropdown({
+const baseModelLimit = 3;
+
+export function MediaFiltersDropdown({
   query,
   onChange,
   isFeed,
   filterType = 'images',
   hideBaseModels = false,
+  hideMediaTypes = false,
   ...buttonProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
@@ -79,29 +82,35 @@ export function ImageFiltersDropdown({
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
-  const router = useRouter();
-  const imageParams = useImageQueryParams();
-
-  function handleToolChange(value: number) {
-    if (!value) {
-      const { tools, ...query } = router.query;
-      router.replace({ query }, undefined, { shallow: true });
-    } else {
-      router.replace({ query: { ...router.query, tools: value } }, undefined, { shallow: true });
-    }
-  }
 
   const [opened, setOpened] = useState(false);
+  const [truncateBaseModels, setTruncateBaseModels] = useLocalStorage({
+    key: 'image-filter-truncate-base-models',
+    defaultValue: false,
+  });
 
   const { filters, setFilters } = useFiltersContext((state) => ({
     filters: state[filterType],
-    setFilters: filterType === 'images' ? state.setImageFilters : state.setModelImageFilters,
+    setFilters:
+      filterType === 'images'
+        ? state.setImageFilters
+        : filterType === 'videos'
+        ? state.setVideoFilters
+        : state.setModelImageFilters,
   }));
 
   const mergedFilters = query || filters;
 
+  const displayedBaseModels = truncateBaseModels
+    ? activeBaseModels.filter(
+        (bm, idx) => idx < baseModelLimit || mergedFilters.baseModels?.includes(bm)
+      )
+    : activeBaseModels;
+
+  // maybe have individual filter length with labels next to them
+
   const filterLength =
-    (mergedFilters.types?.length ?? 0) +
+    ('types' in mergedFilters ? mergedFilters.types?.length ?? 0 : 0) +
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
@@ -196,28 +205,46 @@ export function ImageFiltersDropdown({
             multiple
             my={4}
           >
-            {activeBaseModels.map((baseModel, index) => (
+            {displayedBaseModels.map((baseModel, index) => (
               <Chip key={index} value={baseModel} {...chipProps}>
                 {baseModel}
               </Chip>
             ))}
+            {activeBaseModels.length > baseModelLimit && (
+              <ActionIcon
+                variant="transparent"
+                size="sm"
+                onClick={() => setTruncateBaseModels((prev) => !prev)}
+              >
+                {truncateBaseModels ? (
+                  <IconChevronDown strokeWidth={3} />
+                ) : (
+                  <IconChevronUp strokeWidth={3} />
+                )}
+              </ActionIcon>
+            )}
           </Chip.Group>
         </Stack>
       )}
+
       <Stack spacing="md">
-        <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Chip.Group
-          spacing={8}
-          value={mergedFilters.types ?? []}
-          onChange={(types: MediaType[]) => handleChange({ types })}
-          multiple
-        >
-          {availableMediaTypes.map((type, index) => (
-            <Chip {...chipProps} key={index} value={type}>
-              {getDisplayName(type)}
-            </Chip>
-          ))}
-        </Chip.Group>
+        {!hideMediaTypes && 'types' in mergedFilters && (
+          <>
+            <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <Chip.Group
+              spacing={8}
+              value={mergedFilters.types ?? []}
+              onChange={(types: MediaType[]) => handleChange({ types })}
+              multiple
+            >
+              {availableMediaTypes.map((type, index) => (
+                <Chip {...chipProps} key={index} value={type}>
+                  {getDisplayName(type)}
+                </Chip>
+              ))}
+            </Chip.Group>
+          </>
+        )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Group spacing={8}>
           <Chip
@@ -238,13 +265,15 @@ export function ImageFiltersDropdown({
               </Chip>
             </>
           )}
-          <Chip
-            {...chipProps}
-            checked={mergedFilters.fromPlatform}
-            onChange={(checked) => handleChange({ fromPlatform: checked })}
-          >
-            Made On-site
-          </Chip>
+          {filterType !== 'videos' && (
+            <Chip
+              {...chipProps}
+              checked={mergedFilters.fromPlatform}
+              onChange={(checked) => handleChange({ fromPlatform: checked })}
+            >
+              Made On-site
+            </Chip>
+          )}
           {isModerator && (
             <Chip
               {...chipProps}
@@ -266,9 +295,9 @@ export function ImageFiltersDropdown({
         </Group>
 
         <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <ToolSelect
-          value={(imageParams.query.tools ?? [])[0]}
-          onChange={(toolId) => handleToolChange(toolId)}
+        <ToolMultiSelect
+          value={mergedFilters.tools ?? []}
+          onChange={(tools) => handleChange({ tools })}
           placeholder="Created with..."
         />
 
@@ -344,6 +373,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesInput>;
   onChange?: (params: Partial<GetInfiniteImagesInput>) => void;
   isFeed?: boolean;
-  filterType?: 'images' | 'modelImages';
+  filterType?: 'images' | 'videos' | 'modelImages';
   hideBaseModels?: boolean;
+  hideMediaTypes?: boolean;
 };
