@@ -91,7 +91,6 @@ const MAX_WIDTH = 1320;
 export default function ArticleDetailsPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
@@ -102,31 +101,8 @@ export default function ArticleDetailsPage({
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
 
-  const meta = article ? (
-    <Meta
-      title={`${article.title} | Civitai`}
-      description={truncate(removeTags(article.content), { length: 150 })}
-      images={article?.coverImage}
-      links={[
-        {
-          href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
-          rel: 'canonical',
-        },
-      ]}
-      deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
-    />
-  ) : null;
-
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked) return <NotFound />;
-
-  if (!currentUser && !hasPublicBrowsingLevel(article.nsfwLevel))
-    return (
-      <>
-        {meta}
-        <SensitiveShield />
-      </>
-    );
 
   const category = article.tags.find((tag) => tag.isCategory);
   const tags = article.tags.filter((tag) => !tag.isCategory);
@@ -193,149 +169,162 @@ export default function ArticleDetailsPage({
 
   return (
     <>
-      {meta}
-      <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-      <Container size="xl">
-        <Stack spacing={0} mb="xl">
-          <Group position="apart" noWrap>
-            <Title weight="bold" className={classes.title} order={1}>
-              {article.title}
-            </Title>
-            <Group align="center" className={classes.titleWrapper} noWrap>
-              {!mobile && actionButtons}
-              <ArticleContextMenu article={article} />
-            </Group>
-          </Group>
-          <Group spacing={8}>
-            <UserAvatar user={article.user} withUsername linkToProfile />
-            <Divider orientation="vertical" />
-            <Text color="dimmed" size="sm">
-              {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
-            </Text>
-            {category && (
-              <>
-                <Divider orientation="vertical" />
-                <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
-                  <Badge
-                    component="a"
-                    size="sm"
-                    variant="gradient"
-                    gradient={{ from: 'cyan', to: 'blue' }}
-                    sx={{ cursor: 'pointer' }}
-                  >
-                    {category.name}
-                  </Badge>
-                </Link>
-              </>
-            )}
-            {!!tags.length && (
-              <>
-                <Divider orientation="vertical" />
-                <Collection
-                  items={tags}
-                  renderItem={(tag) => (
-                    <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
-                      <Badge
-                        component="a"
-                        color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                        sx={{ cursor: 'pointer' }}
-                      >
-                        {tag.name}
-                      </Badge>
-                    </Link>
-                  )}
-                  grouped
-                />
-              </>
-            )}
-          </Group>
-        </Stack>
-        <Grid gutter="xl">
-          <Grid.Col xs={12} md={8}>
-            <Stack spacing="xs">
-              <AspectRatio
-                ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
-              >
-                {image && (
-                  <Box
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => onSetImage(image.id)}
-                    onKeyDown={getHotkeyHandler([
-                      ['Enter', handleOpenCoverImage(image.id)],
-                      ['Space', handleOpenCoverImage(image.id)],
-                    ])}
-                    sx={{ cursor: 'pointer' }}
-                  >
-                    <Center className="size-full">
-                      <div className="relative size-full">
-                        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                          {(safe) => (
-                            <>
-                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                              <ImageContextMenu
-                                image={image}
-                                noDelete={true}
-                                className="absolute right-2 top-2 z-10"
-                              />
-                              {!safe ? (
-                                <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                  <MediaHash {...image} />
-                                </div>
-                              ) : (
-                                <EdgeMedia
-                                  src={image.url}
-                                  className="h-full rounded-lg object-cover"
-                                  name={image.name}
-                                  alt={article.title}
-                                  type={image.type}
-                                  width={MAX_WIDTH}
-                                  anim={safe}
-                                />
-                              )}
-                            </>
-                          )}
-                        </ImageGuard2>
-                      </div>
-                    </Center>
-                  </Box>
-                )}
-              </AspectRatio>
-              {article.content && (
-                <article>
-                  <RenderHtml html={article.content} />
-                </article>
-              )}
-              <Divider />
-              <Group position="apart">
-                <Reactions
-                  entityType="article"
-                  reactions={article.reactions}
-                  entityId={article.id}
-                  metrics={{
-                    likeCount: article.stats?.likeCountAllTime,
-                    dislikeCount: article.stats?.dislikeCountAllTime,
-                    heartCount: article.stats?.heartCountAllTime,
-                    laughCount: article.stats?.laughCountAllTime,
-                    cryCount: article.stats?.cryCountAllTime,
-                  }}
-                  targetUserId={article.user.id}
-                />
-                {actionButtons}
+      <Meta
+        title={`${article.title} | Civitai`}
+        description={truncate(removeTags(article.content), { length: 150 })}
+        images={article?.coverImage}
+        links={[
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+            rel: 'canonical',
+          },
+        ]}
+        deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
+      />
+      <SensitiveShield contentNsfwLevel={article.nsfwLevel}>
+        <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
+        <Container size="xl">
+          <Stack spacing={0} mb="xl">
+            <Group position="apart" noWrap>
+              <Title weight="bold" className={classes.title} order={1}>
+                {article.title}
+              </Title>
+              <Group align="center" className={classes.titleWrapper} noWrap>
+                {!mobile && actionButtons}
+                <ArticleContextMenu article={article} />
               </Group>
-            </Stack>
-          </Grid.Col>
-          <Grid.Col xs={12} md={4}>
-            <Sidebar
-              creator={article.user}
-              attachments={article.attachments}
-              articleId={article.id}
-            />
-          </Grid.Col>
-        </Grid>
-        <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-      </Container>
+            </Group>
+            <Group spacing={8}>
+              <UserAvatar user={article.user} withUsername linkToProfile />
+              <Divider orientation="vertical" />
+              <Text color="dimmed" size="sm">
+                {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
+              </Text>
+              {category && (
+                <>
+                  <Divider orientation="vertical" />
+                  <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
+                    <Badge
+                      component="a"
+                      size="sm"
+                      variant="gradient"
+                      gradient={{ from: 'cyan', to: 'blue' }}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      {category.name}
+                    </Badge>
+                  </Link>
+                </>
+              )}
+              {!!tags.length && (
+                <>
+                  <Divider orientation="vertical" />
+                  <Collection
+                    items={tags}
+                    renderItem={(tag) => (
+                      <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
+                        <Badge
+                          component="a"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          {tag.name}
+                        </Badge>
+                      </Link>
+                    )}
+                    grouped
+                  />
+                </>
+              )}
+            </Group>
+          </Stack>
+          <Grid gutter="xl">
+            <Grid.Col xs={12} md={8}>
+              <Stack spacing="xs">
+                <AspectRatio
+                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
+                >
+                  {image && (
+                    <Box
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => onSetImage(image.id)}
+                      onKeyDown={getHotkeyHandler([
+                        ['Enter', handleOpenCoverImage(image.id)],
+                        ['Space', handleOpenCoverImage(image.id)],
+                      ])}
+                      sx={{ cursor: 'pointer' }}
+                    >
+                      <Center className="size-full">
+                        <div className="relative size-full">
+                          <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                            {(safe) => (
+                              <>
+                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                                <ImageContextMenu
+                                  image={image}
+                                  noDelete={true}
+                                  className="absolute right-2 top-2 z-10"
+                                />
+                                {!safe ? (
+                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                                    <MediaHash {...image} />
+                                  </div>
+                                ) : (
+                                  <EdgeMedia
+                                    src={image.url}
+                                    className="h-full rounded-lg object-cover"
+                                    name={image.name}
+                                    alt={article.title}
+                                    type={image.type}
+                                    width={MAX_WIDTH}
+                                    anim={safe}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </ImageGuard2>
+                        </div>
+                      </Center>
+                    </Box>
+                  )}
+                </AspectRatio>
+                {article.content && (
+                  <article>
+                    <RenderHtml html={article.content} />
+                  </article>
+                )}
+                <Divider />
+                <Group position="apart">
+                  <Reactions
+                    entityType="article"
+                    reactions={article.reactions}
+                    entityId={article.id}
+                    metrics={{
+                      likeCount: article.stats?.likeCountAllTime,
+                      dislikeCount: article.stats?.dislikeCountAllTime,
+                      heartCount: article.stats?.heartCountAllTime,
+                      laughCount: article.stats?.laughCountAllTime,
+                      cryCount: article.stats?.cryCountAllTime,
+                    }}
+                    targetUserId={article.user.id}
+                  />
+                  {actionButtons}
+                </Group>
+              </Stack>
+            </Grid.Col>
+            <Grid.Col xs={12} md={4}>
+              <Sidebar
+                creator={article.user}
+                attachments={article.attachments}
+                articleId={article.id}
+              />
+            </Grid.Col>
+          </Grid>
+          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+        </Container>
+      </SensitiveShield>
     </>
   );
 }

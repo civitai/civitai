@@ -1046,15 +1046,6 @@ export function AppHeader({
                           </ActionIcon>
                           {currentUser && (
                             <>
-                              {/* {currentUser?.showNsfw && (
-                            <BlurToggle iconProps={{ stroke: 1.5 }}>
-                              {({ icon, toggle }) => (
-                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                  {icon}
-                                </ActionIcon>
-                              )}
-                            </BlurToggle>
-                          )} */}
                               <Link href="/user/account">
                                 <ActionIcon
                                   variant="default"

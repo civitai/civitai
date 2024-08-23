@@ -98,7 +98,6 @@ import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 
 const querySchema = z.object({
@@ -126,7 +125,6 @@ export const getServerSideProps = createServerSideProps({
 export default function BountyDetailsPage({
   id,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const currentUser = useCurrentUser();
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useUtils();
@@ -165,21 +163,6 @@ export default function BountyDetailsPage({
 
   const currency = getBountyCurrency(bounty);
 
-  const meta = bounty ? (
-    <Meta
-      title={`Civitai | ${bounty?.name}`}
-      images={bounty?.images}
-      description={bounty?.description}
-      links={[
-        {
-          href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
-          rel: 'canonical',
-        },
-      ]}
-      deIndex={bounty?.availability === Availability.Unsearchable}
-    />
-  ) : undefined;
-
   useEffect(() => {
     if (bounty?.id) {
       setImages(bounty.images);
@@ -188,15 +171,6 @@ export default function BountyDetailsPage({
 
   if (loading) return <PageLoader />;
   if (!bounty || isBlocked) return <NotFound />;
-
-  if (!currentUser && !hasPublicBrowsingLevel(bounty.nsfwLevel)) {
-    return (
-      <>
-        {meta}
-        <SensitiveShield />
-      </>
-    );
-  }
 
   const defaultBadgeProps: BadgeProps = {
     radius: 'sm',
@@ -209,163 +183,176 @@ export default function BountyDetailsPage({
 
   return (
     <>
-      {meta}
-      <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
-      <Container size="xl" mb={32}>
-        <Stack spacing="xs" mb="xl">
-          <Group position="apart" className={classes.titleWrapper} noWrap>
-            <Group spacing="xs">
-              <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
-                {bounty.name}
-              </Title>
-              <Group spacing={8}>
-                <CurrencyBadge
-                  size="lg"
-                  radius="sm"
-                  currency={currency}
-                  unitAmount={totalUnitAmount}
-                  variant="light"
-                />
-                {bounty.complete && !!bounty.stats?.entryCountAllTime ? (
-                  <IconBadge
+      <Meta
+        title={`Civitai | ${bounty?.name}`}
+        images={bounty?.images}
+        description={bounty?.description}
+        links={[
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
+            rel: 'canonical',
+          },
+        ]}
+        deIndex={bounty?.availability === Availability.Unsearchable}
+      />
+      <SensitiveShield contentNsfwLevel={bounty.nsfwLevel}>
+        <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
+        <Container size="xl" mb={32}>
+          <Stack spacing="xs" mb="xl">
+            <Group position="apart" className={classes.titleWrapper} noWrap>
+              <Group spacing="xs">
+                <Title weight="bold" className={classes.title} lineClamp={2} order={1}>
+                  {bounty.name}
+                </Title>
+                <Group spacing={8}>
+                  <CurrencyBadge
                     size="lg"
                     radius="sm"
-                    color="yellow.7"
-                    icon={<IconTrophy size={16} fill="currentColor" />}
-                    style={{ color: theme.colors.yellow[7] }}
-                  >
-                    Awarded
-                  </IconBadge>
-                ) : expired ? (
-                  <Badge size="lg" radius="sm" color="red" variant="filled">
-                    Expired
-                  </Badge>
-                ) : (
-                  <IconBadge
-                    size="lg"
-                    radius="sm"
-                    icon={<IconClockHour4 size={18} />}
-                    style={{ color: theme.colors.success[5] }}
-                  >
-                    <DaysFromNow date={bounty.expiresAt} withoutSuffix />
-                  </IconBadge>
-                )}
-                <LoginRedirect reason="perform-action">
+                    currency={currency}
+                    unitAmount={totalUnitAmount}
+                    variant="light"
+                  />
+                  {bounty.complete && !!bounty.stats?.entryCountAllTime ? (
+                    <IconBadge
+                      size="lg"
+                      radius="sm"
+                      color="yellow.7"
+                      icon={<IconTrophy size={16} fill="currentColor" />}
+                      style={{ color: theme.colors.yellow[7] }}
+                    >
+                      Awarded
+                    </IconBadge>
+                  ) : expired ? (
+                    <Badge size="lg" radius="sm" color="red" variant="filled">
+                      Expired
+                    </Badge>
+                  ) : (
+                    <IconBadge
+                      size="lg"
+                      radius="sm"
+                      icon={<IconClockHour4 size={18} />}
+                      style={{ color: theme.colors.success[5] }}
+                    >
+                      <DaysFromNow date={bounty.expiresAt} withoutSuffix />
+                    </IconBadge>
+                  )}
+                  <LoginRedirect reason="perform-action">
+                    <IconBadge
+                      {...defaultBadgeProps}
+                      icon={
+                        <IconViewfinder
+                          size={18}
+                          color={isTracked ? theme.colors.green[6] : undefined}
+                        />
+                      }
+                      onClick={() => handleEngagementClick('Track')}
+                    >
+                      {abbreviateNumber(bounty.stats?.trackCountAllTime ?? 0)}
+                    </IconBadge>
+                  </LoginRedirect>
+                  <LoginRedirect reason="perform-action">
+                    <IconBadge
+                      {...defaultBadgeProps}
+                      icon={
+                        <IconHeart
+                          size={18}
+                          color={isFavorite ? theme.colors.red[6] : undefined}
+                          style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
+                        />
+                      }
+                      onClick={() => handleEngagementClick('Favorite')}
+                    >
+                      {abbreviateNumber(bounty.stats?.favoriteCountAllTime ?? 0)}
+                    </IconBadge>
+                  </LoginRedirect>
                   <IconBadge
                     {...defaultBadgeProps}
-                    icon={
-                      <IconViewfinder
-                        size={18}
-                        color={isTracked ? theme.colors.green[6] : undefined}
-                      />
-                    }
-                    onClick={() => handleEngagementClick('Track')}
+                    icon={<IconMessageCircle2 size={18} />}
+                    onClick={() => {
+                      discussionSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+                    }}
                   >
-                    {abbreviateNumber(bounty.stats?.trackCountAllTime ?? 0)}
+                    {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
                   </IconBadge>
-                </LoginRedirect>
-                <LoginRedirect reason="perform-action">
-                  <IconBadge
-                    {...defaultBadgeProps}
-                    icon={
-                      <IconHeart
-                        size={18}
-                        color={isFavorite ? theme.colors.red[6] : undefined}
-                        style={{ fill: isFavorite ? theme.colors.red[6] : undefined }}
-                      />
-                    }
-                    onClick={() => handleEngagementClick('Favorite')}
-                  >
-                    {abbreviateNumber(bounty.stats?.favoriteCountAllTime ?? 0)}
+                  <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />} sx={undefined}>
+                    {abbreviateNumber(bounty.stats?.entryCountAllTime ?? 0)}
                   </IconBadge>
-                </LoginRedirect>
-                <IconBadge
-                  {...defaultBadgeProps}
-                  icon={<IconMessageCircle2 size={18} />}
-                  onClick={() => {
-                    discussionSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                >
-                  {abbreviateNumber(bounty.stats?.commentCountAllTime ?? 0)}
-                </IconBadge>
-                <IconBadge {...defaultBadgeProps} icon={<IconSwords size={18} />} sx={undefined}>
-                  {abbreviateNumber(bounty.stats?.entryCountAllTime ?? 0)}
-                </IconBadge>
+                </Group>
               </Group>
+              <BountyContextMenu bounty={bounty} position="bottom-end" />
             </Group>
-            <BountyContextMenu bounty={bounty} position="bottom-end" />
-          </Group>
-          <Group spacing={8}>
-            <Text color="dimmed" size="xs">
-              {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
-              {formatDate(bounty.startsAt, undefined, true)}
-            </Text>
-            {bounty.tags.length > 0 && (
-              <>
-                <Divider orientation="vertical" />
-                <Collection
-                  items={bounty.tags}
-                  renderItem={(tag) => (
-                    <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-                      <Badge
-                        component="a"
-                        size="sm"
-                        color="gray"
-                        variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
-                        sx={{ cursor: 'pointer' }}
-                      >
-                        {tag.name}
-                      </Badge>
-                    </Link>
-                  )}
+            <Group spacing={8}>
+              <Text color="dimmed" size="xs">
+                {isFutureDate(bounty.startsAt) ? 'Starts at' : 'Started'}:{' '}
+                {formatDate(bounty.startsAt, undefined, true)}
+              </Text>
+              {bounty.tags.length > 0 && (
+                <>
+                  <Divider orientation="vertical" />
+                  <Collection
+                    items={bounty.tags}
+                    renderItem={(tag) => (
+                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                        <Badge
+                          component="a"
+                          size="sm"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : undefined}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          {tag.name}
+                        </Badge>
+                      </Link>
+                    )}
+                  />
+                </>
+              )}
+            </Group>
+          </Stack>
+          <ContainerGrid gutterMd={32} gutterLg={64}>
+            <ContainerGrid.Col xs={12} md={4} orderMd={2}>
+              <BountySidebar bounty={bounty} />
+            </ContainerGrid.Col>
+            <ContainerGrid.Col xs={12} md={8} orderMd={1}>
+              <Stack spacing="xs">
+                <ImageCarousel
+                  images={bounty.images}
+                  connectId={bounty.id}
+                  connectType="bounty"
+                  mobile={mobile}
+                  onClick={(image) => {
+                    onSetImage(image.id);
+                  }}
+                  isLoading={isDeletingImage}
                 />
-              </>
-            )}
-          </Group>
-        </Stack>
-        <ContainerGrid gutterMd={32} gutterLg={64}>
-          <ContainerGrid.Col xs={12} md={4} orderMd={2}>
-            <BountySidebar bounty={bounty} />
-          </ContainerGrid.Col>
-          <ContainerGrid.Col xs={12} md={8} orderMd={1}>
-            <Stack spacing="xs">
-              <ImageCarousel
-                images={bounty.images}
-                connectId={bounty.id}
-                connectType="bounty"
-                mobile={mobile}
-                onClick={(image) => {
-                  onSetImage(image.id);
-                }}
-                isLoading={isDeletingImage}
-              />
-              <Title order={2} mt="sm">
-                About this bounty
+                <Title order={2} mt="sm">
+                  About this bounty
+                </Title>
+                <article>
+                  <Stack spacing={4}>
+                    {bounty.description && (
+                      <ContentClamp maxHeight={200}>
+                        <RenderHtml html={bounty.description} />
+                      </ContentClamp>
+                    )}
+                  </Stack>
+                </article>
+              </Stack>
+            </ContainerGrid.Col>
+          </ContainerGrid>
+        </Container>
+        <BountyEntries bounty={bounty} />
+        <Container ref={discussionSectionRef} size="xl" mt={32}>
+          <Stack spacing="xl">
+            <Group position="apart">
+              <Title id="comments" order={2} size={28} weight={600}>
+                Discussion
               </Title>
-              <article>
-                <Stack spacing={4}>
-                  {bounty.description && (
-                    <ContentClamp maxHeight={200}>
-                      <RenderHtml html={bounty.description} />
-                    </ContentClamp>
-                  )}
-                </Stack>
-              </article>
-            </Stack>
-          </ContainerGrid.Col>
-        </ContainerGrid>
-      </Container>
-      <BountyEntries bounty={bounty} />
-      <Container ref={discussionSectionRef} size="xl" mt={32}>
-        <Stack spacing="xl">
-          <Group position="apart">
-            <Title id="comments" order={2} size={28} weight={600}>
-              Discussion
-            </Title>
-          </Group>
-          <BountyDiscussion bountyId={bounty.id} userId={bounty.user?.id} />
-        </Stack>
-      </Container>
+            </Group>
+            <BountyDiscussion bountyId={bounty.id} userId={bounty.user?.id} />
+          </Stack>
+        </Container>
+      </SensitiveShield>
     </>
   );
 }

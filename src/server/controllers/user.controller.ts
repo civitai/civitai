@@ -345,7 +345,6 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
-    showNsfw,
     username,
     source,
     landingPage,
@@ -390,7 +389,6 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        showNsfw,
         profilePicture: profilePicture
           ? {
               connectOrCreate: {

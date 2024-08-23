@@ -88,9 +88,9 @@ export const userPublicSettingsSchema = z.object({
 export const userUpdateSchema = z.object({
   id: z.number(),
   username: usernameInputSchema.optional(),
-  showNsfw: z.boolean().optional(),
-  blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
+  // showNsfw: z.boolean().optional(),
+  // blurNsfw: z.boolean().optional(),
+  // browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),

@@ -59,7 +59,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { SensitiveShield2 } from '~/components/SensitiveShield/SensitiveShield';
+import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -207,7 +207,7 @@ export function ImageDetail2() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
-      <SensitiveShield2 contentNsfwLevel={image.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
         <div className="relative flex size-full max-h-full max-w-full overflow-hidden bg-gray-2 dark:bg-dark-9">
           <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
@@ -418,7 +418,7 @@ export function ImageDetail2() {
             </ScrollArea>
           </div>
         </div>
-      </SensitiveShield2>
+      </SensitiveShield>
     </>
   );
 }
