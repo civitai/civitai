@@ -21,8 +21,6 @@ class UserBuzzCache {
   }
 
   async update(amount: number) {
-    const end = new Date();
-    end.setUTCHours(23, 59, 59, 999);
     this._amount = amount;
     await redis.packed.hSet(REDIS_KEYS.BUZZ_EVENTS, this._key, String(amount));
     await setExpiresAt();
