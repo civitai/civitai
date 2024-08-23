@@ -317,6 +317,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (name === 'baseModel') {
         if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
           form.setValue('cfgScale', 3.5);
+          form.setValue('workflow', 'txt2img');
         }
 
         if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
@@ -345,7 +346,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (name === 'resources') {
         if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
           form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
-          form.setValue('workflow', 'txt2img');
         }
       }
     });
