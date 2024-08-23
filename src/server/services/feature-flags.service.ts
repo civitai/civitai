@@ -95,7 +95,7 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   imageIndexFeed: ['granted', 'mod'],
-  isGreen: ['public', 'green'],
+  isGreen: ['public'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: [],
