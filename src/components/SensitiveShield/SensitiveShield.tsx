@@ -9,6 +9,7 @@ import {
   getIsSafeBrowsingLevel,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export function SensitiveShield({
   children,
@@ -20,10 +21,9 @@ export function SensitiveShield({
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
-  console.log({ canViewNsfw });
 
   // this content is not available on this site
-  if (!canViewNsfw && contentNsfwLevel > publicBrowsingLevelsFlag)
+  if (!canViewNsfw && !Flags.hasFlag(contentNsfwLevel, publicBrowsingLevelsFlag))
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
