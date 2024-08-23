@@ -17,7 +17,7 @@ type CacheSettings = {
   skip: boolean;
 };
 
-const origins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS];
+const origins = [...env.TRPC_ORIGINS];
 const hosts = [
   env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
   env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,

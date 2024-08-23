@@ -7,7 +7,6 @@ import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Paper, Text } from '@mantine/core';
-import { Logo } from '~/components/Logo/Logo';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';

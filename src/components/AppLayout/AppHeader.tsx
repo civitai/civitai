@@ -97,6 +97,7 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
+import clsx from 'clsx';
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -800,7 +801,12 @@ export function AppHeader({
   );
 
   return (
-    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
+    <Header
+      height={HEADER_HEIGHT}
+      fixed={fixed}
+      zIndex={200}
+      className={clsx({ ['border-green-8 border-b-[3px]']: features.isGreen })}
+    >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>

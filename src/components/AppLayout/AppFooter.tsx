@@ -33,7 +33,12 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
   const features = useFeatureFlags();
 
   return (
-    <Footer className={cx(classes.root)} height="auto" p="sm" py={4}>
+    <Footer
+      className={cx(classes.root, { ['border-green-8 border-t-[3px]']: features.isGreen })}
+      height="auto"
+      p="sm"
+      py={4}
+    >
       <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
         <Text
           weight={700}
