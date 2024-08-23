@@ -1,5 +1,5 @@
 import { Button, Group, Stack, ThemeIcon } from '@mantine/core';
-import { showNotification } from '@mantine/notifications';
+import { NotificationProps, showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconExclamationMark, IconX } from '@tabler/icons-react';
 
 export function showErrorNotification({
@@ -71,7 +71,8 @@ export function showWarningNotification({
 export function showBuzzNotification({
   message,
   title,
-}: {
+  ...notificationProps
+}: NotificationProps & {
   message: React.ReactNode;
   title?: string;
 }) {
@@ -87,6 +88,7 @@ export function showBuzzNotification({
       </Group>
     ),
     title,
+    ...notificationProps,
   });
 }
 
