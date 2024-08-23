@@ -1335,6 +1335,7 @@ export const getAllImagesIndex = async (
     techniques,
     tags,
     notPublished,
+    notScheduled,
     withMeta: hasMeta,
     excludedUserIds,
     excludeCrossPosts,
@@ -1380,6 +1381,7 @@ export const getAllImagesIndex = async (
     techniques,
     tags,
     notPublished,
+    notScheduled,
     sort,
     limit,
     offset,
@@ -1418,10 +1420,16 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, userCosmetics, profilePictures] = await Promise.all([
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics] = await Promise.all([
     await getBasicDataForUsers(userIds),
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('cosmetics')
+      ? await getCosmeticsForEntity({
+          ids: imageIds,
+          entity: 'Image',
+        })
+      : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1447,6 +1455,7 @@ export const getAllImagesIndex = async (
         profilePicture: profilePictures?.[sr.userId] ?? null,
       },
       reactions,
+      cosmetic: imageCosmetics?.[sr.id] ?? null,
       // TODO fix below
       availability: Availability.Public,
       tags: [], // needed?
@@ -1484,6 +1493,7 @@ type ImageSearchInput = {
   hasMeta?: boolean;
   fromPlatform?: boolean;
   notPublished?: boolean;
+  notScheduled?: boolean;
   baseModels?: string[];
   postIds?: number[];
   period?: MetricTimeframe;
@@ -1537,6 +1547,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     hasMeta,
     fromPlatform,
     notPublished,
+    notScheduled,
     tags,
     tools,
     techniques,
@@ -1642,7 +1653,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    // else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+    else if (notScheduled)
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];

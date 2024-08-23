@@ -118,10 +118,10 @@ export const getAllCollectionsInfiniteHandler = async ({
           },
           image: item.image
             ? {
-                ...item.image,
-                meta: item.image.meta as ImageMetaProps | null,
-                tags: item.image.tags.map((t) => t.tag),
-              }
+              ...item.image,
+              meta: item.image.meta as ImageMetaProps | null,
+              tags: item.image.tags.map((t) => t.tag),
+            }
             : null,
           images: collectionImageItems.map((ci) => ci.image).filter(isDefined) ?? [],
           srcs: collectionImageItems.map((ci) => ci.src).filter(isDefined) ?? [],
@@ -196,7 +196,7 @@ export const saveItemHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: AddCollectionItemInput;
 }) => {
-  const { user } = ctx;
+  const { user, ip, fingerprint } = ctx;
   try {
     const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
@@ -209,12 +209,8 @@ export const saveItemHandler = async ({
 
       if (entityId) {
         await collectedContentReward.apply(
-          {
-            collectorId: user.id,
-            entityType: input.type,
-            entityId,
-          },
-          ctx.ip
+          { collectorId: user.id, entityType: input.type, entityId },
+          { ip, fingerprint }
         );
       }
     }

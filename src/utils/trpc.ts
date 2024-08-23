@@ -8,8 +8,15 @@ import { isDev } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { showErrorNotification } from '~/utils/notifications';
 
+type RequestHeaders = {
+  'x-client-date': string;
+  'x-client': string;
+  'x-client-version'?: string;
+  'x-fingerprint'?: string;
+};
+
 const url = '/api/trpc';
-const headers = {
+const headers: RequestHeaders = {
   'x-client-version': process.env.version,
   'x-client-date': Date.now().toString(),
   'x-client': 'web',
@@ -32,6 +39,20 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   };
 };
 
+/**
+ * Get headers for each request
+ * @see https://trpc.io/docs/v10/client/headers
+ */
+function getHeaders() {
+  if (typeof window === 'undefined') return headers;
+  const fingerprint = window.localStorage.getItem('fingerprint') ?? '';
+
+  return {
+    ...headers,
+    'x-fingerprint': fingerprint ? JSON.parse(fingerprint) : undefined,
+  };
+}
+
 export const trpc = createTRPCNext<AppRouter>({
   config() {
     return {
@@ -48,10 +69,10 @@ export const trpc = createTRPCNext<AppRouter>({
           // do not batch post requests
           condition: (op) => (op.type === 'query' ? op.context.skipBatch === true : true),
           // when condition is true, use normal request
-          true: httpLink({ url, headers }),
+          true: httpLink({ url, headers: getHeaders }),
           // when condition is false, use batching
           // false: unstable_httpBatchStreamLink({ url, maxURLLength: 2083 }),
-          false: httpLink({ url, headers }), // Let's disable batching for now
+          false: httpLink({ url, headers: getHeaders }), // Let's disable batching for now
         }),
       ],
     };

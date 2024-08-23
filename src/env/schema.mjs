@@ -173,7 +173,8 @@ export const serverSchema = z.object({
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.string().url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
-
+  FINGERPRINT_SECRET: z.string().length(64).optional(),
+  FINGERPRINT_IV: z.string().length(32).optional(),
 });
 
 /**

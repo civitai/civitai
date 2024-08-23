@@ -26,6 +26,8 @@ import {
 import { Flags } from '~/shared/utils';
 import { removeEmpty } from '~/utils/object-helpers';
 
+const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
+
 export const getTagWithModelCount = ({ name }: { name: string }) => {
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
     SELECT "public"."Tag"."id",
@@ -269,7 +271,7 @@ export const getVotableTags = async ({
         .filter((x) => {
           if (x.source === TagSource.Rekognition && hasWDTags) {
             if (x.tagType === TagType.Moderation) return true;
-            if (constants.imageTags.styles.includes(x.tagName)) return true;
+            if (alwaysIncludeTags.includes(x.tagName)) return true;
             return false;
           }
           return true;
@@ -327,7 +329,7 @@ export async function getVotableImageTags({
     .filter((x) => {
       if (x.source === TagSource.Rekognition && hasWDTags) {
         if (x.tagType === TagType.Moderation) return true;
-        if (constants.imageTags.styles.includes(x.tagName)) return true;
+        if (alwaysIncludeTags.includes(x.tagName)) return true;
         return false;
       }
       return true;

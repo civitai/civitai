@@ -25,6 +25,7 @@ import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
+  ComputeDeviceFingerprintInput,
   DeleteUserInput,
   GetAllUsersInput,
   GetByUsernameSchema,
@@ -68,6 +69,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { decryptText, encryptText } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1444,4 +1446,16 @@ export async function amIBlockedByUser({
   });
 
   return !!engagement;
+}
+
+export function computeFingerprint({
+  fingerprint,
+  userId,
+}: ComputeDeviceFingerprintInput & { userId: number }) {
+  if (!env.FINGERPRINT_SECRET || !env.FINGERPRINT_IV) return fingerprint;
+  return encryptText({
+    text: `${fingerprint}:${userId}:${Date.now()}`,
+    key: env.FINGERPRINT_SECRET,
+    iv: env.FINGERPRINT_IV,
+  });
 }

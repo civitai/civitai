@@ -1,4 +1,5 @@
 import { ReactNode } from 'react';
+import { useDeviceFingerprint } from '~/hooks/useDeviceFingerprint';
 
 const SEND_INTERVAL = 10000;
 const activities: string[] = [];
@@ -45,6 +46,7 @@ function init() {
 
 export function ActivityReportingProvider({ children }: { children: ReactNode }) {
   init();
+  useDeviceFingerprint();
 
   return <>{children}</>;
 }

@@ -209,6 +209,7 @@ export const constants = {
   },
   imageTags: {
     styles: ['anime', 'cartoon', 'comics', 'manga'] as string[],
+    subjects: ['man', 'woman', 'men', 'women'] as string[],
   },
   maxTrainingRetries: 2,
   mediaUpload: {

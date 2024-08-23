@@ -72,7 +72,7 @@ export async function submitWorkflow({
     const message = (error as any).errors?.messages?.join('\n');
     if (!isProd) {
       console.log('----Error Request Body----');
-      console.dir(body, { depth: null });
+      console.dir(JSON.stringify(body));
       console.log('----End Error Request Body----');
     }
     switch (error.status) {

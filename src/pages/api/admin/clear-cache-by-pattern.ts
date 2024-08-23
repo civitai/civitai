@@ -13,6 +13,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   let cursor: number | undefined;
   let cleared: string[] = [];
   while (cursor !== 0) {
+    console.log('Scanning:', cursor);
     const reply = await redis.scan(cursor ?? 0, {
       MATCH: pattern,
       COUNT: 10000000,
@@ -32,7 +33,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       console.log('Cleared:', i, 'Of', batches.length);
     }
     console.log('Cleared:', cleared.length);
+    console.log('Cursor:', cursor);
   }
+  console.log('Done');
 
   return res.status(200).json({
     ok: true,

@@ -10,6 +10,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
+import { Fingerprint } from '~/server/utils/fingerprint';
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
@@ -160,11 +161,12 @@ export function createBuzzEvent<T>({
     return toAward;
   };
 
-  const apply = async (input: T, ip?: string) => {
+  const apply = async (input: T, tracking?: { ip?: string; fingerprint?: Fingerprint }) => {
     if (!clickhouse) return;
     const definedKey = await getKey(input, { ch: clickhouse, db: dbWrite });
     if (!definedKey) return;
 
+    const { ip, fingerprint } = tracking ?? {};
     const { rewardsMultiplier } = await getMultipliersForUser(definedKey.toUserId);
 
     const transactionDetails = buzzEvent.getTransactionDetails
@@ -178,6 +180,7 @@ export function createBuzzEvent<T>({
       multiplier: rewardsMultiplier,
       status: 'pending',
       ip: ['::1', ''].includes(ip ?? '') ? undefined : ip,
+      fingerprint: fingerprint?.value,
       transactionDetails: JSON.stringify(transactionDetails ?? {}),
     };
 
@@ -379,6 +382,7 @@ export type BuzzEventLog = BuzzEventKey & {
   multiplier?: number;
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
+  fingerprint?: string | null;
   version?: number;
   transactionDetails?: string;
 };
