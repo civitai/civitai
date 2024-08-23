@@ -1,6 +1,6 @@
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 
-export class UserBuzzCache {
+export class BuzzEventsCache {
   private _amount?: number;
   private _hash: string;
 
@@ -27,7 +27,9 @@ export class UserBuzzCache {
   }
 
   static async getMany(args: { userId: number; deviceId: string; type: string }[]) {
-    return await redis.mGet(args.map((x) => getKey(x)));
+    return await redis
+      .mGet(args.map((x) => getKey(x)))
+      .then((arr) => arr.map((val) => (val ? Number(val) : 0)));
   }
 
   static async incrManyBy(
