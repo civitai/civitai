@@ -78,10 +78,12 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
   const { mutate } = trpc.user.updateBrowsingMode.useMutation();
+  const { canViewNsfw } = useFeatureFlags();
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
   function getStoreInitialValues() {
-    if (!currentUser) return { showNsfw: false, blurNsfw: true, browsingLevel: 0 };
+    if (!canViewNsfw || !currentUser)
+      return { showNsfw: false, blurNsfw: true, browsingLevel: publicBrowsingLevelsFlag };
 
     let showNsfw = currentUser.showNsfw;
     let browsingLevel = currentUser.browsingLevel;
