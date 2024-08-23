@@ -20,13 +20,13 @@ export function useDeviceFingerprint() {
 
   useEffect(() => {
     // Use window to get the current stored value of fingerprint without delay
-    const localFingerprint = window.localStorage.getItem('fingerprint');
-    if (localFingerprint || !currentUser || computeFingerprintMutation.isLoading) return;
+    // const localFingerprint = window.localStorage.getItem('fingerprint');
+    if (fingerprint || !currentUser || computeFingerprintMutation.isLoading) return;
 
     getCurrentBrowserFingerPrint().then((fingerprint) => {
       computeFingerprintMutation.mutate({ fingerprint: fingerprint.toString() });
     });
-  }, [currentUser, computeFingerprintMutation.isLoading]);
+  }, [currentUser, computeFingerprintMutation.isLoading, fingerprint]);
 
   return { fingerprint, loading: computeFingerprintMutation.isLoading };
 }
