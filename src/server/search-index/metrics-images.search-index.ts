@@ -379,7 +379,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"
           WHERE ir."imageId" IN (${Prisma.join(batch)})
-          GROUP BY ir."imageId", mv."baseModel"
+          GROUP BY ir."imageId";
         `;
 
         result.modelVersions ??= [];
