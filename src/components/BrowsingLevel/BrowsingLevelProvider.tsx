@@ -14,7 +14,6 @@ import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { deleteCookie } from 'cookies-next';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 type StoreState = {
   showNsfw: boolean;
