@@ -130,7 +130,9 @@ const start = async (port: MessagePort) => {
     emitter.on('eventReceived', ({ target, payload }) =>
       postMessage({ type: 'event:received', target, payload })
     ),
-    emitter.on('pong', () => postMessage({ type: 'pong' })),
+    emitter.on('pong', () => {
+      postMessage({ type: 'event:received', target: 'pong', payload: connection?.state });
+    }),
   ];
 
   // incoming messages
