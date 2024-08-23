@@ -67,6 +67,7 @@ export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
     user: undefined,
     acceptableOrigin: true,
     features: getFeatureFlagsLazy({ req }),
+    fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
     track: new Tracker(req, res),
     ip: requestIp.getClientIp(req) ?? '',
     cache: {
