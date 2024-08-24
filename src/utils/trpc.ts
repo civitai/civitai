@@ -45,10 +45,11 @@ const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
  */
 function getHeaders() {
   if (typeof window === 'undefined') return headers;
+  const fingerprint = window.localStorage.getItem('fingerprint') ?? '';
 
   return {
     ...headers,
-    'x-fingerprint': window.localStorage.getItem('fingerprint') ?? undefined,
+    'x-fingerprint': fingerprint ? JSON.parse(fingerprint) : undefined,
   };
 }
 

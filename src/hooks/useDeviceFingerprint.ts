@@ -1,12 +1,12 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { getCurrentBrowserFingerPrint } from '@rajesh896/broprint.js';
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function useDeviceFingerprint() {
   const currentUser = useCurrentUser();
-  const mounted = useRef(false);
+  // To keep the fingerprint in sync with the local storage
   const [fingerprint, setFingerprint] = useLocalStorage<string | undefined>({
     key: 'fingerprint',
     defaultValue: undefined,
@@ -19,15 +19,14 @@ export function useDeviceFingerprint() {
   });
 
   useEffect(() => {
-    if (fingerprint || !currentUser || !mounted.current) {
-      mounted.current = true;
-      return;
-    }
+    // Use window to get the current stored value of fingerprint without delay
+    // const localFingerprint = window.localStorage.getItem('fingerprint');
+    if (fingerprint || !currentUser || computeFingerprintMutation.isLoading) return;
 
     getCurrentBrowserFingerPrint().then((fingerprint) => {
       computeFingerprintMutation.mutate({ fingerprint: fingerprint.toString() });
     });
-  }, [currentUser, fingerprint]);
+  }, [currentUser, computeFingerprintMutation.isLoading, fingerprint]);
 
   return { fingerprint, loading: computeFingerprintMutation.isLoading };
 }
