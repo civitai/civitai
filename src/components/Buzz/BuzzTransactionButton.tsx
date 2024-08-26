@@ -26,7 +26,7 @@ type Props = ButtonProps & {
   performTransactionOnPurchase?: boolean;
   showPurchaseModal?: boolean;
   error?: string;
-  transactionType?: 'Generation' | 'Default';
+  transactionType?: 'user:generation' | 'Default';
 };
 
 const useButtonStyle = createStyles((theme) => ({

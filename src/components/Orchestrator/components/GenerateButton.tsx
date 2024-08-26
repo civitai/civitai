@@ -41,7 +41,7 @@ export function GenerateButton({
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}
-      transactionType="Generation"
+      transactionType="user:generation"
       showPurchaseModal
     />
   );
