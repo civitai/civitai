@@ -124,11 +124,8 @@ export function useHitsTransformed<T extends IndexName>() {
   });
 }
 
-const cache = createInfiniteHitsSessionStorageCache();
-
 export function useInfiniteHitsTransformed<T extends IndexName>() {
   return useInfiniteHits<SearchIndexDataMap[T][number]>({
     transformItems,
-    cache: cache as any,
   });
 }

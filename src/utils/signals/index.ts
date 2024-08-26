@@ -101,11 +101,17 @@ export const createSignalWorker = ({
         logs[target] = true;
         on(target, logFn);
         console.log(`begin logging: ${target}`);
-      } else {
-        delete logs[target];
-        off(target, logFn);
-        console.log(`end logging: ${target}`);
       }
+      // else {
+      //   delete logs[target];
+      //   off(target, logFn);
+      //   console.log(`end logging: ${target}`);
+      // }
+    };
+
+    window.ping = () => {
+      window.logSignal('pong');
+      postMessage({ type: 'ping' });
     };
   }
 

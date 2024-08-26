@@ -387,10 +387,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           chargeForDownload: true,
                           downloadPrice: 5000,
                           chargeForGeneration: false,
-                          generationPrice: 2500,
+                          generationPrice: undefined,
                           generationTrialLimit: 10,
                           donationGoalEnabled: false,
-                          donationGoal: 50000,
+                          donationGoal: undefined,
                         }
                       : null
                   )
@@ -521,6 +521,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           <InputSwitch
                             name="earlyAccessConfig.chargeForGeneration"
                             disabled={isEarlyAccessOver}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                form.setValue(
+                                  'earlyAccessConfig.generationPrice',
+                                  earlyAccessConfig?.downloadPrice ?? 2500
+                                );
+                              } else {
+                                form.setValue('earlyAccessConfig.generationPrice', undefined);
+                              }
+                            }}
                           />
                         </Group>
                       </Card.Section>
@@ -543,6 +553,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               label="Free Trial Limit"
                               description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
                               min={10}
+                              max={1000}
                               disabled={isEarlyAccessOver}
                               withAsterisk
                             />
@@ -576,6 +587,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                 disabled={
                                   !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
                                 }
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    form.setValue('earlyAccessConfig.donationGoal', 50000);
+                                  } else {
+                                    form.setValue('earlyAccessConfig.donationGoal', undefined);
+                                  }
+                                }}
                               />
                             </Group>
                           </Card.Section>
