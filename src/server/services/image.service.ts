@@ -112,7 +112,7 @@ import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
-import { isDefined } from '~/utils/type-guards';
+import { isDefined, isNumber } from '~/utils/type-guards';
 import {
   GetImageInput,
   ImageMetaProps,
@@ -1358,15 +1358,22 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
   // const { sort, browsingLevel } = input;
 
   const { include, user } = input;
-  const offset = input.cursor as number | undefined;
+
+    // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
+  const cursorParsed = input.cursor?.toString().split('|');
+  const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
+  const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
+
+  // console.log({ cursor, sort, offset, entry });
 
   const currentUserId = user?.id;
 
-  const { data: searchResultsTmp, total: searchTotal } = await getImagesFromSearch({
+  const { data: searchResultsTmp, nextCursor: searchNextCursor } = await getImagesFromSearch({
     ...input,
     currentUserId,
     isModerator: user?.isModerator,
     offset,
+    entry
   });
 
   const searchResults = await filterOutDeleted(searchResultsTmp);
@@ -1447,11 +1454,9 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
     };
   });
 
-  let nextCursor: number | undefined;
-  const lastImg = (offset ?? 0) + input.limit;
-  // - using >= just in case the total estimate is rounding
-  if (searchTotal && searchTotal >= lastImg) {
-    nextCursor = lastImg;
+  let nextCursor: string | undefined;
+  if (searchNextCursor) {
+    nextCursor = `${offset + limit}|${searchNextCursor}`;
   }
 
   return {
@@ -1485,10 +1490,16 @@ type ImageSearchInput = GetAllImagesInput & {
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
+  entry?: number;
+  // Unhandled
+  //prioritizedUserIds?: number[];
+  //userIds?: number | number[];
+  //modelId?: number;
+  //reviewId?: number;
 };
 
 async function getImagesFromSearch(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], total: 0 };
+  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
 
   const {
     sort,
@@ -1514,8 +1525,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId, // missing
     modelId, // missing
     prioritizedUserIds,
-    limit,
+    limit = 100,
     offset,
+    entry,
     //
     // TODO check the unused stuff in here
   } = input;
@@ -1536,7 +1548,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (imageIds.length) {
       filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
     } else {
-      return { data: [], total: 0 };
+      return { data: [], nextCursor: undefined };
     }
   }
 
@@ -1550,7 +1562,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (userIds.length) {
       filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
     } else {
-      return { data: [], total: 0 };
+      return { data: [], nextCursor: undefined };
     }
   }
 
@@ -1671,22 +1683,33 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   // Sort
   //------------------------
 
-  let searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
-  if (sort === ImageSort.MostComments)
+  let searchSort: MeiliImageSort;
+  if (sort === ImageSort.MostComments) {
     searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
-  else if (sort === ImageSort.MostReactions)
+  } else if (sort === ImageSort.MostReactions) {
     searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
-  else if (sort === ImageSort.MostCollected)
+  } else if (sort === ImageSort.MostCollected) {
     searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
-  else if (sort === ImageSort.Oldest) searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
+  } else if (sort === ImageSort.Oldest) {
+    searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
+  } else {
+    searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
+    // - to avoid dupes (for any ascending query), we need to filter on that attribute
+    if (entry) {
+      filters.push(makeMeiliImageSearchFilter('sortAtUnix', `<= ${entry}`));
+    }
+  }
   sorts.push(searchSort);
+
+  // TODO add id to sortableAttributes
+  // sorts.push(makeMeiliImageSearchSort('id', 'desc'))
 
   console.log(filters);
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
     sort: sorts,
-    limit: limit ?? 100,
+    limit: limit + 1,
     offset,
   };
 
@@ -1695,6 +1718,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const results: SearchResponse<ImageMetricsSearchIndexRecord> = await metricsSearchClient
       .index(METRICS_SEARCH_INDEX)
       .search(null, request);
+
+    let nextCursor: number | undefined;
+    if (results.hits.length > limit) {
+      results.hits.pop();
+      // - if we have no entrypoint, it's the first request, and set one for the future
+      //   else keep it the same
+      nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
+    }
 
     const filtered = results.hits.filter((hit) => {
       // check for good data
@@ -1705,7 +1736,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     // TODO maybe grab more if the number is now too low?
-    // console.log({ input: removeEmpty(input), request });
 
     let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
     try {
@@ -1766,7 +1796,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     return {
       data: fullData,
-      total: results.estimatedTotalHits,
+      nextCursor,
     };
   } catch (error) {
     const err = error as Error;
@@ -1780,7 +1810,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       },
       'temp-search'
     ).catch();
-    return { data: [], total: 0 };
+    return { data: [], nextCursor: undefined };
   }
 }
 
@@ -1858,16 +1888,17 @@ const getImageMetrics = async (ids: number[]) => {
         (i) => !clickData.map((c) => c.imageId).includes(i)
       );
       if (missingClickData.length) {
-        logToAxiom(
-          {
-            type: 'info',
-            name: 'Missing datapoints in clickhouse',
-            details: {
-              ids: missingClickData,
+        if (isProd)
+          logToAxiom(
+            {
+              type: 'info',
+              name: 'Missing datapoints in clickhouse',
+              details: {
+                ids: missingClickData,
+              },
             },
-          },
-          'clickhouse'
-        ).catch();
+            'clickhouse'
+          ).catch();
       }
 
       const dataToInsert = clickData
