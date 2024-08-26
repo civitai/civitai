@@ -168,7 +168,7 @@ export const modelVersionEarlyAccessConfigSchema = z.object({
   downloadPrice: z.number().min(100).max(MAX_DONATION_GOAL).optional(),
   chargeForGeneration: z.boolean().default(false),
   generationPrice: z.number().min(50).optional(),
-  generationTrialLimit: z.number().default(10),
+  generationTrialLimit: z.number().max(1000).default(10),
   donationGoalEnabled: z.boolean().default(false),
   donationGoal: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL).optional(),
   donationGoalId: z.number().optional(),
