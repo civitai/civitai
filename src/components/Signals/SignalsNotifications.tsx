@@ -7,7 +7,7 @@ import { Text } from '@mantine/core';
 
 export const SignalNotifications = () => {
   const onBalanceUpdate = useCallback((updated: BuzzUpdateSignalSchema) => {
-    const isGenerationAccount = updated.accountType === 'Generation';
+    const isGenerationAccount = updated.accountType === 'user:generation';
 
     showBuzzNotification({
       color: isGenerationAccount ? 'blue.4' : 'yellow.7',
