@@ -11,6 +11,7 @@ import React from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 export function QueueSnackbar() {
   const router = useRouter();
@@ -88,7 +89,26 @@ export function QueueSnackbar() {
               quantity={quantity}
             />
           ) : balance ? (
-            <Tooltip label="Generation Buzz Credit" refProp="innerRef" withinPortal>
+            <Tooltip
+              label={
+                <Text weight={600}>
+                  Generation Buzz Credit{' '}
+                  <Text color="blue.4" span>
+                    <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
+                      <CurrencyIcon
+                        currency="BUZZ"
+                        size={16}
+                        color="currentColor"
+                        fill="currentColor"
+                      />
+                      {balanceLoading ? '...' : balance.toLocaleString()}
+                    </div>
+                  </Text>
+                </Text>
+              }
+              refProp="innerRef"
+              withinPortal
+            >
               <CurrencyBadge
                 currency="BUZZ"
                 size="sm"

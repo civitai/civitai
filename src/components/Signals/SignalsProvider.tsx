@@ -56,7 +56,7 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
 
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const [status, setStatus] = useState<'connected' | 'reconnecting' | 'error' | 'closed'>();
   const workerRef = useRef<SignalWorker | null>(null);
 
@@ -68,18 +68,18 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
         setStatus((prevStatus) => {
           // TODO.signals reenable when stable
-          // if (prevStatus === 'closed' || prevStatus === 'error')
-          //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
+          if (prevStatus === 'closed' || prevStatus === 'error')
+            queryUtils.orchestrator.queryGeneratedImages.invalidate();
           return 'connected';
         });
       },
       onReconnected: () => {
         console.debug('signal service reconnected'); // eslint-disable-line no-console
         // TODO.signals reenable when stable
-        // if (userId) {
-        //   queryUtils.buzz.getBuzzAccount.invalidate();
-        //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
-        // }
+        if (userId) {
+          queryUtils.buzz.getBuzzAccount.invalidate();
+          queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        }
         setStatus('connected');
       },
       onReconnecting: () => {

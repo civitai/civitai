@@ -74,7 +74,6 @@ export function showBuzzNotification({
   ...notificationProps
 }: NotificationProps & {
   message: React.ReactNode;
-  title?: string;
 }) {
   showNotification({
     color: 'yellow.4',
