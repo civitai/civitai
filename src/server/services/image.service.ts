@@ -2349,17 +2349,18 @@ export async function deleteImagesForModelVersionCache(modelVersionId: number) {
   await imagesForModelVersionsCache.bust(modelVersionId);
 }
 
+// TODO cover only is not handled, but is passed in
 export const getImagesForPosts = async ({
   postIds,
   // excludedIds,
-  // coverOnly = true,
+  coverOnly = true,
   browsingLevel,
   user,
   pending,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
-  // coverOnly?: boolean;
+  coverOnly?: boolean;
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
