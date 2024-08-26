@@ -99,6 +99,8 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: [],
+  // allow users to view models/bounties with marked as poi
+  poi: [],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
