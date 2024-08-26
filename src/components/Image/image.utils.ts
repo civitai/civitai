@@ -59,6 +59,7 @@ export const imagesQueryParamSchema = z
       .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
+    useIndex: booleanString().nullish(),
   })
   .partial();
 

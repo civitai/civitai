@@ -152,7 +152,7 @@ export function ResourceReviewCarousel({
               >
                 <Button
                   component={NextLink}
-                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}`}
+                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}&useIndex=false`}
                   variant="outline"
                   fullWidth
                   className={classes.viewMore}

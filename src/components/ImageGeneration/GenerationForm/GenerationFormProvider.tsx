@@ -17,8 +17,10 @@ import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImag
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
+  SupportedBaseModel,
   getBaseModelFromResources,
   getBaseModelSetType,
+  getBaseModelSetTypes,
   getSizeFromAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -179,19 +181,14 @@ function formatGenerationData(data: GenerationData): PartialFormData {
         !resource.available
       )
         return false;
-      const baseModelSetKey = getBaseModelSetType(resource.baseModel);
-      console.log({ baseModelSetKey, baseModel });
-      if (baseModelSetKey !== baseModel) return false;
-      return config.additionalResourceTypes.some((x) => {
-        const modelTypeMatches = x.type === resource.modelType;
-        const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
-        const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
-        return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
+      const baseModelSetKeys = getBaseModelSetTypes({
+        modelType: resource.modelType,
+        baseModel: resource.baseModel,
+        defaultType: baseModel as SupportedBaseModel,
       });
+      return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
     })
     .slice(0, 9);
-
-  console.log({ resources });
 
   return {
     ...params,
