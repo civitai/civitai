@@ -126,8 +126,13 @@ function ImpressionTracker({
   const node = useScrollAreaRef();
   const { worker } = useSignalContext();
   const { fingerprint } = useDeviceFingerprint();
+
   const enterViewRef = useRef<Date>();
   const impressionTrackedRef = useRef<boolean>();
+
+  const fingerprintRef = useRef<string>();
+  if (!fingerprintRef.current) fingerprintRef.current = fingerprint;
+
   const trackImpressionRef = useRef<VoidFunction>();
   if (!trackImpressionRef.current) {
     trackImpressionRef.current = function () {
@@ -140,7 +145,7 @@ function ImpressionTracker({
         worker.send('recordAdImpression', {
           userId: currentUser.id,
           duration: diff,
-          fingerprint,
+          fingerprint: fingerprintRef.current,
           adId,
         });
       }

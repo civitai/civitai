@@ -78,7 +78,7 @@ export const useBuzzTransaction = (opts?: {
 
   const features = useFeatureFlags();
   const { balance: userBalance } = useBuzz();
-  const { balance: generationBalance } = useBuzz(undefined, 'user:generation');
+  const { balance: generationBalance } = useBuzz(undefined, 'generation');
   const isMobile = useIsMobile();
 
   const { trackAction } = useTrackEvent();

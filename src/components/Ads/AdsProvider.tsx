@@ -4,9 +4,11 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { isProd } from '~/env/other';
+// const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
+
 const AdsContext = createContext<{
   adsBlocked?: boolean;
   adsEnabled: boolean;

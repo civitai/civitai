@@ -27,14 +27,19 @@ export class BuzzEventsCache {
   }
 
   static async getMany(args: { userId: number; deviceId: string; type: string }[]) {
+    if (!args.length) return [];
     return await redis
-      .mGet(args.map((x) => getKey(x)))
+      .hmGet(
+        REDIS_KEYS.BUZZ_EVENTS,
+        args.map((x) => getKey(x))
+      )
       .then((arr) => arr.map((val) => (val ? Number(val) : 0)));
   }
 
   static async incrManyBy(
     args: { userId: number; deviceId: string; type: string; amount: number }[]
   ) {
+    if (!args.length) return;
     await Promise.all(args.map((x) => redis.hIncrBy(REDIS_KEYS.BUZZ_EVENTS, getKey(x), x.amount)));
     await setExpiresAt();
   }
