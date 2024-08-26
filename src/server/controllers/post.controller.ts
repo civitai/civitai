@@ -182,9 +182,9 @@ export const updatePostHandler = async ({
         const images =
           collection.type === CollectionType.Image
             ? await dbWrite.image.findMany({
-              where: { postId: post.id },
-              select: { id: true },
-            })
+                where: { postId: post.id },
+                select: { id: true },
+              })
             : [];
 
         await validateContestCollectionEntry({

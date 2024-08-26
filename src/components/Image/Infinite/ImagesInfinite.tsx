@@ -75,14 +75,14 @@ export function ImagesInfiniteContent({
   useIndex,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
-  const filters = removeEmpty({ ...imageFilters, ...filterOverrides, withTags });
+  const filters = removeEmpty({ useIndex, withTags, ...imageFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
   const { images, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryImages(
-      { ...debouncedFilters, browsingLevel, include: ['cosmetics'], useIndex },
+      { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
       { keepPreviousData: true }
     );
 
