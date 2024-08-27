@@ -18,7 +18,7 @@ export function RemoveFromCollectionMenuItem({ collectionId, itemId }: Props) {
         handleRemoval();
       }}
     >
-      Remove from Collection
+      Remove from this Collection
     </Menu.Item>
   );
 }

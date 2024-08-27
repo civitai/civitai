@@ -199,6 +199,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
@@ -225,37 +226,47 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        if (!permissions || !permissions.manage || !image.id) return null;
+        const isOwnerOrMod =
+          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        const canUpdateCover = !permissions || !permissions.manage || !image.id;
+
         return (
-          <Menu.Item
-            icon={
-              // @ts-ignore: transparent variant actually works here.
-              <ThemeIcon color="pink.7" variant="transparent" size="xs">
-                <IconPhoto size={16} stroke={1.5} />
-              </ThemeIcon>
-            }
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              updateCollectionCoverImageMutation.mutate(
-                {
-                  id: collection.id,
-                  imageId: image.id,
-                },
-                {
-                  onSuccess: async () => {
-                    showSuccessNotification({
-                      title: 'Cover image updated',
-                      message: 'Collection cover image has been updated',
-                    });
-                    await utils.collection.getById.invalidate({ id: collection.id });
-                  },
+          <>
+            {canUpdateCover && (
+              <Menu.Item
+                icon={
+                  // @ts-ignore: transparent variant actually works here.
+                  <ThemeIcon color="pink.7" variant="transparent" size="xs">
+                    <IconPhoto size={16} stroke={1.5} />
+                  </ThemeIcon>
                 }
-              );
-            }}
-          >
-            Use as cover image
-          </Menu.Item>
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  updateCollectionCoverImageMutation.mutate(
+                    {
+                      id: collection.id,
+                      imageId: image.id,
+                    },
+                    {
+                      onSuccess: async () => {
+                        showSuccessNotification({
+                          title: 'Cover image updated',
+                          message: 'Collection cover image has been updated',
+                        });
+                        await utils.collection.getById.invalidate({ id: collection.id });
+                      },
+                    }
+                  );
+                }}
+              >
+                Use as cover image
+              </Menu.Item>
+            )}
+            {isOwnerOrMod && (
+              <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
+            )}
+          </>
         );
       }}
     >

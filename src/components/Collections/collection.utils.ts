@@ -294,6 +294,10 @@ export const useMutateCollection = () => {
         await queryUtils.model.getAll.invalidate();
       }
 
+      if (res.type === CollectionType.Image) {
+        await queryUtils.image.getInfinite.invalidate();
+      }
+
       await queryUtils.collection.getById.invalidate({ id: req.collectionId });
     },
     onError(error) {
