@@ -1,6 +1,5 @@
 import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
-import { HtmlContext } from 'next/dist/shared/lib/html-context';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 type VideoProps = React.DetailedHTMLProps<
@@ -151,22 +150,6 @@ const useStyles = createStyles((theme) => ({
         left: '0px',
         content: '""',
         pointerEvents: 'none',
-      },
-    },
-  },
-  wrapper: {
-    // Fallback
-    ['@supports not (aspect-ratio: 16 / 9)']: {
-      '&:before': {
-        float: 'left',
-        paddingTop: '56.25%',
-        content: '',
-      },
-
-      '&:after': {
-        display: 'block',
-        content: '',
-        clear: 'both',
       },
     },
   },
