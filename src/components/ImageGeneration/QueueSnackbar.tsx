@@ -1,4 +1,4 @@
-import { Badge, Text, Button, createStyles, useMantineTheme, Progress, Card } from '@mantine/core';
+import { Badge, Text, Button, createStyles, Progress, Card, Tooltip, Popover } from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
@@ -8,11 +8,14 @@ import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
 import { WorkflowStatus } from '@civitai/client';
 import React from 'react';
+import { useBuzz } from '~/components/Buzz/useBuzz';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 export function QueueSnackbar() {
   const router = useRouter();
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const {
     queued,
     queueStatus,
@@ -25,6 +28,8 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
+  const { balance, balanceLoading } = useBuzz(undefined, 'Generation');
+
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {
       acc.complete += request.complete;
@@ -32,11 +37,7 @@ export function QueueSnackbar() {
       acc.quantity += request.quantity;
       return acc;
     },
-    {
-      complete: 0,
-      processing: 0,
-      quantity: 0,
-    }
+    { complete: 0, processing: 0, quantity: 0 }
   );
 
   if (requestsLoading) return null;
@@ -77,17 +78,73 @@ export function QueueSnackbar() {
       <Card
         radius="md"
         p={0}
-        className={cx(classes.card, 'flex justify-center px-1 gap-3 items-stretch ')}
+        className={cx(classes.card, 'flex justify-center px-1 gap-2 items-stretch ')}
       >
         <div className="flex basis-20 items-center py-2 pl-1">
-          {queueStatus && (
+          {queueStatus ? (
             <GenerationStatusBadge
               status={queueStatus}
               complete={complete}
               processing={processing}
               quantity={quantity}
             />
-          )}
+          ) : balance ? (
+            // <Tooltip
+            //   label={
+            //     <Text weight={600}>
+            //       Generation Buzz Credit{' '}
+            //       <Text color="blue.4" span>
+            //         <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
+            //           <CurrencyIcon
+            //             currency="BUZZ"
+            //             size={16}
+            //             color="currentColor"
+            //             fill="currentColor"
+            //           />
+            //           {balanceLoading ? '...' : balance.toLocaleString()}
+            //         </div>
+            //       </Text>
+            //     </Text>
+            //   }
+            //   refProp="innerRef"
+            //   withinPortal
+            // >
+            <Popover withinPortal withArrow>
+              <Popover.Target refProp="innerRef">
+                <CurrencyBadge
+                  currency="BUZZ"
+                  size="sm"
+                  unitAmount={balance}
+                  displayCurrency={false}
+                  formatter={abbreviateNumber}
+                  textColor={theme.colors.blue[4]}
+                  className="cursor-pointer"
+                />
+              </Popover.Target>
+              <Popover.Dropdown>
+                <div className="flex flex-col items-center">
+                  <Text weight={600}>
+                    Generation Buzz Credit{' '}
+                    {/* <Text color="blue.4" span>
+                    <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
+                      <CurrencyIcon
+                        currency="BUZZ"
+                        size={16}
+                        color="currentColor"
+                        fill="currentColor"
+                      />
+                      {balanceLoading ? '...' : balance.toLocaleString()}
+                    </div>
+                  </Text> */}
+                  </Text>
+                  <Text component={NextLink} variant="link" href="/articles/7012" target="_blank">
+                    Learn more
+                  </Text>
+                </div>
+              </Popover.Dropdown>
+            </Popover>
+          ) : // </Tooltip>
+          null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
           <Text weight={500} className="flex items-center gap-1 text-sm">
@@ -119,11 +176,11 @@ export function QueueSnackbar() {
                   maw={32}
                   style={{ backgroundColor: item ? colors.background : undefined }}
                   className="flex-1"
-                  styles={(theme) => ({
+                  styles={{
                     bar: {
                       transition: 'width 200ms, left 200ms',
                     },
-                  })}
+                  }}
                 />
               );
             })}

@@ -160,12 +160,12 @@ const useStyles = createStyles((theme) => ({
       '&:before': {
         float: 'left',
         paddingTop: '56.25%',
-        content: '',
+        content: '""',
       },
 
       '&:after': {
         display: 'block',
-        content: '',
+        content: '""',
         clear: 'both',
       },
     },

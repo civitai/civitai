@@ -32,6 +32,7 @@ import {
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
   UserMeta,
+  UserSettingsInput,
   userSettingsSchema,
 } from '~/server/schema/user.schema';
 import {
@@ -69,7 +70,9 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { decryptText, encryptText } from '~/server/utils/key-generator';
+import { encryptText } from '~/server/utils/key-generator';
+import dayjs from 'dayjs';
+import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -307,7 +310,7 @@ export const updateUserById = async ({
   return user;
 };
 
-export async function setUserSetting(userId: number, settings: UserSettingsSchema) {
+export async function setUserSetting(userId: number, settings: UserSettingsInput) {
   const toSet = removeEmpty(settings);
   if (Object.keys(toSet).length) {
     await dbWrite.$executeRawUnsafe(`
@@ -681,7 +684,8 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     meta: (response.meta ?? {}) as UserMeta,
   };
 
-  const { subscription, profilePicture, profilePictureId, settings, ...rest } = user;
+  const { subscription, profilePicture, profilePictureId, publicSettings, settings, ...rest } =
+    user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
@@ -701,12 +705,20 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // if (!!user.username && !!user.email)
   //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
 
+  const userSettings = userSettingsSchema.safeParse(settings ?? {});
+
   return {
     ...rest,
     image: profilePicture?.url ?? rest.image,
     tier,
     permissions,
     memberInBadState,
+    allowAds:
+      userSettings.success && userSettings.data.allowAds != null
+        ? userSettings.data.allowAds
+        : tier != null
+        ? false
+        : true,
     // feedbackToken,
   };
 };
@@ -1458,4 +1470,15 @@ export function computeFingerprint({
     key: env.FINGERPRINT_SECRET,
     iv: env.FINGERPRINT_IV,
   });
+}
+
+export async function requestAdToken({ userId }: { userId: number }) {
+  const expiresAt = dayjs.utc().add(1, 'day').toDate();
+
+  const key = generateKey();
+  const token = generateSecretHash(key);
+
+  await dbWrite.adToken.create({ data: { userId, expiresAt, token } });
+
+  return key;
 }

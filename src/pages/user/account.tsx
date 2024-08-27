@@ -1,6 +1,6 @@
 import { Container, Stack, Title, Text, Button, Group, Divider } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
-import React, { useMemo } from 'react';
+import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
@@ -17,7 +17,7 @@ import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
-import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
+import { StripeConnectCard } from '~/components/Account/StripeConnectCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 
 export default function Account({ providers }: Props) {

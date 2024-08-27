@@ -75,6 +75,7 @@ import {
   toggleBookmarkedArticle,
   updateUserById,
   computeFingerprint,
+  requestAdToken,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -189,4 +190,5 @@ export const userRouter = router({
     .mutation(({ input, ctx }) =>
       computeFingerprint({ fingerprint: input.fingerprint, userId: ctx.user.id })
     ),
+  requestAdToken: protectedProcedure.mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),
 });

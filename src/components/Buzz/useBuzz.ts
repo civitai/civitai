@@ -1,4 +1,3 @@
-import { useSession } from 'next-auth/react';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -6,19 +5,15 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
-    {
-      accountId: accountId ?? (currentUser?.id as number),
-      accountType: accountType ?? 'User',
-    },
-    {
-      enabled: !!currentUser && features.buzz,
-    }
+    { accountId: accountId ?? (currentUser?.id as number), accountType: accountType ?? 'User' },
+    { enabled: !!currentUser && features.buzz }
   );
 
   return {
@@ -29,17 +24,17 @@ export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
 };
 
 export const useBuzzSignalUpdate = () => {
-  const queryUtils = trpc.useContext();
-  const { data: session } = useSession();
+  const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
 
   const onBalanceUpdate = useCallback(
     (updated: BuzzUpdateSignalSchema) => {
-      if (!session?.user) return;
+      if (!currentUser) return;
 
       queryUtils.buzz.getBuzzAccount.setData(
         {
-          accountId: session.user.id as number,
-          accountType: 'User',
+          accountId: currentUser.id as number,
+          accountType: titleCase(updated.accountType) as BuzzAccountType,
         },
         (old) => {
           if (!old) return old;
@@ -47,7 +42,7 @@ export const useBuzzSignalUpdate = () => {
         }
       );
     },
-    [queryUtils, session]
+    [queryUtils, currentUser]
   );
 
   useSignalConnection(SignalMessages.BuzzUpdate, onBalanceUpdate);

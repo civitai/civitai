@@ -131,11 +131,16 @@ export const createSignalWorker = ({
     postMessage({ type: 'connection:init', token });
   }
 
+  function send(target: string, args: Record<string, unknown>) {
+    postMessage({ type: 'send', target, args });
+  }
+
   return {
     on,
     off,
     close,
     subscribe,
     init,
+    send,
   };
 };

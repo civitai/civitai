@@ -148,6 +148,7 @@ const start = async (port: MessagePort) => {
       emitterOffHandlers.forEach((fn) => fn());
       port.close();
     } else if (data.type === 'ping') emitter.emit('pong', undefined);
+    else if (data.type === 'send') connection?.send(data.target, data.args);
   };
 };
 

@@ -63,9 +63,15 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
     const locationChangeFn = (e: Event) => {
       const event = e as CustomEvent;
-      const state = event.detail[0];
-      stateRef.current = { asPath: state.as, query: parseQuery(state), state: history.state.state };
-      if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
+      if (event.detail) {
+        const state = event.detail[0];
+        stateRef.current = {
+          asPath: state.as,
+          query: parseQuery(state),
+          state: history.state.state,
+        };
+        if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
+      }
     };
 
     addEventListener('popstate', popstateFn);

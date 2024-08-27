@@ -1,5 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
+import { buzzAccountTypes } from '~/server/schema/buzz.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 
 export type GetSignalsAccessTokenResponse = z.infer<typeof getSignalsAccessTokenResponse>;
@@ -12,6 +13,7 @@ export const buzzUpdateSignalSchema = z.object({
   balance: z.number(),
   delta: z.number(),
   deltaSince: z.date().optional(),
+  accountType: z.enum(buzzAccountTypes),
 });
 
 export type TrainingUpdateSignalSchema = z.infer<typeof trainingUpdateSignalSchema>;
