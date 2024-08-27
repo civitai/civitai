@@ -42,17 +42,11 @@ function AdWrapper({
   ...props
 }: AdWrapperProps) {
   const currentUser = useCurrentUser();
-  const node = useScrollAreaRef();
   const isClient = useIsClient();
   const { adsBlocked, adsEnabled, isMember } = useAdsContext();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   // const focused = useIsLevelFocused();
-
-  const { ref, inView } = useInView({
-    root: node?.current,
-    rootMargin: '200%',
-  });
 
   if (!adsEnabled) return null;
 
@@ -60,12 +54,11 @@ function AdWrapper({
 
   return (
     <Component
-      ref={ref}
       className={clsx('flex flex-col items-center justify-between', className)}
       style={{ ...style, minHeight: height + 20, minWidth: width }}
       {...props}
     >
-      {isClient && inView && adsBlocked !== undefined && (
+      {isClient && adsBlocked !== undefined && (
         <>
           {adsBlocked ? (
             <NextLink href="/pricing" className="flex">
@@ -117,6 +110,7 @@ function AdWrapper({
   );
 }
 
+const impression_duration = 1000;
 function ImpressionTracker({
   children,
   adId,
@@ -140,7 +134,7 @@ function ImpressionTracker({
       const exitDate = new Date();
       if (worker && enterDate && currentUser && !impressionTrackedRef.current) {
         const diff = exitDate.getTime() - enterDate.getTime();
-        if (diff < 1000) return;
+        if (diff < impression_duration) return;
         impressionTrackedRef.current = true;
         worker.send('recordAdImpression', {
           userId: currentUser.id,
