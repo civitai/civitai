@@ -207,7 +207,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   baseModels,
                   tools,
                   techniques,
-                  pending: true,
+                  // pending: true,
                 }}
                 showEmptyCta={isSameUser}
                 useIndex={!viewingReactions}

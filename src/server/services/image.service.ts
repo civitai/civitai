@@ -1595,8 +1595,17 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   else browsingLevel = onlySelectableLevels(browsingLevel);
   const browsingLevels = Flags.instanceToArray(browsingLevel);
   if (isModerator) browsingLevels.push(0);
-  filters.push(makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`));
-  // TODO.metricSearch test adding OR (nsfwLevel IN [0] AND userId = ${currentUserId}) to above with () around it
+
+  const nsfwFilters = [
+    makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`) as string,
+  ];
+  const nsfwUserFilters = [
+    makeMeiliImageSearchFilter('nsfwLevel', `= 0`),
+    makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
+  ];
+  // if (pending) {}
+  nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
+  filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   if (modelVersionId) {
     if (excludeCrossPosts) {
@@ -1614,7 +1623,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   /*
   // TODO this won't work, can't do custom sort
   if (prioritizedUserIds?.length) {
-    // TODO why do this?
+    // why do this?
     // if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
 
     // If system user, show community images
@@ -1680,7 +1689,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   // nb: this is for dev 08-19
   if (!isProd) {
-    filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
+    // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
   }
 
   // TODO log more of these
@@ -1719,9 +1728,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
   sorts.push(searchSort);
-
-  // TODO add id to sortableAttributes
-  // sorts.push(makeMeiliImageSearchSort('id', 'desc'))
+  sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
 
   console.log(filters);
 

@@ -110,7 +110,7 @@ export function MediaFiltersDropdown({
   // maybe have individual filter length with labels next to them
 
   const filterLength =
-    ('types' in mergedFilters ? mergedFilters.types?.length ?? 0 : 0) +
+    ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
@@ -119,7 +119,7 @@ export function MediaFiltersDropdown({
     (!!mergedFilters.tools?.length ? 1 : 0) +
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (mergedFilters.baseModels?.length ?? 0);
+    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
