@@ -171,6 +171,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     types,
                     withMeta,
                     followed,
+                    fromPlatform,
                     baseModels,
                     tools,
                     techniques,
