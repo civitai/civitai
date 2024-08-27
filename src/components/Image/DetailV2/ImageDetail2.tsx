@@ -400,7 +400,8 @@ export function ImageDetail2() {
               />
               <ImageProcess imageId={image.id} />
               <ImageGenerationData imageId={image.id} />
-              <ModelAndImagePageAdUnit />
+              {!nsfw && <ModelAndImagePageAdUnit />}
+
               <Card className="flex flex-col gap-3 rounded-xl">
                 <Text className="flex items-center gap-2 text-xl font-semibold">
                   <IconBrandWechat />

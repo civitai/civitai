@@ -4101,12 +4101,17 @@ export async function bulkRemoveBlockedImages({
 }
 
 export async function getImagesPendingIngestion() {
+  const date = new Date();
+  date.setDate(date.getDate() - 5);
   return await dbRead.image.findMany({
-    where: { nsfwLevel: 0 },
+    where: { nsfwLevel: 0, ingestion: 'Pending', createdAt: { gt: date } },
     select: {
       id: true,
       name: true,
       url: true,
+      createdAt: true,
+      metadata: true,
     },
+    orderBy: { id: 'desc' },
   });
 }
