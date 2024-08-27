@@ -77,7 +77,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Revenue({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { club, loading } = useQueryClub({ id });
-  const { balance } = useBuzz(id, 'Club');
+  const { balance } = useBuzz(id, 'club');
   const { isOwner, permissions } = useClubContributorStatus({
     clubId: id,
   });
@@ -126,7 +126,7 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
       <Anchor size="sm" target="_blank" href="/content/buzz/terms">
         Buzz Agreement
       </Anchor>
-      <BuzzDashboardOverview accountId={club.id} accountType="Club" />
+      <BuzzDashboardOverview accountId={club.id} accountType="club" />
     </Stack>
   );
 }

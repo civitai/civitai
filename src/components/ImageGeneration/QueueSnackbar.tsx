@@ -1,4 +1,4 @@
-import { Badge, Text, Button, createStyles, Progress, Card, Tooltip, Popover } from '@mantine/core';
+import { Badge, Text, Button, createStyles, Progress, Card, Popover } from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
@@ -11,7 +11,6 @@ import React from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 export function QueueSnackbar() {
   const router = useRouter();
@@ -28,7 +27,7 @@ export function QueueSnackbar() {
   const slots = Array(requestLimit).fill(0);
   const includeQueueLink = !router.pathname.includes('/generate');
 
-  const { balance, balanceLoading } = useBuzz(undefined, 'Generation');
+  const { balance } = useBuzz(undefined, 'generation');
 
   const { complete, processing, quantity } = queued.reduce(
     (acc, request) => {

@@ -59,7 +59,7 @@ export async function getBuzzAccountHandler({
     const { accountId, accountType } = input;
 
     switch (accountType) {
-      case 'Club':
+      case 'club':
         const [userClub] = await userContributingClubs({
           userId: ctx.user.id,
           clubIds: [accountId],
@@ -73,8 +73,8 @@ export async function getBuzzAccountHandler({
         )
           throw throwBadRequestError("You cannot view this club's transactions");
         break;
-      case 'User':
-      case 'Generation':
+      case 'user':
+      case 'generation':
         if (accountId !== ctx.user.id)
           throw throwBadRequestError("You cannot view this user's transactions");
         break;
@@ -271,7 +271,7 @@ export async function getBuzzAccountTransactionsHandler({
     const { accountId, accountType } = input;
 
     switch (accountType) {
-      case 'Club':
+      case 'club':
         const [userClub] = await userContributingClubs({
           userId: ctx.user.id,
           clubIds: [accountId],
@@ -286,7 +286,8 @@ export async function getBuzzAccountTransactionsHandler({
         )
           throw throwBadRequestError("You cannot view this club's transactions");
         break;
-      case 'User':
+      case 'user':
+      case 'generation':
         if (accountId !== ctx.user.id)
           throw throwBadRequestError("You cannot view this user's transactions");
         break;
@@ -326,9 +327,9 @@ export async function withdrawClubFundsHandler({
 
     return createBuzzTransaction({
       toAccountId: id,
-      toAccountType: 'User',
+      toAccountType: 'user',
       fromAccountId: input.clubId,
-      fromAccountType: 'Club',
+      fromAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubWithdrawal,
       description: `Club withdrawal from ${club.name}`,
@@ -362,9 +363,9 @@ export async function depositClubFundsHandler({
 
     return createBuzzTransaction({
       fromAccountId: id,
-      fromAccountType: 'User',
+      fromAccountType: 'user',
       toAccountId: input.clubId,
-      toAccountType: 'Club',
+      toAccountType: 'club',
       amount: input.amount,
       type: TransactionType.ClubDeposit,
       description: `Club deposit on ${club.name}`,

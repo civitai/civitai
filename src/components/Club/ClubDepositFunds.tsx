@@ -19,7 +19,7 @@ export const ClubDepositFunds = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz();
-  const { balance, balanceLoading } = useBuzz(clubId, 'Club');
+  const { balance, balanceLoading } = useBuzz(clubId, 'club');
   const { club, loading } = useQueryClub({ id: clubId });
   const { depositClubFunds, depositingClubFunds } = useMutateClub();
   const isLoading = loading || balanceLoading || userBalanceLoading;

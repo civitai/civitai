@@ -9,7 +9,7 @@ import { NotificationProps } from '@mantine/notifications';
 const notificationConfig: Partial<
   Record<BuzzUpdateSignalSchema['accountType'], (data: BuzzUpdateSignalSchema) => NotificationProps>
 > = {
-  Generation: (updated) => ({
+  generation: (updated) => ({
     color: 'blue.4',
     title: 'Generation Buzz Update',
     message:
@@ -29,7 +29,7 @@ const notificationConfig: Partial<
         </Text>
       ),
   }),
-  User: (updated) => ({
+  user: (updated) => ({
     color: 'yellow.7',
     title: 'User Buzz Update',
     message:
@@ -53,7 +53,7 @@ const notificationConfig: Partial<
 
 export const SignalNotifications = () => {
   const onBalanceUpdate = useCallback((updated: BuzzUpdateSignalSchema) => {
-    const config = notificationConfig[updated.accountType] || notificationConfig.User;
+    const config = notificationConfig[updated.accountType] || notificationConfig.user;
     if (config) showBuzzNotification(config(updated));
   }, []);
 

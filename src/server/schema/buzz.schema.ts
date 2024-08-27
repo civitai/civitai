@@ -27,7 +27,7 @@ export enum TransactionType {
   Compensation = 21,
 }
 
-export const buzzAccountTypes = ['User', 'Club', 'Generation'] as const;
+export const buzzAccountTypes = ['user', 'club', 'generation'] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
@@ -155,7 +155,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
-  accountType: z.enum(buzzAccountTypes).default('User'),
+  accountType: z.enum(buzzAccountTypes).default('user'),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
