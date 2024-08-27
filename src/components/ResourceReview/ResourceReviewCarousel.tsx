@@ -150,6 +150,7 @@ export function ResourceReviewCarousel({
                   overflow: 'hidden',
                 })}
               >
+                {/* TODO remove useIndex=false */}
                 <Button
                   component={NextLink}
                   href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}&useIndex=false`}

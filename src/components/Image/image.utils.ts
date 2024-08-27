@@ -20,46 +20,47 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
 
+// output is input to getInfiniteImagesSchema
 export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
   .object({
-    modelId: numericString(),
-    modelVersionId: numericString(),
-    postId: numericString(),
-    collectionId: numericString(),
-    username: z.coerce.string().transform(postgresSlugify),
-    // userId: numericString(),
-    prioritizedUserIds: numericStringArray(),
-    limit: numericString(),
-    period: z.nativeEnum(MetricTimeframe),
-    periodMode: periodModeSchema,
-    sort: z.nativeEnum(ImageSort),
-    tags: numericStringArray(),
-    view: z.enum(['categories', 'feed']),
-    excludeCrossPosts: z.boolean(),
-    reactions: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.nativeEnum(ReviewReactions))
-    ),
-    types: z
-      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    withMeta: booleanString(),
-    section: z.enum(imageSections),
-    hidden: booleanString(),
-    followed: booleanString(),
-    fromPlatform: booleanString(),
-    notPublished: booleanString(),
-    notScheduled: booleanString(),
-    tools: numericStringArray(),
-    techniques: numericStringArray(),
-    collectionTagId: numericString(),
     baseModels: z
       .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
+    collectionId: numericString(),
+    collectionTagId: numericString(),
+    excludeCrossPosts: z.boolean(),
+    followed: booleanString(),
+    fromPlatform: booleanString(),
+    hidden: booleanString(),
+    limit: numericString(),
+    modelId: numericString(),
+    modelVersionId: numericString(),
+    notPublished: booleanString(),
+    notScheduled: booleanString(),
+    period: z.nativeEnum(MetricTimeframe),
+    periodMode: periodModeSchema,
+    postId: numericString(),
+    prioritizedUserIds: numericStringArray(),
+    reactions: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.nativeEnum(ReviewReactions))
+    ),
+    section: z.enum(imageSections),
+    sort: z.nativeEnum(ImageSort),
+    tags: numericStringArray(),
+    techniques: numericStringArray(),
+    tools: numericStringArray(),
+    types: z
+      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
+      .transform((val) => (Array.isArray(val) ? val : [val]))
+      .optional(),
     useIndex: booleanString().nullish(),
+    userId: numericString(),
+    username: z.coerce.string().transform(postgresSlugify),
+    view: z.enum(['categories', 'feed']),
+    withMeta: booleanString(),
   })
   .partial();
 

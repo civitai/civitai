@@ -16,7 +16,6 @@ import {
   useProfileSectionStyles,
 } from '~/components/Profile/ProfileSection';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
-import { useInView } from '~/hooks/useInView';
 import { ImageSort } from '~/server/common/enums';
 
 const MAX_IMAGES_DISPLAY = 32; // 2 rows of 7
@@ -38,7 +37,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
     {
       ...filters,
       limit: 2 * MAX_IMAGES_DISPLAY,
-      username: user.username,
+      userId: user.id,
       withMeta: false,
       types: undefined,
       include: ['profilePictures', 'cosmetics'],

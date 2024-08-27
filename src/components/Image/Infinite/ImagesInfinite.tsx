@@ -1,6 +1,6 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MetricTimeframe } from '@prisma/client';
 import { isEqual } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect } from 'react';
@@ -8,8 +8,11 @@ import { IntersectionOptions } from 'react-intersection-observer';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
-import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
-
+import {
+  ImagesQueryParamSchema,
+  useImageFilters,
+  useQueryImages,
+} from '~/components/Image/image.utils';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -17,37 +20,12 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ImageSort } from '~/server/common/enums';
-import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 
-type ImageFilters = {
-  modelId?: number;
-  modelVersionId?: number;
-  postId?: number;
-  collectionId?: number;
-  // username?: string;
-  userId?: number;
-  reviewId?: number;
-  prioritizedUserIds?: number[];
-  period?: MetricTimeframe;
-  sort?: ImageSort;
-  reactions?: ReviewReactions[];
-  types?: MediaType[];
-  withMeta?: boolean;
-  followed?: boolean;
-  hidden?: boolean;
-  fromPlatform?: boolean;
-  pending?: boolean;
-  tools?: number[];
-  techniques?: number[];
-  baseModels?: GetInfiniteImagesInput['baseModels'];
-};
-
 type ImagesInfiniteProps = {
   withTags?: boolean;
-  filters?: ImageFilters;
+  filters?: ImagesQueryParamSchema;
   showEof?: boolean;
   renderItem?: React.ComponentType<MasonryRenderItemProps<ImageGetInfinite[number]>>;
   filterType?: 'images' | 'videos';

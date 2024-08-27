@@ -282,12 +282,24 @@ export const moderateImages = async ({
     return affected;
   } else if (reviewAction === 'removeName') {
     await removeNameReference(ids);
+    await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { needsReview: null, ingestion: 'Scanned' },
     });
+    await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   } else {
     // Approve
     const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
@@ -328,6 +340,13 @@ export const moderateImages = async ({
     const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
     if (resetLevels.length) await updateNsfwLevel(resetLevels);
     else if (changeTags) await updateNsfwLevel(ids);
+
+    await imagesSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+    await imagesMetricsSearchIndex.queueUpdate(
+      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
   }
   return null;
 };
@@ -644,12 +663,15 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
 };
+
+type GetAllImagesInput = GetInfiniteImagesOutput & {
+  user?: SessionUser;
+  headers?: Record<string, string>; // TODO needed?
+};
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
-  input: GetInfiniteImagesOutput & {
+  input: GetAllImagesInput & {
     userId?: number;
-    user?: SessionUser;
-    headers?: Record<string, string>; // does this do anything?
   }
 ) => {
   const {
@@ -1305,14 +1327,12 @@ export const getAllImages = async (
   };
 };
 
-// TODO see if GetInfiniteImagesOutput type can be changed
-type GetAllImagesInput = GetInfiniteImagesOutput & {
-  user?: SessionUser;
-  headers?: Record<string, string>; // TODO needed?
-};
-
 // TODO split this into image-index.service because this file is a giant
-export const getAllImagesIndex = async (input: GetAllImagesInput) => {
+
+type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
+export const getAllImagesIndex = async (
+  input: GetAllImagesInput
+): Promise<GetAllImagesIndexResult> => {
   // const {
   //   user,
   //   limit,
@@ -1359,7 +1379,7 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
 
   const { include, user } = input;
 
-    // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
+  // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
@@ -1373,7 +1393,7 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
     currentUserId,
     isModerator: user?.isModerator,
     offset,
-    entry
+    entry,
   });
 
   const searchResults = await filterOutDeleted(searchResultsTmp);
@@ -1424,7 +1444,6 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
       metadata: { width: sr.width, height: sr.height },
-      published: !!publishedAtUnix,
       publishedAt: !publishedAtUnix ? undefined : sr.sortAt,
       //
       user: {
@@ -1456,7 +1475,7 @@ export const getAllImagesIndex = async (input: GetAllImagesInput) => {
 
   let nextCursor: string | undefined;
   if (searchNextCursor) {
-    nextCursor = `${offset + limit}|${searchNextCursor}`;
+    nextCursor = `${offset + input.limit}|${searchNextCursor}`;
   }
 
   return {
