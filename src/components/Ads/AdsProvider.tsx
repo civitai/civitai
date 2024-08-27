@@ -25,7 +25,7 @@ export function useAdsContext() {
 }
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState<boolean>();
+  const [adsBlocked, setAdsBlocked] = useState<boolean>(true);
   const currentUser = useCurrentUser();
 
   // derived value from browsingMode and nsfwOverride
@@ -33,30 +33,30 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
   const adsEnabled = currentUser?.allowAds || !isMember;
-  const [cmpLoaded, setCmpLoaded] = useState(false);
+  // const [cmpLoaded, setCmpLoaded] = useState(false);
 
-  const readyRef = useRef<boolean>();
-  useEffect(() => {
-    if (!readyRef.current && adsEnabled) {
-      readyRef.current = true;
-      if (!isProd) setAdsBlocked(true);
-      else {
-        checkAdsBlocked((blocked) => {
-          setAdsBlocked(blocked);
-        });
-      }
-    }
-  }, [adsEnabled]);
+  // const readyRef = useRef<boolean>();
+  // useEffect(() => {
+  //   if (!readyRef.current && adsEnabled) {
+  //     readyRef.current = true;
+  //     if (!isProd) setAdsBlocked(true);
+  //     else {
+  //       checkAdsBlocked((blocked) => {
+  //         setAdsBlocked(blocked);
+  //       });
+  //     }
+  //   }
+  // }, [adsEnabled]);
 
   function handleCmpLoaded() {
-    console.log('loaded');
-    setCmpLoaded(true);
+    // setCmpLoaded(true);
+    if (isProd) setAdsBlocked(false);
   }
 
   return (
     <AdsContext.Provider
       value={{
-        adsBlocked: adsBlocked || !cmpLoaded,
+        adsBlocked: adsBlocked,
         adsEnabled: adsEnabled && !nsfw,
         username: currentUser?.username,
         providers: adProviders,
@@ -68,7 +68,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         <>
           <Script src="https://cmp.uniconsent.com/v2/stub.min.js" onLoad={handleCmpLoaded} />
           <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
-          {cmpLoaded && (
+          {!adsBlocked && (
             <>
               <Script
                 id="ads-start"
@@ -110,6 +110,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
                 }}
               />
+              <TcfapiSuccess
+                onSuccess={(success) => {
+                  if (success !== undefined) setAdsBlocked(!success);
+                }}
+              />
             </>
           )}
           <div id="uniconsent-config" />
@@ -119,20 +124,36 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
-const checkAdsBlocked = (callback: (blocked: boolean) => void) => {
-  fetch(REQUEST_URL, {
-    method: 'HEAD',
-    mode: 'no-cors',
-  })
-    // ads are blocked if request is redirected
-    // (we assume the REQUEST_URL doesn't use redirections)
-    .then((response) => {
-      callback(response.redirected);
-    })
-    // ads are blocked if request fails
-    // (we do not consider connction problems)
-    .catch(() => {
-      callback(true);
-    });
-};
+function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
+  useEffect(() => {
+    const callback = (data: any, success: boolean) => onSuccess(success);
+
+    if (!window.__tcfapi) onSuccess(false);
+
+    window.__tcfapi('addEventListener', 2, callback);
+
+    return () => {
+      window.__tcfapi('removeEventListener', 2, callback);
+    };
+  }, []);
+
+  return null;
+}
+
+// const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
+// const checkAdsBlocked = (callback: (blocked: boolean) => void) => {
+//   fetch(REQUEST_URL, {
+//     method: 'HEAD',
+//     mode: 'no-cors',
+//   })
+//     // ads are blocked if request is redirected
+//     // (we assume the REQUEST_URL doesn't use redirections)
+//     .then((response) => {
+//       callback(response.redirected);
+//     })
+//     // ads are blocked if request fails
+//     // (we do not consider connction problems)
+//     .catch(() => {
+//       callback(true);
+//     });
+// };
