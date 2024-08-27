@@ -80,7 +80,7 @@ export function showBuzzNotification({
     message: (
       <Group spacing={4}>
         {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
-        <ThemeIcon color="yellow.4" variant="transparent">
+        <ThemeIcon color={notificationProps.color ?? 'yellow.4'} variant="transparent">
           <IconBolt size={18} fill="currentColor" />
         </ThemeIcon>
         {message}
