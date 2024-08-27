@@ -105,6 +105,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -121,6 +122,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { NSFWLevel } from '@civitai/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1763,12 +1765,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
+    const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filtered = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-      return hit.userId === currentUserId || isModerator;
+      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
     // TODO maybe grab more if the number is now too low?
