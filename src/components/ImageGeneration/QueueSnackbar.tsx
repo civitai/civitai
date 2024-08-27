@@ -1,4 +1,4 @@
-import { Badge, Text, Button, createStyles, Progress, Card, Tooltip } from '@mantine/core';
+import { Badge, Text, Button, createStyles, Progress, Card, Tooltip, Popover } from '@mantine/core';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
@@ -89,11 +89,43 @@ export function QueueSnackbar() {
               quantity={quantity}
             />
           ) : balance ? (
-            <Tooltip
-              label={
-                <Text weight={600}>
-                  Generation Buzz Credit{' '}
-                  <Text color="blue.4" span>
+            // <Tooltip
+            //   label={
+            //     <Text weight={600}>
+            //       Generation Buzz Credit{' '}
+            //       <Text color="blue.4" span>
+            //         <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
+            //           <CurrencyIcon
+            //             currency="BUZZ"
+            //             size={16}
+            //             color="currentColor"
+            //             fill="currentColor"
+            //           />
+            //           {balanceLoading ? '...' : balance.toLocaleString()}
+            //         </div>
+            //       </Text>
+            //     </Text>
+            //   }
+            //   refProp="innerRef"
+            //   withinPortal
+            // >
+            <Popover withinPortal withArrow>
+              <Popover.Target refProp="innerRef">
+                <CurrencyBadge
+                  currency="BUZZ"
+                  size="sm"
+                  unitAmount={balance}
+                  displayCurrency={false}
+                  formatter={abbreviateNumber}
+                  textColor={theme.colors.blue[4]}
+                  className="cursor-pointer"
+                />
+              </Popover.Target>
+              <Popover.Dropdown>
+                <div className="flex flex-col items-center">
+                  <Text weight={600}>
+                    Generation Buzz Credit{' '}
+                    {/* <Text color="blue.4" span>
                     <div className="flex flex-row flex-nowrap items-center justify-center gap-1">
                       <CurrencyIcon
                         currency="BUZZ"
@@ -103,22 +135,16 @@ export function QueueSnackbar() {
                       />
                       {balanceLoading ? '...' : balance.toLocaleString()}
                     </div>
+                  </Text> */}
                   </Text>
-                </Text>
-              }
-              refProp="innerRef"
-              withinPortal
-            >
-              <CurrencyBadge
-                currency="BUZZ"
-                size="sm"
-                unitAmount={balance}
-                displayCurrency={false}
-                formatter={abbreviateNumber}
-                textColor={theme.colors.blue[4]}
-              />
-            </Tooltip>
-          ) : null}
+                  <Text component={NextLink} variant="link" href="/articles/7012" target="_blank">
+                    Learn more
+                  </Text>
+                </div>
+              </Popover.Dropdown>
+            </Popover>
+          ) : // </Tooltip>
+          null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
           <Text weight={500} className="flex items-center gap-1 text-sm">
