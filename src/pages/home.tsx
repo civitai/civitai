@@ -20,8 +20,6 @@ import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
@@ -55,9 +53,9 @@ export default function Home() {
         maxColumnCount={7}
         maxSingleColumnWidth={450}
       >
-        <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
+        {/* <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
           <Adunit mt="md" mb="xs" {...adsRegistry.homePageHeader} />
-        </MasonryContainer>
+        </MasonryContainer> */}
 
         {isLoading && (
           <Center sx={{ height: 36 }} mt="md">

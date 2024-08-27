@@ -91,12 +91,28 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
+import { workflowDefinitions } from '~/server/services/orchestrator/types';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
+  // const utils = trpc.useUtils();
+  // const currentUser = useCurrentUser();
+
+  // const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
+  // const handleSetDefinitions = async () => {
+  //   await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
+  //   utils.generation.getWorkflowDefinitions.invalidate();
+  // };
+
   return (
     <IsClient>
+      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
+        <div className="p-3">
+          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
+        </div>
+      )} */}
+
       <GenerationFormProvider>
         <TextToImageWhatIfProvider>
           <GenerationFormContent />

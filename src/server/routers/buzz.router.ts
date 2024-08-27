@@ -21,8 +21,14 @@ import {
   clubTransactionSchema,
   getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
+  claimWatchedAdRewardSchema,
 } from '~/server/schema/buzz.schema';
-import { claimBuzz, getClaimStatus, getEarnPotential } from '~/server/services/buzz.service';
+import {
+  claimBuzz,
+  claimWatchedAdReward,
+  getClaimStatus,
+  getEarnPotential,
+} from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const buzzRouter = router({
@@ -74,4 +80,9 @@ export const buzzRouter = router({
   getDailyBuzzCompensation: protectedProcedure
     .input(getDailyBuzzCompensationInput)
     .query(getDailyCompensationRewardHandler),
+  claimWatchedAdReward: protectedProcedure
+    .input(claimWatchedAdRewardSchema)
+    .mutation(({ input, ctx }) =>
+      claimWatchedAdReward({ ...input, userId: ctx.user.id, ip: ctx.ip })
+    ),
 });

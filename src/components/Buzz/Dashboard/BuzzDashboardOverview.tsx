@@ -1,18 +1,5 @@
 import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
-import {
-  Center,
-  createStyles,
-  Grid,
-  Group,
-  keyframes,
-  Loader,
-  Paper,
-  ScrollArea,
-  Stack,
-  Text,
-  Title,
-  useMantineTheme,
-} from '@mantine/core';
+import { Center, Grid, Group, Loader, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { Line } from 'react-chartjs-2';
 import React, { useMemo } from 'react';
@@ -53,7 +40,7 @@ const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
 export const BuzzDashboardOverview = ({
   accountId,
-  accountType = 'User',
+  accountType = 'user',
 }: {
   accountId: number;
   accountType?: BuzzAccountType;
@@ -177,7 +164,7 @@ export const BuzzDashboardOverview = ({
         >
           <Stack spacing={0}>
             <Title order={3}>Recent Transactions</Title>
-            {accountType === 'User' && (
+            {accountType === 'user' && (
               <Text component="a" variant="link" href={`/user/transactions`} size="xs">
                 <Group spacing={2}>
                   <IconArrowRight size={18} />

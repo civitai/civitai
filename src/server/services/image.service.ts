@@ -774,7 +774,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  }
+  } else AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   let from = 'FROM "Image" i';
   const joins: string[] = [];
@@ -1065,15 +1065,11 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    if (isModerator) {
-      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
-    } else {
-      AND.push(
-        browsingLevel
-          ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-          : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-      );
-    }
+    AND.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   // TODO: Adjust ImageMetric
@@ -4089,4 +4085,15 @@ export async function bulkRemoveBlockedImages({
   if (!hashes?.length) return;
 
   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
+}
+
+export async function getImagesPendingIngestion() {
+  return await dbRead.image.findMany({
+    where: { nsfwLevel: 0 },
+    select: {
+      id: true,
+      name: true,
+      url: true,
+    },
+  });
 }

@@ -145,6 +145,21 @@ const placeholderImageSizes = [
   '970x250',
 ] as const;
 
+const adPlaceholderImageSizes = [
+  [120, 600],
+  [300, 100],
+  [300, 250],
+  [300, 600],
+  [728, 90],
+  [970, 90],
+  [970, 250],
+] as const;
+
+type TupleToObject<T extends readonly (readonly [number, number])[]> = {
+  [K in keyof T]: { width: T[K][0]; height: T[K][1] };
+}[number];
+export type AdSizes = TupleToObject<typeof adPlaceholderImageSizes>;
+
 export const adSizeImageMap: Record<AnyAdSize, (typeof placeholderImageSizes)[number]> = {
   '728x90': '728x90',
   '970x90': '970x90',

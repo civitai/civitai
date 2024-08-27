@@ -59,7 +59,7 @@ export const createBuzzWithdrawalRequest = async ({
 
   const userBuzzAccount = await getUserBuzzAccount({
     accountId: userId,
-    accountType: 'User',
+    accountType: 'user',
   });
 
   if ((userBuzzAccount?.balance ?? 0) < amount) throw throwInsufficientFundsError();

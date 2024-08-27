@@ -173,7 +173,7 @@ export const createClubMembership = async ({
 
     if (clubTier.unitAmount > 0) {
       await createBuzzTransaction({
-        toAccountType: 'Club',
+        toAccountType: 'club',
         toAccountId: clubTier.clubId,
         fromAccountId: userId,
         type: TransactionType.ClubMembership,
@@ -291,7 +291,7 @@ export const updateClubMembership = async ({
 
     if (isUpgrade) {
       await createBuzzTransaction({
-        toAccountType: 'Club',
+        toAccountType: 'club',
         toAccountId: clubTier.clubId,
         fromAccountId: userId,
         type: TransactionType.ClubMembership,
@@ -368,7 +368,7 @@ export const completeClubMembershipCharge = async ({
     await createBuzzTransaction({
       fromAccountId: clubMembershipCharge.userId,
       toAccountId: clubMembershipCharge.clubId,
-      toAccountType: 'Club',
+      toAccountType: 'club',
       amount: clubMembershipCharge.unitAmount,
       type: TransactionType.ClubMembership,
       details: {
@@ -430,7 +430,7 @@ export const clubOwnerRemoveMember = async ({
 
   const clubBuzzAccount = await getUserBuzzAccount({
     accountId: membership.clubId,
-    accountType: 'Club',
+    accountType: 'club',
   });
 
   if ((clubBuzzAccount?.balance ?? 0) < membership.unitAmount) {
@@ -452,10 +452,10 @@ export const clubOwnerRemoveMember = async ({
 
     // Refund the user:
     await createBuzzTransaction({
-      fromAccountType: 'Club',
+      fromAccountType: 'club',
       fromAccountId: membership.clubId,
       toAccountId: membership.userId,
-      toAccountType: 'User',
+      toAccountType: 'user',
       amount: membership.unitAmount,
       type: TransactionType.ClubMembershipRefund,
       details: {

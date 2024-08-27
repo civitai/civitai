@@ -112,10 +112,12 @@ declare global {
   };
 
   interface Window {
+    __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
     logSignal: (target: string, selector?: (args: unknown) => unknown) => void;
     ping: () => void;
     Twitch: any;
     isAuthed?: boolean;
     authChecked?: boolean;
+    pgHB?: { que: Array<() => void>; requestWebRewardedAd?: (args: unknown) => void };
   }
 }
