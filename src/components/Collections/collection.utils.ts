@@ -10,7 +10,10 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
-import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
+import {
+  GetAllCollectionsInfiniteSchema,
+  RemoveCollectionItemInput,
+} from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
@@ -18,6 +21,7 @@ import { CollectionByIdModel } from '~/types/router';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 const collectionQueryParamSchema = z
   .object({
@@ -273,4 +277,39 @@ export const contestCollectionReactionsHidden = (
     !!collection.metadata?.votingPeriodStart &&
     isFutureDate(collection.metadata?.votingPeriodStart ?? new Date())
   );
+};
+
+export const useMutateCollection = () => {
+  const queryUtils = trpc.useUtils();
+  const removeCollectionItemMutation = trpc.collection.removeFromCollection.useMutation({
+    onSuccess: async (res, req) => {
+      showSuccessNotification({
+        autoClose: 5000, // 10s
+        title: 'Item has been removed.',
+        message: 'Item has been removed from collection and is no longer visible.',
+      });
+
+      if (res.type === CollectionType.Model) {
+        // Attempt to update the data:
+        await queryUtils.model.getAll.invalidate();
+      }
+
+      await queryUtils.collection.getById.invalidate({ id: req.collectionId });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to remove item from collection',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const removeCollectionItemHandler = async (data: RemoveCollectionItemInput) => {
+    await removeCollectionItemMutation.mutateAsync(data);
+  };
+
+  return {
+    removeCollectionItem: removeCollectionItemHandler,
+    removingCollectionItem: removeCollectionItemMutation.isLoading,
+  };
 };

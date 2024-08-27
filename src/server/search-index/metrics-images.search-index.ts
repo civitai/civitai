@@ -14,7 +14,13 @@ const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 
 const searchableAttributes = [] as const;
 
-const sortableAttributes = ['sortAt', 'reactionCount', 'commentCount', 'collectedCount'] as const;
+const sortableAttributes = [
+  'id',
+  'sortAt',
+  'reactionCount',
+  'commentCount',
+  'collectedCount',
+] as const;
 
 const filterableAttributes = [
   'id',
@@ -225,7 +231,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         SELECT id
         FROM "Image"
         WHERE "updatedAt" > '${lastUpdateIso}'
-          AND "createdAt" < '${lastUpdateIso}'
           AND "postId" IS NOT NULL
         ORDER BY id;
       `);

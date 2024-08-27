@@ -9,6 +9,7 @@ import {
   getCollectionByIdHandler,
   getPermissionDetailsHandler,
   getUserCollectionItemsByItemHandler,
+  removeCollectionItemHandler,
   saveItemHandler,
   unfollowHandler,
   updateCollectionCoverImageHandler,
@@ -26,6 +27,7 @@ import {
   getAllUserCollectionsInputSchema,
   getCollectionPermissionDetails,
   getUserCollectionItemsByItemSchema,
+  removeCollectionItemInput,
   saveCollectionItemInputSchema,
   updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
@@ -126,4 +128,8 @@ export const collectionRouter = router({
     .input(getCollectionPermissionDetails)
     .use(isFlagProtected('collections'))
     .query(getPermissionDetailsHandler),
+  removeFromCollection: protectedProcedure
+    .input(removeCollectionItemInput)
+    .use(isFlagProtected('collections'))
+    .mutation(removeCollectionItemHandler),
 });

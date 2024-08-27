@@ -40,6 +40,7 @@ import {
   GetAllCollectionsInfiniteSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
+  RemoveCollectionItemInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
@@ -77,6 +78,7 @@ export type CollectionContributorPermissionFlags = {
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
+  collectionType: CollectionType | null;
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
@@ -129,6 +131,7 @@ export const getUserCollectionPermissionsById = async ({
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
+    collectionType: null,
   };
 
   const collection = await dbRead.collection.findFirst({
@@ -137,6 +140,7 @@ export const getUserCollectionPermissionsById = async ({
       read: true,
       write: true,
       userId: true,
+      type: true,
       contributors: userId
         ? {
             select: {
@@ -158,6 +162,8 @@ export const getUserCollectionPermissionsById = async ({
   if (!collection) {
     return permissions;
   }
+
+  permissions.collectionType = collection.type;
 
   if (
     collection.read === CollectionReadConfiguration.Public ||
@@ -1962,4 +1968,72 @@ export const getContestsFromEntity = async ({
   `;
 
   return contestEntries;
+};
+
+export const removeCollectionItem = async ({
+  userId,
+  collectionId,
+  itemId,
+  isModerator,
+}: RemoveCollectionItemInput & { userId: number; isModerator?: boolean }) => {
+  const permissions = await getUserCollectionPermissionsById({
+    id: collectionId,
+    userId,
+    isModerator,
+  });
+
+  if (!permissions.collectionType) {
+    throw throwNotFoundError('Unable to determine collection type');
+  }
+
+  let isOwner = false;
+  const tableKey =
+    permissions.collectionType === CollectionType.Model
+      ? 'Model'
+      : permissions.collectionType === CollectionType.Article
+      ? 'Article'
+      : permissions.collectionType === CollectionType.Image
+      ? 'Image'
+      : permissions.collectionType === CollectionType.Post
+      ? 'Post'
+      : null;
+
+  if (!tableKey) {
+    throw throwNotFoundError('Unable to determine collection type');
+  }
+
+  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
+  `;
+
+  if (!item) {
+    throw throwNotFoundError('Model not found');
+  }
+
+  isOwner = item.userId === userId;
+
+  if (
+    !permissions.write &&
+    !permissions.writeReview &&
+    !isOwner &&
+    !permissions.manage &&
+    !isModerator
+  ) {
+    throw throwAuthorizationError(
+      'You do not have permission to remove items from this collection.'
+    );
+  }
+
+  await dbWrite.$queryRaw`
+    DELETE FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId} AND "${Prisma.raw(
+    `${tableKey.toLowerCase()}Id`
+  )}" = ${itemId}
+  `;
+
+  return {
+    collectionId,
+    itemId,
+    type: permissions.collectionType,
+  };
 };
