@@ -206,7 +206,7 @@ export const userSettingsSchema = z.object({
   airEmail: z.string().email().optional(),
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
-  allowAds: z.boolean().optional().default(true),
+  allowAds: z.boolean().optional(),
   gallerySettings: modelGallerySettingsSchema
     .omit({ pinnedPosts: true, images: true })
     .partial()

@@ -70,7 +70,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { decryptText, encryptText } from '~/server/utils/key-generator';
+import { encryptText } from '~/server/utils/key-generator';
 import dayjs from 'dayjs';
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -713,7 +713,12 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     tier,
     permissions,
     memberInBadState,
-    allowAds: userSettings.success ? userSettings.data.allowAds : undefined,
+    allowAds:
+      userSettings.success && userSettings.data.allowAds != null
+        ? userSettings.data.allowAds
+        : tier != null
+        ? false
+        : true,
     // feedbackToken,
   };
 };
