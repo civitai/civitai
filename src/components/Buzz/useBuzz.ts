@@ -5,6 +5,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
@@ -31,7 +32,10 @@ export const useBuzzSignalUpdate = () => {
       if (!currentUser) return;
 
       queryUtils.buzz.getBuzzAccount.setData(
-        { accountId: currentUser.id as number, accountType: updated.accountType },
+        {
+          accountId: currentUser.id as number,
+          accountType: titleCase(updated.accountType) as BuzzAccountType,
+        },
         (old) => {
           if (!old) return old;
           return { ...old, balance: updated.balance };

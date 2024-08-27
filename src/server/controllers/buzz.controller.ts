@@ -74,7 +74,7 @@ export async function getBuzzAccountHandler({
           throw throwBadRequestError("You cannot view this club's transactions");
         break;
       case 'User':
-      case 'generation':
+      case 'Generation':
         if (accountId !== ctx.user.id)
           throw throwBadRequestError("You cannot view this user's transactions");
         break;

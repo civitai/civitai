@@ -44,8 +44,6 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
   return withRetries(
     async () => {
       if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
-      // @ts-ignore: TODO remove this when the endpoint is fixed
-      if (accountType === 'user:generation') accountType = 'Generation';
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );

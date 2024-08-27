@@ -9,7 +9,7 @@ import { NotificationProps } from '@mantine/notifications';
 const notificationConfig: Partial<
   Record<BuzzUpdateSignalSchema['accountType'], (data: BuzzUpdateSignalSchema) => NotificationProps>
 > = {
-  generation: (updated) => ({
+  Generation: (updated) => ({
     color: 'blue.4',
     title: 'Generation Buzz Update',
     message:

@@ -72,13 +72,13 @@ export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
-  type?: 'user:generation' | 'Default';
+  type?: 'Generation' | 'Default';
 }) => {
   const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
 
   const features = useFeatureFlags();
   const { balance: userBalance } = useBuzz();
-  const { balance: generationBalance } = useBuzz(undefined, 'generation');
+  const { balance: generationBalance } = useBuzz(undefined, 'Generation');
   const isMobile = useIsMobile();
 
   const { trackAction } = useTrackEvent();
@@ -94,7 +94,7 @@ export const useBuzzTransaction = (opts?: {
 
   const getCurrentBalance = () => {
     switch (type) {
-      case 'user:generation':
+      case 'Generation':
         return userBalance + generationBalance;
       default:
         return userBalance;
@@ -104,7 +104,7 @@ export const useBuzzTransaction = (opts?: {
   const hasRequiredAmount = (buzzAmount: number) => getCurrentBalance() >= buzzAmount;
   const hasTypeRequiredAmount = (buzzAmount: number) => {
     switch (type) {
-      case 'user:generation':
+      case 'Generation':
         return generationBalance >= buzzAmount;
       default:
         return userBalance >= buzzAmount;
