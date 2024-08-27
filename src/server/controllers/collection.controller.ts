@@ -118,10 +118,10 @@ export const getAllCollectionsInfiniteHandler = async ({
           },
           image: item.image
             ? {
-              ...item.image,
-              meta: item.image.meta as ImageMetaProps | null,
-              tags: item.image.tags.map((t) => t.tag),
-            }
+                ...item.image,
+                meta: item.image.meta as ImageMetaProps | null,
+                tags: item.image.tags.map((t) => t.tag),
+              }
             : null,
           images: collectionImageItems.map((ci) => ci.image).filter(isDefined) ?? [],
           srcs: collectionImageItems.map((ci) => ci.src).filter(isDefined) ?? [],

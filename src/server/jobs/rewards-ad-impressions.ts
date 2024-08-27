@@ -30,7 +30,9 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
       sum(impressions) as totalAdImpressions,
       sum(duration) as totalAdDuration
       FROM adImpressions
-      WHERE time > parseDateTimeBestEffort('${lastRun.toISOString()}')
+      WHERE
+        time >= toStartOfHour(parseDateTimeBestEffort('${lastRun.toISOString()}'))
+        AND time < toStartOfHour(now())
       GROUP BY userId, deviceId;
     `);
 
