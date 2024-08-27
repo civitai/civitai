@@ -3,8 +3,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import Head from 'next/head';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { isProd } from '~/env/other';
-// const isProd = true;
+import Script from 'next/script';
+// import { isProd } from '~/env/other';
+const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
@@ -32,6 +33,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
   const adsEnabled = currentUser?.allowAds || !isMember;
+  const [cmpLoaded, setCmpLoaded] = useState(false);
 
   const readyRef = useRef<boolean>();
   useEffect(() => {
@@ -46,10 +48,15 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [adsEnabled]);
 
+  function handleCmpLoaded() {
+    console.log('loaded');
+    setCmpLoaded(true);
+  }
+
   return (
     <AdsContext.Provider
       value={{
-        adsBlocked,
+        adsBlocked: adsBlocked || !cmpLoaded,
         adsEnabled: adsEnabled && !nsfw,
         username: currentUser?.username,
         providers: adProviders,
@@ -59,14 +66,15 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && isProd && (
         <>
-          <Head>
-            <script src="https://cmp.uniconsent.com/v2/stub.min.js" />
-            <script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
-            <script
-              id="ads-start"
-              type="text/javascript"
-              dangerouslySetInnerHTML={{
-                __html: `
+          <Script src="https://cmp.uniconsent.com/v2/stub.min.js" onLoad={handleCmpLoaded} />
+          <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
+          {cmpLoaded && (
+            <>
+              <Script
+                id="ads-start"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
                 window.googletag = window.googletag || {};
                 window.googletag.cmd = window.googletag.cmd || [];
                 window.googletag.cmd.push(function () {
@@ -75,13 +83,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 });
                 (adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1;
               `,
-              }}
-            />
-            <script
-              id="ads-init"
-              type="text/javascript"
-              dangerouslySetInnerHTML={{
-                __html: `
+                }}
+              />
+              <Script
+                id="ads-init"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
               __tcfapi("addEventListener", 2, function(tcData, success) {
                 if (success && tcData.unicLoad  === true) {
                   if(!window._initAds) {
@@ -100,9 +108,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 }
               });
             `,
-              }}
-            />
-          </Head>
+                }}
+              />
+            </>
+          )}
           <div id="uniconsent-config" />
         </>
       )}
