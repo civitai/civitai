@@ -3,6 +3,10 @@ import { env } from '~/env/server.mjs';
 
 let stripe: Stripe;
 export const getServerStripe = async () => {
+  if (!env.STRIPE_SECRET_KEY) {
+    return;
+  }
+
   if (!stripe)
     stripe = await new Stripe(env.STRIPE_SECRET_KEY, {
       typescript: true,

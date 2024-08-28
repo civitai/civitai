@@ -4,7 +4,7 @@ import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';

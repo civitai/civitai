@@ -9,9 +9,6 @@ export const createCustomerSchema = z.object({ id: z.number(), email: z.string()
 export type CreateSubscribeSessionInput = z.infer<typeof createSubscribeSessionSchema>;
 export const createSubscribeSessionSchema = z.object({ priceId: z.string() });
 
-export type GetUserSubscriptionInput = z.infer<typeof getUserSubscriptionSchema>;
-export const getUserSubscriptionSchema = z.object({ userId: z.number() });
-
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
 export const createDonateSessionSchema = z.object({ returnUrl: z.string() });
 
@@ -70,20 +67,3 @@ export type PaymentMethodDeleteInput = z.infer<typeof paymentMethodDeleteInput>;
 export const paymentMethodDeleteInput = z.object({
   paymentMethodId: z.string(),
 });
-
-export type ProductMetadata = z.infer<typeof productMetadataSchema>;
-export const productMetadataSchema = z
-  .object({
-    vaultSizeKb: z.coerce.number().positive().optional(),
-    badge: z.string().optional(),
-    monthlyBuzz: z.coerce.number().positive().optional(),
-    animatedBadge: booleanString().optional(),
-    badgeType: z.enum(['none', 'static', 'animated']),
-    tier: z.enum(['founder', 'bronze', 'silver', 'gold']),
-    generationLimit: z.coerce.number().positive().optional(),
-    quantityLimit: z.coerce.number().positive().optional(),
-    queueLimit: z.coerce.number().positive().optional(),
-    rewardsMultiplier: z.coerce.number().positive().default(1),
-    purchasesMultiplier: z.coerce.number().positive().default(1),
-  })
-  .passthrough();

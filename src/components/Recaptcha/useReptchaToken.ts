@@ -3,6 +3,7 @@ import { env } from '../../env/client.mjs';
 import { RecaptchaContext } from './RecaptchaWidget';
 import { RecaptchaAction } from '../../server/common/constants';
 import { useDebouncer } from '../../utils/debouncer';
+import { isDev } from '~/env/other';
 
 export const useRecaptchaToken = (
   action: RecaptchaAction,
@@ -29,6 +30,14 @@ export const useRecaptchaToken = (
     setLoading(true);
 
     try {
+      if (isDev) {
+        const token = 'dev-recaptcha-token';
+        setToken(token);
+        onGetToken?.(token);
+
+        return token;
+      }
+
       const token = await window?.grecaptcha.enterprise.execute(env.NEXT_PUBLIC_RECAPTCHA_KEY, {
         action,
       });

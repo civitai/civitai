@@ -15,6 +15,7 @@ interface ExtendedUser {
   createdAt?: Date;
   isModerator?: boolean;
   customerId?: string; // could be fetched
+  paddleCustomerId?: string; // could be fetched
   subscriptionId?: string; // could be fetched
   tier?: UserTier;
   muted?: boolean;

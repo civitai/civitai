@@ -70,7 +70,11 @@ export function CurrencyBadge({
       {...badgeProps}
     >
       <Group spacing={4} noWrap>
-        <Icon size={iconSize[badgeProps.size ?? 'sm']} fill="currentColor" {...iconProps} />
+        <Icon
+          size={iconSize[badgeProps.size ?? 'sm']}
+          fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
+          {...iconProps}
+        />
         {loading && <Loader size="xs" variant="dots" color={colorString} />}
         {!loading && (
           <>

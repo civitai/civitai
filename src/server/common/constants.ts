@@ -308,8 +308,9 @@ export const constants = {
   },
   supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
   memberships: {
-    tierOrder: ['founder', 'bronze', 'silver', 'gold'],
+    tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
+      free: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
       founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
       bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
       silver: '9f174f9f-e823-44af-b969-cd1a1d7efb08',
@@ -324,7 +325,7 @@ export const constants = {
   freeMembershipDetails: {
     name: 'Free',
     price: 0,
-    badge: '020f374d-f165-4f45-9082-371e696a44ff',
+    badge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
     metadata: {
       monthlyBuzz: 0,
       generationLimit: 1,
@@ -846,6 +847,7 @@ export const CacheTTL = {
 export const RECAPTCHA_ACTIONS = {
   STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
   COMPLETE_ONBOARDING: 'COMPLETE_ONBOARDING',
+  PADDLE_TRANSACTION: 'PADDLE_TRANSACTION',
 } as const;
 
 export type RecaptchaAction = keyof typeof RECAPTCHA_ACTIONS;
