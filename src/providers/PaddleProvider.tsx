@@ -1,6 +1,7 @@
 import { CheckoutEventsData, initializePaddle, Paddle, PaddleEventData } from '@paddle/paddle-js';
 import { useContext, useEffect, useState, createContext, useRef, useCallback } from 'react';
 import { env } from '~/env/client.mjs';
+import { isDev } from '~/env/other';
 import { EventEmitter } from '~/utils/eventEmitter';
 
 type PaddleEventEmitter = {
@@ -55,7 +56,7 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         'checkout.loaded': undefined;
       }>();
       initializePaddle({
-        environment: 'sandbox',
+        environment: isDev ? 'sandbox' : 'production',
         token: env.NEXT_PUBLIC_PADDLE_TOKEN,
         eventCallback,
         checkout: {
