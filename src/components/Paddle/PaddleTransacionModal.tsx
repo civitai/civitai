@@ -104,13 +104,20 @@ export const PaddleTransacionModal = ({
 
   useEffect(() => {
     if (
+      !transactionId &&
       !subscriptionLoading &&
       (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle)
     ) {
       // Go ahead and automatically trigger the checkout
       getTransaction();
     }
-  }, [subscription, subscriptionLoading, subscriptionPaymentProvider, getTransaction]);
+  }, [
+    subscription,
+    subscriptionLoading,
+    subscriptionPaymentProvider,
+    getTransaction,
+    transactionId,
+  ]);
 
   const handlePurchaseWithSubscription = useCallback(async () => {
     try {
