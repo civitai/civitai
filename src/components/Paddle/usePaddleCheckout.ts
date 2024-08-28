@@ -15,7 +15,9 @@ export const usePaddleBuzzTransaction = ({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const createTransactionMutation = trpc.paddle.createBuzzPurchaseTransaction.useMutation();
-  const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.PADDLE_TRANSACTION);
+  const { getToken, loading: isLoadingToken } = useRecaptchaToken(
+    RECAPTCHA_ACTIONS.PADDLE_TRANSACTION
+  );
 
   const getTransaction = useCallback(async () => {
     if (createTransactionMutation.isLoading) return;
@@ -47,7 +49,7 @@ export const usePaddleBuzzTransaction = ({
 
   return {
     transactionId,
-    isLoading,
+    isLoading: isLoading || isLoadingToken,
     error,
     getTransaction,
   };
