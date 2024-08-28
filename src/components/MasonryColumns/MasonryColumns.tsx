@@ -9,8 +9,8 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { DynamicAd } from '~/components/Ads/AdUnit';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 type Props<TData> = {
   data: TData[];
@@ -68,20 +68,9 @@ export function MasonryColumns<TData>({
                 {data.type === 'data' &&
                   createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
                 {data.type === 'ad' && (
-                  <Adunit
-                    radius="sm"
-                    sx={(theme) => ({
-                      overflow: 'hidden',
-                      width: 320,
-                      background:
-                        theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
-                    })}
-                    p={10}
-                    withBorder
-                    shadow="sm"
-                    mx="auto"
-                    {...adsRegistry.masonryColumns}
-                  />
+                  <TwCard className="border p-2 shadow">
+                    <DynamicAd />
+                  </TwCard>
                 )}
               </React.Fragment>
             );

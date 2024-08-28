@@ -33,6 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { ModelAndImagePageAdUnit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
@@ -401,7 +402,9 @@ export function ImageDetail2() {
                 />
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
-                <Card className="flex flex-col gap-3 rounded-xl">
+                {!nsfw && <ModelAndImagePageAdUnit />}
+
+              <Card className="flex flex-col gap-3 rounded-xl">
                   <Text className="flex items-center gap-2 text-xl font-semibold">
                     <IconBrandWechat />
                     <span>Discussion</span>

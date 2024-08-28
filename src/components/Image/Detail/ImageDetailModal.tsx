@@ -6,6 +6,7 @@ import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider'
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { removeEmpty } from '../../../utils/object-helpers';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
+import { useMemo } from 'react';
 
 export default function ImageDetailModal({
   imageId,
@@ -18,9 +19,13 @@ export default function ImageDetailModal({
 } & ImagesContextState) {
   const dialog = useDialogContext();
   const { query } = useBrowserRouter();
-  const queryFilters = imagesQueryParamSchema
-    .omit({ tags: true })
-    .parse(removeEmpty({ ...query, ...filters }));
+  const queryFilters = useMemo(
+    () =>
+      !images
+        ? imagesQueryParamSchema.omit({ tags: true }).parse(removeEmpty({ ...query, ...filters }))
+        : {},
+    [query, images]
+  );
 
   if (!query.imageId) return null;
 

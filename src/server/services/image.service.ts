@@ -105,6 +105,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -121,6 +122,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { NSFWLevel } from '@civitai/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -761,7 +763,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  }
+  } else AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   let from = 'FROM "Image" i';
   const joins: string[] = [];
@@ -1052,15 +1054,11 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
-    if (isModerator) {
-      AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
-    } else {
-      AND.push(
-        browsingLevel
-          ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-          : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-      );
-    }
+    AND.push(
+      browsingLevel
+        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
+        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
+    );
   }
 
   // TODO: Adjust ImageMetric
@@ -1767,12 +1765,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
+    const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filtered = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-      return hit.userId === currentUserId || isModerator;
+      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
     // TODO maybe grab more if the number is now too low?
@@ -4102,4 +4101,20 @@ export async function bulkRemoveBlockedImages({
   if (!hashes?.length) return;
 
   return dbWrite.blockedImage.deleteMany({ where: { hash: { in: hashes } } });
+}
+
+export async function getImagesPendingIngestion() {
+  const date = new Date();
+  date.setDate(date.getDate() - 5);
+  return await dbRead.image.findMany({
+    where: { nsfwLevel: 0, ingestion: 'Pending', createdAt: { gt: date } },
+    select: {
+      id: true,
+      name: true,
+      url: true,
+      createdAt: true,
+      metadata: true,
+    },
+    orderBy: { id: 'desc' },
+  });
 }

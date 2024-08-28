@@ -13,7 +13,7 @@ export const benefitIconSize = 18;
 const themeIconSize = benefitIconSize + 6;
 
 const defaultBenefits = [
-  // { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
+  { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
   {
     content: (
       <Text variant="link" td="underline" component="a" href="/product/link" target="_blank">

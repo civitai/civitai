@@ -1175,13 +1175,13 @@ export const deleteClub = async ({
     throw throwBadRequestError('Only club owners can delete clubs');
   }
 
-  const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'Club' });
+  const buzzAccount = await getUserBuzzAccount({ accountId: club.id, accountType: 'club' });
 
   if ((buzzAccount?.balance ?? 0) > 0) {
     await createBuzzTransaction({
       toAccountId: club.userId,
       fromAccountId: club.id,
-      fromAccountType: 'Club',
+      fromAccountType: 'club',
       type: TransactionType.Tip,
       amount: buzzAccount.balance as number,
     });

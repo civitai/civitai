@@ -2,7 +2,6 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
@@ -14,7 +13,7 @@ import { useTrackEvent } from '../TrackView/track.utils';
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
   const [processing, setProcessing] = useState<boolean>(false);
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const { data: packages = [], isLoading } = trpc.stripe.getBuzzPackages.useQuery();
 
@@ -73,11 +72,13 @@ export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   performTransactionOnPurchase?: boolean;
+  type?: 'Generation' | 'Default';
 }) => {
-  const { message, purchaseSuccessMessage, performTransactionOnPurchase } = opts ?? {};
+  const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
 
   const features = useFeatureFlags();
-  const { balance } = useBuzz();
+  const { balance: userBalance } = useBuzz();
+  const { balance: generationBalance } = useBuzz(undefined, 'generation');
   const isMobile = useIsMobile();
 
   const { trackAction } = useTrackEvent();
@@ -90,12 +91,32 @@ export const useBuzzTransaction = (opts?: {
       });
     },
   });
-  const hasRequiredAmount = (buzzAmount: number) => balance >= buzzAmount;
+
+  const getCurrentBalance = () => {
+    switch (type) {
+      case 'Generation':
+        return userBalance + generationBalance;
+      default:
+        return userBalance;
+    }
+  };
+
+  const hasRequiredAmount = (buzzAmount: number) => getCurrentBalance() >= buzzAmount;
+  const hasTypeRequiredAmount = (buzzAmount: number) => {
+    switch (type) {
+      case 'Generation':
+        return generationBalance >= buzzAmount;
+      default:
+        return userBalance >= buzzAmount;
+    }
+  };
+
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
-    const hasRequiredAmount = balance >= buzzAmount;
-    if (!hasRequiredAmount) {
+    const balance = getCurrentBalance();
+    const meetsRequirement = hasRequiredAmount(buzzAmount);
+    if (!meetsRequirement) {
       trackAction({ type: 'NotEnoughFunds', details: { amount: buzzAmount } }).catch(
         () => undefined
       );
@@ -118,6 +139,7 @@ export const useBuzzTransaction = (opts?: {
 
   return {
     hasRequiredAmount,
+    hasTypeRequiredAmount,
     conditionalPerformTransaction,
     tipUserMutation,
   };

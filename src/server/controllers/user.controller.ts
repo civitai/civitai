@@ -1290,7 +1290,7 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const settings = await getUserSettings(id);
 
     // Limits it to the input type
-    return settings as UserSettingsSchema;
+    return settings;
   } catch (error) {
     throw throwDbError(error);
   }

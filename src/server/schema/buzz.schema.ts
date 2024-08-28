@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
+import { titleCase } from '~/utils/string-helpers';
 import { stringDate } from '~/utils/zod-helpers';
 
 export enum TransactionType {
@@ -27,8 +28,12 @@ export enum TransactionType {
   Compensation = 21,
 }
 
-const buzzAccountTypes = ['User', 'Club', 'Other'] as const;
+export const buzzAccountTypes = ['user', 'club', 'generation'] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
+
+function preprocessAccountType(value: unknown) {
+  return typeof value === 'string' ? (value?.toLowerCase() as BuzzAccountType) : undefined;
+}
 
 export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
 export const getUserBuzzAccountSchema = z.object({
@@ -83,8 +88,8 @@ export const getBuzzTransactionResponse = z.object({
     ),
   fromAccountId: z.coerce.number(),
   toAccountId: z.coerce.number(),
-  fromAccountType: z.enum(buzzAccountTypes),
-  toAccountType: z.enum(buzzAccountTypes),
+  fromAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
+  toAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)),
   amount: z.coerce.number(),
   description: z.coerce.string().nullish(),
   details: buzzTransactionDetails.nullish(),
@@ -155,7 +160,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
-  accountType: z.enum(buzzAccountTypes).default('User'),
+  accountType: z.enum(buzzAccountTypes).default('user'),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
@@ -176,3 +181,6 @@ export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
   date: stringDate(),
 });
+
+export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
+export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
