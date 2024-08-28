@@ -251,6 +251,7 @@ export const createTrainingRequest = async ({
     cost: status.cost,
     baseModel: baseModelType,
     targetSteps: trainingParams.targetSteps,
+    resolution: trainingParams.resolution,
   });
 
   // Determine if we still need to charge them for this training
