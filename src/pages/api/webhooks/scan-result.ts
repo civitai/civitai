@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
+import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -53,30 +54,29 @@ export default WebhookEndpoint(async (req, res) => {
     if (!data.exists) await unpublish(file.modelVersionId);
   }
 
-  if (tasks.includes('Convert')) {
-    // TODO justin: handle conversion result
-    // TODO koen: include the new size in the conversionOutput
-    // const [format, { url, hashes, conversionOutput }] = Object.entries(scanResult.conversions)[0];
-    // const baseUrl = url.split('?')[0];
-    // const convertedName = baseUrl.split('/').pop();
-    // if (convertedName) {
-    //   await dbWrite.modelFile.create({
-    //     data: {
-    //       name: convertedName,
-    //       sizeKB,
-    //       modelVersionId: file.modelVersionId,
-    //       url: baseUrl,
-    //       type: file.type,
-    //       metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
-    //       hashes: {
-    //         create: Object.entries(hashes).map(([type, hash]) => ({
-    //           type: hashTypeMap[type.toLowerCase()] as ModelHashType,
-    //           hash,
-    //         })),
-    //       },
-    //     },
-    //   });
-    // }
+  if (tasks.includes('Convert') && scanResult.conversions) {
+    const [format, { url, hashes, sizeKB }] = Object.entries(scanResult.conversions)[0];
+    const baseUrl = url.split('?')[0];
+    const convertedName = baseUrl.split('/').pop();
+    if (convertedName) {
+      // TODO.convert: do we need to queue for scanning or assume it's safe?
+      await dbWrite.modelFile.create({
+        data: {
+          name: convertedName,
+          sizeKB,
+          modelVersionId: file.modelVersionId,
+          url: baseUrl,
+          type: file.type,
+          metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
+          hashes: {
+            create: Object.entries(hashes).map(([type, hash]) => ({
+              type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+              hash,
+            })),
+          },
+        },
+      });
+    }
   }
 
   // Update if we made changes...
@@ -112,6 +112,7 @@ export default WebhookEndpoint(async (req, res) => {
       await dataForModelsCache.bust(version.modelId);
     }
   }
+  await deleteFilesForModelVersionCache(file.modelVersionId);
 
   res.status(200).json({ ok: true });
 });
@@ -183,6 +184,7 @@ type ScanResult = {
 type ConversionResult = {
   url: string;
   hashes: Record<ModelHashType, string>;
+  sizeKB: number;
   conversionOutput: string;
 };
 
