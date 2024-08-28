@@ -23,22 +23,25 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ImageSort } from '~/server/common/enums';
+import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function ResourceReviewCarousel({
-  username,
+  userId,
   modelVersionId,
   reviewId,
 }: {
-  username: string;
+  userId: number;
   modelVersionId: number;
   reviewId: number;
 }) {
   const { classes } = useStyles();
   const mobile = useContainerSmallerThan('sm');
 
-  const filters = {
-    username,
+  // today, typescript was not cool.
+  // functions will only check extra parameters if it's fresh
+  const filters: GetInfiniteImagesInput = {
+    userId,
     modelVersionId,
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
@@ -150,10 +153,9 @@ export function ResourceReviewCarousel({
                   overflow: 'hidden',
                 })}
               >
-                {/* TODO remove useIndex=false */}
                 <Button
                   component={NextLink}
-                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&username=${username}&useIndex=false`}
+                  href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
                   variant="outline"
                   fullWidth
                   className={classes.viewMore}

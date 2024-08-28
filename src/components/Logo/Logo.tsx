@@ -37,8 +37,8 @@ const gradients = {
 };
 
 export function Logo() {
-  const { isGreen, isBlue, isRed } = useFeatureFlags();
-  const { classes, cx } = useStyles({ color: isGreen ? 'green' : isBlue ? 'blue' : 'red' });
+  const { isGreen, isRed } = useFeatureFlags();
+  const { classes, cx } = useStyles({ color: isGreen ? 'green' : isRed ? 'red' : 'blue' });
   const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
   const holiday = useMemo(() => {
     if (!showHoliday) return null;

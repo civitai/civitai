@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
+import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
 
 const stringToNumber = z.coerce.number().optional();
@@ -265,6 +266,8 @@ export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;
 export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
+// TODO try using ".strict()", fix "authed" as unrecognized key
+
 // faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
@@ -294,7 +297,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.nativeEnum(MediaType)).optional(),
     useIndex: z.boolean().nullish(),
     userId: z.number().optional(),
-    // username: zc.usernameValidationSchema.optional(),
+    username: zc.usernameValidationSchema.optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().optional(),
 

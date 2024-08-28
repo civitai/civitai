@@ -685,7 +685,7 @@ export const getAllImages = async (
     modelId,
     modelVersionId,
     imageId, // TODO - remove, not in use
-    userId: targetUserId,
+    username,
     period,
     periodMode,
     tags,
@@ -710,7 +710,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
   } = input;
-  let { sort, browsingLevel } = input;
+  let { sort, browsingLevel, userId: targetUserId } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -743,6 +743,12 @@ export const getAllImages = async (
     } else {
       return { items: [], nextCursor: undefined };
     }
+  }
+
+  if (username && !targetUserId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    targetUserId = targetUser.id;
   }
 
   // TODO.fix disable excludeCrossPosts
@@ -1525,7 +1531,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     fromPlatform,
     notPublished,
     scheduled,
-    userId,
+    username,
     tags,
     tools,
     techniques,
@@ -1547,7 +1553,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     prioritizedUserIds,
     // TODO check the unused stuff in here
   } = input;
-  let { browsingLevel } = input;
+  let { browsingLevel, userId } = input;
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
@@ -1566,6 +1572,17 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     } else {
       return { data: [], nextCursor: undefined };
     }
+  }
+
+  if (username && !userId) {
+    const targetUser = await dbRead.user.findUnique({ where: { username }, select: { id: true } });
+    if (!targetUser) throw new Error('User not found');
+    userId = targetUser.id;
+
+    logToAxiom(
+      { type: 'search-warning', message: 'Using username instead of userId' },
+      'temp-search'
+    ).catch();
   }
 
   // could throw authorization error here
@@ -1674,6 +1691,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
+  //  how?
   // if (reviewId) {}
 
   // Handle period filter

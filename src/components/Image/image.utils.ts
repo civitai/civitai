@@ -86,7 +86,7 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
 };
 
 export const useQueryImages = (
-  filters?: Partial<GetInfiniteImagesInput>,
+  filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};

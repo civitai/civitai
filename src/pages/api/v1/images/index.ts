@@ -33,7 +33,7 @@ export const config = {
   },
 };
 
-// TODO merge
+// TODO merge with getInfiniteImagesSchema
 const imagesEndpointSchema = z.object({
   limit: numericString(z.number().min(0).max(200)).default(constants.galleryFilterDefaults.limit),
   page: numericString().optional(),
@@ -42,6 +42,7 @@ const imagesEndpointSchema = z.object({
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
   username: usernameSchema.optional(),
+  userId: numericString().optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   nsfw: z

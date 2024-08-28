@@ -3,6 +3,7 @@ import { useState, useCallback } from 'react';
 import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
+import { useDebouncer } from '~/utils/debouncer';
 
 export const usePaddleBuzzTransaction = ({
   unitAmount,
@@ -15,10 +16,13 @@ export const usePaddleBuzzTransaction = ({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const createTransactionMutation = trpc.paddle.createBuzzPurchaseTransaction.useMutation();
-  const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.PADDLE_TRANSACTION);
+  const { getToken, loading: isLoadingToken } = useRecaptchaToken(
+    RECAPTCHA_ACTIONS.PADDLE_TRANSACTION,
+    false
+  );
 
   const getTransaction = useCallback(async () => {
-    if (createTransactionMutation.isLoading) return;
+    if (isLoading || createTransactionMutation.isLoading || isLoadingToken) return;
 
     setTransactionId(null);
     setError(null);
@@ -43,13 +47,18 @@ export const usePaddleBuzzTransaction = ({
     } finally {
       setIsLoading(false);
     }
-  }, [unitAmount, currency, getToken]);
+  }, [unitAmount, currency, getToken, createTransactionMutation]);
+
+  const debouncer = useDebouncer(300);
+  const debouncedGetTransaction = useCallback(() => {
+    debouncer(getTransaction);
+  }, [getTransaction, debouncer]);
 
   return {
-    transactionId,
-    isLoading,
     error,
-    getTransaction,
+    transactionId,
+    isLoading: isLoading || isLoadingToken,
+    getTransaction: debouncedGetTransaction,
   };
 };
 
