@@ -170,7 +170,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
       </Container>
       {data.user.username && (
         <ResourceReviewCarousel
-          username={data.user.username}
+          userId={data.user.id}
           modelVersionId={data.modelVersion.id}
           reviewId={reviewId}
         />
