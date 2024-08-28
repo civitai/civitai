@@ -65,7 +65,7 @@ import {
   IconInfoCircle,
   IconPlus,
 } from '@tabler/icons-react';
-import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+// import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';

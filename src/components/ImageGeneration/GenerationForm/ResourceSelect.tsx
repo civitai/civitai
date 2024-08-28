@@ -48,7 +48,6 @@ export const ResourceSelect = ({
       title: buttonLabel,
       onSelect: handleAdd,
       options,
-      isTraining,
     });
   };
 

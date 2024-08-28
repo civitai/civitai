@@ -632,21 +632,8 @@ export const generation = {
   },
 } as const;
 
-export type ResourceFilter = {
-  type: ModelType;
-  baseModelSet?: BaseModelSetType;
-  baseModels?: BaseModel[];
-};
 export const generationConfig = {
   SD1: {
-    // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
-    additionalResourceTypes: [
-      { type: ModelType.LORA, baseModelSet: 'SD1' },
-      { type: ModelType.DoRA, baseModelSet: 'SD1' },
-      { type: ModelType.LoCon, baseModelSet: 'SD1' },
-      { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
-      { type: ModelType.VAE, baseModelSet: 'SD1' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
@@ -669,13 +656,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SDXL: {
-    additionalResourceTypes: [
-      { type: ModelType.LORA, baseModelSet: 'SDXL' },
-      { type: ModelType.DoRA, baseModelSet: 'SDXL' },
-      { type: ModelType.LoCon, baseModelSet: 'SDXL' },
-      { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
-      { type: ModelType.VAE, baseModelSet: 'SDXL' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -698,25 +678,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Pony: {
-    additionalResourceTypes: [
-      {
-        type: ModelType.LORA,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      {
-        type: ModelType.DoRA,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      {
-        type: ModelType.LoCon,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
-      { type: ModelType.VAE, baseModelSet: 'SDXL' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -739,7 +700,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    additionalResourceTypes: [{ type: ModelType.LORA, baseModelSet: 'Flux1' }] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
