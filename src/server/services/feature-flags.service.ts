@@ -1,6 +1,6 @@
 import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isDev } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IncomingHttpHeaders } from 'http';
@@ -106,7 +106,7 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // Logic
 // --------------------------
 const serverDomainMap: Record<ServerAvailability, string | undefined> = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  green: isProd ? env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN : undefined,
   blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
