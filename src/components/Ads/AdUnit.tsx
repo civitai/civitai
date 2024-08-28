@@ -1,4 +1,5 @@
 import {
+  AdSizes,
   AnyAdSize,
   AscendeumAdUnit,
   AscendeumAdUnitType,
@@ -6,171 +7,205 @@ import {
   adSizeImageMap,
 } from '~/components/Ads/ads.utils';
 import { Center, Group, Paper, PaperProps, Text, createStyles } from '@mantine/core';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
-import { useInView } from '~/hooks/useInView';
 import Image from 'next/image';
-import { useStackingContext } from '~/components/Dialog/dialogStore';
+import { useIsLevelFocused, useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
 import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
 import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
 import { isDefined } from '~/utils/type-guards';
 import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import clsx from 'clsx';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from 'react-intersection-observer';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useIsClient } from '~/providers/IsClientProvider';
+import { TwCard } from '~/components/TwCard/TwCard';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { useDeviceFingerprint } from '~/hooks/useDeviceFingerprint';
 
-const useStyles = createStyles((theme) => ({
-  root: { display: 'flex', flexDirection: 'column', background: 'none' },
-}));
+type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
+  AdSizes & {
+    children: React.ReactNode | ((args: { isMobile: boolean }) => React.ReactNode);
+    component?: 'div' | 'TwCard';
+  };
 
-export function Adunit<TAscendeum extends AscendeumAdUnitType>({
-  browsingLevelOverride,
-  sfw,
-  nsfw,
+function AdWrapper({
   children,
-  showRemoveAds,
   className,
-  ...paperProps
-}: {
-  browsingLevelOverride?: BrowsingLevel[];
-  sfw: AscendeumAdUnit<TAscendeum>;
-  nsfw?: ExoclickAdUnit;
-  children?: (Ad: JSX.Element) => React.ReactElement;
-  showRemoveAds?: boolean;
-} & PaperProps) {
-  const { classes, cx } = useStyles();
-  const { ref, inView } = useInView({ rootMargin: '200%' });
-  const { isCurrentStack } = useStackingContext();
-  const { adsBlocked, nsfwOverride, adsEnabled, providers, cookieConsent, username } =
-    useAdsContext();
-  const containerWidth = useContainerWidth();
+  width,
+  height,
+  style,
+  component = 'div',
+  ...props
+}: AdWrapperProps) {
+  const currentUser = useCurrentUser();
+  const isClient = useIsClient();
+  const { adsBlocked, adsEnabled, isMember } = useAdsContext();
+  const isMobile =
+    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  // const focused = useIsLevelFocused();
 
-  // TODO - maybe consider the priority of each nsfw override flag. Which flags have the most priority?
-  const showNsfw = false; // temporary until we come back to ads and nsfw levels
-  const renderTypeMap = { sfw, nsfw };
-  const renderType = !showNsfw ? 'sfw' : 'nsfw';
-  const componentProps = useMemo(() => renderTypeMap[renderType], [renderType]);
+  if (!adsEnabled) return null;
 
-  // TODO - check if this value causes render on each container width change
-  const bidSizes = useMemo(() => {
-    if (!componentProps) return undefined;
-
-    const breakpoints = [...componentProps.breakpoints].reverse();
-    for (const { minWidth, maxWidth, sizes } of breakpoints) {
-      const satisfiesMinWidth = minWidth ? containerWidth >= minWidth : true;
-      const satisfiesMaxWidth = maxWidth ? containerWidth <= maxWidth : true;
-      if (satisfiesMinWidth && satisfiesMaxWidth) {
-        const bidSizes = (sizes ? (Array.isArray(sizes) ? sizes : [sizes]) : []) as string[];
-        const filtered = bidSizes.filter(isDefined);
-        if (filtered.length) return filtered;
-      }
-    }
-  }, [containerWidth, renderType]);
-
-  if (!bidSizes || !adsEnabled) return null;
-
-  const canRenderContent = inView && isCurrentStack;
-  const showPlaceholderImage =
-    adsBlocked || !cookieConsent || !componentProps || !providers.includes(componentProps.type);
-  const [width, height] = bidSizes[0].split('x').map(Number);
-
-  const Content = (
-    <>
-      <Center mih={height} miw={width}>
-        {canRenderContent && (
-          <>
-            {showPlaceholderImage ? (
-              <AdPlaceholder size={bidSizes[0]} />
-            ) : (
-              <AdContent componentProps={componentProps} bidSizes={bidSizes} />
-            )}
-          </>
-        )}
-      </Center>
-      {showRemoveAds && (
-        // <Text
-        //   component={NextLink}
-        //   td="underline"
-        //   href="/pricing"
-        //   color="dimmed"
-        //   size="xs"
-        //   align="center"
-        // >
-        //   Remove ads
-        // </Text>
-        <Group position="apart" miw={width}>
-          <Text
-            component={NextLink}
-            td="underline"
-            href="/pricing"
-            color="dimmed"
-            size="xs"
-            align="center"
-          >
-            Remove ads
-          </Text>
-
-          <Text
-            component={NextLink}
-            td="underline"
-            href={`/ad-feedback?Username=${username}`}
-            color="dimmed"
-            size="xs"
-            align="center"
-          >
-            Feedback
-          </Text>
-        </Group>
-      )}
-    </>
-  );
+  const Component = component === 'div' ? 'div' : TwCard;
 
   return (
-    <Paper component={Center} ref={ref} className={cx(classes.root, className)} {...paperProps}>
-      {children ? children(Content) : Content}
-    </Paper>
+    <Component
+      className={clsx('flex flex-col items-center justify-between', className)}
+      style={{ ...style, minHeight: height + 20, minWidth: width }}
+      {...props}
+    >
+      {isClient && adsBlocked !== undefined && (
+        <>
+          {adsBlocked ? (
+            <NextLink href="/pricing" className="flex">
+              <Image
+                src={`/images/support-us/${width}x${height}.jpg`}
+                alt="Please support civitai and creators by disabling adblock"
+                width={width}
+                height={height}
+              />
+            </NextLink>
+          ) : typeof children === 'function' ? (
+            children({ isMobile })
+          ) : (
+            children
+          )}
+
+          <div className="flex w-full justify-between">
+            {!isMember ? (
+              <Text
+                component={NextLink}
+                td="underline"
+                href="/pricing"
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Remove ads
+              </Text>
+            ) : (
+              <div />
+            )}
+
+            {currentUser && (
+              <Text
+                component={NextLink}
+                td="underline"
+                href={`/ad-feedback?Username=${currentUser.username}`}
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Feedback
+              </Text>
+            )}
+          </div>
+        </>
+      )}
+    </Component>
   );
 }
 
-function AdPlaceholder({ size }: { size: string }) {
-  const { adsBlocked } = useAdsContext();
-  const _size = adSizeImageMap[size as AnyAdSize];
-  if (!_size) return null;
-  const [width, height] = _size.split('x').map(Number);
+const impression_duration = 1000;
+function ImpressionTracker({
+  children,
+  adId,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { adId: string }) {
+  const currentUser = useCurrentUser();
+  const node = useScrollAreaRef();
+  const { worker } = useSignalContext();
+  const { fingerprint } = useDeviceFingerprint();
 
-  return adsBlocked ? (
-    <NextLink href="/pricing" style={{ display: 'flex' }}>
-      <Image
-        src={`/images/support-us/${width}x${height}.jpg`}
-        alt="Please support civitai and creators by disabling adblock"
-        width={width}
-        height={height}
-      />
-    </NextLink>
-  ) : (
-    <NextLink href="/pricing" style={{ display: 'flex' }}>
-      <Image
-        src={`/images/become-a-member/${width}x${height}.jpg`}
-        alt="Please become a member to support creators today"
-        width={width}
-        height={height}
-      />
-    </NextLink>
-  );
-}
+  const enterViewRef = useRef<Date>();
+  const impressionTrackedRef = useRef<boolean>();
 
-function AdContent<TAscendeum extends AscendeumAdUnitType>({
-  componentProps,
-  bidSizes,
-}: {
-  componentProps: AscendeumAdUnit<TAscendeum> | ExoclickAdUnit;
-  bidSizes: string[];
-}) {
-  if (!componentProps || !bidSizes) return null;
+  const fingerprintRef = useRef<string>();
+  if (!fingerprintRef.current) fingerprintRef.current = fingerprint;
 
-  switch (componentProps.type) {
-    case 'ascendeum':
-      return <AscendeumAd adunit={componentProps.adunit} bidSizes={bidSizes} />;
-    case 'exoclick':
-      return <ExoclickAd bidSizes={bidSizes} />;
+  const trackImpressionRef = useRef<VoidFunction>();
+  if (!trackImpressionRef.current) {
+    trackImpressionRef.current = function () {
+      const enterDate = enterViewRef.current;
+      const exitDate = new Date();
+      if (worker && enterDate && currentUser && !impressionTrackedRef.current) {
+        const diff = exitDate.getTime() - enterDate.getTime();
+        if (diff < impression_duration) return;
+        impressionTrackedRef.current = true;
+        worker.send('recordAdImpression', {
+          userId: currentUser.id,
+          duration: diff,
+          fingerprint: fingerprintRef.current,
+          adId,
+        });
+      }
+    };
   }
+
+  const { ref, inView } = useInView({
+    root: node?.current,
+    threshold: 0.5,
+  });
+
+  useEffect(() => {
+    if (inView) enterViewRef.current = new Date();
+    else if (enterViewRef.current) trackImpressionRef.current?.();
+  }, [inView]);
+
+  useEffect(() => {
+    const handler = trackImpressionRef.current;
+    if (!handler) return;
+    window.addEventListener('beforeunload', handler);
+
+    return () => {
+      handler();
+      window.removeEventListener('beforeunload', handler);
+    };
+  }, []);
+
+  return (
+    <div ref={ref} {...props}>
+      {children}
+    </div>
+  );
+}
+
+export function DynamicAd() {
+  return (
+    <AdWrapper width={300} height={250}>
+      {({ isMobile }) => {
+        const id = isMobile ? 'civitaicom47764' : 'civitaicom47455';
+        return (
+          <ImpressionTracker adId={id} className="w-full overflow-hidden">
+            <div id={id} />
+          </ImpressionTracker>
+        );
+      }}
+    </AdWrapper>
+  );
+}
+
+export function ModelAndImagePageAdUnit() {
+  const { adsEnabled } = useAdsContext();
+
+  if (!adsEnabled) return null;
+
+  return (
+    <div className="flex justify-center">
+      <AdWrapper component="TwCard" className="border p-2 shadow" width={300} height={250}>
+        {({ isMobile }) => {
+          const id = isMobile ? 'civitaicom47765' : 'civitaicom47763';
+          return (
+            <ImpressionTracker adId={id} className="w-full overflow-hidden">
+              <div id={id} />
+            </ImpressionTracker>
+          );
+        }}
+      </AdWrapper>
+    </div>
+  );
 }

@@ -17,15 +17,7 @@ const DialogContext = createContext<DialogState>({
 });
 export const useDialogContext = () => useContext(DialogContext);
 
-const DialogProviderInner = ({
-  dialog,
-  index,
-  focused,
-}: {
-  dialog: Dialog;
-  index: number;
-  focused?: 'true';
-}) => {
+const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);
 
   const Dialog = dialog.component;
@@ -42,9 +34,7 @@ const DialogProviderInner = ({
   }, []);
 
   return (
-    <DialogContext.Provider
-      value={{ opened, onClose, zIndex: 200 + index, target: dialog.target, focused }}
-    >
+    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index, target: dialog.target }}>
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
   );
@@ -55,14 +45,12 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <React.Fragment key={dialog.id.toString()}>
-          {createRenderElement(dialog, i, i === dialogs.length - 1 ? 'true' : undefined)}
-        </React.Fragment>
+        <React.Fragment key={dialog.id.toString()}>{createRenderElement(dialog, i)}</React.Fragment>
       ))}
     </>
   );
 };
 
-const createRenderElement = trieMemoize([WeakMap, {}, {}], (dialog, index, focused) => (
-  <DialogProviderInner dialog={dialog} index={index} focused={focused} />
+const createRenderElement = trieMemoize([WeakMap, {}, {}], (dialog, index) => (
+  <DialogProviderInner dialog={dialog} index={index} />
 ));

@@ -42,7 +42,7 @@ export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; 
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
-    const { adminTags } = getFeatureFlags({ user: ctx?.user });
+    const { adminTags } = getFeatureFlags(ctx);
 
     const results = await getTags({
       ...input,

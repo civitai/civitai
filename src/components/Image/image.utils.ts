@@ -46,12 +46,14 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     notPublished: booleanString(),
+    scheduled: booleanString(),
     tools: numericStringArray(),
     collectionTagId: numericString(),
     baseModels: z
       .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
+    useIndex: booleanString().nullish(),
   })
   .partial();
 

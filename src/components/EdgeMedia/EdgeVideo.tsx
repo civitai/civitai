@@ -42,7 +42,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     useEffect(() => {
       // Hard set the src for Safari because it doesn't support autoplay webm
-      const inSafari = typeof navigator !== 'undefined' && navigator.userAgent.match(/safari/i);
+      const inSafari =
+        typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
       if (inSafari && ref.current && src) {
         ref.current.src = src;
       }
@@ -150,6 +151,22 @@ const useStyles = createStyles((theme) => ({
         left: '0px',
         content: '""',
         pointerEvents: 'none',
+      },
+    },
+  },
+  wrapper: {
+    // Fallback
+    ['@supports not (aspect-ratio: 16 / 9)']: {
+      '&:before': {
+        float: 'left',
+        paddingTop: '56.25%',
+        content: '""',
+      },
+
+      '&:after': {
+        display: 'block',
+        content: '""',
+        clear: 'both',
       },
     },
   },

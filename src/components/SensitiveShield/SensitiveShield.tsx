@@ -1,46 +1,53 @@
-import { Button, Container, Group, Paper, Stack, Text } from '@mantine/core';
+import { Button, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import React from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  getIsSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export function SensitiveShield({
   children,
-  enabled = true,
+  contentNsfwLevel,
 }: {
-  children?: JSX.Element;
-  enabled?: boolean;
+  children: React.ReactNode;
+  contentNsfwLevel: number;
 }) {
+  const currentUser = useCurrentUser();
   const router = useRouter();
-  const [accepted, setAccepted] = useState(false);
-  if (children && (!enabled || accepted)) return children;
+  const { canViewNsfw } = useFeatureFlags();
 
-  return (
-    <Container size="xs">
-      <Paper p="xl" radius="md" withBorder>
-        <Stack align="center">
+  // this content is not available on this site
+  if (!canViewNsfw && !Flags.hasFlag(contentNsfwLevel, publicBrowsingLevelsFlag))
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Text>This content is not available on this site</Text>
+      </div>
+    );
+  if (!currentUser && !getIsSafeBrowsingLevel(contentNsfwLevel))
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-2 p-3">
           <IconEyeOff size={56} />
           <Text size="xl" weight={500}>
             Sensitive Content
           </Text>
           <Text>This content has been marked as NSFW</Text>
-          <Group>
-            {children ? (
-              <Button leftIcon={<IconEyeOff />} onClick={() => setAccepted(true)}>
-                {`I'm over 18`}
-              </Button>
-            ) : (
-              <Button
-                component={NextLink}
-                href={`/login?returnUrl=${router.asPath}`}
-                leftIcon={<IconKey />}
-              >
-                Log in to view
-              </Button>
-            )}
-          </Group>
-        </Stack>
-      </Paper>
-    </Container>
-  );
+          <Button
+            component={NextLink}
+            href={`/login?returnUrl=${router.asPath}`}
+            leftIcon={<IconKey />}
+          >
+            Log in to view
+          </Button>
+        </div>
+      </div>
+    );
+
+  return <>{children}</>;
 }

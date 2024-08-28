@@ -11,9 +11,7 @@ import {
   Switch,
   Text,
   ThemeIcon,
-  Tooltip,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
 import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
 import { isEqual } from 'lodash';
@@ -25,13 +23,16 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import {
+  MAX_DONATION_GOAL,
+  MIN_DONATION_GOAL,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputMultiSelect,
   InputNumber,
   InputRTE,
-  InputSegmentedControl,
   InputSelect,
   InputSwitch,
   InputText,
@@ -112,6 +113,17 @@ const schema = modelVersionUpsertSchema2
       return true;
     },
     { message: 'Max strength must be greater than min strength', path: ['settings.maxStrength'] }
+  )
+  .refine(
+    (data) => {
+      const { generationPrice, downloadPrice } = data.earlyAccessConfig ?? {};
+      if (generationPrice && downloadPrice) {
+        return generationPrice <= downloadPrice;
+      }
+
+      return true;
+    },
+    { message: 'Generation price cannot be greater than download price', path: ['generationPrice'] }
   );
 type Schema = z.infer<typeof schema>;
 
@@ -286,7 +298,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const maxEarlyAccessModels = getMaxEarlyAccessModels({ userMeta: currentUser?.meta });
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
     // TODO: Update to model scores.
-    .map(([score, days]) =>
+    .map(([, days]) =>
       days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta }) ? days : null
     )
     .filter(isDefined);
@@ -375,10 +387,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           chargeForDownload: true,
                           downloadPrice: 5000,
                           chargeForGeneration: false,
-                          generationPrice: 2500,
+                          generationPrice: undefined,
                           generationTrialLimit: 10,
                           donationGoalEnabled: false,
-                          donationGoal: 50000,
+                          donationGoal: undefined,
                         }
                       : null
                   )
@@ -482,7 +494,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                             description=" How much buzz would you like to charge for your version download?"
                             min={100}
                             max={
-                              isPublished ? version?.earlyAccessConfig?.downloadPrice : undefined
+                              isPublished
+                                ? version?.earlyAccessConfig?.downloadPrice
+                                : MAX_DONATION_GOAL
                             }
                             step={100}
                             icon={<CurrencyIcon currency="BUZZ" size={16} />}
@@ -507,6 +521,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                           <InputSwitch
                             name="earlyAccessConfig.chargeForGeneration"
                             disabled={isEarlyAccessOver}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                form.setValue(
+                                  'earlyAccessConfig.generationPrice',
+                                  earlyAccessConfig?.downloadPrice ?? 2500
+                                );
+                              } else {
+                                form.setValue('earlyAccessConfig.generationPrice', undefined);
+                              }
+                            }}
                           />
                         </Group>
                       </Card.Section>
@@ -529,6 +553,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               label="Free Trial Limit"
                               description={`Resources in early access require the ability to be tested, please specify how many free tests a user can do prior to purchasing the ${resourceLabel}`}
                               min={10}
+                              max={1000}
                               disabled={isEarlyAccessOver}
                               withAsterisk
                             />
@@ -562,6 +587,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                 disabled={
                                   !!version?.earlyAccessConfig?.donationGoalId || isEarlyAccessOver
                                 }
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    form.setValue('earlyAccessConfig.donationGoal', 50000);
+                                  } else {
+                                    form.setValue('earlyAccessConfig.donationGoal', undefined);
+                                  }
+                                }}
                               />
                             </Group>
                           </Card.Section>
@@ -572,7 +604,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                   name="earlyAccessConfig.donationGoal"
                                   label="Donation Goal Amount"
                                   description="How much Buzz would you like to set as your donation goal? Early access purchases will count towards this goal. After publishing, you cannot change this value"
-                                  min={1000}
+                                  min={MIN_DONATION_GOAL}
+                                  max={MAX_DONATION_GOAL}
                                   step={100}
                                   icon={<CurrencyIcon currency="BUZZ" size={16} />}
                                   disabled={
@@ -620,8 +653,8 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
           {baseModel === 'SD 3' && (
             <Alert color="yellow" title="SD3 Unbanned">
               <Text>
-                Licensing concerns associated Stable Diffusion 3 have been resolved and it's been
-                unbanned. On-site generation with SD3 is unsupported.{' '}
+                Licensing concerns associated Stable Diffusion 3 have been resolved and it&apos;s
+                been unbanned. On-site generation with SD3 is unsupported.{' '}
                 <Text
                   variant="link"
                   td="underline"

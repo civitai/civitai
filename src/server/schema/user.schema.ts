@@ -88,9 +88,9 @@ export const userPublicSettingsSchema = z.object({
 export const userUpdateSchema = z.object({
   id: z.number(),
   username: usernameInputSchema.optional(),
-  showNsfw: z.boolean().optional(),
-  blurNsfw: z.boolean().optional(),
-  browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
+  // showNsfw: z.boolean().optional(),
+  // blurNsfw: z.boolean().optional(),
+  // browsingLevel: z.number().min(0).max(allBrowsingLevelsFlag).optional(),
   email: z.string().email().optional(),
   image: z.string().nullish(),
   profilePicture: profilePictureSchema.nullish(),
@@ -195,16 +195,18 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
+export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
-  newsletterDialogLastSeenAt: z.date().nullish(),
+  newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   features: z.record(z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   airEmail: z.string().email().optional(),
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
-  cosmeticStoreLastViewed: z.date().nullish(),
+  cosmeticStoreLastViewed: z.coerce.date().nullish(),
+  allowAds: z.boolean().optional(),
   gallerySettings: modelGallerySettingsSchema
     .omit({ pinnedPosts: true, images: true })
     .partial()
@@ -223,6 +225,7 @@ export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
+  allowAds: z.boolean().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
@@ -264,3 +267,6 @@ export const userMeta = z.object({
   scores: userScoreMetaSchema.optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
+
+export type ComputeDeviceFingerprintInput = z.infer<typeof computeDeviceFingerprintSchema>;
+export const computeDeviceFingerprintSchema = z.object({ fingerprint: z.string() });

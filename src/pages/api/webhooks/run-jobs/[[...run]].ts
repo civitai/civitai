@@ -44,6 +44,7 @@ import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
+import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
@@ -108,6 +109,7 @@ export const jobs: Job[] = [
   confirmMutes,
   checkImageExistence,
   fullImageExistence,
+  rewardsAdImpressions,
 ];
 
 const log = createLogger('jobs', 'green');

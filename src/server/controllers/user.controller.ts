@@ -345,7 +345,6 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
-    showNsfw,
     username,
     source,
     landingPage,
@@ -390,7 +389,6 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        showNsfw,
         profilePicture: profilePicture
           ? {
               connectOrCreate: {
@@ -665,10 +663,14 @@ export const toggleFollowUserHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId } = ctx.user;
+    const { ip, fingerprint, user } = ctx;
+    const { id: userId } = user;
     const result = await toggleFollowUser({ ...input, userId });
     if (result) {
-      await firstDailyFollowReward.apply({ followingId: input.targetUserId, userId });
+      await firstDailyFollowReward.apply(
+        { followingId: input.targetUserId, userId },
+        { ip, fingerprint }
+      );
       ctx.track
         .userEngagement({
           type: 'Follow',
@@ -1288,7 +1290,7 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const settings = await getUserSettings(id);
 
     // Limits it to the input type
-    return settings as UserSettingsSchema;
+    return settings;
   } catch (error) {
     throw throwDbError(error);
   }

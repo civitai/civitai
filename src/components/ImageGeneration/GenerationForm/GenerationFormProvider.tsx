@@ -17,8 +17,10 @@ import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImag
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
+  SupportedBaseModel,
   getBaseModelFromResources,
   getBaseModelSetType,
+  getBaseModelSetTypes,
   getSizeFromAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
@@ -179,13 +181,12 @@ function formatGenerationData(data: GenerationData): PartialFormData {
         !resource.available
       )
         return false;
-      const baseModelSetKey = getBaseModelSetType(resource.baseModel);
-      return config.additionalResourceTypes.some((x) => {
-        const modelTypeMatches = x.type === resource.modelType;
-        const baseModelSetMatches = x.baseModelSet === baseModelSetKey;
-        const baseModelIncluded = x.baseModels?.includes(resource.baseModel as BaseModel);
-        return modelTypeMatches && (baseModelSetMatches || baseModelIncluded);
+      const baseModelSetKeys = getBaseModelSetTypes({
+        modelType: resource.modelType,
+        baseModel: resource.baseModel,
+        defaultType: baseModel as SupportedBaseModel,
       });
+      return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
     })
     .slice(0, 9);
 
@@ -274,7 +275,9 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
           });
 
-          setValues(runType === 'remix' ? data : removeEmpty(data));
+          setValues(
+            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources }
+          );
           break;
       }
 
@@ -311,6 +314,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       if (name === 'baseModel') {
         if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
           form.setValue('cfgScale', 3.5);
+          form.setValue('workflow', 'txt2img');
         }
 
         if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {

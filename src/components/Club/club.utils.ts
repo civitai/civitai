@@ -418,7 +418,7 @@ export const useMutateClub = () => {
     async onSuccess(_, { clubId }) {
       await queryUtils.buzz.getBuzzAccount.invalidate({
         accountId: clubId,
-        accountType: 'Club',
+        accountType: 'club',
       });
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },
@@ -444,7 +444,7 @@ export const useMutateClub = () => {
     async onSuccess(_, { clubId }) {
       await queryUtils.buzz.getBuzzAccount.invalidate({
         accountId: clubId,
-        accountType: 'Club',
+        accountType: 'club',
       });
       await queryUtils.buzz.getAccountTransactions.invalidate();
     },

@@ -97,6 +97,7 @@ import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
+import clsx from 'clsx';
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -800,7 +801,12 @@ export function AppHeader({
   );
 
   return (
-    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
+    <Header
+      height={HEADER_HEIGHT}
+      fixed={fixed}
+      zIndex={200}
+      className={clsx({ ['border-green-8 border-b-[3px]']: features.isGreen })}
+    >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -840,7 +846,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              <BrowsingModeIcon />
+              {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
@@ -1040,15 +1046,6 @@ export function AppHeader({
                           </ActionIcon>
                           {currentUser && (
                             <>
-                              {/* {currentUser?.showNsfw && (
-                            <BlurToggle iconProps={{ stroke: 1.5 }}>
-                              {({ icon, toggle }) => (
-                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                  {icon}
-                                </ActionIcon>
-                              )}
-                            </BlurToggle>
-                          )} */}
                               <Link href="/user/account">
                                 <ActionIcon
                                   variant="default"

@@ -196,7 +196,7 @@ export const saveItemHandler = async ({
   ctx: DeepNonNullable<Context>;
   input: AddCollectionItemInput;
 }) => {
-  const { user } = ctx;
+  const { user, ip, fingerprint } = ctx;
   try {
     const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
@@ -209,12 +209,8 @@ export const saveItemHandler = async ({
 
       if (entityId) {
         await collectedContentReward.apply(
-          {
-            collectorId: user.id,
-            entityType: input.type,
-            entityId,
-          },
-          ctx.ip
+          { collectorId: user.id, entityType: input.type, entityId },
+          { ip, fingerprint }
         );
       }
     }

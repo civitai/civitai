@@ -15,6 +15,7 @@ import {
   HomeStyleSegmentedControl,
 } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { IconVideo } from '@tabler/icons-react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type ProfileNavigationProps = {
   username: string;
@@ -27,6 +28,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const { data: userOverview } = trpc.userProfile.overview.useQuery({
     username,
   });
+  const { articles } = useFeatureFlags();
   const activePath = router.pathname.split('/').pop() || overviewPath;
 
   const baseUrl = `/user/${username}`;
@@ -61,6 +63,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       url: `${baseUrl}/articles`,
       icon: (props) => <IconPencilMinus {...props} />,
       count: numberWithCommas(userOverview?.articleCount),
+      disabled: !articles,
     },
     collections: {
       url: `${baseUrl}/collections`,

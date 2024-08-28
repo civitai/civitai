@@ -120,7 +120,7 @@ export const processClubMembershipRecurringPayments = createJob(
                   await createBuzzTransaction({
                     fromAccountId: clubMembership.userId,
                     toAccountId: clubMembership.clubId,
-                    toAccountType: 'Club',
+                    toAccountType: 'club',
                     amount: chargedAmount,
                     type: TransactionType.ClubMembership,
                     details: {

@@ -18,18 +18,18 @@ import {
   ClubSort,
   CollectionSort,
   ImageSort,
+  MarkerSort,
+  MarkerType,
   ModelSort,
   PostSort,
   QuestionSort,
   QuestionStatus,
   ThreadSort,
-  MarkerType,
-  MarkerSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
-import { removeEmpty } from '~/utils/object-helpers';
 import { getInfiniteClubSchema } from '~/server/schema/club.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -68,6 +68,7 @@ const imageFilterSchema = z.object({
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   notPublished: z.boolean().optional(),
+  scheduled: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
   tools: z.number().array().optional(),
@@ -287,6 +288,7 @@ const createFilterStore = () =>
   );
 
 const FiltersContext = createContext<FilterStore | null>(null);
+
 export function useFiltersContext<T>(selector: (state: StoreState) => T) {
   const store = useContext(FiltersContext);
   if (!store) throw new Error('Missing FiltersContext.Provider in the tree');

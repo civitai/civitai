@@ -49,6 +49,7 @@ import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export function ImagesAsPostsCard({
   data,
@@ -215,6 +216,8 @@ export function ImagesAsPostsCard({
     forceDisabled: !currentUser?.autoplayGifs,
   });
 
+  const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
+
   return (
     <div className={cx(pinned && classes.pinned)}>
       {pinned && (
@@ -232,6 +235,7 @@ export function ImagesAsPostsCard({
         height={height}
         ref={ref}
         className={cx(classes.card)}
+        frameDecoration={cosmetic}
       >
         {data.user.id !== -1 && (
           <Paper p="xs" radius={0}>

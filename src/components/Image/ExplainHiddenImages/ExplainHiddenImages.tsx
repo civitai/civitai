@@ -7,6 +7,7 @@ import {
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BrowsingLevel,
   browsingLevelLabels,
@@ -93,6 +94,7 @@ export function useExplainHiddenImages<
 >(images?: T[]) {
   const browsingLevel = useBrowsingLevelDebounced();
   const hiddenPreferences = useHiddenPreferencesContext();
+  const { canViewNsfw } = useFeatureFlags();
 
   return useMemo(() => {
     const browsingLevelBelowDict: Record<number, number> = {};
@@ -132,10 +134,11 @@ export function useExplainHiddenImages<
       hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
       hiddenAboveBrowsingLevel,
       hiddenByTags,
-      hasHidden:
-        !!hiddenBelowBrowsingLevel.length ||
-        !!hiddenAboveBrowsingLevel.length ||
-        !!hiddenByTags.length,
+      hasHidden: canViewNsfw
+        ? !!hiddenBelowBrowsingLevel.length ||
+          !!hiddenAboveBrowsingLevel.length ||
+          !!hiddenByTags.length
+        : false,
     };
   }, [browsingLevel, hiddenPreferences, images]);
 }

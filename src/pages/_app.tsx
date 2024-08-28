@@ -10,18 +10,17 @@ import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { init as linkifyInit, registerCustomProtocol } from 'linkifyjs';
-import type { NextPage } from 'next';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
 import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
-import React, { ReactElement, ReactNode } from 'react';
+import React, { ReactElement } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { CustomNextPage, InnerLayoutOptions } from '~/components/AppLayout/createPage';
+import { CustomNextPage } from '~/components/AppLayout/createPage';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
@@ -57,7 +56,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -218,12 +216,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-  const flags = getFeatureFlags({ user: session?.user });
+  const flags = getFeatureFlags({ user: session?.user, req: appContext.ctx?.req });
+  // console.log(flags);
 
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
-    (appContext.ctx.req as any)['flags'] = flags;
+    // (appContext.ctx.req as any)['flags'] = flags;
   }
 
   return {

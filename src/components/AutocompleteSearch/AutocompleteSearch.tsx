@@ -391,9 +391,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           maxDropdownHeight={280}
           defaultValue={targetData[0].value}
           // Ensure we disable search targets if they are not enabled
-          data={targetData
-            .filter((value) => (features.imageSearch ? true : value.value !== 'images'))
-            .filter((value) => (features.bounties ? true : value.value !== 'bounties'))}
+          data={targetData.filter(
+            ({ value }) =>
+              (features.imageSearch ? true : value !== 'images') &&
+              (features.bounties ? true : value !== 'bounties') &&
+              (features.articles ? true : value !== 'articles')
+          )}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           sx={{ flexShrink: 1 }}
           onChange={onTargetChange}

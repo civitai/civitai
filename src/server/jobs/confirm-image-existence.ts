@@ -29,15 +29,15 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
 
         // find them in the db
         const existingImages = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-        SELECT id, "nsfwLevel"
-        FROM "Image"
-        WHERE id in (${Prisma.join(batch)})
-      `;
+          SELECT id, "nsfwLevel"
+          FROM "Image"
+          WHERE id in (${Prisma.join(batch)})
+        `;
         const existingImagesIds = existingImages.map((i) => i.id);
 
         // delete ids that don't exist, or update ones that are blocked
         const deleteIds = batch.filter((id) => !existingImagesIds.includes(id));
-        const updateIds = existingImages.filter((i) =>
+        const updateData = existingImages.filter((i) =>
           [NsfwLevel.Blocked, 0].includes(i.nsfwLevel)
         );
 
@@ -51,10 +51,10 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
             client,
           });
         }
-        if (updateIds.length) {
+        if (updateData.length) {
           await updateDocs({
             indexName: METRICS_IMAGES_SEARCH_INDEX,
-            documents: existingImages,
+            documents: updateData,
             client,
           });
         }

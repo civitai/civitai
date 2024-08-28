@@ -29,23 +29,6 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
 
   return (
     <>
-      {isPony && modelType !== 'Checkpoint' && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          <Text>
-            This asset is designed to work best with the{' '}
-            <Text
-              component="a"
-              variant="link"
-              td="underline"
-              href="/models/257749/pony-diffusion-v6-xl"
-              target="_blank"
-            >
-              Pony Diffusion XL model
-            </Text>
-            , it will work with other SDXL models but may not look as intended.
-          </Text>
-        </AlertWithIcon>
-      )}
       {onlyPickle && (
         <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
           <Text>

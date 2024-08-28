@@ -7,6 +7,10 @@ import {
 } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
+import {
+  MAX_DONATION_GOAL,
+  MIN_DONATION_GOAL,
+} from '~/components/Model/ModelVersions/model-version.utils';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
@@ -161,12 +165,12 @@ export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAcce
 export const modelVersionEarlyAccessConfigSchema = z.object({
   timeframe: z.number(),
   chargeForDownload: z.boolean().default(false),
-  downloadPrice: z.number().optional(),
+  downloadPrice: z.number().min(100).max(MAX_DONATION_GOAL).optional(),
   chargeForGeneration: z.boolean().default(false),
-  generationPrice: z.number().optional(),
-  generationTrialLimit: z.number().default(10),
+  generationPrice: z.number().min(50).optional(),
+  generationTrialLimit: z.number().max(1000).default(10),
   donationGoalEnabled: z.boolean().default(false),
-  donationGoal: z.number().optional(),
+  donationGoal: z.number().min(MIN_DONATION_GOAL).max(MAX_DONATION_GOAL).optional(),
   donationGoalId: z.number().optional(),
   originalPublishedAt: z.date().optional(),
 });

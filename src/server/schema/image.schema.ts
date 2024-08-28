@@ -308,11 +308,12 @@ export const getInfiniteImagesSchema = baseQuerySchema
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
     notPublished: z.coerce.boolean().optional(),
+    scheduled: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
     tools: z.number().array().optional(),
     techniques: z.number().array().optional(),
     baseModels: z.enum(constants.baseModels).array().optional(),
-    useIndex: z.boolean().optional(),
+    useIndex: z.boolean().nullish(),
   })
   .transform((value) => {
     if (value.withTags) {

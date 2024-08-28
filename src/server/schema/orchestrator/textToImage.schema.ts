@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isProd } from '~/env/other';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 
@@ -33,7 +34,12 @@ export const textToImageParamsSchema = z.object({
   height: z.number(),
   // temp props?
   denoise: z.number().max(1).optional(),
-  image: z.string().startsWith('https://orchestration.civitai.com').optional(),
+  image: z
+    .string()
+    .startsWith(
+      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
+    )
+    .optional(),
   upscale: z.number().max(3).optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),

@@ -312,7 +312,7 @@ export async function bulkSetReportStatus({
     for (const report of prepReports) {
       await Promise.all(
         report.userIds.map((userId) =>
-          reportAcceptedReward.apply({ userId, reportId: report.id }, ip)
+          reportAcceptedReward.apply({ userId, reportId: report.id }, { ip })
         )
       );
     }

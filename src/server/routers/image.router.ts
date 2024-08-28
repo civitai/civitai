@@ -59,6 +59,7 @@ import {
   getImageDetail,
   getImageGenerationData,
   getImagesByUserIdForModeration,
+  getImagesPendingIngestion,
 } from '~/server/services/image.service';
 import { CacheTTL } from '~/server/common/constants';
 import { z } from 'zod';
@@ -192,5 +193,7 @@ export const imageRouter = router({
   getImagesByUserIdForModeration: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
+
+  getAllImagesPendingIngestion: moderatorProcedure.query(getImagesPendingIngestion),
   // #endregion
 });

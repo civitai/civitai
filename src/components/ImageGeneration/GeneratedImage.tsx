@@ -236,7 +236,7 @@ export function GeneratedImage({
       {inView && (
         <>
           <div
-            className={`relative flex flex-1 cursor-pointer flex-col items-center justify-center after:absolute after:inset-0 after:size-full after:shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]`}
+            className="relative flex flex-1 cursor-pointer flex-col items-center justify-center"
             onClick={handleImageClick}
             onMouseDown={(e) => {
               if (e.button === 1) return handleAuxClick();
@@ -251,6 +251,7 @@ export function GeneratedImage({
                 if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               }}
             />
+            <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
           <label className="absolute left-3 top-3 ">
             <Checkbox

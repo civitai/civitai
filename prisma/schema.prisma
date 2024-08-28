@@ -272,6 +272,7 @@ model User {
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
+  adTokens                   AdToken[]
 }
 
 model CustomerSubscription {
@@ -1665,6 +1666,15 @@ model ApiKey {
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
   type      ApiKeyType @default(User)
+  expiresAt DateTime?
+}
+
+model AdToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
   expiresAt DateTime?
 }
 

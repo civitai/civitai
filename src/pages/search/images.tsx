@@ -95,7 +95,7 @@ function RenderFilters() {
         title="Filter by Base Model"
         sortBy={['name']}
         attribute="baseModel"
-        limit={20}
+        limit={30}
       />
     </>
   );

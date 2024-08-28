@@ -20,6 +20,9 @@ type Props = BadgeProps & {
   formatter?: (value: number) => string;
   displayCurrency?: boolean;
   loading?: boolean;
+  iconProps?: IconProps;
+  textColor?: string;
+  innerRef?: React.ForwardedRef<HTMLDivElement>;
 };
 
 const iconSize: Record<MantineSize, number> = {
@@ -38,16 +41,20 @@ export function CurrencyBadge({
   sx,
   children,
   loading,
+  iconProps,
+  textColor,
+  innerRef,
   ...badgeProps
 }: Props) {
   const value = formatCurrencyForDisplay(unitAmount, currency);
   const theme = useMantineTheme();
   const Icon = CurrencyConfig[currency].icon;
   const config = CurrencyConfig[currency];
-  const colorString = config.color(theme);
+  const colorString = textColor || config.color(theme);
 
   return (
     <Badge
+      ref={innerRef}
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       color="gray"
       radius="xl"
@@ -57,7 +64,7 @@ export function CurrencyBadge({
         fontSize: 12,
         fontWeight: 600,
         lineHeight: 1.5,
-        color: config.color ? config.color(theme) : theme.colors.accent[5],
+        color: colorString,
         ...(sx ? (typeof sx === 'function' ? sx(theme) : sx) : {}),
       }}
       {...badgeProps}
@@ -66,6 +73,7 @@ export function CurrencyBadge({
         <Icon
           size={iconSize[badgeProps.size ?? 'sm']}
           fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
+          {...iconProps}
         />
         {loading && <Loader size="xs" variant="dots" color={colorString} />}
         {!loading && (

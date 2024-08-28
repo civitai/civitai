@@ -75,6 +75,7 @@ export const createPostHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { ip, fingerprint } = ctx;
     const post = await createPost({ userId: ctx.user.id, ...input });
     const isPublished = !!post.publishedAt;
     const isScheduled = isPublished && dayjs(post.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future
@@ -90,11 +91,8 @@ export const createPostHandler = async ({
 
     if (isPublished && !isScheduled) {
       await firstDailyPostReward.apply(
-        {
-          postId: post.id,
-          posterId: post.user.id,
-        },
-        ctx.ip
+        { postId: post.id, posterId: post.user.id },
+        { ip, fingerprint }
       );
 
       await ctx.track.post({
@@ -184,12 +182,8 @@ export const updatePostHandler = async ({
         const images =
           collection.type === CollectionType.Image
             ? await dbWrite.image.findMany({
-                where: {
-                  postId: post.id,
-                },
-                select: {
-                  id: true,
-                },
+                where: { postId: post.id },
+                select: { id: true },
               })
             : [];
 
@@ -315,7 +309,7 @@ export const updatePostHandler = async ({
             modelVersionId: updatedPost.modelVersionId,
             posterId: updatedPost.userId,
           },
-          ctx.ip
+          { ip: ctx.ip, fingerprint: ctx.fingerprint }
         );
       }
 
@@ -325,7 +319,7 @@ export const updatePostHandler = async ({
           postId: updatedPost.id,
           posterId: updatedPost.userId,
         },
-        ctx.ip
+        { ip: ctx.ip, fingerprint: ctx.fingerprint }
       );
 
       if (!isScheduled) {

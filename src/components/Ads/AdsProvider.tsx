@@ -1,124 +1,158 @@
-import React, { createContext, useContext, useState } from 'react';
-
-import { NsfwLevel } from '~/server/common/enums';
-import { useGenerationStore } from '~/store/generation.store';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { env } from '~/env/client.mjs';
-import { isProd } from '~/env/other';
-import Script from 'next/script';
-import { useConsentManager } from '~/components/Ads/ads.utils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import Script from 'next/script';
+import { isProd } from '~/env/other';
+// const isProd = true;
 
-type AdProvider = 'ascendeum' | 'exoclick' | 'adsense';
-const adProviders: AdProvider[] = ['ascendeum'];
-const AscendeumAdsContext = createContext<{
-  adsBlocked: boolean;
-  nsfw: boolean;
-  nsfwOverride?: boolean;
+type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
+const adProviders: AdProvider[] = ['pubgalaxy'];
+
+const AdsContext = createContext<{
+  adsBlocked?: boolean;
   adsEnabled: boolean;
   username?: string;
   isMember: boolean;
-  enabled: boolean;
   providers: readonly string[];
-  cookieConsent: boolean;
 } | null>(null);
 
 export function useAdsContext() {
-  const context = useContext(AscendeumAdsContext);
-  if (!context) throw new Error('missing AscendumAdsProvider');
+  const context = useContext(AdsContext);
+  if (!context) throw new Error('missing AdsProvider');
   return context;
 }
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState(false);
+  const [adsBlocked, setAdsBlocked] = useState<boolean>(true);
   const currentUser = useCurrentUser();
-  const isMember = !!currentUser?.isMember;
-  // const enabled = env.NEXT_PUBLIC_ADS;
-  const enabled = false;
-  const adsEnabled = enabled && !isMember;
-  // const { targeting: cookieConsent = false } = useConsentManager();
-  const cookieConsent = true;
-
-  // keep track of generation panel views that are considered nsfw
-  const nsfwOverride = useGenerationStore(({ view, opened }) => {
-    if (!opened) return;
-    else if (view === 'queue' || view === 'feed') return true;
-  });
 
   // derived value from browsingMode and nsfwOverride
   const browsingLevel = useBrowsingLevelDebounced();
-  const nsfw = browsingLevel > NsfwLevel.PG;
+  const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
+  const isMember = currentUser?.isMember ?? false;
+  const adsEnabled = currentUser?.allowAds || !isMember;
+  // const [cmpLoaded, setCmpLoaded] = useState(false);
 
-  // const readyRef = useRef(false);
+  // const readyRef = useRef<boolean>();
   // useEffect(() => {
-  //   if (!readyRef.current && adsEnabled && cookieConsent) {
+  //   if (!readyRef.current && adsEnabled) {
   //     readyRef.current = true;
-  //     checkAdsBlocked((blocked) => {
-  //       // setAdsBlocked(blocked);
-  //       setAdsBlocked(!isProd ? true : blocked);
-  //     });
+  //     if (!isProd) setAdsBlocked(true);
+  //     else {
+  //       checkAdsBlocked((blocked) => {
+  //         setAdsBlocked(blocked);
+  //       });
+  //     }
   //   }
-  // }, [adsEnabled, cookieConsent]);
+  // }, [adsEnabled]);
+
+  function handleCmpLoaded() {
+    // setCmpLoaded(true);
+    if (isProd) setAdsBlocked(false);
+  }
 
   return (
-    <AscendeumAdsContext.Provider
+    <AdsContext.Provider
       value={{
-        adsBlocked,
-        nsfw,
-        adsEnabled: adsEnabled,
+        adsBlocked: adsBlocked,
+        adsEnabled: adsEnabled && !nsfw,
         username: currentUser?.username,
-        nsfwOverride,
-        isMember,
-        enabled,
-        cookieConsent,
         providers: adProviders,
+        isMember,
       }}
     >
-      {adsEnabled &&
-        cookieConsent &&
-        adProviders.map((provider) => (
-          <LoadProviderScript
-            key={provider}
-            provider={provider}
-            onError={() => setAdsBlocked(true)}
-          />
-        ))}
       {children}
-    </AscendeumAdsContext.Provider>
+      {adsEnabled && isProd && (
+        <>
+          <Script src="https://cmp.uniconsent.com/v2/stub.min.js" onLoad={handleCmpLoaded} />
+          <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
+          {!adsBlocked && (
+            <>
+              <Script
+                id="ads-start"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
+                window.googletag = window.googletag || {};
+                window.googletag.cmd = window.googletag.cmd || [];
+                window.googletag.cmd.push(function () {
+                  window.googletag.pubads().enableAsyncRendering();
+                  window.googletag.pubads().disableInitialLoad();
+                });
+                (adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1;
+              `,
+                }}
+              />
+              <Script
+                id="ads-init"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
+              __tcfapi("addEventListener", 2, function(tcData, success) {
+                if (success && tcData.unicLoad  === true) {
+                  if(!window._initAds) {
+                    window._initAds = true;
+
+                    var script = document.createElement('script');
+                    script.async = true;
+                    script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
+                    document.head.appendChild(script);
+
+                    var script = document.createElement('script');
+                    script.async = true;
+                    script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
+                    document.head.appendChild(script);
+                  }
+                }
+              });
+            `,
+                }}
+              />
+              <TcfapiSuccess
+                onSuccess={(success) => {
+                  if (success !== undefined) setAdsBlocked(!success);
+                }}
+              />
+            </>
+          )}
+          <div id="uniconsent-config" />
+        </>
+      )}
+    </AdsContext.Provider>
   );
 }
 
-function LoadProviderScript({ provider, onError }: { provider: AdProvider; onError: () => void }) {
-  switch (provider) {
-    case 'ascendeum':
-      return <Script src="https://ads.civitai.com/asc.civitai.js" onError={onError} />;
-    case 'adsense':
-      return (
-        <Script
-          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6320044818993728"
-          onError={onError}
-        />
-      );
-    case 'exoclick':
-    default:
-      return null;
-  }
+function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
+  useEffect(() => {
+    const callback = (data: any, success: boolean) => onSuccess(success);
+
+    if (!window.__tcfapi) onSuccess(false);
+
+    window.__tcfapi('addEventListener', 2, callback);
+
+    return () => {
+      window.__tcfapi('removeEventListener', 2, callback);
+    };
+  }, []);
+
+  return null;
 }
 
-const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
-const checkAdsBlocked = (callback: (blocked: boolean) => void) => {
-  fetch(REQUEST_URL, {
-    method: 'HEAD',
-    mode: 'no-cors',
-  })
-    // ads are blocked if request is redirected
-    // (we assume the REQUEST_URL doesn't use redirections)
-    .then((response) => {
-      callback(response.redirected);
-    })
-    // ads are blocked if request fails
-    // (we do not consider connction problems)
-    .catch(() => {
-      callback(true);
-    });
-};
+// const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
+// const checkAdsBlocked = (callback: (blocked: boolean) => void) => {
+//   fetch(REQUEST_URL, {
+//     method: 'HEAD',
+//     mode: 'no-cors',
+//   })
+//     // ads are blocked if request is redirected
+//     // (we assume the REQUEST_URL doesn't use redirections)
+//     .then((response) => {
+//       callback(response.redirected);
+//     })
+//     // ads are blocked if request fails
+//     // (we do not consider connction problems)
+//     .catch(() => {
+//       callback(true);
+//     });
+// };
