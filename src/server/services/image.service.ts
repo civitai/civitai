@@ -121,7 +121,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { NSFWLevel } from '@civitai/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1539,13 +1538,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     excludeCrossPosts,
     hidden,
     followed,
-    reviewId, // missing
-    modelId, // missing
-    prioritizedUserIds,
     limit = 100,
     offset,
     entry,
     //
+    reviewId,
+    modelId,
+    prioritizedUserIds,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel } = input;
@@ -1686,9 +1685,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   if (afterDate) filters.push(makeMeiliImageSearchFilter('sortAtUnix', `> ${afterDate.getTime()}`));
 
   // nb: this is for dev 08-19
-  if (!isProd) {
-    // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
-  }
+  // if (!isProd) {
+  // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
+  // }
 
   // TODO log more of these
   // Log properties we don't support yet
@@ -1727,8 +1726,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
   sorts.push(searchSort);
   sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
-
-  console.log(filters);
 
   const request: SearchParams = {
     filter: filters.join(' AND '),
