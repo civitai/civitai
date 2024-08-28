@@ -511,7 +511,7 @@ export function Collection({
       </Popover>
     ) : null;
 
-  const nsfw = collection ? !getIsSafeBrowsingLevel(collection.nsfwLevel) : false;
+  if (!collection) return null;
 
   return (
     <>
@@ -529,7 +529,7 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield enabled={nsfw && !currentUser}>
+      <SensitiveShield contentNsfwLevel={collection.nsfwLevel}>
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}

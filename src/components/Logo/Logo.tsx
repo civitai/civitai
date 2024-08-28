@@ -3,9 +3,14 @@ import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
 import { LiveNowIndicator } from '~/components/Social/LiveNow';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const gradients = {
   blue: {
+    inner: ['#081692', '#1E043C'],
+    outer: ['#1284F7', '#0A20C9'],
+  },
+  green: {
     inner: ['#081692', '#1E043C'],
     outer: ['#1284F7', '#0A20C9'],
   },
@@ -31,8 +36,9 @@ const gradients = {
   },
 };
 
-export function Logo({ ...props }: LogoProps) {
-  const { classes, cx } = useStyles();
+export function Logo() {
+  const { isGreen, isBlue, isRed } = useFeatureFlags();
+  const { classes, cx } = useStyles({ color: isGreen ? 'green' : isBlue ? 'blue' : 'red' });
   const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
   const holiday = useMemo(() => {
     if (!showHoliday) return null;
@@ -61,7 +67,7 @@ export function Logo({ ...props }: LogoProps) {
   const outerGradient = holiday ? gradients[holiday].outer : gradients.blue.outer;
 
   return (
-    <Box className={cx(classes.root, holidayClass)} {...props}>
+    <div className={cx(classes.root, holidayClass)}>
       {holiday === 'halloween' && (
         <img src="/images/holiday/ghost.png" alt="ghost" className={classes.flyOver} />
       )}
@@ -152,7 +158,7 @@ export function Logo({ ...props }: LogoProps) {
         </g>
       </svg>
       <LiveNowIndicator className={classes.liveNow} />
-    </Box>
+    </div>
   );
 }
 
@@ -160,7 +166,7 @@ type LogoProps = {
   size?: 'sm' | 'md' | 'lg' | 'xl';
 } & BoxProps;
 
-const useStyles = createStyles((theme, _, getRef) => ({
+const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'red' }, getRef) => ({
   root: {
     height: 30,
     position: 'relative',
@@ -188,12 +194,12 @@ const useStyles = createStyles((theme, _, getRef) => ({
 
   ai: {
     ref: getRef('ai'),
-    fill: theme.colors.blue[8],
+    fill: theme.colors[color][8],
   },
 
   accent: {
     ref: getRef('accent'),
-    fill: theme.colors.blue[8],
+    fill: theme.colors[color][8],
   },
 
   text: {

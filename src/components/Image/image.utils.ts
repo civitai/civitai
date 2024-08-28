@@ -38,7 +38,6 @@ export const imagesQueryParamSchema = z
     modelId: numericString(),
     modelVersionId: numericString(),
     notPublished: booleanString(),
-    notScheduled: booleanString(),
     period: z.nativeEnum(MetricTimeframe),
     periodMode: periodModeSchema,
     postId: numericString(),
@@ -47,6 +46,7 @@ export const imagesQueryParamSchema = z
       (val) => (Array.isArray(val) ? val : [val]),
       z.array(z.nativeEnum(ReviewReactions))
     ),
+    scheduled: booleanString(),
     section: z.enum(imageSections),
     sort: z.nativeEnum(ImageSort),
     tags: numericStringArray(),

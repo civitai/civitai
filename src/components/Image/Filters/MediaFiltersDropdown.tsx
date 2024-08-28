@@ -115,7 +115,7 @@ export function MediaFiltersDropdown({
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
-    (mergedFilters.notScheduled ? 1 : 0) +
+    (mergedFilters.scheduled ? 1 : 0) +
     (!!mergedFilters.tools?.length ? 1 : 0) +
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
@@ -128,7 +128,7 @@ export function MediaFiltersDropdown({
       hidden: false,
       fromPlatform: false,
       notPublished: false,
-      notScheduled: false,
+      scheduled: false,
       tools: [],
       techniques: [],
       period: MetricTimeframe.AllTime,
@@ -246,7 +246,7 @@ export function MediaFiltersDropdown({
           </>
         )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <Group spacing={8}>
+        <div className="flex gap-2">
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
@@ -266,33 +266,37 @@ export function MediaFiltersDropdown({
             </>
           )}
           {filterType !== 'videos' && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.fromPlatform}
-              onChange={(checked) => handleChange({ fromPlatform: checked })}
-            >
-              Made On-site
-            </Chip>
-          )}
-          {isModerator && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.notPublished}
-              onChange={(checked) => handleChange({ notPublished: checked })}
-            >
-              Not Published
-            </Chip>
-          )}
-          {isModerator && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.notScheduled}
-              onChange={(checked) => handleChange({ notScheduled: checked })}
-            >
-              Not Scheduled
-            </Chip>
-          )}
-        </Group>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.fromPlatform}
+            onChange={(checked) => handleChange({ fromPlatform: checked })}
+          >
+            Made On-site
+          </Chip>
+            )}
+        </div>
+
+        {isModerator && (
+          <>
+            <Divider label="Moderator" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <div className="flex gap-2">
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.notPublished}
+                onChange={(checked) => handleChange({ notPublished: checked })}
+              >
+                Not Published
+              </Chip>
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.scheduled}
+                onChange={(checked) => handleChange({ scheduled: checked })}
+              >
+                Scheduled
+              </Chip>
+            </div>
+          </>
+        )}
 
         <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
         <ToolMultiSelect

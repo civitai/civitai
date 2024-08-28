@@ -8,6 +8,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import semver from 'semver';
 import { NextApiRequest } from 'next';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -30,6 +31,7 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   return next({ ctx: { user, acceptableOrigin } });
 });
 
+// TODO - figure out a better way to do this
 async function needsUpdate(req?: NextApiRequest) {
   const type = req?.headers['x-client'] as string;
   const version = req?.headers['x-client-version'] as string;
@@ -48,7 +50,7 @@ async function needsUpdate(req?: NextApiRequest) {
   return false;
 }
 
-export const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
+const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   // if (await needsUpdate(ctx.req)) {
   //   throw new TRPCError({
   //     code: 'PRECONDITION_FAILED',
@@ -64,7 +66,20 @@ export const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   return result;
 });
 
-export const publicProcedure = t.procedure.use(isAcceptableOrigin).use(enforceClientVersion);
+const applyDomainFeature = t.middleware((options) => {
+  const { next, ctx } = options;
+  const input = (options.rawInput ?? {}) as { browsingLevel?: number };
+
+  if (input.browsingLevel)
+    input.browsingLevel = ctx.features.canViewNsfw ? input.browsingLevel : publicBrowsingLevelsFlag;
+
+  return next();
+});
+
+export const publicProcedure = t.procedure
+  .use(isAcceptableOrigin)
+  .use(enforceClientVersion)
+  .use(applyDomainFeature);
 
 /**
  * Reusable middleware to ensure

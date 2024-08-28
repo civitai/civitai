@@ -56,6 +56,15 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
 
   return { blockedFor: [], success: true };
 };
+
+const expressions = nsfwWords.map((word) => new RegExp(word, 'i'));
+export function hasNsfwWords(text?: string | null) {
+  if (!text) return false;
+  for (const expression of expressions) {
+    if (expression.test(text)) return true;
+  }
+  return false;
+}
 // #endregion
 
 // #region [minorCheck]

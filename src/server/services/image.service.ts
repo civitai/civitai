@@ -104,6 +104,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -120,6 +121,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { NSFWLevel } from '@civitai/client';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1344,7 +1346,7 @@ export const getAllImagesIndex = async (
   //   techniques,
   //   tags,
   //   notPublished,
-  //   notScheduled,
+  //   scheduled,
   //   withMeta: hasMeta,
   //   excludedUserIds,
   //   excludeCrossPosts,
@@ -1523,7 +1525,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     withMeta,
     fromPlatform,
     notPublished,
-    notScheduled,
+    scheduled,
     userId,
     tags,
     tools,
@@ -1641,8 +1643,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (notScheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+    else if (scheduled)
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
@@ -1749,12 +1751,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       nextCursor = !entry ? results.hits[0]?.sortAtUnix : entry;
     }
 
+    const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
     const filtered = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-      return hit.userId === currentUserId || isModerator;
+      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
     // TODO maybe grab more if the number is now too low?
@@ -4088,12 +4091,17 @@ export async function bulkRemoveBlockedImages({
 }
 
 export async function getImagesPendingIngestion() {
+  const date = new Date();
+  date.setDate(date.getDate() - 5);
   return await dbRead.image.findMany({
-    where: { nsfwLevel: 0 },
+    where: { nsfwLevel: 0, ingestion: 'Pending', createdAt: { gt: date } },
     select: {
       id: true,
       name: true,
       url: true,
+      createdAt: true,
+      metadata: true,
     },
+    orderBy: { id: 'desc' },
   });
 }

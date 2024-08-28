@@ -62,6 +62,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
+  console.log({ image });
+
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
     forceDisabled: !currentUser?.autoplayGifs,

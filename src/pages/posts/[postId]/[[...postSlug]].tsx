@@ -17,7 +17,7 @@ export default function PostDetailPage({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ctx, ssg, browsingLevel }) => {
+  resolver: async ({ ctx, ssg }) => {
     const params = (ctx.params ?? {}) as { postId: string };
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
@@ -25,7 +25,6 @@ export const getServerSideProps = createServerSideProps({
     await ssg?.post.get.prefetch({ id: postId });
     await ssg?.image.getInfinite.prefetchInfinite({
       postId,
-      browsingLevel,
       pending: true,
     });
     await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });

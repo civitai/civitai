@@ -6,8 +6,7 @@ import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.type
 import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
-import { Text } from '@mantine/core';
-
+import { Paper, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
