@@ -5,7 +5,7 @@ import { postgresSlugify } from '~/utils/string-helpers';
 
 export function useCurrentUser() {
   const user = useCivitaiSessionContext();
-  return !isEmpty(user) ? user : null;
+  return user;
 }
 
 export function useCurrentUserRequired() {

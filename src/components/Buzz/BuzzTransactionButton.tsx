@@ -87,7 +87,10 @@ export function BuzzTransactionButton({
 
   const hasCost = buzzAmount > 0;
   const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
-  const buttonColor = meetsTypeRequiredAmount ? 'blue.4' : 'yellow.7';
+  const buttonColor =
+    meetsTypeRequiredAmount && transactionType === 'Generation'
+      ? theme.colors.blue[4]
+      : theme.colors.yellow[7];
 
   return (
     <Button
@@ -119,7 +122,7 @@ export function BuzzTransactionButton({
             pl={4}
             pr={8}
             loading={loading}
-            textColor={meetsTypeRequiredAmount ? theme.colors.blue[4] : theme.colors.yellow[7]}
+            textColor={buttonColor}
             color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
           >
             {!hasRequiredAmount(buzzAmount) && (
