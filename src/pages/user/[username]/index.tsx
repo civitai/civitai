@@ -6,8 +6,8 @@ import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import {
-  ProfileSectionComponent,
   getAllAvailableProfileSections,
+  ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
@@ -104,5 +104,6 @@ function ProfileOverview() {
     </>
   );
 }
+
 setPageOptions(ProfileOverview, { innerLayout: UserProfileLayout });
 export default ProfileOverview;

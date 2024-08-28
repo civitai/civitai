@@ -10,7 +10,6 @@ import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
 import { constants } from '~/server/common/constants';
 import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
-import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
 
 const stringToNumber = z.coerce.number().optional();
@@ -266,9 +265,40 @@ export type ImageInclude = z.infer<typeof imageInclude>;
 export type GetInfiniteImagesInput = z.input<typeof getInfiniteImagesSchema>;
 export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
+// faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
-    limit: z.number().min(0).max(200).default(100),
+    // - from imagesQueryParamSchema
+    baseModels: z.enum(constants.baseModels).array().optional(),
+    collectionId: z.number().optional(),
+    collectionTagId: z.number().optional(),
+    excludeCrossPosts: z.boolean().optional(),
+    followed: z.boolean().optional(),
+    fromPlatform: z.coerce.boolean().optional(),
+    hidden: z.boolean().optional(),
+    limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
+    modelId: z.number().optional(),
+    modelVersionId: z.number().optional(),
+    notPublished: z.coerce.boolean().optional(),
+    period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
+    periodMode: periodModeSchema,
+    postId: z.number().optional(),
+    prioritizedUserIds: z.array(z.number()).optional(),
+    reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
+    // section: z.enum(imageSections),
+    scheduled: z.coerce.boolean().optional(),
+    sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
+    tags: z.array(z.number()).optional(),
+    techniques: z.number().array().optional(),
+    tools: z.number().array().optional(),
+    types: z.array(z.nativeEnum(MediaType)).optional(),
+    useIndex: z.boolean().nullish(),
+    userId: z.number().optional(),
+    // username: zc.usernameValidationSchema.optional(),
+    // view: z.enum(['categories', 'feed']),
+    withMeta: z.boolean().optional(),
+
+    // - additional
     cursor: z
       .union([z.bigint(), z.number(), z.string(), z.date()])
       .transform((val) =>
@@ -277,43 +307,19 @@ export const getInfiniteImagesSchema = baseQuerySchema
           : val
       )
       .optional(),
-    skip: z.number().optional(),
-    postId: z.number().optional(),
-    postIds: z.number().array().optional(),
-    collectionId: z.number().optional(),
-    collectionTagId: z.number().optional(),
-    modelId: z.number().optional(),
-    modelVersionId: z.number().optional(),
-    imageId: z.number().optional(),
-    reviewId: z.number().optional(),
-    username: zc.usernameValidationSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
-    prioritizedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
-    period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
-    periodMode: periodModeSchema,
-    sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
-    tags: z.array(z.number()).optional(),
     generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-    withTags: z.boolean().optional(),
-    include: z.array(imageInclude).optional().default(['cosmetics']),
-    excludeCrossPosts: z.boolean().optional(),
-    reactions: z.array(z.nativeEnum(ReviewReactions)).optional(),
     ids: z.array(z.number()).optional(),
+    imageId: z.number().optional(),
+    include: z.array(imageInclude).optional().default(['cosmetics']),
     includeBaseModel: z.boolean().optional(),
-    types: z.array(z.nativeEnum(MediaType)).optional(),
-    withMeta: z.boolean().optional(),
-    hidden: z.boolean().optional(),
-    followed: z.boolean().optional(),
-    fromPlatform: z.coerce.boolean().optional(),
-    notPublished: z.coerce.boolean().optional(),
-    scheduled: z.coerce.boolean().optional(),
     pending: z.boolean().optional(),
-    tools: z.number().array().optional(),
-    techniques: z.number().array().optional(),
-    baseModels: z.enum(constants.baseModels).array().optional(),
-    useIndex: z.boolean().nullish(),
+    postIds: z.number().array().optional(),
+    reviewId: z.number().optional(),
+    skip: z.number().optional(),
+    withTags: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

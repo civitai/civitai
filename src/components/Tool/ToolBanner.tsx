@@ -1,13 +1,17 @@
-import { Button, Title, Text, useMantineTheme } from '@mantine/core';
+import { Button, Text, Title, useMantineTheme } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { useImageQueryParams } from '~/components/Image/image.utils';
+import { useImageFilters } from '~/components/Image/image.utils';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { FilterKeys } from '~/providers/FiltersProvider';
 import { trpc } from '~/utils/trpc';
 
-export function ToolBanner() {
-  const { query } = useImageQueryParams();
-  const { tools: toolIds } = query;
+export function ToolBanner({
+  filterType = 'images',
+}: {
+  filterType?: FilterKeys<'images' | 'videos'>;
+}) {
+  const { tools: toolIds } = useImageFilters(filterType);
   const selectedId = toolIds?.[0];
 
   const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length });

@@ -1,6 +1,5 @@
 import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
-import { HtmlContext } from 'next/dist/shared/lib/html-context';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 type VideoProps = React.DetailedHTMLProps<
