@@ -5,6 +5,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserMeta } from '~/server/schema/user.schema';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -17,6 +18,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   const { useStore } = useBrowsingModeContext();
   const browsingModeState = useStore((state) => state);
   const { canViewNsfw } = useFeatureFlags();
+  useDomainSync(data?.user as SessionUser);
 
   const value = useMemo(() => {
     if (!data?.user) return null;
