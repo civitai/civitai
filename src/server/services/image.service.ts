@@ -4091,7 +4091,7 @@ export async function getImagesPendingIngestion() {
   const date = new Date();
   date.setDate(date.getDate() - 5);
   return await dbRead.image.findMany({
-    where: { nsfwLevel: 0, ingestion: 'Pending', createdAt: { gt: date } },
+    where: { ingestion: 'Pending', createdAt: { gt: date } },
     select: {
       id: true,
       name: true,
