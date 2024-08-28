@@ -95,12 +95,10 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   imageIndexFeed: ['granted', 'mod'],
-  isGreen: ['public'],
+  isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: [],
-  // allow users to view models/bounties with marked as poi
-  poi: [],
+  canViewNsfw: ['public', 'blue', 'red'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
@@ -109,10 +107,8 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 const serverDomainMap: Record<ServerAvailability, string | undefined> = {
   green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: undefined,
-  red: undefined,
-  // blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE, // TODO - uncomment
-  // red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED, // TODO - uncomment
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 
 type FeatureAccessContext = {
