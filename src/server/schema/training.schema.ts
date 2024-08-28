@@ -32,6 +32,7 @@ const trainingEtaSchema = z.object({
   stepMultiplier: z.number().min(1),
   expStrength: z.number().min(0),
   expStart: z.number().min(1),
+  resolutionBase: z.number().min(512),
 });
 const trainingCostSchema = z.object({
   modelCoefficients: z.object({
@@ -56,6 +57,7 @@ export const defaultTrainingCost: TrainingCost = {
       stepMultiplier: 1.73,
       expStrength: 1.55,
       expStart: 3000,
+      resolutionBase: 512,
     },
     sdxl: {
       base: 30,
@@ -63,14 +65,15 @@ export const defaultTrainingCost: TrainingCost = {
       stepMultiplier: 1.73,
       expStrength: 1.1,
       expStart: 2200,
+      resolutionBase: 1024,
     },
-    // TODO what values?
     flux: {
       base: 25,
       steps: 0.017,
       stepMultiplier: 1.73,
       expStrength: 1.55,
       expStart: 3000,
+      resolutionBase: 512,
     },
   },
   hourlyCost: 0.44,

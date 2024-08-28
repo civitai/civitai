@@ -14,10 +14,12 @@ export const calcEta = ({
   cost,
   baseModel: model,
   targetSteps: steps,
+  resolution,
 }: {
   cost: TrainingCost;
   baseModel: TrainingBaseModelType;
   targetSteps: number;
+  resolution: number;
 }) => {
   if (!model) return;
   if (!trainingBaseModelType.includes(model)) {
@@ -25,10 +27,13 @@ export const calcEta = ({
   }
 
   const modelCoeffs = cost.modelCoefficients[model];
+  const resolutionCoeff = Math.max(1, resolution / modelCoeffs.resolutionBase);
+
   const computedEta =
-    modelCoeffs.base +
-    modelCoeffs.steps * modelCoeffs.stepMultiplier * steps +
-    Math.E ** ((modelCoeffs.expStrength * steps) / modelCoeffs.expStart);
+    (modelCoeffs.base +
+      modelCoeffs.steps * modelCoeffs.stepMultiplier * steps +
+      Math.E ** ((modelCoeffs.expStrength * steps) / modelCoeffs.expStart)) *
+    resolutionCoeff;
 
   return Math.max(cost.minEta, computedEta);
 };

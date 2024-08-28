@@ -1,21 +1,19 @@
-import { useDidUpdate, useHotkeys, useLocalStorage } from '@mantine/hooks';
-import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { ReviewReactions } from '@prisma/client';
+import { useHotkeys } from '@mantine/hooks';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { ImagesQueryParamSchema, useQueryImages } from '~/components/Image/image.utils';
+import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { ImageGetById, ImageGetInfinite } from '~/types/router';
+import { ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
-import { removeEmpty } from '../../../utils/object-helpers';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { NotFound } from '~/components/AppLayout/NotFound';
 
 type ImageDetailState = {
   images: ImageGetInfinite;
@@ -49,17 +47,7 @@ export function ImageDetailProvider({
   imageId: number;
   images?: ImagesInfiniteModel[];
   hideReactionCount?: boolean;
-  filters: {
-    postId?: number;
-    modelId?: number;
-    modelVersionId?: number;
-    username?: string;
-    limit?: number;
-    prioritizedUserIds?: number[];
-    tags?: number[];
-    reactions?: ReviewReactions[];
-    collectionId?: number;
-  } & Record<string, unknown>;
+  filters: ImagesQueryParamSchema;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -69,14 +57,14 @@ export function ImageDetailProvider({
     postId?: number;
     active?: boolean;
   };
-  const { modelId, modelVersionId, username, reactions, postId: filterPostId } = filters;
+  const { modelId, modelVersionId, username, userId, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
   const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
   const browsingLevel = useBrowsingLevelDebounced();
   const { images: queryImages = [], isInitialLoading: imagesLoading } = useQueryImages(
-    // TODO: Hacky way to prevent sending the username when filtering by reactions
-    { ...filters, username: !!reactions?.length ? undefined : username, postId, browsingLevel },
+    // TODO: Hacky way to prevent sending the userId when filtering by reactions
+    { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
     { enabled: shouldFetchMany }
   );
   const images = initialImages.length > 0 ? initialImages : queryImages;

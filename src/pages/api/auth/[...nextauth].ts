@@ -13,7 +13,7 @@ import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
-import { civTokenDecrypt } from '~/pages/api/auth/civ-token';
+import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';

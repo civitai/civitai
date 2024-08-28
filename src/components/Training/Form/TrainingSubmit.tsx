@@ -169,6 +169,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       baseModel: formBaseModelType,
       targetSteps: selectedRun.params.targetSteps,
+      resolution: selectedRun.params.resolution,
     });
     const isCustom = isTrainingCustomModel(formBaseModel);
     const price = calcBuzzFromEta({
@@ -184,11 +185,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    status.cost,
     selectedRun.params.targetSteps,
+    selectedRun.params.resolution,
     selectedRun.highPriority,
     formBaseModel,
     formBaseModelType,
-    status.cost,
   ]);
 
   const { data: dryRunData, isFetching: dryRunLoading } =
