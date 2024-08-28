@@ -1,11 +1,6 @@
 import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import {
-  IconCaretRightFilled,
-  IconDeviceGamepad,
-  IconEyeExclamation,
-  IconProps,
-} from '@tabler/icons-react';
+import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
 import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
@@ -13,8 +8,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
-  const currentUser = useCurrentUser();
-  if (!currentUser) return null;
   return (
     <Popover zIndex={constants.imageGeneration.drawerZIndex + 1} withArrow withinPortal>
       <Popover.Target>

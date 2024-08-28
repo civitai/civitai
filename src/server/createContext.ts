@@ -4,8 +4,9 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
-import { parseBrowsingMode } from '~/server/utils/server-side-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { createCallerFactory } from '@trpc/server';
+import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
 
 type CacheSettings = {
@@ -17,7 +18,12 @@ type CacheSettings = {
   skip: boolean;
 };
 
-const origins = [env.NEXTAUTH_URL, ...(env.TRPC_ORIGINS ?? [])];
+const origins = [...env.TRPC_ORIGINS];
+const hosts = [
+  env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+];
 export const createContext = async ({
   req,
   res,
@@ -28,9 +34,10 @@ export const createContext = async ({
   const session = await getServerAuthSession({ req, res });
   const ip = requestIp.getClientIp(req) ?? '';
   const acceptableOrigin = isProd
-    ? origins.some((o) => req.headers.referer?.startsWith(o)) ?? false
+    ? (origins.some((o) => req.headers.referer?.startsWith(o)) ||
+        hosts.some((h) => req.headers.host === h)) ??
+      false
     : true;
-  const { browsingLevel, showNsfw } = parseBrowsingMode(req.cookies, session);
   const track = new Tracker(req, res);
   const cache: CacheSettings | null = {
     browserTTL: session?.user ? 0 : 60,
@@ -43,9 +50,8 @@ export const createContext = async ({
 
   return {
     user: session?.user,
-    browsingLevel,
-    showNsfw,
     acceptableOrigin,
+    features: getFeatureFlagsLazy({ user: session?.user, req }),
     track,
     ip,
     cache,
@@ -55,11 +61,30 @@ export const createContext = async ({
   };
 };
 
+const createCaller = createCallerFactory()(appRouter);
+export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
+  createCaller({
+    user: undefined,
+    acceptableOrigin: true,
+    features: getFeatureFlagsLazy({ req }),
+    fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
+    track: new Tracker(req, res),
+    ip: requestIp.getClientIp(req) ?? '',
+    cache: {
+      browserTTL: 3 * 60,
+      edgeTTL: 3 * 60,
+      staleWhileRevalidate: 60,
+      canCache: true,
+      skip: false,
+    },
+    res,
+    req,
+  });
+
 export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
   user: undefined,
   acceptableOrigin: true,
-  browsingLevel: publicBrowsingLevelsFlag,
-  showNsfw: false,
+  features: getFeatureFlagsLazy({ req }),
   track: new Tracker(req, res),
   ip: requestIp.getClientIp(req) ?? '',
   cache: {

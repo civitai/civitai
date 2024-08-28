@@ -13,6 +13,7 @@ import { useDebouncer } from '~/utils/debouncer';
 import { useSession } from 'next-auth/react';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { deleteCookie } from 'cookies-next';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 type StoreState = {
   showNsfw: boolean;
@@ -77,10 +78,12 @@ export function BrowsingModeProvider({ children }: { children: React.ReactNode }
   const debouncer = useDebouncer(1000);
   const cookies = useCookies();
   const { mutate } = trpc.user.updateBrowsingMode.useMutation();
+  const { canViewNsfw } = useFeatureFlags();
   const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
 
   function getStoreInitialValues() {
-    if (!currentUser) return { showNsfw: false, blurNsfw: true, browsingLevel: 0 };
+    if (!canViewNsfw || !currentUser)
+      return { showNsfw: false, blurNsfw: true, browsingLevel: publicBrowsingLevelsFlag };
 
     let showNsfw = currentUser.showNsfw;
     let browsingLevel = currentUser.browsingLevel;
@@ -140,9 +143,15 @@ export function BrowsingModeOverrideProvider({
   children: React.ReactNode;
   browsingLevel?: number;
 }) {
-  const [browsingLevelOverride, setBrowsingLevelOverride] = useState(browsingLevel);
+  const { canViewNsfw } = useFeatureFlags();
+  const [browsingLevelOverride, setBrowsingLevelOverride] = useState(
+    canViewNsfw ? browsingLevel : publicBrowsingLevelsFlag
+  );
 
-  useDidUpdate(() => setBrowsingLevelOverride(browsingLevel), [browsingLevel]);
+  useDidUpdate(
+    () => setBrowsingLevelOverride(canViewNsfw ? browsingLevel : publicBrowsingLevelsFlag),
+    [browsingLevel]
+  );
 
   return (
     <BrowsingModeOverrideCtx.Provider value={{ browsingLevelOverride, setBrowsingLevelOverride }}>
