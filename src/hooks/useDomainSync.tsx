@@ -7,7 +7,9 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
 async function getSyncToken() {
-  const res = await fetch(`//${env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE}/api/auth/sync`);
+  const res = await fetch(`//${env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE}/api/auth/sync`, {
+    credentials: 'include',
+  });
   if (!res.ok) return null;
   const data = await res.json();
   return data as { token: EncryptedDataSchema; userId: number; username: string; };
