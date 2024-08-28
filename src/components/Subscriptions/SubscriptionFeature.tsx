@@ -4,11 +4,11 @@ import { capitalize } from 'lodash-es';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -76,7 +76,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
     return null;
   }
 
-  const metadata = subscription.product.metadata as ProductMetadata;
+  const metadata = subscription.product.metadata as SubscriptionProductMetadata;
 
   return (
     <SubscriptionFeature

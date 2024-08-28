@@ -315,6 +315,7 @@ export const completeClubMembershipCharge = async ({
   stripePaymentIntentId: string;
 }) => {
   const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe is not available');
   const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
     expand: ['payment_method'],
   });

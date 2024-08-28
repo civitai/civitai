@@ -87,7 +87,7 @@ const featureFlags = createFeatureFlags({
   buzzWithdrawalTransfer: ['granted'],
   vault: ['mod'],
   draftMode: ['mod'],
-  membershipsV2: ['mod'],
+  membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
   donationGoals: ['public'],
@@ -99,6 +99,7 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
+  customPaymentProvider: ['mod'],
 });
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 

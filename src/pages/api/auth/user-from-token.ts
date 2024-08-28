@@ -29,7 +29,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       u.email,
       (
         SELECT
-        p.metadata->>'${env.STRIPE_METADATA_KEY}'
+        p.metadata->>'${env.TIER_METADATA_KEY}'
         FROM "CustomerSubscription" s
         JOIN "Product" p ON p.id = s."productId"
         WHERE s."userId" = u.id AND s.status IN ('active', 'trialing')

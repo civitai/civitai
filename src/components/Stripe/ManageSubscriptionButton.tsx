@@ -2,7 +2,7 @@ import { cloneElement } from 'react';
 import { trpc } from '~/utils/trpc';
 import Router from 'next/router';
 
-export function ManageSubscriptionButton({ children }: { children: React.ReactElement }) {
+export function StripeManageSubscriptionButton({ children }: { children: React.ReactElement }) {
   const { mutate, isLoading } = trpc.stripe.createManageSubscriptionSession.useMutation();
 
   const handleClick = () => {

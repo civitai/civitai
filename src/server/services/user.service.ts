@@ -675,6 +675,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     isModerator: response.isModerator ?? undefined,
     deletedAt: response.deletedAt ?? undefined,
     customerId: response.customerId ?? undefined,
+    paddleCustomerId: response.paddleCustomerId ?? undefined,
     subscriptionId: response.subscriptionId ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,
@@ -688,7 +689,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
-      ? (subscription.product.metadata as any)[env.STRIPE_METADATA_KEY]
+      ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
       : undefined;
   const memberInBadState =
     (subscription &&

@@ -15,13 +15,13 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
-import { PlanMeta, getPlanDetails } from '~/components/Stripe/PlanCard';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PlanMeta, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -29,6 +29,9 @@ import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { PaymentProvider } from '@prisma/client';
+import { showSuccessNotification } from '~/utils/notifications';
+import { useMutatePaddle } from '~/components/Paddle/util';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -86,7 +89,9 @@ export const DowngradeFeedbackModal = ({
             ))}
           </Radio.Group>
           <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
-            Downgrade is immediate. You will lose your tier benefits as soon as you downgrade.
+            Downgrade is immediate and you will be charged instantly. You will lose your tier
+            benefits as soon as you downgrade, and will receive the buzz along the other benefits of
+            the downgraded tier.
           </AlertWithIcon>
           <Group grow>
             <SubscribeButton priceId={priceId} onSuccess={handleClose}>
@@ -139,7 +144,7 @@ export const CancelMembershipFeedbackModal = () => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
-  const { vault, isLoading } = useQueryVault();
+  const { isLoading } = useQueryVault();
   const { trackAction } = useTrackEvent();
 
   return (
@@ -197,24 +202,108 @@ export const CancelMembershipFeedbackModal = () => {
   );
 };
 
+export const StripeCancelMembershipButton = ({
+  onClose,
+  hasUsedVaultStorage,
+}: {
+  onClose: () => void;
+  hasUsedVaultStorage: boolean;
+}) => {
+  const { mutate, isLoading: connectingToStripe } =
+    trpc.stripe.createCancelSubscriptionSession.useMutation({
+      async onSuccess({ url }) {
+        onClose();
+        Router.push(url);
+      },
+    });
+
+  return (
+    <Button
+      color="gray"
+      onClick={() => {
+        if (hasUsedVaultStorage) {
+          dialogStore.trigger({
+            component: VaultStorageDowngrade,
+            props: {
+              onContinue: () => {
+                mutate();
+              },
+            },
+          });
+        } else {
+          mutate();
+        }
+      }}
+      radius="xl"
+      loading={connectingToStripe}
+    >
+      Proceed to Cancel
+    </Button>
+  );
+};
+
+export const PaddleCancelMembershipButton = ({
+  onClose,
+  hasUsedVaultStorage,
+}: {
+  onClose: () => void;
+  hasUsedVaultStorage: boolean;
+}) => {
+  const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
+  const handleCancelSubscription = () => {
+    cancelSubscription({
+      onSuccess: ({ url, canceled }) => {
+        if (url) {
+          onClose();
+          Router.push(url);
+        } else if (canceled) {
+          onClose();
+          showSuccessNotification({
+            title: 'You have been successfully downgraded to our Free tier.',
+            message: 'You will no longer be billed for your subscription',
+          });
+        }
+      },
+    });
+  };
+
+  return (
+    <Button
+      color="gray"
+      onClick={() => {
+        if (hasUsedVaultStorage) {
+          dialogStore.trigger({
+            component: VaultStorageDowngrade,
+            props: {
+              onContinue: () => {
+                handleCancelSubscription();
+              },
+            },
+          });
+        } else {
+          handleCancelSubscription();
+        }
+      }}
+      radius="xl"
+      loading={cancelingSubscription}
+    >
+      Proceed to Cancel
+    </Button>
+  );
+};
+
 export const CancelMembershipBenefitsModal = () => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
-  const { mutate, isLoading: connectingToStripe } =
-    trpc.stripe.createCancelSubscriptionSession.useMutation({
-      async onSuccess({ url }) {
-        handleClose();
-        Router.push(url);
-      },
-    });
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
+    useActiveSubscription();
 
   const product = subscription?.product;
   const details = product ? getPlanDetails(product, features) : null;
   const benefits = details?.benefits ?? [];
-  const hasUsedVaultStorage = vault && vault.usedStorageKb > 0;
+  const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
 
   return (
     <Modal {...dialog} size="md" title="You will lose the following if you cancel" radius="md">
@@ -230,27 +319,18 @@ export const CancelMembershipBenefitsModal = () => {
             </Paper>
           )}
           <Group grow>
-            <Button
-              color="gray"
-              onClick={() => {
-                if (hasUsedVaultStorage) {
-                  dialogStore.trigger({
-                    component: VaultStorageDowngrade,
-                    props: {
-                      onContinue: () => {
-                        mutate();
-                      },
-                    },
-                  });
-                } else {
-                  mutate();
-                }
-              }}
-              radius="xl"
-              loading={connectingToStripe}
-            >
-              Proceed to Cancel
-            </Button>
+            {subscriptionPaymentProvider === PaymentProvider.Stripe && (
+              <StripeCancelMembershipButton
+                onClose={handleClose}
+                hasUsedVaultStorage={hasUsedVaultStorage}
+              />
+            )}
+            {subscriptionPaymentProvider === PaymentProvider.Paddle && (
+              <PaddleCancelMembershipButton
+                onClose={handleClose}
+                hasUsedVaultStorage={hasUsedVaultStorage}
+              />
+            )}
             <Button color="blue" onClick={handleClose} radius="xl">
               Don&rsquo;t cancel plan
             </Button>
@@ -316,7 +396,14 @@ export const VaultStorageDowngrade = ({
             </Text>
           </Stack>
           <Group grow>
-            <Button color="gray" onClick={onContinue} radius="xl">
+            <Button
+              color="gray"
+              onClick={() => {
+                onContinue();
+                handleClose();
+              }}
+              radius="xl"
+            >
               {continueLabel}
             </Button>
             <Button color="blue" onClick={handleClose} radius="xl">
@@ -357,8 +444,12 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
         )}
 
         <Alert>
-          Please note you will be charged immediately for your upgrade and will get access to all
-          benefits:.
+          <Stack>
+            <Text>
+              Please note you will be charged immediately to the card we have in file for your
+              upgrade and will get access to all benefits of the new plan.
+            </Text>
+          </Stack>
         </Alert>
         <Group grow>
           <SubscribeButton priceId={priceId} onSuccess={handleClose}>

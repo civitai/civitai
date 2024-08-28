@@ -363,6 +363,10 @@ export async function completeStripeBuzzTransaction({
 }> {
   try {
     const stripe = await getServerStripe();
+    if (!stripe) {
+      throw throwBadRequestError('Stripe not available');
+    }
+
     const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
       expand: ['payment_method'],
     });

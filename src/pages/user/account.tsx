@@ -80,7 +80,7 @@ export const getServerSideProps = createServerSideProps({
 
     const providers = await getProviders();
     await ssg?.account.getAll.prefetch();
-    if (session?.user?.subscriptionId) await ssg?.stripe.getUserSubscription.prefetch();
+    if (session?.user?.subscriptionId) await ssg?.subscriptions.getUserSubscription.prefetch();
 
     return {
       props: {
