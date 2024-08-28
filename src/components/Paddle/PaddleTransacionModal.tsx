@@ -14,6 +14,7 @@ import {
   useMantineTheme,
   CloseButton,
 } from '@mantine/core';
+import { PaymentProvider } from '@prisma/client';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useTrackEvent } from '../TrackView/track.utils';
@@ -63,7 +64,8 @@ export const PaddleTransacionModal = ({
     isLoading: paddleTransactionLoading,
     getTransaction,
   } = usePaddleBuzzTransaction({ unitAmount, currency });
-  const { subscription, subscriptionLoading } = useActiveSubscription();
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
+    useActiveSubscription();
   const { emitter, paddle } = usePaddle();
   const { purchaseBuzzWithSubscription, purchasingBuzzWithSubscription } = useMutatePaddle();
   const [success, setSuccess] = useState(false);
@@ -101,11 +103,14 @@ export const PaddleTransacionModal = ({
   }, [transactionId, paddle, emitter, onCheckoutComplete, dialog.onClose]);
 
   useEffect(() => {
-    if (!subscriptionLoading && !subscription) {
+    if (
+      !subscriptionLoading &&
+      (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle)
+    ) {
       // Go ahead and automatically trigger the checkout
       getTransaction();
     }
-  }, [subscription, subscriptionLoading, getTransaction]);
+  }, [subscription, subscriptionLoading, subscriptionPaymentProvider, getTransaction]);
 
   const handlePurchaseWithSubscription = useCallback(async () => {
     try {
