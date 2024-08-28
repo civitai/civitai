@@ -28,6 +28,7 @@ export const useRecaptchaToken = (
 
     setToken(null);
     setLoading(true);
+    setError(null);
 
     try {
       if (isDev) {
@@ -51,7 +52,7 @@ export const useRecaptchaToken = (
     } finally {
       setLoading(false);
     }
-  }, [ready, loading, action]);
+  }, [ready, loading, action, onGetToken]);
 
   useEffect(() => {
     if (ready) {

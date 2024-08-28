@@ -43,7 +43,7 @@ export const usePaddleBuzzTransaction = ({
     } finally {
       setIsLoading(false);
     }
-  }, [unitAmount, currency, getToken]);
+  }, [unitAmount, currency, getToken, createTransactionMutation]);
 
   return {
     transactionId,

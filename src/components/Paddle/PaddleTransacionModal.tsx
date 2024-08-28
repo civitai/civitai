@@ -143,7 +143,7 @@ export const PaddleTransacionModal = ({
     [dialog]
   );
 
-  if (transactionError && !paddleTransactionLoading) {
+  if (transactionError && !paddleTransactionLoading && !transactionId) {
     return (
       <Modal {...dialog} {...modalProps}>
         <Error error={transactionError} onClose={dialog.onClose} />
