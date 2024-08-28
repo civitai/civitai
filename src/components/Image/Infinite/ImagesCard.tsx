@@ -59,8 +59,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const showVotes = !!tags?.length && isScanned;
 
   const onSite = image.onSite;
-  const notPublished = image.publishedAt === null;
+  const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
+
+  console.log({ image });
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,

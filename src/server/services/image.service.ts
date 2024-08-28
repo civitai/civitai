@@ -1333,7 +1333,7 @@ export const getAllImagesIndex = async (
     techniques,
     tags,
     notPublished,
-    notScheduled,
+    scheduled,
     withMeta: hasMeta,
     excludedUserIds,
     excludeCrossPosts,
@@ -1384,7 +1384,7 @@ export const getAllImagesIndex = async (
     techniques,
     tags,
     notPublished,
-    notScheduled,
+    scheduled,
     sort,
     limit,
     offset,
@@ -1495,7 +1495,7 @@ type ImageSearchInput = {
   hasMeta?: boolean;
   fromPlatform?: boolean;
   notPublished?: boolean;
-  notScheduled?: boolean;
+  scheduled?: boolean;
   baseModels?: string[];
   postIds?: number[];
   period?: MetricTimeframe;
@@ -1550,7 +1550,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     hasMeta,
     fromPlatform,
     notPublished,
-    notScheduled,
+    scheduled,
     tags,
     tools,
     techniques,
@@ -1656,8 +1656,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-    else if (notScheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+    else if (scheduled)
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
