@@ -295,4 +295,15 @@ export const modelNotifications = createNotificationProcessor({
       url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
   },
+  'model-hash-fix': {
+    displayName: 'Model Hash Fix',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `We've fixed an incorrect hash the metadata in your resource "${details.modelName}: ${details.versionName}". Please redownload it to ensure that your images report the correct resource hash going forward.`,
+      url: `/models/${details.modelId}/${slugit(details.modelName)}?modelVersionId=${
+        details.versionId
+      }`,
+    }),
+  },
 });
