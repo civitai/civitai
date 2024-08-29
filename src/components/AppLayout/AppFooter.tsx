@@ -34,7 +34,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
 
   return (
     <Footer
-      className={cx(classes.root, { ['border-green-8 border-t-[3px]']: features.isGreen })}
+      className={cx(classes.root, { ['border-green-8 border-t-[3px]']: features.isGreen, ['border-red-800 border-t-[3px]']: features.isRed })}
       height="auto"
       p="sm"
       py={4}

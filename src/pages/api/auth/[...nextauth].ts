@@ -266,6 +266,9 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
 
+  if (!isDev && !!customAuthOptions.cookies?.sessionToken?.options?.domain)
+    customAuthOptions.cookies.sessionToken.options.domain = '.' + req.headers.host; // add a . in front so that subdomains are included
+
   customAuthOptions.events.signOut = async (context) => {
     // console.log('signout event', context.user?.email, context.account?.userId);
     deleteEncryptedCookie({ req, res }, { name: generationServiceCookie.name });
