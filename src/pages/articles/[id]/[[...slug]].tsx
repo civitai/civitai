@@ -71,7 +71,7 @@ export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
   resolver: async ({ ctx, ssg, features }) => {
-    if (!features?.articles) return { notFound: true };
+    // if (!features?.articles) return { notFound: true };
 
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
