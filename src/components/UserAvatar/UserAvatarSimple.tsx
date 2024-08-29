@@ -20,7 +20,7 @@ export function UserAvatarSimple({
   cosmetics,
 }: {
   id: number;
-  profilePicture?: ProfileImage;
+  profilePicture?: ProfileImage | null;
   username?: string | null;
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;

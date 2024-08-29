@@ -50,6 +50,7 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -70,6 +71,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         read: true,
         type: true,
         userId: true,
+        user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,

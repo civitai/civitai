@@ -1,10 +1,9 @@
-import { ActionIcon, Badge, Group, Stack, Sx, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Sx, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
@@ -16,6 +15,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NsfwLevel } from '~/server/common/enums';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 type ImageProps = {
   id: number;
@@ -67,7 +67,7 @@ export function CollectionCard({ data, sx }: Props) {
     <FeedCard
       className={coverImages.length === 0 ? classes.noImage : undefined}
       href={`/collections/${data.id}`}
-      aspectRatio="square"
+      aspectRatio="portrait"
       // Necessary when inside a UniformGrid
       sx={sx || { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
     >
@@ -95,21 +95,24 @@ export function CollectionCard({ data, sx }: Props) {
           )}
         </div>
 
-        <Stack className={cx(classes.contentOverlay, classes.bottom)} spacing="sm">
-          <Group position="apart" align="flex-end" noWrap>
-            <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
-              {data.name}
-            </Text>
-            <Group spacing={4} noWrap>
-              <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
+        <div className={cx('flex flex-col gap-2', classes.contentOverlay, classes.bottom)}>
+          {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
+          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+            {data.name}
+          </Text>
+          <div className="flex flex-nowrap gap-1">
+            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+              <Group spacing={2}>
+                <IconLayoutGrid size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(itemCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
+              </Group>
+              <Group spacing={2}>
+                <IconUser size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
-              </IconBadge>
-            </Group>
-          </Group>
-        </Stack>
+              </Group>
+            </Badge>
+          </div>
+        </div>
       </div>
     </FeedCard>
   );
