@@ -24,8 +24,7 @@ const featureFlags = createFeatureFlags({
   ambientCard: ['public'],
   gallery: ['mod', 'member'],
   posts: ['mod', 'member'],
-  articles: [],
-  // articles: ['blue', 'red', 'public'],
+  articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
@@ -96,15 +95,13 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   imageIndexFeed: ['granted', 'mod'],
-  isGreen: [], // TODO - undo changes
-  // isGreen: ['public', 'green'],
+  isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: [], // TODO - undo changes
-  // canViewNsfw: ['public', 'blue', 'red'],
+  canViewNsfw: ['public', 'blue', 'red'],
   customPaymentProvider: ['mod'],
 });
-// const artificialTypeError: string = 1;
+
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------
