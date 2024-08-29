@@ -40,6 +40,7 @@ function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
     hasMeta: !item.hideMeta && item.prompt,
     nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
     ingestion: ImageIngestionStatus.Scanned,
+    publishedAt: item.sortAt,
   }));
 }
 
