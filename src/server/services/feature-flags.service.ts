@@ -95,12 +95,13 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['granted', 'mod'],
   imageIndexFeed: ['granted', 'mod'],
-  isGreen: ['public', 'green'],
+  isGreen: [], // TODO - undo changes
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: ['public', 'blue', 'red'],
+  canViewNsfw: [], // TODO - undo changes
   customPaymentProvider: ['mod'],
 });
+// const artificialTypeError: string = 1;
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------

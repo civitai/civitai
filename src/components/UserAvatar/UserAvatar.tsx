@@ -25,6 +25,7 @@ import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -116,7 +117,9 @@ export function UserAvatar({
 
   const imageSize = getRawAvatarSize(avatarProps?.size ?? avatarSize ?? size);
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
-  const blockedProfilePicture = avatarUser.profilePicture?.ingestion === 'Blocked';
+  const blockedProfilePicture =
+    avatarUser.profilePicture?.ingestion === 'Blocked' ||
+    !hasPublicBrowsingLevel(avatarUser.profilePicture?.nsfwLevel ?? 0);
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
@@ -171,10 +174,7 @@ export function UserAvatar({
                 }}
               />
             )}
-            {avatarUser.profilePicture &&
-            avatarUser.profilePicture.id &&
-            !blockedProfilePicture &&
-            !userDeleted ? (
+            {avatarUser.profilePicture?.id && !blockedProfilePicture && !userDeleted ? (
               <Paper
                 w={imageSize}
                 h={imageSize}

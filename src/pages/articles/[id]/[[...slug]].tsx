@@ -61,7 +61,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { hasPublicBrowsingLevel } from '../../../shared/constants/browsingLevel.constants';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),

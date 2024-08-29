@@ -10,6 +10,7 @@ import {
 } from '~/server/selectors/cosmetic.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getInitials } from '~/utils/string-helpers';
 
 export function UserAvatarSimple({
@@ -44,17 +45,17 @@ export function UserAvatarSimple({
   return (
     <UnstyledButton
       onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-      className="flex gap-2 items-center"
+      className="flex items-center gap-2"
     >
       {displayProfilePicture && (
-        <div style={{ position: 'relative' }}>
-          <div className={classes.profilePictureWrapper}>
-            {!profilePicture ? (
-              <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
-            ) : (
-              <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
-            )}
-          </div>
+        <div className="relative size-8 overflow-hidden rounded-full bg-white bg-opacity-30 dark:bg-black">
+          {/* <div className={classes.profilePictureWrapper}> */}
+          {!profilePicture || !hasPublicBrowsingLevel(profilePicture.nsfwLevel) ? (
+            <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
+          ) : (
+            <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+          )}
+          {/* </div> */}
 
           {decoration && decoration.data.url && (
             <EdgeMedia
