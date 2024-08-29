@@ -54,14 +54,19 @@ const allowedOrigins = [
 export const addCorsHeaders = (
   req: NextApiRequest,
   res: NextApiResponse,
-  allowedMethods: string[] = ['GET']
+  allowedMethods: string[] = ['GET'],
+  { allowCredentials = false }: { allowCredentials?: boolean } = {}
 ) => {
-  const origin = req.headers.origin;
-  const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  if (allowCredentials) {
+    const origin = req.headers.origin;
+    const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return true;
@@ -96,7 +101,7 @@ export function AuthedEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    const shouldStop = addCorsHeaders(req, res, allowedMethods, { allowCredentials: true });
     if (shouldStop) return;
 
     if (!req.method || !allowedMethods.includes(req.method))
