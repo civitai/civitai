@@ -4,17 +4,11 @@ import { useEffect } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { colorDomains, ColorDomain } from '~/server/common/constants';
 import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
-const syncDomains = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-};
-type SyncDomain = keyof typeof syncDomains;
-
-async function getSyncToken(syncAccount: SyncDomain = 'blue') {
-  const domain = syncDomains[syncAccount];
+async function getSyncToken(syncAccount: ColorDomain = 'blue') {
+  const domain = colorDomains[syncAccount];
   const res = await fetch(`//${domain}/api/auth/sync`, {
     credentials: 'include',
   });
@@ -31,9 +25,9 @@ export function useDomainSync(currentUser: SessionUser | undefined) {
     if (isSyncing || typeof window === 'undefined') return;
     isSyncing = true;
     const { searchParams, host } = new URL(window.location.href);
-    const syncColor = searchParams.get('sync-account') as SyncDomain | null;
+    const syncColor = searchParams.get('sync-account') as ColorDomain | null;
     if (!syncColor) return;
-    const syncDomain = syncDomains[syncColor];
+    const syncDomain = colorDomains[syncColor];
     if (!syncDomain || host === syncDomain) return;
 
     getSyncToken(syncColor).then((data) => {

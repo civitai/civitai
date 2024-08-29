@@ -15,7 +15,7 @@ import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, ColorDomain, colorDomains } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -252,6 +252,14 @@ export function createAuthOptions(): NextAuthOptions {
 
 export const authOptions = createAuthOptions();
 
+function getRequestDomainColor(req: NextApiRequest) {
+  const host = req.headers.host;
+  if (!host) return undefined;
+  for (const [color, domain] of Object.entries(colorDomains)) {
+    if (host === domain) return color as ColorDomain;
+  }
+}
+
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   const customAuthOptions = createAuthOptions();
   // Yes, this is intended. Without this, you can't log in to a user
@@ -265,6 +273,20 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   // customAuthOptions.events.session = async (message) => {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
+
+  // Replace oauth tokens with appropriate color domain tokens when given
+  domainProviderAdjustment: if (!isDev && customAuthOptions.providers.length) {
+    const domainColor = getRequestDomainColor(req);
+    if (!domainColor) break domainProviderAdjustment;
+    for (const provider of customAuthOptions.providers) {
+      const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
+      const clientSecret = process.env[`${provider.id}_CLIENT_SECRET_${domainColor}`.toUpperCase()];
+      if (clientId && clientSecret) {
+        provider.options.clientId = clientId;
+        provider.options.clientSecret = clientSecret;
+      }
+    }
+  }
 
   if (!isDev && !!customAuthOptions.cookies?.sessionToken?.options?.domain)
     customAuthOptions.cookies.sessionToken.options.domain = '.' + req.headers.host; // add a . in front so that subdomains are included

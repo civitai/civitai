@@ -827,3 +827,10 @@ export const milestoneNotificationFix = '2024-04-20';
 
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
+
+export const colorDomains = {
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+};
+export type ColorDomain = keyof typeof colorDomains;
