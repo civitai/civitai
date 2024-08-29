@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
@@ -43,6 +44,9 @@ const addFields = async () => {
         id: number;
         publishedAt?: Date;
         sortAt: Date;
+        nsfwLevel: NsfwLevel;
+        aiNsfwLevel: NsfwLevel;
+        nsfwLevelLocked: boolean;
       };
 
       const consoleFetchKey = `Fetch: ${start} - ${end}`;
@@ -52,7 +56,10 @@ const addFields = async () => {
         SELECT
           i."id",
           p."publishedAt",
-          i."sortAt"
+          i."sortAt",
+          i."nsfwLevel",
+          i."aiNsfwLevel",
+          i."nsfwLevelLocked"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE i.id BETWEEN ${start} AND ${end}
@@ -64,8 +71,9 @@ const addFields = async () => {
       const consoleTransformKey = `Transform: ${start} - ${end}`;
       console.log(consoleTransformKey);
       console.time(consoleTransformKey);
-      const documents = records.map(({ publishedAt, ...r }) => ({
+      const documents = records.map(({ publishedAt, nsfwLevelLocked, ...r }) => ({
         ...r,
+        combinedNsfwLevel: nsfwLevelLocked ? r.nsfwLevel : Math.max(r.nsfwLevel, r.aiNsfwLevel),
         publishedAtUnix: publishedAt?.getTime(),
         sortAtUnix: r.sortAt.getTime(),
       }));

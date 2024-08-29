@@ -666,6 +666,7 @@ type GetAllImagesRaw = {
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
+  useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
 };
@@ -1551,6 +1552,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
+    useCombinedNsfwLevel,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1610,11 +1612,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const browsingLevels = Flags.instanceToArray(browsingLevel);
   if (isModerator) browsingLevels.push(0);
 
+  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
+    ? 'combinedNsfwLevel'
+    : 'nsfwLevel';
   const nsfwFilters = [
-    makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`) as string,
+    makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
   const nsfwUserFilters = [
-    makeMeiliImageSearchFilter('nsfwLevel', `= 0`),
+    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
     makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
   ];
   // if (pending) {}

@@ -262,6 +262,7 @@ export const getInfiniteImagesHandler = async ({
     return await fetchFn({
       ...input,
       user,
+      useCombinedNsfwLevel: features.canViewNsfw,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
     });
@@ -319,6 +320,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await fetchFn({
         ...input,
         limit: limit * 3,
+        useCombinedNsfwLevel: features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
@@ -338,6 +340,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
+        useCombinedNsfwLevel: features.canViewNsfw,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
