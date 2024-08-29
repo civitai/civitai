@@ -72,6 +72,10 @@ export function hasPublicBrowsingLevel(level: number) {
   return Flags.hasFlag(level, publicBrowsingLevelsFlag);
 }
 
+export function hasSafeBrowsingLevel(level: number) {
+  return Flags.intersects(level, sfwBrowsingLevelsFlag);
+}
+
 export const browsingLevelOr = (array: (number | undefined)[]) => {
   for (const item of array) {
     if (!!item) return item;

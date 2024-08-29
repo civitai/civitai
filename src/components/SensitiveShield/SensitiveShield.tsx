@@ -6,8 +6,8 @@ import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  getIsSafeBrowsingLevel,
   hasPublicBrowsingLevel,
+  hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 
 export function SensitiveShield({
@@ -30,7 +30,7 @@ export function SensitiveShield({
         <Text>This content is not available on this site</Text>
       </div>
     );
-  if (!currentUser && !getIsSafeBrowsingLevel(contentNsfwLevel))
+  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel))
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">
