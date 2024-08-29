@@ -29,11 +29,9 @@ export const ModelSearchItem = forwardRef<
 
   if (!hit) return <ViewMoreItem ref={ref} value={value} {...props} />;
 
-  const { images, user, nsfwLevel, type, category, metrics, version } = hit;
+  const { images, user, type, category, metrics, version, nsfw } = hit;
   const coverImage = images[0];
   const alt = coverImage.name;
-
-  const nsfw = !getIsSafeBrowsingLevel(nsfwLevel);
 
   return (
     <Group ref={ref} {...props} key={hit.id} spacing="md" align="flex-start" noWrap>
@@ -47,7 +45,7 @@ export const ModelSearchItem = forwardRef<
         }}
       >
         {coverImage ? (
-          nsfw ? (
+          !getIsSafeBrowsingLevel(coverImage.nsfwLevel) ? (
             <MediaHash {...coverImage} cropFocus="top" />
           ) : (
             <EdgeMedia
