@@ -52,6 +52,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -93,6 +94,7 @@ export default function ArticleDetailsPage({
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
+  const { articles } = useFeatureFlags();
 
   const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
@@ -100,8 +102,11 @@ export default function ArticleDetailsPage({
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
 
+  // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
+  const disableArticles = !articles && !article?.user.isModerator;
+
   if (isLoading) return <PageLoader />;
-  if (!article || isBlocked) return <NotFound />;
+  if (!article || isBlocked || disableArticles) return <NotFound />;
 
   const category = article.tags.find((tag) => tag.isCategory);
   const tags = article.tags.filter((tag) => !tag.isCategory);
