@@ -9,7 +9,6 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
   const { classes } = useFeedFiltersStyles();
 
   const currentUser = useCurrentUser();
-  const canViewNewest = currentUser?.showNsfw ?? false;
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
@@ -23,7 +22,6 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
       <SortFilter
         type="images"
         variant="button"
-        includeNewest={canViewNewest}
         buttonProps={{
           className: classes.subnavDropdown,
         }}
