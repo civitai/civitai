@@ -12,6 +12,7 @@ import {
 import { IconProps } from '@tabler/icons-react';
 import Link from 'next/link';
 import React from 'react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const useStyles = createStyles((theme, _, getRef) => ({
   label: {
@@ -64,6 +65,7 @@ export function HomeStyleSegmentedControl({
   ...props
 }: Props) {
   const { classes, theme } = useStyles();
+  const { canViewNsfw } = useFeatureFlags();
 
   const options: SegmentedControlItem[] = Object.entries(data).map(([key, value]) => ({
     label: (
@@ -85,7 +87,8 @@ export function HomeStyleSegmentedControl({
             <Text size="sm" transform="capitalize" inline>
               {value.label ?? key}
             </Text>
-            {value.count && <Badge>{value.count}</Badge>}
+            {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
+            {canViewNsfw && value.count && <Badge>{value.count}</Badge>}
           </Group>
         </Anchor>
       </Link>

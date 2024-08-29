@@ -106,10 +106,7 @@ import { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import {
-  getIsSafeBrowsingLevel,
-  hasPublicBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -528,7 +525,7 @@ export default function ModelDetailsV2({
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
         }
       />
-      <SensitiveShield contentNsfwLevel={model.nsfwLevel}>
+      <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <Container size="xl">
           <Announcements />
