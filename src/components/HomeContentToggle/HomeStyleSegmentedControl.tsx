@@ -87,6 +87,7 @@ export function HomeStyleSegmentedControl({
             <Text size="sm" transform="capitalize" inline>
               {value.label ?? key}
             </Text>
+            {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
             {canViewNsfw && value.count && <Badge>{value.count}</Badge>}
           </Group>
         </Anchor>
