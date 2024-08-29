@@ -134,6 +134,7 @@ const ModelSelector = ({
               resources: [
                 {
                   type: ModelType.Checkpoint,
+                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'],
                 },
               ],
             }}

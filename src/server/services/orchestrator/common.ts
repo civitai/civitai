@@ -18,6 +18,7 @@ import {
   allInjectableResourceIds,
   fluxModeOptions,
   formatGenerationResources,
+  getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
@@ -173,11 +174,11 @@ export async function parseGenerateImageInput({
         .join(', ')}`
     );
 
-  const config = getGenerationConfig(params.baseModel);
-  const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
+  const availableResourceTypes = getBaseModelResourceTypes(params.baseModel).map((x) => x.type);
+  // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const availableResources = [
     checkpoint,
-    ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type)),
+    ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type as any)),
   ];
 
   // #region [together]

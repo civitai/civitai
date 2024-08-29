@@ -8,6 +8,7 @@ import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
+import { isDefined } from '~/utils/type-guards';
 
 export function TokenSecuredEndpoint(
   token: string,
@@ -38,14 +39,29 @@ export function WebhookEndpoint(
 const PUBLIC_CACHE_MAX_AGE = 300;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = PUBLIC_CACHE_MAX_AGE / 2;
 
-const addCorsHeaders = (
+const allowedOrigins = [
+  env.NEXTAUTH_URL,
+  ...env.TRPC_ORIGINS,
+  env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+]
+  .filter(isDefined)
+  .map((origin) => {
+    if (!origin.startsWith('http')) return `https://${origin}`;
+    return origin;
+  });
+export const addCorsHeaders = (
   req: NextApiRequest,
   res: NextApiResponse,
   allowedMethods: string[] = ['GET']
 ) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Headers', '*');
   res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return true;

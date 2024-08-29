@@ -101,6 +101,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'fileFormats',
     'lastVersionAtUnix',
     'versions.hashes',
+    'versions.baseModel',
   ];
 
   if (
