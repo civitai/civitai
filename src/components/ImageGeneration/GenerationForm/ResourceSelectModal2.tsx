@@ -208,13 +208,12 @@ function ResourceHitList({
         const resourceType = resourceTypes.find((x) => x.type === model.type);
         if (!resourceType) return null;
         const versions = model.versions.filter((version) => {
-          if (model.id === 128417)
-            return (
-              (canGenerate ? canGenerate === version.canGenerate : true) &&
-              (!!resourceType.baseModels?.length
-                ? resourceType.baseModels.includes(version.baseModel)
-                : true)
-            );
+          return (
+            (canGenerate ? canGenerate === version.canGenerate : true) &&
+            (!!resourceType.baseModels?.length
+              ? resourceType.baseModels.includes(version.baseModel)
+              : true)
+          );
         });
         if (!versions.length) return null;
         return { ...model, versions };
