@@ -525,7 +525,7 @@ export default function ModelDetailsV2({
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
         }
       />
-      <SensitiveShield contentNsfwLevel={model.nsfwLevel}>
+      <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <Container size="xl">
           <Announcements />

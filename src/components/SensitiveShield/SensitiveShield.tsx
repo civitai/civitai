@@ -12,9 +12,11 @@ import {
 
 export function SensitiveShield({
   children,
+  nsfw,
   contentNsfwLevel,
 }: {
   children: React.ReactNode;
+  nsfw?: boolean;
   contentNsfwLevel: number;
 }) {
   const currentUser = useCurrentUser();
@@ -22,7 +24,7 @@ export function SensitiveShield({
   const { canViewNsfw } = useFeatureFlags();
 
   // this content is not available on this site
-  if (!canViewNsfw && !hasPublicBrowsingLevel(contentNsfwLevel))
+  if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)))
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
