@@ -56,7 +56,7 @@ const addFields = async () => {
         SELECT
           i."id",
           p."publishedAt",
-          i."sortAt",
+          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
           i."aiNsfwLevel",
           i."nsfwLevelLocked"
@@ -66,7 +66,10 @@ const addFields = async () => {
       `;
       console.timeEnd(consoleFetchKey);
 
-      if (records.length === 0) return;
+      if (records.length === 0) {
+        console.log(`No updates found:  ${start} - ${end}`);
+        return;
+      }
 
       const consoleTransformKey = `Transform: ${start} - ${end}`;
       console.log(consoleTransformKey);

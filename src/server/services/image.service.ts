@@ -1119,7 +1119,7 @@ export const getAllImages = async (
       ) as "onSite",
       i."generationProcess",
       i."createdAt",
-      i."sortAt",
+      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -1666,6 +1666,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+    else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
@@ -1674,6 +1675,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
+  console.log('filters', filters);
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
@@ -3331,7 +3333,7 @@ export const getImageModerationReviewQueue = async ({
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
-      i."sortAt",
+      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,

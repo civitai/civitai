@@ -54,7 +54,7 @@ const updateUserDetails = (idOffset: number) =>
     const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
       WITH target AS MATERIALIZED (
         SELECT
-          i."id", 
+          i."id",
           i."userId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -158,8 +158,8 @@ const updateDateFields = (idOffset: number) =>
     console.log('Fetching records from ID: ', idOffset);
     const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
         SELECT
-          i."id", 
-          i."sortAt",
+          i."id",
+          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
           p."publishedAt" as "publishedAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
