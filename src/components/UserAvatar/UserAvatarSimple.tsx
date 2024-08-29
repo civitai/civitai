@@ -3,6 +3,7 @@ import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -26,6 +27,7 @@ export function UserAvatarSimple({
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 }) {
+  const { canViewNsfw } = useFeatureFlags();
   const { classes } = useStyles();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
@@ -48,14 +50,17 @@ export function UserAvatarSimple({
       className="flex items-center gap-2"
     >
       {displayProfilePicture && (
-        <div className="relative size-8 overflow-hidden rounded-full bg-white bg-opacity-30 dark:bg-black">
-          {/* <div className={classes.profilePictureWrapper}> */}
-          {!profilePicture || !hasPublicBrowsingLevel(profilePicture.nsfwLevel) ? (
-            <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
-          ) : (
-            <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
-          )}
-          {/* </div> */}
+        <div className="relative ">
+          <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
+            {profilePicture &&
+            (!canViewNsfw ? hasPublicBrowsingLevel(profilePicture.nsfwLevel) : true) ? (
+              <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+            ) : (
+              <span className="text-sm font-semibold text-dark-8 dark:text-gray-0">
+                {username ? getInitials(username) : <IconUser size={32} />}
+              </span>
+            )}
+          </div>
 
           {decoration && decoration.data.url && (
             <EdgeMedia
@@ -110,14 +115,6 @@ export function UserAvatarSimple({
 }
 
 const useStyles = createStyles((theme) => ({
-  profilePictureWrapper: {
-    overflow: 'hidden',
-    backgroundColor: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)',
-    borderRadius: theme.radius.xl,
-    height: 32,
-    width: 32,
-    position: 'relative',
-  },
   username: {
     verticalAlign: 'middle',
     filter:

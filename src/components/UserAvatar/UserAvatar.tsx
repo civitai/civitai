@@ -26,6 +26,7 @@ import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -92,6 +93,7 @@ export function UserAvatar({
 }: Props) {
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
+  const { canViewNsfw } = useFeatureFlags();
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
@@ -119,7 +121,7 @@ export function UserAvatar({
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    !hasPublicBrowsingLevel(avatarUser.profilePicture?.nsfwLevel ?? 0);
+    (!canViewNsfw ? !hasPublicBrowsingLevel(avatarUser.profilePicture?.nsfwLevel ?? 0) : false);
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 

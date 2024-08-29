@@ -805,7 +805,10 @@ export function AppHeader({
       height={HEADER_HEIGHT}
       fixed={fixed}
       zIndex={200}
-      className={clsx({ ['border-green-8 border-b-[3px]']: features.isGreen, ['border-red-800 border-t-[3px]']: features.isRed })}
+      className={clsx({
+        ['border-green-8 border-b-[3px]']: features.isGreen,
+        ['border-red-800 border-t-[3px]']: features.isRed,
+      })}
     >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
