@@ -104,7 +104,7 @@ const featureFlags = createFeatureFlags({
   // canViewNsfw: ['public', 'blue', 'red'],
   customPaymentProvider: ['mod'],
 });
-const artificialTypeError: string = 1;
+// const artificialTypeError: string = 1;
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------
