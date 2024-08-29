@@ -1,4 +1,4 @@
-import { Button, Group, Stack, ThemeIcon } from '@mantine/core';
+import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NotificationProps, showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconExclamationMark, IconX } from '@tabler/icons-react';
 
@@ -86,7 +86,12 @@ export function showBuzzNotification({
         {message}
       </Group>
     ),
-    title,
+    // Hide title on mobile for smaller notifications
+    title: (
+      <Text className="hide-mobile" inherit>
+        {title}
+      </Text>
+    ),
     ...notificationProps,
   });
 }
