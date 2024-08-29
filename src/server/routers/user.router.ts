@@ -185,7 +185,7 @@ export const userRouter = router({
   setLeaderboardEligibility: moderatorProcedure
     .input(setLeaderboardEligbilitySchema)
     .mutation(setLeaderboardEligibilityHandler),
-  computeFingerprint: protectedProcedure
+  ingestFingerprint: protectedProcedure
     .input(computeDeviceFingerprintSchema)
     .mutation(({ input, ctx }) =>
       computeFingerprint({ fingerprint: input.fingerprint, userId: ctx.user.id })
