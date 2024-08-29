@@ -346,7 +346,7 @@ export function AppHeader({
       },
       {
         href: '/articles/create',
-        visible: !isMuted,
+        visible: !isMuted && features.articles,
         redirectReason: 'create-article',
         label: (
           <Group align="center" spacing="xs">
