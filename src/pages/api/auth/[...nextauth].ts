@@ -236,7 +236,7 @@ export function createAuthOptions(): NextAuthOptions {
         name: civitaiTokenCookieName,
         options: {
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: 'none',
           path: '/',
           secure: useSecureCookies,
           domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
