@@ -24,7 +24,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { useDeviceFingerprint } from '~/hooks/useDeviceFingerprint';
+import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
   AdSizes & {

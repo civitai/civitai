@@ -666,6 +666,7 @@ type GetAllImagesRaw = {
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
+  useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
 };
@@ -1118,7 +1119,7 @@ export const getAllImages = async (
       ) as "onSite",
       i."generationProcess",
       i."createdAt",
-      i."sortAt",
+      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -1551,6 +1552,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
+    useCombinedNsfwLevel,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1610,11 +1612,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const browsingLevels = Flags.instanceToArray(browsingLevel);
   if (isModerator) browsingLevels.push(0);
 
+  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
+    ? 'combinedNsfwLevel'
+    : 'nsfwLevel';
   const nsfwFilters = [
-    makeMeiliImageSearchFilter('nsfwLevel', `IN [${browsingLevels.join(',')}]`) as string,
+    makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
   const nsfwUserFilters = [
-    makeMeiliImageSearchFilter('nsfwLevel', `= 0`),
+    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
     makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
   ];
   // if (pending) {}
@@ -1661,6 +1666,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+    else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
@@ -1669,6 +1675,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
+  console.log('filters', filters);
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
@@ -3326,7 +3333,7 @@ export const getImageModerationReviewQueue = async ({
       i."hideMeta",
       i."generationProcess",
       i."createdAt",
-      i."sortAt",
+      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
