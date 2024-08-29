@@ -6,8 +6,16 @@ import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
-async function getSyncToken() {
-  const res = await fetch(`//${env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE}/api/auth/sync`, {
+const syncDomains = {
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+};
+type SyncDomain = keyof typeof syncDomains;
+
+async function getSyncToken(syncAccount: SyncDomain = 'blue') {
+  const domain = syncDomains[syncAccount];
+  const res = await fetch(`//${domain}/api/auth/sync`, {
     credentials: 'include',
   });
   if (!res.ok) return null;
@@ -18,13 +26,17 @@ async function getSyncToken() {
 let isSyncing = false;
 export function useDomainSync(currentUser: SessionUser | undefined) {
   const { swapAccount } = useAccountContext();
-  const { isBlue } = useFeatureFlags();
 
   useEffect(() => {
-    if (isBlue) return;
-    if (isSyncing) return;
+    if (isSyncing || typeof window === 'undefined') return;
     isSyncing = true;
-    getSyncToken().then((data) => {
+    const { searchParams, host } = new URL(window.location.href);
+    const syncColor = searchParams.get('sync-account') as SyncDomain | null;
+    if (!syncColor) return;
+    const syncDomain = syncDomains[syncColor];
+    if (!syncDomain || host === syncDomain) return;
+
+    getSyncToken(syncColor).then((data) => {
       if (!data) return;
       const { token, userId, username } = data;
       if (currentUser?.id === userId) return;
@@ -35,7 +47,9 @@ export function useDomainSync(currentUser: SessionUser | undefined) {
         title: 'Syncing account...',
         message: `Switching to ${username} account`,
       });
-      swapAccount(token).catch(() => {});
+      setTimeout(() => {
+        swapAccount(token).catch(() => {});
+      }, 1000);
     });
   }, []);
 }
