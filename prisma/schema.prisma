@@ -676,6 +676,7 @@ model ModelVersion {
   nsfwLevel         Int             @default(0)
   earlyAccessEndsAt DateTime?
   earlyAccessConfig Json?
+  uploadType        ModelUploadType @default(Created)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]

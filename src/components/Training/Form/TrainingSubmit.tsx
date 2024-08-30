@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, TrainingStatus } from '@prisma/client';
+import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconCopy, IconExclamationMark, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -400,6 +400,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           staging,
           highPriority,
         },
+        uploadType: ModelUploadType.Trained,
       };
 
       try {

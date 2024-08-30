@@ -102,6 +102,7 @@ BEGIN
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     WHERE (irh.name IS NULL OR irh.name != 'vae')
       AND (m.id IS NULL OR m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation'))
+      AND (irh.hash IS NULL OR irh.hash != 'e3b0c44298fc') -- Exclude empty hash
   ), image_resource_id AS (
     SELECT
       irh.id,

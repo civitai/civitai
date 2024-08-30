@@ -8,6 +8,8 @@ import { createJob, getJobDate } from './job';
 const jobName = 'full-image-existence';
 const queryBatch = 2e5;
 
+// TODO use dataProcessor
+
 export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
 
