@@ -1,16 +1,15 @@
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
-import { Container, Table, Title, TypographyStylesProvider } from '@mantine/core';
-import ReactMarkdown from 'react-markdown';
+import { Container, Title, TypographyStylesProvider } from '@mantine/core';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
-import Link from 'next/link';
 import { env } from '~/env/client.mjs';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 const contentRoot = 'src/static-content';
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -63,33 +62,7 @@ export default function ContentPage({
       <Container size="md">
         <Title order={1}>{title}</Title>
         <TypographyStylesProvider>
-          <ReactMarkdown
-            rehypePlugins={[rehypeRaw, remarkGfm]}
-            className="markdown-content"
-            components={{
-              a: ({ node, ...props }) => {
-                return (
-                  <Link href={props.href as string} passHref>
-                    <a
-                      target={props.href?.includes('http') ? '_blank' : '_self'}
-                      rel="nofollow noreferrer"
-                    >
-                      {props.children?.[0]}
-                    </a>
-                  </Link>
-                );
-              },
-              table: ({ node, ...props }) => {
-                return (
-                  <Table {...props} striped withBorder withColumnBorders>
-                    {props.children}
-                  </Table>
-                );
-              },
-            }}
-          >
-            {content}
-          </ReactMarkdown>
+          <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
         </TypographyStylesProvider>
       </Container>
     </>

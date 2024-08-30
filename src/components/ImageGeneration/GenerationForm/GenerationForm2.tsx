@@ -19,7 +19,7 @@ import {
   ActionIcon,
   Group,
 } from '@mantine/core';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -1083,13 +1083,9 @@ export function GenerationFormContent() {
                         title="Image Generation Status Alert"
                         id={messageHash}
                       >
-                        <ReactMarkdown
-                          allowedElements={['a', 'strong']}
-                          unwrapDisallowed
-                          className="markdown-content"
-                        >
+                        <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
                           {status.message}
-                        </ReactMarkdown>
+                        </CustomMarkdown>
                       </DismissibleAlert>
                     )}
                   </>

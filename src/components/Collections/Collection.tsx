@@ -28,7 +28,7 @@ import {
 import { truncate } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -588,14 +588,13 @@ export function Collection({
                     </Group>
                     {collection?.description && (
                       <Text size="xs" color="dimmed">
-                        <ReactMarkdown
+                        <CustomMarkdown
                           rehypePlugins={[rehypeRaw, remarkGfm]}
                           allowedElements={['a', 'p', 'strong', 'em', 'code', 'u']}
                           unwrapDisallowed
-                          className="markdown-content"
                         >
                           {collection.description}
-                        </ReactMarkdown>
+                        </CustomMarkdown>
                       </Text>
                     )}
                   </Stack>

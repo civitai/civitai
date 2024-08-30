@@ -1,8 +1,6 @@
 import {
   ActionIcon,
   ActionIconProps,
-  AspectRatio,
-  Box,
   Button,
   Center,
   Loader,
@@ -11,14 +9,13 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import Link from 'next/link';
 import { cloneElement, useCallback, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { trpc } from '../../utils/trpc';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 type Props = {
   feature: string;
@@ -41,11 +38,6 @@ export const FeatureIntroductionModal = ({
   });
   const dialog = useDialogContext();
 
-  const videoKeysRequirements = [
-    ['youtube', 'embed'],
-    ['drive.google.com', 'preview'],
-  ];
-
   return (
     <Modal {...dialog} size="lg" title={content?.title} {...modalProps} withCloseButton>
       {isLoading || !content ? (
@@ -53,50 +45,9 @@ export const FeatureIntroductionModal = ({
           <Loader />
         </Center>
       ) : (
-        <ReactMarkdown
-          rehypePlugins={[rehypeRaw]}
-          className="markdown-content"
-          components={{
-            a: ({ node, ...props }) => {
-              if (
-                videoKeysRequirements.some((requirements) =>
-                  requirements.every((item) => props.href?.includes(item))
-                )
-              ) {
-                return (
-                  <AspectRatio ratio={16 / 9} maw={800} mx="auto">
-                    <Box
-                      component="iframe"
-                      sx={{
-                        border: 'none',
-                        position: 'absolute',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                      }}
-                      src={props.href as string}
-                      allowFullScreen
-                    />
-                  </AspectRatio>
-                );
-              }
-
-              return (
-                <Link href={props.href as string} passHref>
-                  <a
-                    target={props.href?.includes('http') ? '_blank' : '_self'}
-                    rel="nofollow noreferrer"
-                  >
-                    {props.children?.[0]}
-                  </a>
-                </Link>
-              );
-            },
-          }}
-        >
+        <CustomMarkdown rehypePlugins={[rehypeRaw]} allowExternalVideo>
           {content.content}
-        </ReactMarkdown>
+        </CustomMarkdown>
       )}
 
       <Center>
