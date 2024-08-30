@@ -124,7 +124,6 @@ function MyApp(props: CustomAppProps) {
     <>
       <Head>
         <title>Civitai | Share your models</title>
-        <MetaPWA />
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
