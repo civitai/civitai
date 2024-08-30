@@ -916,7 +916,7 @@ export function AppHeader({
                           closeMenuOnClick={false}
                           mb={4}
                         >
-                          <Group w="100%" position="apart">
+                          <Group w="100%" position="apart" noWrap>
                             <UserAvatar user={creator ?? currentUser} withUsername />
                             <IconChevronRight />
                           </Group>
