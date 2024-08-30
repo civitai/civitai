@@ -8,8 +8,6 @@ import {
   Center,
   Loader,
   Alert,
-  Tabs,
-  List,
   ThemeIcon,
   Group,
   createStyles,
@@ -48,6 +46,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { env } from '~/env/client.mjs';
 
 export default function Pricing() {
   const router = useRouter();
@@ -304,8 +303,16 @@ const useStyles = createStyles((theme) => ({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg }) => {
+  resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
+    if (!features?.isGreen || !features.canBuyBuzz)
+      return {
+        redirect: {
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
+          statusCode: 302,
+          basePath: false,
+        },
+      };
   },
 });

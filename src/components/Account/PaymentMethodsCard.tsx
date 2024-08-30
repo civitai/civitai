@@ -289,7 +289,7 @@ export function PaymentMethodsCard() {
   const currentPaymentProvider = subscriptionPaymentProvider ?? paymentProvider;
 
   if (currentPaymentProvider === PaymentProvider.Stripe) {
-    return <StripePaymentMethods />;
+    return null; // We don't want new payment methods on stripe since we're leaving really.
   }
 
   if (currentPaymentProvider === PaymentProvider.Paddle) {
