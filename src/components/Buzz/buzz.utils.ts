@@ -88,7 +88,7 @@ export const useBuyBuzz = (): ((...args: OpenBuyBuzzModalProps) => void) => {
       };
 
       window.open(
-        `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
+        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );

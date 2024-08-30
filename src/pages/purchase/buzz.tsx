@@ -27,13 +27,14 @@ import { env } from '~/env/client.mjs';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.isGreen)
-      return {
-        redirect: {
-          destination: `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
-          statusCode: 302,
-        },
-      };
+    console.log(features?.isGreen, features?.isBlue);
+    // if (!features?.isGreen)
+    //   return {
+    //     redirect: {
+    //       // destination: `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+    //       statusCode: 302,
+    //     },
+    //   };
   },
 });
 

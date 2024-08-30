@@ -71,7 +71,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.isGreen || !features.canBuyBuzz) {
       return {
         redirect: {
-          destination: `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          destination: `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
           statusCode: 302,
         },
       };
