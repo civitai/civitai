@@ -21,6 +21,21 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import React, { useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { env } from '~/env/client.mjs';
+
+export const getServerSideProps = createServerSideProps({
+  useSession: true,
+  resolver: async ({ features }) => {
+    if (!features?.isGreen)
+      return {
+        redirect: {
+          destination: `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          statusCode: 302,
+        },
+      };
+  },
+});
 
 const schema = z.object({
   returnUrl: z.string().optional(),
@@ -76,12 +91,21 @@ export default function PurchaseBuzz() {
         </Text>
         <Divider my="md" />
         <Center>
-          <Stack>
-            <Title order={3} align="center">
-              Where to go from here?
-            </Title>
-            <BuzzFeatures />
-          </Stack>
+          {minBuzzAmount ? (
+            <Stack>
+              <Text align="center" mt="lg">
+                You can now close this window and return to the previous window
+                <br /> to continue with your action!
+              </Text>
+            </Stack>
+          ) : (
+            <Stack>
+              <Title order={3} align="center">
+                Where to go from here?
+              </Title>
+              <BuzzFeatures />
+            </Stack>
+          )}
         </Center>
       </Container>
     );
@@ -89,6 +113,21 @@ export default function PurchaseBuzz() {
 
   return (
     <Container size="md" mb="lg">
+      {minBuzzAmount && (
+        <Alert radius="sm" color="info" mb="xl">
+          <Stack spacing={0}>
+            <Text>
+              The action you are trying to perform requires you to purchase a minimum of
+              <CurrencyBadge currency={Currency.BUZZ} unitAmount={minBuzzAmount} /> to continue.
+            </Text>
+
+            <Text>
+              Once you have purchased the required amount, you can close this window and return to
+              the previous site to continue with your action.
+            </Text>
+          </Stack>
+        </Alert>
+      )}
       <Alert radius="sm" color="yellow" style={{ zIndex: 10 }} mb="xl">
         <Group spacing="xs" noWrap position="center">
           <CurrencyIcon currency={Currency.BUZZ} size={24} />

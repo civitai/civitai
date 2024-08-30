@@ -9,6 +9,9 @@ import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
+import { env } from '~/env/client.mjs';
+import { QS } from '~/utils/qs';
+import { ModalProps } from '@mantine/core';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -72,6 +75,29 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
   };
 };
 
+type OpenBuyBuzzModalProps = Parameters<typeof openBuyBuzzModal>;
+
+export const useBuyBuzz = (): ((...args: OpenBuyBuzzModalProps) => void) => {
+  const features = useFeatureFlags();
+  if (!features.canBuyBuzz) {
+    return (...args: OpenBuyBuzzModalProps) => {
+      const props = args[0];
+      const query = {
+        minBuzzAmount: props.minBuzzAmount,
+        'sync-account': 'blue',
+      };
+
+      window.open(
+        `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?${QS.stringify(query)}`,
+        '_blank',
+        'noreferrer'
+      );
+    };
+  } else {
+    return openBuyBuzzModal;
+  }
+};
+
 export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
@@ -84,6 +110,7 @@ export const useBuzzTransaction = (opts?: {
   const { balance: userBalance } = useBuzz();
   const { balance: generationBalance } = useBuzz(undefined, 'generation');
   const isMobile = useIsMobile();
+  const onBuyBuzz = useBuyBuzz();
 
   const { trackAction } = useTrackEvent();
 
@@ -125,7 +152,7 @@ export const useBuzzTransaction = (opts?: {
         () => undefined
       );
 
-      openBuyBuzzModal(
+      onBuyBuzz(
         {
           message: typeof message === 'function' ? message(buzzAmount - balance) : message,
           minBuzzAmount: buzzAmount - balance,

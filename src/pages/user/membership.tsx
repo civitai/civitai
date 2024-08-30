@@ -47,10 +47,11 @@ import { capitalize } from 'lodash-es';
 import { booleanString } from '~/utils/zod-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session, ctx, features }) => {
     if (!session || !session.user)
       return {
         redirect: {
@@ -66,6 +67,15 @@ export const getServerSideProps = createServerSideProps({
           permanent: false,
         },
       };
+
+    if (!features?.isGreen || !features.canBuyBuzz) {
+      return {
+        redirect: {
+          destination: `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          statusCode: 302,
+        },
+      };
+    }
   },
 });
 
