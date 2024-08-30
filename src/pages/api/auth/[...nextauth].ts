@@ -277,6 +277,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   // Handle domain-specific auth settings
   fixRedirect: if (
     req.url?.startsWith('/api/auth/signin/') ||
+    req.url?.startsWith('/api/auth/signout') ||
     req.url?.startsWith('/api/auth/callback/')
   ) {
     const domainColor = getRequestDomainColor(req);
