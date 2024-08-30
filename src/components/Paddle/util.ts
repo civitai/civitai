@@ -13,6 +13,7 @@ export const useMutatePaddle = () => {
   const updateSubscriptionMutation = trpc.paddle.updateSubscription.useMutation();
   const cancelSubscriptionMutation = trpc.paddle.cancelSubscription.useMutation();
   const purchaseBuzzWithSubscription = trpc.paddle.purchaseBuzzWithSubscription.useMutation();
+  const getOrCreateCustomerIdMutation = trpc.paddle.getOrCreateCustomer.useMutation();
 
   const handleProcessCompleteBuzzTransaction = (data: GetByIdStringInput) => {
     return processCompleteBuzzTransactionMutation.mutateAsync(data);
@@ -35,6 +36,10 @@ export const useMutatePaddle = () => {
     return purchaseBuzzWithSubscription.mutateAsync(data);
   };
 
+  const handleGetOrCreateCustomer = () => {
+    return getOrCreateCustomerIdMutation.mutateAsync();
+  };
+
   return {
     processCompleteBuzzTransaction: handleProcessCompleteBuzzTransaction,
     processingCompleteBuzzTransaction: processCompleteBuzzTransactionMutation.isLoading,
@@ -44,6 +49,8 @@ export const useMutatePaddle = () => {
     cancelingSubscription: cancelSubscriptionMutation.isLoading,
     purchaseBuzzWithSubscription: handlePurchaseBuzzWithSubscription,
     purchasingBuzzWithSubscription: purchaseBuzzWithSubscription.isLoading,
+    getOrCreateCustomer: handleGetOrCreateCustomer,
+    gettingOrCreateCustomer: getOrCreateCustomerIdMutation.isLoading,
   };
 };
 
