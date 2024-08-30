@@ -86,8 +86,8 @@ function DumbSortFilter({ type, value, onChange, ...props }: DumbProps) {
     options: sortOptions[type]
       .map((x) => ({ label: x, value: x }))
       .filter((x) => {
+        if (!canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
         if (type === 'images') {
-          if (!canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
           if (!currentUser?.showNsfw && x.value === 'Newest') return false;
           return true;
         }
