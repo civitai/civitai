@@ -114,6 +114,9 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
         customer: {
           id: customerId as string,
         },
+        customData: {
+          userId: currentUser?.id,
+        },
         settings: {
           showAddDiscounts: false,
         },

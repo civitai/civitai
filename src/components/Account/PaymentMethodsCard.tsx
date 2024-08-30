@@ -245,6 +245,9 @@ const PaddlePaymentMethods = () => {
         customer: {
           id: customerId,
         },
+        customData: {
+          userId: currentUser?.id,
+        },
         items: [
           {
             priceId: managementUrls.freeSubscriptionPriceId,
