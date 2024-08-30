@@ -137,7 +137,6 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
     const domains = Object.entries(serverDomainMap)
       .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability))
       .map(([key, domain]) => domain);
-    console.log('check', host, domains);
     serverMatch = domains.some((domain) => host === domain);
     // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
