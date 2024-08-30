@@ -1,6 +1,7 @@
 import {
   ModelStatus,
   ModelType,
+  ModelUploadType,
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
@@ -222,6 +223,7 @@ export const modelVersionUpsertSchema2 = z.object({
       unitAmount: z.number(),
     })
     .nullish(),
+  uploadType: z.nativeEnum(ModelUploadType).optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;
