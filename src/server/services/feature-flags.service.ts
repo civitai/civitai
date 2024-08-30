@@ -100,7 +100,7 @@ const featureFlags = createFeatureFlags({
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
-  customPaymentProvider: ['mod'],
+  customPaymentProvider: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
