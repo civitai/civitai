@@ -7,6 +7,7 @@ import {
 import { Context } from '~/server/createContext';
 import {
   createBuzzPurchaseTransaction,
+  createCustomer,
   processCompleteBuzzTransaction,
   purchaseBuzzWithSubscription,
   updateSubscriptionPlan,
@@ -20,11 +21,7 @@ import {
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { createRecaptchaAssesment } from '~/server/recaptcha/client';
-import {
-  getOrCreateCustomer,
-  getPaddleSubscription,
-  getTransactionById,
-} from '~/server/paddle/client';
+import { getPaddleSubscription, getTransactionById } from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 import { PaymentProvider } from '@prisma/client';
@@ -232,9 +229,9 @@ export const purchaseBuzzWithSubscriptionHandler = async ({
 
 export const getOrCreateCustomerHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const user = { userId: ctx.user.id, email: ctx.user.email as string };
-    const customer = await getOrCreateCustomer(user);
-    return customer.id;
+    const user = { id: ctx.user.id, email: ctx.user.email as string };
+    const customer = await createCustomer(user);
+    return customer;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
