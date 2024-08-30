@@ -26,7 +26,8 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
     const results = await clickhouse?.$query<Impression>(`
       SELECT
       userId,
-      deviceId,
+      0 as deviceId, -- Disable deviceIds for now
+      -- deviceId,
       sum(impressions) as totalAdImpressions,
       sum(duration) as totalAdDuration
       FROM adImpressions
