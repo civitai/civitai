@@ -233,7 +233,8 @@ export const purchaseBuzzWithSubscriptionHandler = async ({
 export const getOrCreateCustomerHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const user = { userId: ctx.user.id, email: ctx.user.email as string };
-    return await getOrCreateCustomer(user);
+    const customer = await getOrCreateCustomer(user);
+    return customer.id;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

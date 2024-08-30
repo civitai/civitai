@@ -27,7 +27,7 @@ import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { useSubscriptionManagementUrls } from '~/components/Paddle/util';
+import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { PaymentProvider } from '@prisma/client';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -226,16 +226,24 @@ const PaddlePaymentMethods = () => {
   const { paddle } = usePaddle();
   const currentUser = useCurrentUser();
   const { subscription } = useActiveSubscription();
+  const { getOrCreateCustomer } = useMutatePaddle();
 
   if (!currentUser?.email) {
     return null;
   }
 
-  const handleSetupDefaultPaymentMethod = () => {
+  const handleSetupDefaultPaymentMethod = async () => {
+    let customerId = currentUser?.paddleCustomerId;
+
+    if (!customerId) {
+      // If this ever happens, first, create the customer id:
+      customerId = await getOrCreateCustomer();
+    }
+
     if (!!managementUrls?.freeSubscriptionPriceId) {
       paddle.Checkout.open({
         customer: {
-          email: currentUser.email as string,
+          id: customerId,
         },
         items: [
           {

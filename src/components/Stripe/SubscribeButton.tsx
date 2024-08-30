@@ -97,9 +97,11 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
         }
       );
     } else {
+      let customerId = currentUser?.paddleCustomerId;
+
       if (!currentUser?.paddleCustomerId) {
         // If this ever happens, first, create the customer id:
-        await getOrCreateCustomer();
+        customerId = await getOrCreateCustomer();
       }
 
       paddle?.Checkout.open({
@@ -110,7 +112,7 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
           },
         ],
         customer: {
-          email: currentUser?.email as string,
+          id: customerId as string,
         },
         settings: {
           showAddDiscounts: false,
