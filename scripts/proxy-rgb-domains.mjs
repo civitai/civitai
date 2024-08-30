@@ -1,9 +1,20 @@
 import redbird from 'redbird';
 
-const greenProxy = redbird({ port: 3001, xfwd: false, bunyan: false });
-greenProxy.register('localhost', 'http://localhost:3000');
-console.log('Green proxy:', 'http://localhost:3001');
-
-const redProxy = redbird({ port: 3002, xfwd: false, bunyan: false });
-redProxy.register('localhost', 'http://localhost:3000');
-console.log('Red proxy:', 'http://localhost:3002');
+const proxy = redbird({
+  port: 80,
+  xfwd: false,
+  bunyan: false,
+  ssl: {
+    port: 443,
+  },
+});
+const proxyColors = ['red', 'green', 'blue'];
+for (const color of proxyColors) {
+  proxy.register(`civitai-dev.${color}`, 'http://localhost:3000', {
+    ssl: {
+      key: `scripts/certs/${color}-key.pem`,
+      cert: `scripts/certs/${color}-cert.pem`,
+    },
+  });
+  console.log(`${color} proxy:`, `https://civitai-dev.${color}`);
+}
