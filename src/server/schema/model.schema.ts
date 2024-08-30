@@ -235,6 +235,7 @@ export type ModelMeta = Partial<{
   takenDownBy: number;
   bountyId: number;
   unpublishedBy: number;
+  showcaseCollectionId: number;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

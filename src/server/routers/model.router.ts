@@ -31,6 +31,7 @@ import {
   upsertModelHandler,
   getModelOwnerHandler,
   copyGalleryBrowsingLevelHandler,
+  getModelCollectionShowcaseHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -207,4 +208,7 @@ export const modelRouter = router({
     .input(copyGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(copyGalleryBrowsingLevelHandler),
+  getCollectionShowcase: publicProcedure
+    .input(getByIdSchema)
+    .query(getModelCollectionShowcaseHandler),
 });

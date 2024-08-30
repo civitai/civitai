@@ -99,6 +99,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
@@ -112,6 +113,10 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
+import {
+  getCollectionById,
+  getCollectionItemsByCollectionId,
+} from '~/server/services/collection.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -1614,6 +1619,34 @@ export async function copyGalleryBrowsingLevelHandler({
       model.gallerySettings as ModelGallerySettingsSchema;
 
     await copyGallerySettingsToAllModelsByUser({ userId, settings });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}
+
+export async function getModelCollectionShowcaseHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: Context;
+}) {
+  try {
+    const model = await getModel({ id: input.id, select: { id: true, meta: true } });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const modelMeta = model.meta as ModelMeta | null;
+    if (!modelMeta?.showcaseCollectionId) return null;
+
+    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const items = await getCollectionItemsByCollectionId({
+      input: {
+        collectionId: collection.id,
+        browsingLevel: ctx.user?.browsingLevel ?? publicBrowsingLevelsFlag,
+      },
+      user: ctx.user,
+    });
+    // TODO.manuel: Add the collection items to the collection object
   } catch (error) {
     throw throwDbError(error);
   }
