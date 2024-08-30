@@ -298,7 +298,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       // Set the correct redirect uri
       provider.options.authorization ??= {};
       provider.options.authorization.params ??= {};
-      provider.options.authorization.params.redirect_uri = `${protocol}://${req.headers.host}/api/auth/callback/${provider.id}`;
+      provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
 
       // Set the correct client id and secret when needed
       const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
