@@ -274,11 +274,27 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
 
-  // Replace oauth tokens with appropriate color domain tokens when given
-  domainProviderAdjustment: if (!isDev && customAuthOptions.providers.length) {
+  // Handle domain-specific auth settings
+  fixRedirect: if (
+    req.url?.startsWith('/api/auth/signin/') ||
+    req.url?.startsWith('/api/auth/callback/')
+  ) {
     const domainColor = getRequestDomainColor(req);
-    if (!domainColor) break domainProviderAdjustment;
+    req.headers.origin = `https://${req.headers.host}`;
+    if (!domainColor) break fixRedirect;
+
+    // Update the cookie domain
+    if (!!customAuthOptions.cookies?.sessionToken?.options?.domain)
+      customAuthOptions.cookies.sessionToken.options.domain = '.' + req.headers.host;
+
+    // Update the provider options
     for (const provider of customAuthOptions.providers) {
+      // Set the correct redirect uri
+      provider.options.authorization ??= {};
+      provider.options.authorization.params ??= {};
+      provider.options.authorization.params.redirect_uri = `https://${req.headers.host}/api/auth/callback/${provider.id}`;
+
+      // Set the correct client id and secret when needed
       const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
       const clientSecret = process.env[`${provider.id}_CLIENT_SECRET_${domainColor}`.toUpperCase()];
       if (clientId && clientSecret) {
@@ -287,9 +303,6 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }
     }
   }
-
-  if (!isDev && !!customAuthOptions.cookies?.sessionToken?.options?.domain)
-    customAuthOptions.cookies.sessionToken.options.domain = '.' + req.headers.host; // add a . in front so that subdomains are included
 
   customAuthOptions.events.signOut = async (context) => {
     // console.log('signout event', context.user?.email, context.account?.userId);
