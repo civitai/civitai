@@ -1,14 +1,10 @@
 import { ChatMemberStatus, ChatMessageType, Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs from 'dayjs';
-import { find as findLinks } from 'linkifyjs';
 import { uniq } from 'lodash-es';
-import { unfurl } from 'unfurl.js';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { logToAxiom } from '~/server/logging/client';
 import {
   AddUsersInput,
   CreateChatInput,
@@ -23,21 +19,10 @@ import {
 } from '~/server/schema/chat.schema';
 import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
-import {
-  createMessage,
-  maxChats,
-  maxChatsPerDay,
-  maxUsersPerChat,
-  upsertChat,
-} from '~/server/services/chat.service';
+import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
-import { getChatHash } from '~/server/utils/chat';
-import {
-  throwBadRequestError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
-import { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import { throwBadRequestError, throwDbError, throwNotFoundError, } from '~/server/utils/errorHandling';
+import { ChatCreateChat } from '~/types/router';
 
 /**
  * Get user chat settings
@@ -584,8 +569,8 @@ export const createMessageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const { id: userId, muted } = ctx.user;
-    return await createMessage({ ...input, userId, muted });
+    const { id: userId, muted, isModerator } = ctx.user;
+    return await createMessage({ ...input, userId, muted, isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
