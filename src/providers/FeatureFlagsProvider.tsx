@@ -7,11 +7,31 @@ import { toggleableFeatures } from '~/server/services/feature-flags.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const FeatureFlagsCtx = createContext<FeatureAccess>({} as FeatureAccess);
+type FeatureFlagsCtxState = FeatureAccess & {
+  toggles: {
+    available: typeof toggleableFeatures;
+    values: FeatureAccess;
+    set: (key: keyof FeatureAccess, value: boolean) => void;
+  };
+};
+
+const FeatureFlagsCtx = createContext<FeatureFlagsCtxState | null>(null);
 
 export type UseFeatureFlagsReturn = ReturnType<typeof useFeatureFlags>;
 export const useFeatureFlags = () => {
-  const features = useContext(FeatureFlagsCtx);
+  const context = useContext(FeatureFlagsCtx);
+  if (!context) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
+  return context;
+};
+export const FeatureFlagsProvider = ({
+  children,
+  flags: initialFlags,
+}: {
+  children: React.ReactNode;
+  flags: FeatureAccess;
+}) => {
+  const session = useSession();
+  const [flags] = useState(initialFlags);
   const [toggled, setToggled] = useLocalStorage<Partial<FeatureAccess>>({
     key: 'toggled-features',
     defaultValue: toggleableFeatures.reduce(
@@ -20,12 +40,12 @@ export const useFeatureFlags = () => {
     ),
   });
 
-  const session = useSession(); // Using useSession here cause of Provider order
   const queryUtils = trpc.useUtils();
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
     undefined,
     { cacheTime: Infinity, staleTime: Infinity, retry: 0, enabled: !!session.data }
   );
+
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
     async onMutate(payload) {
       await queryUtils.user.getFeatureFlags.cancel();
@@ -53,15 +73,15 @@ export const useFeatureFlags = () => {
     },
   });
 
-  const handleToggle = (key: keyof FeatureAccess, value: boolean) => {
-    setToggled((prev) => ({ ...prev, [key]: value }));
-    toggleFeatureFlagMutation.mutate({ feature: key, value });
-  };
-
   const featuresWithToggled = useMemo(() => {
-    return Object.keys(features).reduce((acc, key) => {
+    const handleToggle = (key: keyof FeatureAccess, value: boolean) => {
+      setToggled((prev) => ({ ...prev, [key]: value }));
+      toggleFeatureFlagMutation.mutate({ feature: key, value });
+    };
+
+    const features = Object.keys(flags).reduce((acc, key) => {
       const featureAccessKey = key as keyof FeatureAccess;
-      const hasFeature = features[featureAccessKey];
+      const hasFeature = flags[featureAccessKey];
       const toggleableFeature = toggleableFeatures.find(
         (toggleableFeature) => toggleableFeature.key === key
       );
@@ -79,27 +99,18 @@ export const useFeatureFlags = () => {
         : toggleableFeature.default;
       return { ...acc, [key]: hasFeature && isToggled } as FeatureAccess;
     }, {} as FeatureAccess);
-  }, [features, toggled, userFeatures]);
 
-  if (!features) throw new Error('useFeatureFlags can only be used inside FeatureFlagsCtx');
+    return {
+      ...features,
+      toggles: {
+        available: toggleableFeatures,
+        values: { ...toggled, ...userFeatures },
+        set: handleToggle,
+      },
+    };
+  }, [flags, toggled, userFeatures]);
 
-  return {
-    ...featuresWithToggled,
-    toggles: {
-      available: toggleableFeatures,
-      values: { ...toggled, ...userFeatures },
-      set: handleToggle,
-    },
-  };
-};
-export const FeatureFlagsProvider = ({
-  children,
-  flags: initialFlags,
-}: {
-  children: React.ReactNode;
-  flags: FeatureAccess;
-}) => {
-  const [flags] = useState(initialFlags);
-
-  return <FeatureFlagsCtx.Provider value={flags}>{children}</FeatureFlagsCtx.Provider>;
+  return (
+    <FeatureFlagsCtx.Provider value={featuresWithToggled}>{children}</FeatureFlagsCtx.Provider>
+  );
 };
