@@ -1,21 +1,21 @@
 import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
-import { SignalMessages } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
-import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
-import { getChatHash } from '~/server/utils/chat';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { find as findLinks } from 'linkifyjs';
-import { logToAxiom } from '~/server/logging/client';
-import { constants } from '~/server/common/constants';
+import { unfurl } from 'unfurl.js';
 // I don't think the server should rely on FE code, but it's a bit too much to refactor right now.
 import { linkifyOptions } from '~/components/Chat/util';
+import { env } from '~/env/server.mjs';
+import { constants } from '~/server/common/constants';
+import { SignalMessages } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
+import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
+import { getChatHash } from '~/server/utils/chat';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 // We should not be using /types/router here, but it's a bit too much to refactor right now.
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
-import { unfurl } from 'unfurl.js';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 
 export const maxChats = 200;
 export const maxChatsPerDay = 10;
@@ -158,6 +158,7 @@ export const upsertChat = async ({
 export const createMessage = async ({
   userId,
   muted,
+  isModerator,
   chatId,
   content,
   contentType,
@@ -165,6 +166,7 @@ export const createMessage = async ({
 }: CreateMessageInput & {
   userId: number;
   muted?: boolean;
+  isModerator?: boolean;
 }) => {
   const chat = await dbWrite.chat.findFirst({
     where: {
@@ -208,15 +210,18 @@ export const createMessage = async ({
       }
     }
 
-    const otherMembers = chat.chatMembers.filter((cm) => cm.userId !== userId);
-    const blockedUsers = await Promise.all([
-      BlockedUsers.getCached({ userId }),
-      BlockedByUsers.getCached({ userId }),
-    ]);
-    const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
-    const blockedByAll = otherMembers.every((cm) => blockedUserIds.includes(cm.userId));
-    if (blockedByAll) {
-      throw throwBadRequestError(`Unable to post in this chat`);
+    // let moderators chat with users who blocked them, otherwise check if every member blocked the user and prevent the message
+    if (!isModerator) {
+      const otherMembers = chat.chatMembers.filter((cm) => cm.userId !== userId);
+      const blockedUsers = await Promise.all([
+        BlockedUsers.getCached({ userId }),
+        BlockedByUsers.getCached({ userId }),
+      ]);
+      const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
+      const blockedByAll = otherMembers.every((cm) => blockedUserIds.includes(cm.userId));
+      if (blockedByAll) {
+        throw throwBadRequestError(`Unable to post in this chat`);
+      }
     }
   }
 
