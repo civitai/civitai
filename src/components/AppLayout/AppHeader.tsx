@@ -807,7 +807,7 @@ export function AppHeader({
       zIndex={200}
       className={clsx({
         ['border-green-8 border-b-[3px]']: features.isGreen,
-        ['border-red-800 border-t-[3px]']: features.isRed,
+        ['border-red-800 border-b-[3px]']: features.isRed,
       })}
     >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>

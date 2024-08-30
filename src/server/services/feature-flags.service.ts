@@ -108,7 +108,7 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // Logic
 // --------------------------
 const serverDomainMap: Record<ServerAvailability, string | undefined> = {
-  green: isProd ? env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN : undefined,
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
   blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
@@ -137,6 +137,7 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
     const domains = Object.entries(serverDomainMap)
       .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability))
       .map(([key, domain]) => domain);
+    console.log('check', host, domains);
     serverMatch = domains.some((domain) => host === domain);
     // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;

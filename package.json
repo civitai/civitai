@@ -32,7 +32,8 @@
     "db:generate": "prisma generate",
     "db:seed": "prisma db seed",
     "share": "ngrok http 3000",
-    "prepare": "husky"
+    "prepare": "husky",
+    "rgb-proxy": "node scripts/proxy-rgb-domains.mjs"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -253,6 +254,7 @@
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
     "prisma": "^5.17.0",
+    "redbird": "^0.10.0",
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",
     "tsc-files": "^1.1.4",
