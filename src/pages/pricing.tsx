@@ -46,6 +46,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { env } from '~/env/client.mjs';
 
 export default function Pricing() {
   const router = useRouter();
@@ -308,8 +309,9 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.isGreen || !features.canBuyBuzz)
       return {
         redirect: {
-          destination: `${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
           statusCode: 302,
+          basePath: false,
         },
       };
   },
