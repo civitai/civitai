@@ -1675,7 +1675,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
-  console.log('filters', filters);
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
