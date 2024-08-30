@@ -98,7 +98,6 @@ import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
 import clsx from 'clsx';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
-import AppFavIcons from '~/components/AppLayout/AppFavIcons';
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -812,7 +811,6 @@ export function AppHeader({
         ['border-red-800 border-b-[3px]']: features.isRed,
       })}
     >
-      <AppFavIcons />
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
