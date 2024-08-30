@@ -759,7 +759,7 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 };
 
 export const CurrencyConfig: Record<
-  Currency | 'GEN',
+  Currency,
   {
     icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     color: (theme: MantineTheme) => string;
@@ -775,11 +775,6 @@ export const CurrencyConfig: Record<
     icon: IconCurrencyDollar,
     color: (theme) => theme.colors.yellow[7],
     fill: undefined,
-  },
-  GEN: {
-    icon: IconBolt,
-    color: (theme) => theme.colors.blue[4],
-    fill: (theme) => theme.colors.blue[4],
   },
 };
 
@@ -827,3 +822,10 @@ export const milestoneNotificationFix = '2024-04-20';
 
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
+
+export const colorDomains = {
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+};
+export type ColorDomain = keyof typeof colorDomains;

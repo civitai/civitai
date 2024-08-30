@@ -106,9 +106,6 @@ export default function ResourceSelectModal({
       );
   }
   if (or.length) filters.push(or.join(' OR '));
-  // if (types.length) filters.push(`type IN [${types.join(',')}]`);
-  // if (baseModels.length)
-  //   filters.push(`versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}]`);
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
@@ -211,10 +208,12 @@ function ResourceHitList({
         const resourceType = resourceTypes.find((x) => x.type === model.type);
         if (!resourceType) return null;
         const versions = model.versions.filter((version) => {
-          if (canGenerate === undefined) return true;
-          return canGenerate === version.canGenerate && !!resourceType.baseModels?.length
-            ? resourceType.baseModels.includes(version.baseModel)
-            : true;
+          return (
+            (canGenerate ? canGenerate === version.canGenerate : true) &&
+            (!!resourceType.baseModels?.length
+              ? resourceType.baseModels.includes(version.baseModel)
+              : true)
+          );
         });
         if (!versions.length) return null;
         return { ...model, versions };

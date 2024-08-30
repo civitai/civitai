@@ -141,6 +141,7 @@ const modelSelect = {
   id: true,
   name: true,
   type: true,
+  nsfw: true,
   nsfwLevel: true,
   minor: true,
   status: true,

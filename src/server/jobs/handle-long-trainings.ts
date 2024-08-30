@@ -275,7 +275,7 @@ export const handleLongTrainings = createJob('handle-long-trainings', `*/10 * * 
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "User" u ON m."userId" = u.id
     WHERE mf.type = 'Training Data'
-      AND m."uploadType" = 'Trained'
+      AND mv."uploadType" = 'Trained'
       AND mv."trainingStatus" in ('Processing', 'Submitted')
       -- Hasn't had a recent update
       AND mv."updatedAt" between '10/16/2023' and ${lastRun}

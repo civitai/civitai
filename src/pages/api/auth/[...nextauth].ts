@@ -15,7 +15,7 @@ import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, ColorDomain, colorDomains } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -31,6 +31,7 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -146,7 +147,7 @@ export function createAuthOptions(): NextAuthOptions {
         return session;
       },
       async redirect({ url, baseUrl }) {
-        // console.log('redirect');
+        // console.log('redirect', url, baseUrl);
         if (url.startsWith('/')) return `${baseUrl}${url}`;
         // allow redirects to other civitai domains
         if (isDev || new URL(url).origin.includes('civitai')) return url;
@@ -236,7 +237,7 @@ export function createAuthOptions(): NextAuthOptions {
         name: civitaiTokenCookieName,
         options: {
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: hostname == 'localhost' ? 'lax' : 'none',
           path: '/',
           secure: useSecureCookies,
           domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
@@ -252,7 +253,16 @@ export function createAuthOptions(): NextAuthOptions {
 
 export const authOptions = createAuthOptions();
 
+function getRequestDomainColor(req: NextApiRequest) {
+  const host = req.headers.host;
+  if (!host) return undefined;
+  for (const [color, domain] of Object.entries(colorDomains)) {
+    if (host === domain) return color as ColorDomain;
+  }
+}
+
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
+  // console.log('nextauth', req.url);
   const customAuthOptions = createAuthOptions();
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another
@@ -265,6 +275,40 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
   // customAuthOptions.events.session = async (message) => {
   //   console.log('session event', message.session?.user?.email, message.token?.email);
   // };
+
+  // Handle domain-specific auth settings
+  fixRedirect: if (
+    req.url?.startsWith('/api/auth/signin') ||
+    req.url?.startsWith('/api/auth/signout') ||
+    req.url?.startsWith('/api/auth/callback')
+  ) {
+    const domainColor = getRequestDomainColor(req);
+    const protocol = getProtocol(req);
+    req.headers.origin = `${protocol}://${req.headers.host}`;
+    const { hostname: reqHostname } = new URL(req.headers.origin);
+    if (!domainColor) break fixRedirect;
+
+    // Update the cookie domain
+    if (!!customAuthOptions.cookies?.sessionToken?.options?.domain)
+      customAuthOptions.cookies.sessionToken.options.domain =
+        (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
+
+    // Update the provider options
+    for (const provider of customAuthOptions.providers) {
+      // Set the correct redirect uri
+      provider.options.authorization ??= {};
+      provider.options.authorization.params ??= {};
+      provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
+
+      // Set the correct client id and secret when needed
+      const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
+      const clientSecret = process.env[`${provider.id}_CLIENT_SECRET_${domainColor}`.toUpperCase()];
+      if (clientId && clientSecret) {
+        provider.options.clientId = clientId;
+        provider.options.clientSecret = clientSecret;
+      }
+    }
+  }
 
   customAuthOptions.events.signOut = async (context) => {
     // console.log('signout event', context.user?.email, context.account?.userId);

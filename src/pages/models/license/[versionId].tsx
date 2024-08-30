@@ -1,6 +1,6 @@
 import { Center, Container, Group, Loader, Stack, Title } from '@mantine/core';
 import { InferGetServerSidePropsType } from 'next';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -46,9 +46,7 @@ export default function ModelLicensePage({
             <Title>{data.model.name} License</Title>
           </Group>
           {data.license.content && (
-            <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
-              {data.license.content}
-            </ReactMarkdown>
+            <CustomMarkdown rehypePlugins={[rehypeRaw]}>{data.license.content}</CustomMarkdown>
           )}
         </Stack>
       </Container>

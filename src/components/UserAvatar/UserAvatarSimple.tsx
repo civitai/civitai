@@ -3,6 +3,7 @@ import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BadgeCosmetic,
   ContentDecorationCosmetic,
@@ -10,6 +11,7 @@ import {
 } from '~/server/selectors/cosmetic.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getInitials } from '~/utils/string-helpers';
 
 export function UserAvatarSimple({
@@ -25,6 +27,7 @@ export function UserAvatarSimple({
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 }) {
+  const { canViewNsfw } = useFeatureFlags();
   const { classes } = useStyles();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
@@ -44,15 +47,18 @@ export function UserAvatarSimple({
   return (
     <UnstyledButton
       onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-      className="flex gap-2 items-center"
+      className="flex items-center gap-2"
     >
       {displayProfilePicture && (
-        <div style={{ position: 'relative' }}>
-          <div className={classes.profilePictureWrapper}>
-            {!profilePicture ? (
-              <Text size="sm">{username ? getInitials(username) : <IconUser size={32} />}</Text>
-            ) : (
+        <div className="relative ">
+          <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
+            {profilePicture &&
+            (!canViewNsfw ? hasPublicBrowsingLevel(profilePicture.nsfwLevel) : true) ? (
               <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
+            ) : (
+              <span className="text-sm font-semibold text-dark-8 dark:text-gray-0">
+                {username ? getInitials(username) : <IconUser size={32} />}
+              </span>
             )}
           </div>
 
@@ -109,14 +115,6 @@ export function UserAvatarSimple({
 }
 
 const useStyles = createStyles((theme) => ({
-  profilePictureWrapper: {
-    overflow: 'hidden',
-    backgroundColor: theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)',
-    borderRadius: theme.radius.xl,
-    height: 32,
-    width: 32,
-    position: 'relative',
-  },
   username: {
     verticalAlign: 'middle',
     filter:

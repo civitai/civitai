@@ -6,16 +6,17 @@ import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
-  getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
+  hasPublicBrowsingLevel,
+  hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
 
 export function SensitiveShield({
   children,
+  nsfw,
   contentNsfwLevel,
 }: {
   children: React.ReactNode;
+  nsfw?: boolean;
   contentNsfwLevel: number;
 }) {
   const currentUser = useCurrentUser();
@@ -23,13 +24,13 @@ export function SensitiveShield({
   const { canViewNsfw } = useFeatureFlags();
 
   // this content is not available on this site
-  if (!canViewNsfw && !Flags.hasFlag(contentNsfwLevel, publicBrowsingLevelsFlag))
+  if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)))
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
       </div>
     );
-  if (!currentUser && !getIsSafeBrowsingLevel(contentNsfwLevel))
+  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel))
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">

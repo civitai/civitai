@@ -21,6 +21,7 @@ import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MediaType } from '@prisma/client';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function ImageSearch() {
   return (
@@ -41,19 +42,23 @@ const filterMediaTypesOptions: RefinementListProps['transformItems'] = (items) =
 };
 
 function RenderFilters() {
+  const { canViewNsfw } = useFeatureFlags();
+
+  const items = [
+    { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
+    { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
+    { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
+    { label: 'Most Collected', value: ImagesSearchIndexSortBy[3] as string },
+    { label: 'Most Buzz', value: ImagesSearchIndexSortBy[4] as string },
+    { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
+  ];
+
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'} />
       <SortBy
         title="Sort images by"
-        items={[
-          { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
-          { label: 'Most Reactions', value: ImagesSearchIndexSortBy[1] as string },
-          { label: 'Most Discussed', value: ImagesSearchIndexSortBy[2] as string },
-          { label: 'Most Collected', value: ImagesSearchIndexSortBy[3] as string },
-          { label: 'Most Buzz', value: ImagesSearchIndexSortBy[4] as string },
-          { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
-        ]}
+        items={!canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
       />
       <DateRangeRefinement title="Filter by Creation Date" attribute="createdAtUnix" />
       <ChipRefinementList

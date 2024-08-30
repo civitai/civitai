@@ -49,6 +49,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'baseModel',
     'aspectRatio',
     'nsfwLevel',
+    'combinedNsfwLevel',
     'type',
     'toolNames',
     'techniqueNames',
@@ -121,6 +122,8 @@ type BaseImage = {
   width: number | null;
   metadata: Prisma.JsonValue;
   nsfwLevel: NsfwLevel;
+  aiNsfwLevel: NsfwLevel;
+  nsfwLevelLocked: boolean;
   postId: number | null;
   needsReview: string | null;
   hideMeta: boolean;
@@ -168,7 +171,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ userId, id, ...imageRecord }) => {
+    .map(({ userId, id, nsfwLevelLocked, ...imageRecord }) => {
       const user = userId ? users[userId] ?? null : null;
 
       if (!user || !userId) {
@@ -185,7 +188,10 @@ const transformData = async ({
       return {
         ...imageRecord,
         id,
-        nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
+        nsfwLevel: imageRecord.nsfwLevel,
+        combinedNsfwLevel: nsfwLevelLocked
+          ? imageRecord.nsfwLevel
+          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -283,6 +289,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."name",
         i."url",
         i."nsfwLevel",
+        i."aiNsfwLevel",
+        i."nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",
         i."height",
@@ -296,7 +304,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",
-        i."sortAt"
+        COALESCE(p."publishedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

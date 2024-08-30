@@ -370,7 +370,10 @@ export default function UserTrainingModels() {
                     onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(mv))}
                   >
                     <td>
-                      {mv.model.name} - {mv.name}
+                      <Group spacing={4}>
+                        <Text>{mv.model.name}</Text>
+                        {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
+                      </Group>
                     </td>
                     <td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>

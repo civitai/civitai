@@ -62,12 +62,18 @@ export function getIsPublicBrowsingLevel(level: number) {
   return levels.every((level) => publicBrowsingLevelsArray.includes(level));
 }
 
+/** does not include any nsfw level flags */
 export function getIsSafeBrowsingLevel(level: number) {
   return level !== 0 && !Flags.intersects(level, nsfwBrowsingLevelsFlag);
 }
 
+/** includes a level suitable for public browsing */
 export function hasPublicBrowsingLevel(level: number) {
-  return level !== 0 && Flags.intersects(publicBrowsingLevelsFlag, level);
+  return Flags.hasFlag(level, publicBrowsingLevelsFlag);
+}
+
+export function hasSafeBrowsingLevel(level: number) {
+  return Flags.intersects(level, sfwBrowsingLevelsFlag);
 }
 
 export const browsingLevelOr = (array: (number | undefined)[]) => {
