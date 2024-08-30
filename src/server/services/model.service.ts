@@ -1562,7 +1562,7 @@ export const unpublishModelById = async ({
 
       return updatedModel;
     },
-    { timeout: 10000 }
+    { timeout: 30000, maxWait: 10000 }
   );
 
   // Fetch affected posts to remove their images from search index
