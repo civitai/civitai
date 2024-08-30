@@ -188,7 +188,7 @@ const transformData = async ({
       return {
         ...imageRecord,
         id,
-        nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
+        nsfwLevel: imageRecord.nsfwLevel,
         combinedNsfwLevel: nsfwLevelLocked
           ? imageRecord.nsfwLevel
           : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),

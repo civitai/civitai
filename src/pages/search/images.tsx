@@ -55,7 +55,7 @@ function RenderFilters() {
 
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'} />
       <SortBy
         title="Sort images by"
         items={!canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}
