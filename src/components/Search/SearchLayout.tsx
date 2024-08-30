@@ -204,7 +204,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
 const maxColumnCount = 7;
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
   return (
-    <ScrollArea p="md">
+    <ScrollArea className="!py-4">
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={maxColumnCount}
