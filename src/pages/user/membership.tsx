@@ -25,21 +25,20 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '@mantine/next';
 import { trpc } from '~/utils/trpc';
-import { getPlanDetails } from '~/components/Stripe/PlanCard';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import {
   IconDotsVertical,
   IconInfoCircle,
   IconInfoTriangleFilled,
   IconRotateClockwise,
 } from '@tabler/icons-react';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
 import { constants } from '~/server/common/constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { ManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
+import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { useRouter } from 'next/router';
 import { userTierSchema } from '~/server/schema/user.schema';
@@ -47,10 +46,12 @@ import { z } from 'zod';
 import { capitalize } from 'lodash-es';
 import { booleanString } from '~/utils/zod-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { env } from '~/env/client.mjs';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session, ctx, features }) => {
     if (!session || !session.user)
       return {
         redirect: {
@@ -66,6 +67,16 @@ export const getServerSideProps = createServerSideProps({
           permanent: false,
         },
       };
+
+    if (!features?.isGreen || !features.canBuyBuzz) {
+      return {
+        redirect: {
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          statusCode: 302,
+          basePath: false,
+        },
+      };
+    }
   },
 });
 
@@ -83,8 +94,9 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const querySchema = z.object({
-  downgraded: booleanString().optional(),
   tier: userTierSchema.optional(),
+  updated: booleanString().optional(),
+  downgraded: booleanString().optional(),
 });
 
 export default function UserMembership() {
@@ -98,6 +110,7 @@ export default function UserMembership() {
   const query = querySchema.safeParse(router.query);
   const isDrowngrade = query.success ? query.data?.downgraded : false;
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
+  const isUpdate = query.success ? query.data?.updated : false;
 
   if (subscriptionLoading || !subscription) {
     return (
@@ -111,8 +124,9 @@ export default function UserMembership() {
 
   const price = subscription.price;
   const product = subscription.product;
+  const meta = product?.metadata as SubscriptionProductMetadata;
+  const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
-  console.log(price);
 
   return (
     <>
@@ -127,6 +141,13 @@ export default function UserMembership() {
                   You have successfully downgraded your membership to the{' '}
                   {capitalize(downgradedTier)} tier. It may take a few seconds for your new plan to
                   take effect. You may refresh the page to see the changes.
+                </Alert>
+              )}
+              {isUpdate && (
+                <Alert>
+                  Your membership has been successfully updated. It may take a few seconds for your
+                  new plan to take effect. If you don&rsquo;t see the changes after refreshing the
+                  page in a few minutes, please contact support.
                 </Alert>
               )}
               {subscription?.isBadState && (
@@ -164,7 +185,7 @@ export default function UserMembership() {
                       <Stack spacing={0}>
                         {product && (
                           <Text weight={600} size={20}>
-                            {product.name}
+                            {isFree ? 'Free' : product.name}
                           </Text>
                         )}
                         {price && (
@@ -222,9 +243,9 @@ export default function UserMembership() {
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
-                          <ManageSubscriptionButton>
+                          <StripeManageSubscriptionButton>
                             <Menu.Item>View Details</Menu.Item>
-                          </ManageSubscriptionButton>
+                          </StripeManageSubscriptionButton>
                           {!subscription?.canceledAt && (
                             <Menu.Item
                               onClick={() => {

@@ -5,45 +5,20 @@ import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
 
 import { appRouter } from '~/server/routers';
-import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { FeatureAccess, getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import {
-  browsingLevelOr,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { parseCookies } from '~/shared/utils';
-
-export function parseBrowsingMode(
-  cookies: Partial<{ [key: string]: string }>,
-  session: Session | null
-) {
-  if (!session?.user) {
-    return {
-      browsingLevel: publicBrowsingLevelsFlag,
-      showNsfw: false,
-    };
-  }
-
-  const { browsingLevel, showNsfw } = parseCookies(cookies);
-  return {
-    showNsfw: showNsfw ?? session.user.showNsfw ?? false,
-    browsingLevel: browsingLevelOr([browsingLevel, session.user.browsingLevel]),
-  };
-}
 
 export const getServerProxySSGHelpers = async (
   ctx: GetServerSidePropsContext,
   session: Session | null,
-  browsingLevel: number,
-  showNsfw: boolean
+  features: ReturnType<typeof getFeatureFlagsLazy>
 ) => {
   const ssg = createServerSideHelpers({
     router: appRouter,
     ctx: {
       user: session?.user,
       acceptableOrigin: true,
-      browsingLevel,
-      showNsfw,
+      features,
       track: new Tracker(),
       ip: null as any,
       res: null as any,
@@ -66,13 +41,11 @@ export function createServerSideProps<P>({
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
       (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
-    const flags =
-      (context.req as any)['flags'] ?? getFeatureFlags({ user: session?.user, req: context.req });
-    const { browsingLevel, showNsfw } = parseBrowsingMode(context.req.cookies, session);
+    const features = getFeatureFlagsLazy({ user: session?.user, req: context.req });
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
-        ? await getServerProxySSGHelpers(context, session, browsingLevel, showNsfw)
+        ? await getServerProxySSGHelpers(context, session, features)
         : undefined;
 
     const result = (await resolver({
@@ -80,8 +53,7 @@ export function createServerSideProps<P>({
       isClient,
       ssg,
       session,
-      features: flags,
-      browsingLevel,
+      features,
     })) as GetPropsFnResult<P> | undefined;
 
     let props: GetPropsFnResult<P>['props'] | undefined;
@@ -95,7 +67,7 @@ export function createServerSideProps<P>({
     return {
       props: {
         session,
-        flags,
+        // flags: features,
         ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
       },
@@ -124,5 +96,5 @@ type CustomGetServerSidePropsContext = {
   ssg?: AsyncReturnType<typeof getServerProxySSGHelpers>;
   session?: Session | null;
   features?: FeatureAccess;
-  browsingLevel: number;
+  // browsingLevel: number;
 };

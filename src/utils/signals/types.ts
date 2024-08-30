@@ -47,4 +47,5 @@ export type WorkerIncomingMessage =
   | { type: 'connection:init'; token: string }
   | { type: 'event:register'; target: string }
   | { type: 'beforeunload' }
-  | { type: 'ping' };
+  | { type: 'ping' }
+  | { type: 'send'; target: string; args: Record<string, unknown> };

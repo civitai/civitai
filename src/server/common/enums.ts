@@ -144,6 +144,7 @@ export enum SignalMessages {
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
+  Pong = 'pong',
 }
 
 export enum BountySort {

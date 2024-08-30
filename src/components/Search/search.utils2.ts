@@ -38,8 +38,9 @@ function imagesTransform(items: Hit<ImageSearchIndexRecord>[]) {
   return items.map((item) => ({
     ...item,
     hasMeta: !item.hideMeta && item.prompt,
-    nsfwLevel: flagifyBrowsingLevel(item.nsfwLevel),
+    nsfwLevel: item.nsfwLevel,
     ingestion: ImageIngestionStatus.Scanned,
+    publishedAt: item.sortAt,
   }));
 }
 

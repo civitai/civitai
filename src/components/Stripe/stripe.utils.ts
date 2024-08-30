@@ -113,7 +113,7 @@ export const usePaymentIntent = ({
   //   }
   // );
 
-  const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION);
+  const { getToken } = useRecaptchaToken(RECAPTCHA_ACTIONS.STRIPE_TRANSACTION, false);
   const debouncer = useDebouncer(300);
   const getPaymentIntent = useCallback(async () => {
     setClientSecret(null);

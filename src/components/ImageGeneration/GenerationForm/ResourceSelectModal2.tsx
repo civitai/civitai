@@ -25,7 +25,7 @@ import {
   IconInfoCircle,
   IconTagOff,
 } from '@tabler/icons-react';
-import React, { useContext, useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Configure,
   InstantSearch,
@@ -43,7 +43,6 @@ import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
@@ -55,74 +54,61 @@ import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { BaseModel, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
-import {
-  GenerationResource,
-  getBaseModelSet,
-  getIsSdxl,
-} from '~/shared/constants/generation.constants';
+import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import clsx from 'clsx';
+import { isDefined } from '~/utils/type-guards';
 
 type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
-  isTraining?: boolean;
 };
+
+function getTypesAndBaseModels(resources: { type: string; baseModels?: string[] }[]) {
+  return resources.reduce<[string[], string[]]>(
+    (acc, resource) => {
+      const [types, baseModels] = acc;
+      return [
+        [...new Set([...types, resource.type])],
+        [...new Set([...baseModels, ...(resource?.baseModels ?? [])])],
+      ];
+    },
+    [[], []]
+  );
+}
 
 export default function ResourceSelectModal({
   title,
   onSelect,
   onClose,
   options = {},
-  isTraining,
 }: ResourceSelectModalProps) {
   const dialog = useDialogContext();
-
-  const features = useFeatureFlags();
   const isMobile = useIsMobile();
   const { resources = [], canGenerate } = options;
-  const _resources = resources?.map(({ type, baseModelSet, baseModels }) => {
-    let aggregate: BaseModel[] = [];
-    if (baseModelSet) aggregate = getBaseModelSet(baseModelSet);
-    if (baseModels) aggregate = [...new Set([...aggregate, ...baseModels])];
-    return { type, baseModels: aggregate };
-  });
 
   const filters: string[] = [];
+  const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
-  if (!!_resources.length) {
-    const innerFilter: string[] = [];
-    for (const { type, baseModels } of _resources) {
-      if (!baseModels.length) innerFilter.push(`type = ${type}`);
-      else
-        innerFilter.push(
-          `(${baseModels
-            .map((baseModel) => `(type = ${type} AND version.baseModel = '${baseModel}')`)
-            .join(' OR ')})`
-          //TODO - use IN instead of OR
-        );
-    }
-    filters.push(`(${innerFilter.join(' OR ')})`);
+  for (const { type, baseModels } of resources) {
+    if (!baseModels?.length) or.push(`type = ${type}`);
+    else
+      or.push(
+        `type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}]`
+      );
   }
+  if (or.length) filters.push(or.join(' OR '));
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
-  if (!features.sdxlGeneration) {
-    for (const baseModel in baseModelSets.SDXL) {
-      exclude.push(`NOT version.baseModel = ${baseModel}`);
-    }
-  }
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -137,9 +123,7 @@ export default function ResourceSelectModal({
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
       <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden">
-        <ResourceSelectContext.Provider
-          value={{ onSelect: handleSelect, canGenerate, isTraining, resources: _resources }}
-        >
+        <ResourceSelectContext.Provider value={{ onSelect: handleSelect, canGenerate, resources }}>
           <InstantSearch
             searchClient={searchClient}
             indexName={searchIndexMap.models}
@@ -154,7 +138,7 @@ export default function ResourceSelectModal({
               <CustomSearchBox isMobile={isMobile} autoFocus />
               <CategoryTagFilters />
             </div>
-            <ResourceHitList />
+            <ResourceHitList resourceTypes={resources} canGenerate={canGenerate} />
           </InstantSearch>
         </ResourceSelectContext.Provider>
       </div>
@@ -164,8 +148,7 @@ export default function ResourceSelectModal({
 
 const ResourceSelectContext = React.createContext<{
   canGenerate?: boolean;
-  isTraining?: boolean;
-  resources: { type: ModelType; baseModels: BaseModel[] }[];
+  resources: { type: string; baseModels?: string[] }[];
   onSelect: (
     value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
   ) => void;
@@ -196,7 +179,13 @@ function CategoryTagFilters() {
   );
 }
 
-function ResourceHitList() {
+function ResourceHitList({
+  canGenerate,
+  resourceTypes,
+}: {
+  canGenerate?: boolean;
+  resourceTypes: { type: string; baseModels?: string[] }[];
+}) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
@@ -213,22 +202,41 @@ function ResourceHitList() {
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
+  const filtered = useMemo(() => {
+    return models
+      .map((model) => {
+        const resourceType = resourceTypes.find((x) => x.type === model.type);
+        if (!resourceType) return null;
+        const versions = model.versions.filter((version) => {
+          return (
+            (canGenerate ? canGenerate === version.canGenerate : true) &&
+            (!!resourceType.baseModels?.length
+              ? resourceType.baseModels.includes(version.baseModel)
+              : true)
+          );
+        });
+        if (!versions.length) return null;
+        return { ...model, versions };
+      })
+      .filter(isDefined);
+  }, [models]);
+
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
   if (loading && !hits.length)
     return (
-      <Box>
+      <div className="p-3 py-5">
         <Center mt="md">
           <Loader />
         </Center>
-      </Box>
+      </div>
     );
 
   if (!hits.length)
     return (
-      <Box>
+      <div className="p-3 py-5">
         <Center>
           <Stack spacing="md" align="center" maw={800}>
             {hiddenCount > 0 && (
@@ -248,7 +256,7 @@ function ResourceHitList() {
             </Text>
           </Stack>
         </Center>
-      </Box>
+      </div>
     );
 
   return (
@@ -259,7 +267,7 @@ function ResourceHitList() {
       )}
 
       <div className={classes.grid}>
-        {models
+        {filtered
           .filter((model) => model.versions.length > 0)
           .map((model) => (
             <ResourceSelectCard key={model.id} data={model} />
@@ -282,25 +290,13 @@ const IMAGE_CARD_WIDTH = 450;
 function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
   const currentUser = useCurrentUser();
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
-  const { onSelect, canGenerate, isTraining, resources } = useResourceSelectContext();
+  const { onSelect } = useResourceSelectContext();
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
-  const resourceFilter = resources.find((x) => x.type === data.type);
-  const versions = data.versions.filter((version) => {
-    // TODO test 'Flux.1 D'
-    if (isTraining && !['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'].includes(version.baseModel))
-      return false;
-    if (canGenerate === undefined) return true;
-    return (
-      version.canGenerate === canGenerate &&
-      (resourceFilter?.baseModels?.length
-        ? resourceFilter.baseModels?.includes(version.baseModel as BaseModel)
-        : true)
-    );
-  });
+  const versions = data.versions;
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
 
   const handleSelect = () => {
@@ -338,17 +334,6 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
     data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
   let contextMenuItems: React.ReactNode[] = [];
-
-  // if (features.collections) {
-  //   contextMenuItems = contextMenuItems.concat([
-  //     <AddToCollectionMenuItem
-  //       key="add-to-collection"
-  //       onClick={() =>
-  //         openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
-  //       }
-  //     />,
-  //   ]);
-  // }
 
   if (currentUser?.id !== data.user.id)
     contextMenuItems = contextMenuItems.concat([

@@ -1,6 +1,6 @@
 import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isDev } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IncomingHttpHeaders } from 'http';
@@ -24,7 +24,7 @@ const featureFlags = createFeatureFlags({
   ambientCard: ['public'],
   gallery: ['mod', 'member'],
   posts: ['mod', 'member'],
-  articles: ['public'],
+  articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
@@ -87,7 +87,7 @@ const featureFlags = createFeatureFlags({
   buzzWithdrawalTransfer: ['granted'],
   vault: ['mod'],
   draftMode: ['mod'],
-  membershipsV2: ['mod'],
+  membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
   donationGoals: ['public'],
@@ -98,7 +98,12 @@ const featureFlags = createFeatureFlags({
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
+  canViewNsfw: ['public', 'blue', 'red'],
+  canBuyBuzz: ['public', 'green'],
+  customPaymentProvider: ['public'],
+  adsEnabled: ['public', 'blue'],
 });
+
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------
@@ -124,21 +129,19 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
 
-  // Check server availability
-  let serverRequirement = false;
+  // // Check server availability
+  let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
   );
-  if (!availableServers.length || !host) serverRequirement = true;
+  if (!availableServers.length || !host) serverMatch = true;
   else {
-    for (const server of availableServers) {
-      const domain = serverDomainMap[server as ServerAvailability];
-      if (!domain) continue;
-      if (host.includes(domain)) {
-        serverRequirement = true;
-        break;
-      }
-    }
+    const domains = Object.entries(serverDomainMap)
+      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability))
+      .map(([key, domain]) => domain);
+    serverMatch = domains.some((domain) => host === domain);
+    // if server doesn't match, return false regardless of other availability flags
+    if (!serverMatch) return false;
   }
 
   // Check granted access
@@ -155,7 +158,7 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
     else if (!!user.tier && user.tier != 'free' && roles.includes('member')) roleAccess = true; // Gives access to any tier
   }
 
-  return envRequirement && serverRequirement && (grantedAccess || roleAccess);
+  return envRequirement && serverMatch && (grantedAccess || roleAccess);
 };
 
 export type FeatureAccess = Record<FeatureFlagKey, boolean>;

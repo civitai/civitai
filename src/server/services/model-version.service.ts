@@ -1220,6 +1220,7 @@ export const modelVersionDonationGoals = async ({
     select: {
       id: true,
       modelId: true,
+      earlyAccessEndsAt: true,
       model: {
         select: {
           userId: true,
@@ -1228,10 +1229,13 @@ export const modelVersionDonationGoals = async ({
     },
   });
 
+  const canSeeAllGoals = userId === version.model.userId || isModerator;
+
   const donationGoals = await dbRead.donationGoal.findMany({
     where: {
       modelVersionId: id,
-      active: version.model.userId === userId || isModerator ? undefined : true,
+      active: canSeeAllGoals ? undefined : true,
+      isEarlyAccess: version.earlyAccessEndsAt || canSeeAllGoals ? undefined : false, // Avoids returning earlyAccessGoals for public models.
     },
     select: {
       id: true,

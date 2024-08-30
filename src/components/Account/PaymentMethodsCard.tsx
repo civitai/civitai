@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Button,
   Card,
   Center,
   Divider,
@@ -24,6 +25,12 @@ import { UserPaymentMethod } from '~/types/router';
 import { booleanString } from '~/utils/zod-helpers';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { useSubscriptionManagementUrls } from '~/components/Paddle/util';
+import { PaymentProvider } from '@prisma/client';
+import { usePaddle } from '~/providers/PaddleProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const PaymentMethodItem = ({
   paymentMethod,
@@ -115,7 +122,7 @@ const querySchema = z.object({
   missingPaymentMethod: booleanString().optional(),
 });
 
-export function PaymentMethodsCard() {
+const StripePaymentMethods = () => {
   const { deletingPaymentMethod, deletePaymentMethod } = useMutateStripe();
   const { userPaymentMethods, isLoading: isLoadingPaymentMethods } = useUserPaymentMethods();
   const router = useRouter();
@@ -212,4 +219,82 @@ export function PaymentMethodsCard() {
       </Stack>
     </Card>
   );
+};
+
+const PaddlePaymentMethods = () => {
+  const { managementUrls, isLoading } = useSubscriptionManagementUrls();
+  const { paddle } = usePaddle();
+  const currentUser = useCurrentUser();
+  const { subscription } = useActiveSubscription();
+
+  if (!currentUser?.email) {
+    return null;
+  }
+
+  const handleSetupDefaultPaymentMethod = () => {
+    if (!!managementUrls?.freeSubscriptionPriceId) {
+      paddle.Checkout.open({
+        customer: {
+          email: currentUser.email as string,
+        },
+        items: [
+          {
+            priceId: managementUrls.freeSubscriptionPriceId,
+            quantity: 1,
+          },
+        ],
+      });
+    }
+  };
+
+  return (
+    <Card withBorder>
+      <Stack>
+        <Title order={2} id="payment-methods">
+          Payment methods
+        </Title>
+
+        <Divider label="Your payment methods" />
+        {isLoading && (
+          <Center>
+            <Loader variant="bars" />
+          </Center>
+        )}
+        {managementUrls?.updatePaymentMethod && (
+          <Button component="a" href={managementUrls?.updatePaymentMethod}>
+            Update your default paymet method
+          </Button>
+        )}
+        {managementUrls?.freeSubscriptionPriceId && !subscription && (
+          <Stack>
+            <Text align="center" size="sm" color="dimmed">
+              We found no default payment method.
+            </Text>
+            <Button onClick={handleSetupDefaultPaymentMethod}>Setup default payment method</Button>
+          </Stack>
+        )}
+      </Stack>
+    </Card>
+  );
+};
+
+export function PaymentMethodsCard() {
+  const paymentProvider = usePaymentProvider();
+  const { subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription();
+
+  if (subscriptionLoading) {
+    return null;
+  }
+
+  const currentPaymentProvider = subscriptionPaymentProvider ?? paymentProvider;
+
+  if (currentPaymentProvider === PaymentProvider.Stripe) {
+    return null; // We don't want new payment methods on stripe since we're leaving really.
+  }
+
+  if (currentPaymentProvider === PaymentProvider.Paddle) {
+    return <PaddlePaymentMethods />;
+  }
+
+  return null;
 }

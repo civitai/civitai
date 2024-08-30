@@ -8,7 +8,6 @@ import {
   MantineSize,
   Text,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import { Currency } from '@prisma/client';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
@@ -27,6 +26,7 @@ type Props = ButtonProps & {
   performTransactionOnPurchase?: boolean;
   showPurchaseModal?: boolean;
   error?: string;
+  transactionType?: 'Generation' | 'Default';
 };
 
 const useButtonStyle = createStyles((theme) => ({
@@ -51,16 +51,18 @@ export function BuzzTransactionButton({
   loading,
   showPurchaseModal = true,
   error,
+  transactionType,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
-  const { classes, cx } = useButtonStyle();
-  const theme = useMantineTheme();
-  const { conditionalPerformTransaction, hasRequiredAmount } = useBuzzTransaction({
-    message,
-    purchaseSuccessMessage,
-    performTransactionOnPurchase,
-  });
+  const { classes, cx, theme } = useButtonStyle();
+  const { conditionalPerformTransaction, hasRequiredAmount, hasTypeRequiredAmount } =
+    useBuzzTransaction({
+      message,
+      purchaseSuccessMessage,
+      performTransactionOnPurchase,
+      type: transactionType,
+    });
 
   if (!features.buzz) return null;
 
@@ -84,10 +86,13 @@ export function BuzzTransactionButton({
   };
 
   const hasCost = buzzAmount > 0;
+  const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
+  const buttonColor =
+    meetsTypeRequiredAmount && transactionType === 'Generation' ? 'blue.4' : 'yellow.7';
 
   return (
     <Button
-      color={error ? 'red.9' : hasCost || loading ? 'yellow.7' : 'blue'}
+      color={error ? 'red.9' : hasCost || loading ? buttonColor : 'blue'}
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
@@ -115,6 +120,11 @@ export function BuzzTransactionButton({
             pl={4}
             pr={8}
             loading={loading}
+            textColor={
+              meetsTypeRequiredAmount && transactionType === 'Generation'
+                ? theme.colors.blue[4]
+                : theme.colors.yellow[7]
+            }
             color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
           >
             {!hasRequiredAmount(buzzAmount) && (

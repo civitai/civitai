@@ -10,7 +10,6 @@ import {
   Title,
   Box,
 } from '@mantine/core';
-import ReactMarkdown from 'react-markdown';
 import { GetAnnouncement } from '~/server/services/announcement.service';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
@@ -18,6 +17,7 @@ import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 const useStyles = createStyles((theme, { color }: { color: string }, getRef) => ({
   card: {
@@ -127,24 +127,9 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
         </Group>
 
         <Text>
-          <ReactMarkdown
-            allowedElements={['a']}
-            components={{
-              a: ({ node, ...props }) => {
-                return (
-                  <Link href={props.href as string}>
-                    <a target={props.href?.includes('http') ? '_blank' : '_self'}>
-                      {props.children[0]}
-                    </a>
-                  </Link>
-                );
-              },
-            }}
-            unwrapDisallowed
-            className="markdown-content"
-          >
+          <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {announcement.content}
-          </ReactMarkdown>
+          </CustomMarkdown>
         </Text>
 
         <ContainerGrid mt="auto">

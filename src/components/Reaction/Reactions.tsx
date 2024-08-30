@@ -258,7 +258,7 @@ function ReactionBadge({
       pr={3}
       color={color}
       compact
-      classNames={{ inner: 'flex gap-0.5' }}
+      classNames={{ label: 'flex gap-1' }}
       {...(buttonStyling ? buttonStyling(reaction, hasReacted) : {})}
     >
       <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>

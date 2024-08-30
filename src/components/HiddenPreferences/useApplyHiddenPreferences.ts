@@ -6,9 +6,11 @@ import {
   useHiddenPreferencesContext,
 } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { hasNsfwWords } from '~/utils/metadata/audit';
 import { isDefined, paired } from '~/utils/type-guards';
 
 export function useApplyHiddenPreferences<
@@ -43,6 +45,7 @@ export function useApplyHiddenPreferences<
   const [previous, setPrevious] = useState<any[]>([]);
   const systemBrowsingLevel = useBrowsingLevelDebounced();
   const browsingLevel = browsingLevelOverride ?? systemBrowsingLevel;
+  const { canViewNsfw } = useFeatureFlags();
 
   const hiddenPreferences = useHiddenPreferencesContext();
 
@@ -76,6 +79,7 @@ export function useApplyHiddenPreferences<
       hiddenPreferences: preferences,
       currentUser,
       allowLowerLevels,
+      canViewNsfw,
     });
 
     return {
@@ -108,6 +112,7 @@ type FilterPreferencesProps<TKey, TData> = {
   disabled?: boolean;
   currentUser: CivitaiSessionUser | null;
   allowLowerLevels?: boolean;
+  canViewNsfw: boolean;
 };
 
 function filterPreferences<
@@ -123,6 +128,7 @@ function filterPreferences<
   disabled,
   currentUser,
   allowLowerLevels,
+  canViewNsfw,
 }: FilterPreferencesProps<TKey, TData>) {
   const hidden = {
     unprocessed: 0,
@@ -152,6 +158,7 @@ function filterPreferences<
         .filter((model) => {
           const userId = model.user.id;
           const isOwner = userId === currentUser?.id;
+          if (!canViewNsfw && (hasNsfwWords(model.name) || model.nsfw === true)) return false;
           if ((isOwner || isModerator) && model.nsfwLevel === 0) return true;
           if (showHidden && !hiddenModels.get(model.id)) return false;
           if (!Flags.intersects(model.nsfwLevel, browsingLevel)) {
@@ -244,6 +251,7 @@ function filterPreferences<
       const articles = value.filter((article) => {
         const userId = article.user.id;
         const isOwner = userId === currentUser?.id;
+        if (!canViewNsfw && hasNsfwWords(article.title)) return false;
         if ((isOwner || isModerator) && article.nsfwLevel === 0) return true;
         if (!Flags.intersects(article.nsfwLevel, browsingLevel)) {
           hidden.browsingLevel++;
@@ -345,6 +353,7 @@ function filterPreferences<
         .filter((bounty) => {
           const userId = bounty.user.id;
           const isOwner = userId === currentUser?.id;
+          if (!canViewNsfw && hasNsfwWords(bounty.name)) return false;
           if ((isOwner || isModerator) && bounty.nsfwLevel === 0) return true;
           if (!Flags.intersects(bounty.nsfwLevel, browsingLevel)) {
             hidden.browsingLevel++;
@@ -396,6 +405,7 @@ function filterPreferences<
         .filter((post) => {
           const userId = post.userId ?? post.user?.id;
           const isOwner = userId && userId === currentUser?.id;
+          if (!canViewNsfw && hasNsfwWords(post.title)) return false;
           if ((isOwner || isModerator) && post.nsfwLevel === 0) return true;
           if (!Flags.intersects(post.nsfwLevel, browsingLevel)) {
             hidden.browsingLevel++;
@@ -436,6 +446,7 @@ function filterPreferences<
         .filter((x) => !!x.nsfwLevel && Flags.intersects(x.nsfwLevel, browsingLevel))
         .map((x) => x.id);
       const tags = value.filter((tag) => {
+        if (!canViewNsfw && hasNsfwWords(tag.name)) return false;
         if (hiddenTags.get(tag.id)) {
           hidden.tags++;
           return false;
@@ -476,6 +487,7 @@ type BaseModel = {
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
+  name?: string | null;
 };
 
 type BaseArticle = {
@@ -485,6 +497,7 @@ type BaseArticle = {
   tags?: {
     id: number;
   }[];
+  title?: string | null;
   coverImage?: {
     id: number;
     tags: number[];
@@ -521,6 +534,7 @@ type BaseBounty = {
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
+  name?: string | null;
   images: {
     id: number;
     tagIds?: number[];
@@ -534,6 +548,7 @@ type BasePost = {
   userId?: number;
   user?: { id: number };
   nsfwLevel: number;
+  title?: string | null;
   images?: {
     id: number;
     tagIds?: number[];
@@ -546,6 +561,7 @@ type BasePost = {
 type BaseTag = {
   id: number;
   nsfwLevel?: number;
+  name?: string | null;
 };
 
 export type BaseDataTypeMap = {

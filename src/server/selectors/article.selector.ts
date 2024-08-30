@@ -17,7 +17,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
   publishedAt: true,
   tags: { select: { tag: { select: simpleTagSelect } } },
   user: {
-    select: userWithCosmeticsSelect,
+    select: { ...userWithCosmeticsSelect, isModerator: true },
   },
   reactions: {
     select: getReactionsSelectV2,

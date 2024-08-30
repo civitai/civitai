@@ -120,7 +120,7 @@ export const processClubMembershipRecurringPayments = createJob(
                   await createBuzzTransaction({
                     fromAccountId: clubMembership.userId,
                     toAccountId: clubMembership.clubId,
-                    toAccountType: 'Club',
+                    toAccountType: 'club',
                     amount: chargedAmount,
                     type: TransactionType.ClubMembership,
                     details: {
@@ -166,6 +166,11 @@ export const processClubMembershipRecurringPayments = createJob(
                 },
               });
 
+              return;
+            }
+
+            // TODO.PaddleIntegration: Check for active payment provider and use that instead of stripe.
+            if (!stripe) {
               return;
             }
 

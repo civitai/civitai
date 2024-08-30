@@ -7,6 +7,7 @@ import nsfwWords from './lists/words-nsfw.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
 import promptTags from './lists/prompt-tags.json';
+import paddleNsfwWords from './lists/words-paddle-nsfw.json';
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -56,6 +57,15 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
 
   return { blockedFor: [], success: true };
 };
+
+const expressions = [...nsfwWords, ...paddleNsfwWords].map((word) => new RegExp(word, 'i'));
+export function hasNsfwWords(text?: string | null) {
+  if (!text) return false;
+  for (const expression of expressions) {
+    if (expression.test(text)) return true;
+  }
+  return false;
+}
 // #endregion
 
 // #region [minorCheck]

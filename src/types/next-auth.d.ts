@@ -1,6 +1,6 @@
 import type { User as PrismaUser } from '@prisma/client';
 import { DefaultSession, DefaultUser } from 'next-auth';
-import { UserTier } from '~/server/schema/user.schema';
+import { UserSettingsSchema, UserTier } from '~/server/schema/user.schema';
 
 interface ExtendedUser {
   id: number;
@@ -15,6 +15,7 @@ interface ExtendedUser {
   createdAt?: Date;
   isModerator?: boolean;
   customerId?: string; // could be fetched
+  paddleCustomerId?: string; // could be fetched
   subscriptionId?: string; // could be fetched
   tier?: UserTier;
   muted?: boolean;
@@ -26,6 +27,7 @@ interface ExtendedUser {
   referral?: { id: number }; // client only
   memberInBadState?: boolean;
   meta?: UserMeta;
+  allowAds?: boolean;
   // TODO.briant - clean up user session data
   /*
     remove `deletedAt` from session user data

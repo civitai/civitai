@@ -93,10 +93,12 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
+import clsx from 'clsx';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import AppFavIcons from '~/components/AppLayout/AppFavIcons';
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -253,6 +255,7 @@ export function AppHeader({
   renderSearchComponent = defaultRenderSearchComponent,
   fixed = true,
 }: Props) {
+  const onBuyBuzz = useBuyBuzz();
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -345,7 +348,7 @@ export function AppHeader({
       },
       {
         href: '/articles/create',
-        visible: !isMuted,
+        visible: !isMuted && features.articles,
         redirectReason: 'create-article',
         label: (
           <Group align="center" spacing="xs">
@@ -695,7 +698,7 @@ export function AppHeader({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openBuyBuzzModal({}, { fullScreen: isMobile });
+                onBuyBuzz({}, { fullScreen: isMobile });
               }}
               compact
             >
@@ -800,7 +803,16 @@ export function AppHeader({
   );
 
   return (
-    <Header height={HEADER_HEIGHT} fixed={fixed} zIndex={200}>
+    <Header
+      height={HEADER_HEIGHT}
+      fixed={fixed}
+      zIndex={200}
+      className={clsx({
+        ['border-green-8 border-b-[3px]']: features.isGreen,
+        ['border-red-800 border-b-[3px]']: features.isRed,
+      })}
+    >
+      <AppFavIcons />
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
       </Box>
@@ -840,7 +852,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              <BrowsingModeIcon />
+              {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
@@ -907,7 +919,7 @@ export function AppHeader({
                           closeMenuOnClick={false}
                           mb={4}
                         >
-                          <Group w="100%" position="apart">
+                          <Group w="100%" position="apart" noWrap>
                             <UserAvatar user={creator ?? currentUser} withUsername />
                             <IconChevronRight />
                           </Group>
@@ -1040,15 +1052,6 @@ export function AppHeader({
                           </ActionIcon>
                           {currentUser && (
                             <>
-                              {/* {currentUser?.showNsfw && (
-                            <BlurToggle iconProps={{ stroke: 1.5 }}>
-                              {({ icon, toggle }) => (
-                                <ActionIcon variant="default" size="lg" onClick={() => toggle()}>
-                                  {icon}
-                                </ActionIcon>
-                              )}
-                            </BlurToggle>
-                          )} */}
                               <Link href="/user/account">
                                 <ActionIcon
                                   variant="default"

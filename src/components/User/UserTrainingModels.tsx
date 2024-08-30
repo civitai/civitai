@@ -310,7 +310,7 @@ export default function UserTrainingModels() {
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
                 const baseModelType = thisTrainingDetails?.baseModelType ?? 'sd15';
-                const { targetSteps } = thisTrainingDetails?.params || {};
+                const { targetSteps, resolution } = thisTrainingDetails?.params || {};
 
                 const startDate = isSubmitted
                   ? (estData ?? {})[mv.id]
@@ -337,13 +337,15 @@ export default function UserTrainingModels() {
                   <Text>{startStr ?? 'Unknown'}</Text>
                 );
 
-                const etaMins = !!targetSteps
-                  ? calcEta({
-                      cost: status.cost,
-                      baseModel: baseModelType,
-                      targetSteps,
-                    })
-                  : undefined;
+                const etaMins =
+                  !!targetSteps && !!resolution
+                    ? calcEta({
+                        cost: status.cost,
+                        baseModel: baseModelType,
+                        targetSteps,
+                        resolution,
+                      })
+                    : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
                   !!startDate && !!etaMins
@@ -368,7 +370,10 @@ export default function UserTrainingModels() {
                     onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(mv))}
                   >
                     <td>
-                      {mv.model.name} - {mv.name}
+                      <Group spacing={4}>
+                        <Text>{mv.model.name}</Text>
+                        {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
+                      </Group>
                     </td>
                     <td>
                       <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>

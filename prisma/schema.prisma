@@ -163,7 +163,6 @@ model User {
   isModerator             Boolean?              @default(false)
   createdAt               DateTime              @default(now())
   deletedAt               DateTime?
-  customerId              String?               @unique
   subscriptionId          String?
   subscription            CustomerSubscription?
   mutedAt                 DateTime? /// Updated via trigger
@@ -178,6 +177,9 @@ model User {
   excludeFromLeaderboards Boolean               @default(false)
   rewardsEligibility      RewardsEligibility    @default(Eligible)
   eligibilityChangedAt    DateTime?
+  // Payment provider related
+  customerId              String?               @unique // Stripe
+  paddleCustomerId        String?               @unique
 
   profile          UserProfile?
   profilePictureId Int?               @unique
@@ -270,6 +272,7 @@ model User {
   donations                  Donation[]
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
+  adTokens                   AdToken[]
 }
 
 model CustomerSubscription {
@@ -292,13 +295,19 @@ model CustomerSubscription {
   updatedAt          DateTime?
 }
 
+enum PaymentProvider {
+  Stripe
+  Paddle
+}
+
 model Product {
-  id             String  @id
+  id             String          @id
   active         Boolean
   name           String
   description    String?
   metadata       Json
   defaultPriceId String?
+  provider       PaymentProvider @default(Stripe)
 
   prices                Price[]
   customerSubscriptions CustomerSubscription[]
@@ -319,18 +328,19 @@ model Price {
   metadata              Json
   customerSubscriptions CustomerSubscription[]
   purchases             Purchase[]
+  provider              PaymentProvider        @default(Stripe)
 }
 
 model Purchase {
-  id         Int      @id @default(autoincrement())
-  customerId String
-  customer   User     @relation(fields: [customerId], references: [customerId])
-  productId  String?
-  product    Product? @relation(fields: [productId], references: [id])
-  priceId    String?
-  price      Price?   @relation(fields: [priceId], references: [id])
-  status     String?
-  createdAt  DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  customer  User     @relation(fields: [userId], references: [id])
+  productId String?
+  product   Product? @relation(fields: [productId], references: [id])
+  priceId   String?
+  price     Price?   @relation(fields: [priceId], references: [id])
+  status    String?
+  createdAt DateTime @default(now())
 }
 
 enum UserEngagementType {
@@ -666,6 +676,7 @@ model ModelVersion {
   nsfwLevel         Int             @default(0)
   earlyAccessEndsAt DateTime?
   earlyAccessConfig Json?
+  uploadType        ModelUploadType @default(Created)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1656,6 +1667,15 @@ model ApiKey {
   user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime   @default(now())
   type      ApiKeyType @default(User)
+  expiresAt DateTime?
+}
+
+model AdToken {
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
   expiresAt DateTime?
 }
 

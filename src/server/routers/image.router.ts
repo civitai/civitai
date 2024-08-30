@@ -1,35 +1,35 @@
-import { cacheIt, edgeCacheIt } from './../middleware.trpc';
-import {
-  getEntitiesCoverImageHandler,
-  getImageContestCollectionDetailsHandler,
-  getImageHandler,
-  getImageResourcesHandler,
-  getImagesAsPostsInfiniteHandler,
-  getInfiniteImagesHandler,
-  getModeratorReviewQueueHandler,
-} from './../controllers/image.controller';
-import {
-  getInfiniteImagesSchema,
-  imageModerationSchema,
-  getImageSchema,
-  getEntitiesCoverImage,
-  imageReviewQueueInputSchema,
-  createImageSchema,
-  updateImageNsfwLevelSchema,
-  imageRatingReviewInput,
-  reportCsamImagesSchema,
-  addOrRemoveImageToolsSchema,
-  updateImageToolsSchema,
-  updateImageTechniqueSchema,
-  addOrRemoveImageTechniquesSchema,
-} from './../schema/image.schema';
+import { z } from 'zod';
+import { CacheTTL } from '~/server/common/constants';
 import {
   deleteImageHandler,
-  setTosViolationHandler,
   moderateImageHandler,
+  setTosViolationHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import {
+  addImageTechniques,
+  addImageTools,
+  createArticleCoverImage,
+  createImage,
+  get404Images,
+  getImageDetail,
+  getImageGenerationData,
+  getImageRatingRequests,
+  getImagesByUserIdForModeration,
+  getImagesForModelVersionCache,
+  getImagesPendingIngestion,
+  getModeratorPOITags,
+  ingestArticleCoverImages,
+  ingestImageById,
+  removeImageResource,
+  removeImageTechniques,
+  removeImageTools,
+  reportCsamImages,
+  updateImageNsfwLevel,
+  updateImageTechniques,
+  updateImageTools,
+} from '~/server/services/image.service';
 import {
   middleware,
   moderatorProcedure,
@@ -39,29 +39,30 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
-  ingestImageById,
-  removeImageResource,
-  getModeratorPOITags,
-  get404Images,
-  reportCsamImages,
-  createImage,
-  createArticleCoverImage,
-  ingestArticleCoverImages,
-  getImagesForModelVersionCache,
-  updateImageNsfwLevel,
-  getImageRatingRequests,
-  addImageTools,
-  removeImageTools,
-  updateImageTools,
-  updateImageTechniques,
-  removeImageTechniques,
-  addImageTechniques,
-  getImageDetail,
-  getImageGenerationData,
-  getImagesByUserIdForModeration,
-} from '~/server/services/image.service';
-import { CacheTTL } from '~/server/common/constants';
-import { z } from 'zod';
+  getEntitiesCoverImageHandler,
+  getImageContestCollectionDetailsHandler,
+  getImageHandler,
+  getImageResourcesHandler,
+  getImagesAsPostsInfiniteHandler,
+  getInfiniteImagesHandler,
+  getModeratorReviewQueueHandler,
+} from './../controllers/image.controller';
+import { cacheIt, edgeCacheIt } from './../middleware.trpc';
+import {
+  addOrRemoveImageTechniquesSchema,
+  addOrRemoveImageToolsSchema,
+  createImageSchema,
+  getEntitiesCoverImage,
+  getImageSchema,
+  getInfiniteImagesSchema,
+  imageModerationSchema,
+  imageRatingReviewInput,
+  imageReviewQueueInputSchema,
+  reportCsamImagesSchema,
+  updateImageNsfwLevelSchema,
+  updateImageTechniqueSchema,
+  updateImageToolsSchema,
+} from './../schema/image.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -192,5 +193,7 @@ export const imageRouter = router({
   getImagesByUserIdForModeration: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
+
+  getAllImagesPendingIngestion: moderatorProcedure.query(getImagesPendingIngestion),
   // #endregion
 });

@@ -1,6 +1,6 @@
 import { Container, Stack, Title, Text, Button, Group, Divider } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
-import React, { useMemo } from 'react';
+import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
 import { ApiKeysCard } from '~/components/Account/ApiKeysCard';
@@ -17,11 +17,11 @@ import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
-import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
+import { StripeConnectCard } from '~/components/Account/StripeConnectCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 
 export default function Account({ providers }: Props) {
-  const { apiKeys, buzz } = useFeatureFlags();
+  const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
   return (
@@ -41,7 +41,7 @@ export default function Account({ providers }: Props) {
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />
-          <ModerationCard />
+          {canViewNsfw && <ModerationCard />}
           <AccountsCard providers={providers} />
           <StripeConnectCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
@@ -80,7 +80,7 @@ export const getServerSideProps = createServerSideProps({
 
     const providers = await getProviders();
     await ssg?.account.getAll.prefetch();
-    if (session?.user?.subscriptionId) await ssg?.stripe.getUserSubscription.prefetch();
+    if (session?.user?.subscriptionId) await ssg?.subscriptions.getUserSubscription.prefetch();
 
     return {
       props: {

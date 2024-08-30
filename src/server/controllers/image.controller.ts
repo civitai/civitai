@@ -262,6 +262,7 @@ export const getInfiniteImagesHandler = async ({
     return await fetchFn({
       ...input,
       user,
+      useCombinedNsfwLevel: !features.canViewNsfw,
       headers: { src: 'getInfiniteImagesHandler' },
       include: [...input.include, 'tagIds'],
     });
@@ -319,6 +320,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { items: pinnedPostsImages } = await fetchFn({
         ...input,
         limit: limit * 3,
+        useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
@@ -338,6 +340,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const { nextCursor, items } = await fetchFn({
         ...input,
         followed: false,
+        useCombinedNsfwLevel: !features.canViewNsfw,
         cursor,
         ids: fetchHidden ? hiddenImagesIds : undefined,
         limit: Math.ceil(limit * 2), // Overscan so that I can merge by postId
@@ -391,10 +394,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       const review = reviews.find((review) => review.userId === user.id);
       // TODO meili has sortAt as a string, not a date
       const createdAt = images.map((image) => new Date(image.sortAt)).sort()[0];
-      // TODO we can probably replace this with publishedAt
-      let publishedAt: Date | undefined = image.sortAt;
-      if (features.imageIndex && !(image as ImageResultSearchIndex).published)
-        publishedAt = undefined;
 
       if (input.sort === ImageSort.Newest) images.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
       const imageNsfwLevels = images.map((x) => x.nsfwLevel);
@@ -409,7 +408,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned: !!(image.postId && pinned[image.postId]),
         nsfwLevel,
         modelVersionId: image.modelVersionId,
-        publishedAt,
+        publishedAt: image.publishedAt,
         createdAt,
         user,
         images,

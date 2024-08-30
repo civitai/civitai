@@ -282,7 +282,7 @@ export function ModelCard({ data, forceInView }: Props) {
                         className={cx(classes.contentOverlay, classes.top)}
                         noWrap
                       >
-                        <Group spacing={4}>
+                        <div className="flex gap-1">
                           <ImageGuard2.BlurToggle className={classes.chip} />
                           {currentUser?.isModerator && isPOI && (
                             <Badge
@@ -356,8 +356,8 @@ export function ModelCard({ data, forceInView }: Props) {
                               <IconArchiveFilled size={16} />
                             </Badge>
                           )}
-                        </Group>
-                        <Stack spacing="xs">
+                        </div>
+                        <div className="flex flex-col gap-2">
                           {contextMenuItems.length > 0 && (
                             <Menu position="left-start" withArrow offset={-5} withinPortal>
                               <Menu.Target>
@@ -422,7 +422,7 @@ export function ModelCard({ data, forceInView }: Props) {
                               </HoverActionButton>
                             )}
                           </CivitaiLinkManageButton>
-                        </Stack>
+                        </div>
                       </Group>
                       {safe ? (
                         <div

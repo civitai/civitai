@@ -68,7 +68,7 @@ const imageFilterSchema = z.object({
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   notPublished: z.boolean().optional(),
-  notScheduled: z.boolean().optional(),
+  scheduled: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
   tools: z.number().array().optional(),

@@ -4,6 +4,7 @@ import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NextRouter, useRouter } from 'next/router';
 import React, { useEffect } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 import { Files, UploadStepActions } from '~/components/Resource/Files';
@@ -104,7 +105,6 @@ const CreateSteps = ({
 
 const TrainSteps = ({
   step,
-  versionId,
   modelData,
   modelVersion,
   goBack,
@@ -113,7 +113,6 @@ const TrainSteps = ({
   postId,
 }: {
   step: number;
-  versionId: string | string[];
   modelData: ModelVersionById['model'];
   modelVersion: ModelVersionById;
   goBack: () => void;
@@ -126,7 +125,7 @@ const TrainSteps = ({
       active={step - 1}
       onStepClick={(step) =>
         router.replace(
-          `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${step + 1}`
+          `/models/${modelData?.id}/model-versions/${modelVersion.id}/wizard?step=${step + 1}`
         )
       }
       allowNextStepsSelect={false}
@@ -201,7 +200,11 @@ export function ModelVersionWizard({ data }: Props) {
   const parsedStep = router.query.step ? Number(router.query.step) : 1;
   const step = isNumber(parsedStep) ? parsedStep : 1;
 
-  const { data: modelVersion, isInitialLoading } = trpc.modelVersion.getById.useQuery(
+  const {
+    data: modelVersion,
+    isInitialLoading,
+    isError,
+  } = trpc.modelVersion.getById.useQuery(
     { id: Number(versionId), withFiles: true },
     { enabled: !!versionId }
   );
@@ -230,7 +233,7 @@ export function ModelVersionWizard({ data }: Props) {
 
   // Filter to posts belonging to the owner of the model
   const postId = modelVersion?.posts?.filter((post) => post.userId === modelData?.user.id)?.[0]?.id;
-  const isTraining = modelData?.uploadType === ModelUploadType.Trained;
+  const isTraining = modelVersion?.uploadType === ModelUploadType.Trained;
 
   useEffect(() => {
     if (isTraining || isInitialLoading) return;
@@ -267,12 +270,13 @@ export function ModelVersionWizard({ data }: Props) {
       </div>
       {isInitialLoading ? (
         <PageLoader text="Loading model..." />
+      ) : isError || !modelData ? (
+        <NotFound />
       ) : isTraining ? (
         <TrainSteps
           step={step}
-          versionId={versionId!}
           modelData={modelData}
-          modelVersion={modelVersion!}
+          modelVersion={modelVersion}
           goBack={goBack}
           goNext={goNext}
           router={router}

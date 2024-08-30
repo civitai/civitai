@@ -131,6 +131,7 @@ const start = async (port: MessagePort) => {
       postMessage({ type: 'event:received', target, payload })
     ),
     emitter.on('pong', () => {
+      postMessage({ type: 'pong' });
       postMessage({ type: 'event:received', target: 'pong', payload: connection?.state });
     }),
   ];
@@ -148,6 +149,7 @@ const start = async (port: MessagePort) => {
       emitterOffHandlers.forEach((fn) => fn());
       port.close();
     } else if (data.type === 'ping') emitter.emit('pong', undefined);
+    else if (data.type === 'send') connection?.send(data.target, data.args);
   };
 };
 

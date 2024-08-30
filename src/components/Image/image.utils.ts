@@ -17,48 +17,57 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
+const imageSections = ['images', 'reactions'] as const;
+export type ImageSections = (typeof imageSections)[number];
+
+// output is input to getInfiniteImagesSchema
+export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
   .object({
-    modelId: numericString(),
-    modelVersionId: numericString(),
-    postId: numericString(),
-    collectionId: numericString(),
-    username: z.coerce.string().transform(postgresSlugify),
-    prioritizedUserIds: numericStringArray(),
-    limit: numericString(),
-    period: z.nativeEnum(MetricTimeframe),
-    periodMode: periodModeSchema,
-    sort: z.nativeEnum(ImageSort),
-    tags: numericStringArray(),
-    view: z.enum(['categories', 'feed']),
-    excludeCrossPosts: z.boolean(),
-    reactions: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.nativeEnum(ReviewReactions))
-    ),
-    types: z
-      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    withMeta: booleanString(),
-    section: z.enum(['images', 'reactions']),
-    hidden: booleanString(),
-    followed: booleanString(),
-    fromPlatform: booleanString(),
-    notPublished: booleanString(),
-    notScheduled: booleanString(),
-    tools: numericStringArray(),
-    collectionTagId: numericString(),
     baseModels: z
       .union([z.enum(constants.baseModels).array(), z.enum(constants.baseModels)])
       .transform((val) => (Array.isArray(val) ? val : [val]))
       .optional(),
+    collectionId: numericString(),
+    collectionTagId: numericString(),
+    excludeCrossPosts: z.boolean(),
+    followed: booleanString(),
+    fromPlatform: booleanString(),
+    hidden: booleanString(),
+    limit: numericString(),
+    modelId: numericString(),
+    modelVersionId: numericString(),
+    notPublished: booleanString(),
+    period: z.nativeEnum(MetricTimeframe),
+    periodMode: periodModeSchema,
+    postId: numericString(),
+    prioritizedUserIds: numericStringArray(),
+    reactions: z.preprocess(
+      (val) => (Array.isArray(val) ? val : [val]),
+      z.array(z.nativeEnum(ReviewReactions))
+    ),
+    scheduled: booleanString(),
+    section: z.enum(imageSections),
+    sort: z.nativeEnum(ImageSort),
+    tags: numericStringArray(),
+    techniques: numericStringArray(),
+    tools: numericStringArray(),
+    types: z
+      .union([z.array(z.nativeEnum(MediaType)), z.nativeEnum(MediaType)])
+      .transform((val) => (Array.isArray(val) ? val : [val]))
+      .optional(),
+    useIndex: booleanString().nullish(),
+    userId: numericString(),
+    username: z.coerce.string().transform(postgresSlugify),
+    view: z.enum(['categories', 'feed']),
+    withMeta: booleanString(),
   })
   .partial();
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
-export const useImageFilters = (type: FilterKeys<'images' | 'modelImages' | 'videos'>) => {
+// could have userImages and userVideo
+export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
 
@@ -77,7 +86,7 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
 };
 
 export const useQueryImages = (
-  filters?: Partial<GetInfiniteImagesInput>,
+  filters?: GetInfiniteImagesInput,
   options?: { keepPreviousData?: boolean; enabled?: boolean; applyHiddenPreferences?: boolean }
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};

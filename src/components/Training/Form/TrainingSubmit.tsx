@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, TrainingStatus } from '@prisma/client';
+import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconCopy, IconExclamationMark, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
@@ -169,6 +169,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       cost: status.cost,
       baseModel: formBaseModelType,
       targetSteps: selectedRun.params.targetSteps,
+      resolution: selectedRun.params.resolution,
     });
     const isCustom = isTrainingCustomModel(formBaseModel);
     const price = calcBuzzFromEta({
@@ -184,11 +185,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    status.cost,
     selectedRun.params.targetSteps,
+    selectedRun.params.resolution,
     selectedRun.highPriority,
     formBaseModel,
     formBaseModelType,
-    status.cost,
   ]);
 
   const { data: dryRunData, isFetching: dryRunLoading } =
@@ -398,6 +400,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           staging,
           highPriority,
         },
+        uploadType: ModelUploadType.Trained,
       };
 
       try {

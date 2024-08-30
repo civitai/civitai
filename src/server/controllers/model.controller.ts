@@ -59,6 +59,7 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
@@ -86,6 +87,12 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getCategoryTags } from '~/server/services/system-cache';
+import {
+  BlockedByUsers,
+  BlockedUsers,
+  HiddenUsers,
+} from '~/server/services/user-preferences.service';
+import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
 import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
@@ -103,15 +110,8 @@ import {
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
-import { getUnavailableResources } from '../services/generation/generation.service';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { hasEntityAccess } from '~/server/services/common.service';
-import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
-import {
-  BlockedByUsers,
-  BlockedUsers,
-  HiddenUsers,
-} from '~/server/services/user-preferences.service';
+import { getUnavailableResources } from '../services/generation/generation.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -770,6 +770,7 @@ export const getDownloadCommandHandler = async ({
       (isMod ||
         modelVersion?.model?.status === 'Published' ||
         modelVersion.model.userId === userId);
+
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
@@ -972,6 +973,7 @@ export const getAvailableTrainingModelsHandler = async ({
 }: {
   ctx: DeepNonNullable<Context>;
 }) => {
+  // TODO not in use yet, but should probably alter this query
   try {
     return await dbRead.model.findMany({
       where: {

@@ -26,6 +26,9 @@ const relevantEvents = new Set(['account.updated', 'transfer.created']);
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const stripe = await getServerStripe();
+    if (!stripe) {
+      return;
+    }
 
     const buf = await buffer(req);
     console.log(req.headers, req.env);

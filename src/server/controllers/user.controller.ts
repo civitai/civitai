@@ -345,7 +345,6 @@ export const updateUserHandler = async ({
     nameplateId,
     profileDecorationId,
     profileBackgroundId,
-    showNsfw,
     username,
     source,
     landingPage,
@@ -390,7 +389,6 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        showNsfw,
         profilePicture: profilePicture
           ? {
               connectOrCreate: {
@@ -1292,7 +1290,7 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Con
     const settings = await getUserSettings(id);
 
     // Limits it to the input type
-    return settings as UserSettingsSchema;
+    return settings;
   } catch (error) {
     throw throwDbError(error);
   }

@@ -20,8 +20,14 @@ import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Redirect } from '~/components/Redirect/Redirect';
 
 export default function ArticlesSearch() {
+  const { articles } = useFeatureFlags();
+
+  if (!articles) return <Redirect url="/" />;
+
   return (
     <SearchLayout.Root>
       <SearchLayout.Filters>

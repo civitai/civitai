@@ -382,7 +382,7 @@ export type BuzzEventLog = BuzzEventKey & {
   multiplier?: number;
   status?: 'pending' | 'awarded' | 'capped' | 'unqualified';
   ip?: string;
-  fingerprint?: string | null;
+  fingerprint?: string | null; // TODO - rename to deviceId
   version?: number;
   transactionDetails?: string;
 };

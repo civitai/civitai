@@ -43,7 +43,7 @@ import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions } from '~/components/Chat/util';
@@ -904,13 +904,9 @@ function DisplayMessages({
                   border: '1px solid gray',
                 }}
               >
-                <ReactMarkdown
-                  allowedElements={['a']}
-                  unwrapDisallowed
-                  className="markdown-content"
-                >
+                <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                   {c.content.replace(currentUser?.username ?? '', 'You')}
-                </ReactMarkdown>
+                </CustomMarkdown>
               </Text>
             ) : (
               <>

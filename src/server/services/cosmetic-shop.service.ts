@@ -1,5 +1,5 @@
 import { CollectionType, CosmeticType, MediaType, MetricTimeframe, Prisma } from '@prisma/client';
-import { ImageSort, ImageType } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -604,16 +604,8 @@ export const getUserPreviewImagesForCosmetics = async ({
 }: {
   userId: number;
 } & GetPreviewImagesInput) => {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-  });
-
-  if (!user) {
-    return [];
-  }
-
   const userImages = await getAllImages({
-    username: user.username ?? '',
+    userId,
     limit: 2 * limit,
     sort: ImageSort.MostReactions,
     browsingLevel,

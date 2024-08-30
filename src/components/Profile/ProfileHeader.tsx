@@ -9,7 +9,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -174,14 +174,13 @@ export function ProfileHeader({ username }: { username: string }) {
           </ThemeIcon>
           <Stack spacing={0}>
             <Text>
-              <ReactMarkdown
+              <CustomMarkdown
                 rehypePlugins={[rehypeRaw, remarkGfm]}
                 allowedElements={['a', 'p']}
                 unwrapDisallowed
-                className="markdown-content"
               >
                 {profile.message}
-              </ReactMarkdown>
+              </CustomMarkdown>
             </Text>
             {profile.messageAddedAt && (
               <Text color="dimmed" size="xs">

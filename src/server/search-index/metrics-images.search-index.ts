@@ -15,11 +15,11 @@ const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const searchableAttributes = [] as const;
 
 const sortableAttributes = [
-  'id',
+   'id', 
   'sortAt',
   'reactionCount',
   'commentCount',
-  'collectedCount',
+  'collectedCount', 
 ] as const;
 
 const filterableAttributes = [
@@ -36,6 +36,7 @@ const filterableAttributes = [
   'tagIds',
   'userId',
   'nsfwLevel',
+  'combinedNsfwLevel',
   'postId',
   'publishedAtUnix',
   'existedAtUnix',
@@ -109,6 +110,8 @@ export type SearchBaseImage = {
   postId: number;
   url: string;
   nsfwLevel: number;
+  aiNsfwLevel: number;
+  nsfwLevelLocked: boolean;
   width: number;
   height: number;
   hash: string;
@@ -164,7 +167,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ publishedAt, ...imageRecord }) => {
+    .map(({ publishedAt, nsfwLevelLocked, ...imageRecord }) => {
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
@@ -182,6 +185,9 @@ const transformData = async ({
       return {
         ...imageRecord,
         ...imageMetrics,
+        combinedNsfwLevel: nsfwLevelLocked
+          ? imageRecord.nsfwLevel
+          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         baseModel,
         modelVersionIds,
         toolIds: imageTools.map((t) => t.toolId),
@@ -226,6 +232,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     const { startId, endId } = newItems[0];
 
     let updateIds: number[] = [];
+    // TODO remove createdAt clause below?
     if (lastUpdatedAt) {
       const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
         SELECT id
@@ -254,7 +261,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ? Prisma.raw(`i.id BETWEEN ${batch.startId} AND ${batch.endId}`)
         : undefined,
     ].filter(isDefined);
-    logger(`PullData :: Pulling data for batch`, batchLogKey);
+    logger(`PullData :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
     if (step === 0) {
       const images = await db.$queryRaw<SearchBaseImage[]>`
@@ -264,6 +271,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."postId",
         i."url",
         i."nsfwLevel",
+        i."aiNsfwLevel",
+        i."nsfwLevelLocked",
         i."width",
         i."height",
         i."hash",
@@ -315,7 +324,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       const subBatchLogKey = `${i} of ${batches.length}`;
 
       if (step === 1) {
-        logger(`Pulling metrics`, batchLogKey, subBatchLogKey);
+        logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
                    SUM(if(
@@ -335,7 +344,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 2) {
-        logger(`Pulling tags`, batchLogKey, subBatchLogKey);
+        logger(`Pulling tags :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         // Pull tags:
         const cacheImageTags = await tagIdsForImagesCache.fetch(batch);
 
@@ -345,7 +354,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 3) {
-        logger(`Pulling techs and tools`, batchLogKey, subBatchLogKey);
+        logger(`Pulling techs and tools :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         // Tools and techs
 
         const tools: ImageTool[] = await db.imageTool.findMany({
@@ -372,7 +381,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       }
 
       if (step === 4) {
-        logger(`Pulling versions`, batchLogKey, subBatchLogKey);
+        logger(`Pulling versions :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         // Model versions & baseModel:
 
         const modelVersions = await db.$queryRaw<ModelVersions[]>`

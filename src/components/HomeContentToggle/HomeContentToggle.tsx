@@ -361,6 +361,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
           key === 'bounties' && !features.bounties,
           key === 'clubs' && !features.clubs,
           key === 'shop' && !features.cosmeticShop,
+          key === 'articles' && !features.articles,
         ].some((b) => b)
     )
     .map(([key, value]) => {

@@ -7,6 +7,7 @@ import {
   stringToArray,
 } from '~/utils/zod-helpers';
 
+ 
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -85,11 +86,6 @@ export const serverSchema = z.object({
   UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
   UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
   SHOW_SFW_IN_NSFW: zc.booleanString,
-  STRIPE_SECRET_KEY: z.string(),
-  STRIPE_WEBHOOK_SECRET: z.string(),
-  STRIPE_CONNECT_WEBHOOK_SECRET: z.string(),
-  STRIPE_DONATE_ID: z.string(),
-  STRIPE_METADATA_KEY: z.string(),
   LOGGING: commaDelimitedStringArray(),
   IMAGE_SCANNING_ENDPOINT: z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
@@ -99,7 +95,7 @@ export const serverSchema = z.object({
   DELIVERY_WORKER_TOKEN: z.string().optional(),
   PLAYFAB_TITLE_ID: z.string().optional(),
   PLAYFAB_SECRET_KEY: z.string().optional(),
-  TRPC_ORIGINS: commaDelimitedStringArray().optional(),
+  TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   CANNY_SECRET: z.string().optional(),
   ORCHESTRATOR_ENDPOINT: z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
@@ -175,6 +171,13 @@ export const serverSchema = z.object({
   CHOPPED_TOKEN: z.string().optional(),
   FINGERPRINT_SECRET: z.string().length(64).optional(),
   FINGERPRINT_IV: z.string().length(32).optional(),
+  TIER_METADATA_KEY: z.string().default('tier'),
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_CONNECT_WEBHOOK_SECRET: z.string().optional(),
+  STRIPE_DONATE_ID: z.string().optional(),
+  PADDLE_SECRET_KEY: z.string().optional(),
+  PADDLE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 /**
@@ -183,7 +186,6 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string(),
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
@@ -215,6 +217,9 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_SERVER_DOMAIN_GREEN: z.string().optional(),
   NEXT_PUBLIC_SERVER_DOMAIN_BLUE: z.string().optional(),
   NEXT_PUBLIC_SERVER_DOMAIN_RED: z.string().optional(),
+  NEXT_PUBLIC_PADDLE_TOKEN: z.string().optional(),
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: z.enum(['Stripe', 'Paddle']).default('Stripe'),
 });
 
 /**
@@ -224,7 +229,6 @@ export const clientSchema = z.object({
  * @type {{ [k in keyof z.infer<typeof clientSchema>]: z.infer<typeof clientSchema>[k] | undefined }}
  */
 export const clientEnv = {
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
@@ -256,4 +260,8 @@ export const clientEnv = {
   NEXT_PUBLIC_SERVER_DOMAIN_GREEN: process.env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
   NEXT_PUBLIC_SERVER_DOMAIN_BLUE: process.env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
   NEXT_PUBLIC_SERVER_DOMAIN_RED: process.env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
+  NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
+  // Default to Stripe in case the env var is not set
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
 };

@@ -11,6 +11,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { userMultipliersCache } from '~/server/redis/caches';
 import {
   BuzzAccountType,
+  ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
   GetBuzzTransactionResponse,
@@ -34,6 +35,8 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+// import { adWatchedReward } from '~/server/rewards';
+import { generateSecretHash } from '~/server/utils/key-generator';
 
 type AccountType = 'User';
 
@@ -123,10 +126,10 @@ export async function getUserBuzzTransactions({
 
   // Remove duplicate user ids
   const toUserIds = new Set(
-    transactions.filter((t) => t.toAccountType === 'User').map((t) => t.toAccountId)
+    transactions.filter((t) => t.toAccountType === 'user').map((t) => t.toAccountId)
   );
   const fromUserIds = new Set(
-    transactions.filter((t) => t.fromAccountType === 'User').map((t) => t.fromAccountId)
+    transactions.filter((t) => t.fromAccountType === 'user').map((t) => t.fromAccountId)
   );
   // Remove account 0 (central bank)
   toUserIds.delete(0);
@@ -360,6 +363,10 @@ export async function completeStripeBuzzTransaction({
 }> {
   try {
     const stripe = await getServerStripe();
+    if (!stripe) {
+      throw throwBadRequestError('Stripe not available');
+    }
+
     const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
       expand: ['payment_method'],
     });
@@ -823,3 +830,39 @@ export const getDailyCompensationRewardByUser = async ({
       .sort((a, b) => b.totalSum - a.totalSum)
   );
 };
+
+export async function claimWatchedAdReward({
+  key,
+  userId,
+  ip,
+}: ClaimWatchedAdRewardInput & { userId: number; ip?: string }) {
+  throw new Error('claimWatchedAdReward not implemented');
+  // const rewardDetails = await adWatchedReward.getUserRewardDetails(userId);
+  // if (!rewardDetails) return false;
+
+  // const awardedPercent =
+  //   rewardDetails.cap && rewardDetails.awarded !== -1
+  //     ? rewardDetails.awarded / rewardDetails.cap
+  //     : 0;
+  // if (awardedPercent >= 1) return false;
+
+  // const token = generateSecretHash(key);
+  // const match = await dbRead.adToken.findFirst({
+  //   where: { token, userId },
+  //   select: { expiresAt: true, createdAt: true },
+  // });
+  // // if token doesn't exist or is expired, it's invalid
+  // if (!match || (match.expiresAt && match.expiresAt < new Date())) return false;
+
+  // // if token was created less than 15 seconds ago, it's invalid
+  // const now = new Date();
+  // if (now.getTime() - match.createdAt.getTime() < 15000) return false;
+
+  // // await adWatchedReward.apply({ token, userId }, ip);
+  // await dbWrite.adToken.update({
+  //   where: { token },
+  //   data: { expiresAt: new Date() },
+  // });
+
+  // return true;
+}

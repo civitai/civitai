@@ -367,7 +367,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.Upscaler, baseModels: [...baseModelSets.SD1] },
+    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SD1] },
   ],
   SDXL: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
@@ -376,11 +376,11 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.Upscaler, baseModels: [...baseModelSets.SDXL] },
+    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SDXL] },
   ],
   Pony: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
-    { type: ModelType.TextualInversion, baseModels: ['SD 1.5'] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Pony, 'SD 1.5'] },
     {
       type: ModelType.LORA,
       baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
@@ -403,6 +403,11 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
   ],
 };
+export function getBaseModelResourceTypes(baseModel: string) {
+  if (baseModel in baseModelResourceTypes)
+    return baseModelResourceTypes[baseModel as SupportedBaseModel];
+  throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
+}
 
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },

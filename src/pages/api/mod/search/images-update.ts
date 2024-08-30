@@ -2,7 +2,9 @@ import { CosmeticSource, CosmeticType, ImageIngestionStatus, Prisma } from '@pri
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { dataProcessor } from '~/server/db/db-helpers';
 import { updateDocs } from '~/server/meilisearch/client';
 import { ImageModelWithIngestion, profileImageSelect } from '~/server/selectors/image.selector';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
@@ -11,8 +13,11 @@ import { isDefined } from '~/utils/type-guards';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = IMAGES_SEARCH_INDEX;
-const IMAGE_WHERE: (idOffset: number) => Prisma.Sql[] = (idOffset: number) => [
-  Prisma.sql`i."id" > ${idOffset}`,
+const IMAGE_WHERE: (start: number, end?: number) => Prisma.Sql[] = (
+  start: number,
+  end?: number
+) => [
+  end ? Prisma.sql`i."id" BETWEEN ${start} AND ${end}` : Prisma.sql`i."id" > ${start}`,
   Prisma.sql`i."postId" IS NOT NULL`,
   Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
   Prisma.sql`i."tosViolation" = false`,
@@ -23,7 +28,7 @@ const IMAGE_WHERE: (idOffset: number) => Prisma.Sql[] = (idOffset: number) => [
 ];
 
 const schema = z.object({
-  update: z.enum(['user', 'dateFields']),
+  update: z.enum(['user', 'dateFields', 'nsfw']),
 });
 
 const updateUserDetails = (idOffset: number) =>
@@ -54,7 +59,7 @@ const updateUserDetails = (idOffset: number) =>
     const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
       WITH target AS MATERIALIZED (
         SELECT
-          i."id", 
+          i."id",
           i."userId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -158,8 +163,8 @@ const updateDateFields = (idOffset: number) =>
     console.log('Fetching records from ID: ', idOffset);
     const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
         SELECT
-          i."id", 
-          i."sortAt",
+          i."id",
+          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
           p."publishedAt" as "publishedAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -190,10 +195,90 @@ const updateDateFields = (idOffset: number) =>
     return records[records.length - 1].id;
   });
 
+async function updateNsfw() {
+  await dataProcessor({
+    params: { batchSize: 100000, concurrency: 10, start: 0 },
+    runContext: {
+      on: (event: 'close', listener: () => void) => {
+        // noop
+      },
+    },
+    rangeFetcher: async (ctx) => {
+      const [{ start, end }] = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        WITH dates AS (
+          SELECT
+          MIN("createdAt") as start,
+          MAX("createdAt") as end
+          FROM "Image"
+        )
+        SELECT MIN(id) as start, MAX(id) as end
+        FROM "Image" i
+        JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";
+      `;
+
+      return { start, end };
+    },
+    processor: async ({ start, end }) => {
+      type ImageForSearchIndex = {
+        id: number;
+        nsfwLevel: NsfwLevel;
+        aiNsfwLevel: NsfwLevel;
+        nsfwLevelLocked: boolean;
+      };
+
+      const consoleFetchKey = `Fetch: ${start} - ${end}`;
+      console.log(consoleFetchKey);
+      console.time(consoleFetchKey);
+      const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
+        SELECT
+          i."id",
+          p."publishedAt",
+          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+          i."nsfwLevel",
+          i."aiNsfwLevel",
+          i."nsfwLevelLocked"
+        FROM "Image" i
+        JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
+        WHERE ${Prisma.join(IMAGE_WHERE(start, end), ' AND ')}
+      `;
+      console.timeEnd(consoleFetchKey);
+
+      if (records.length === 0) {
+        console.log(`No updates found:  ${start} - ${end}`);
+        return;
+      }
+
+      const consoleTransformKey = `Transform: ${start} - ${end}`;
+      console.log(consoleTransformKey);
+      console.time(consoleTransformKey);
+      const documents = records.map(({ nsfwLevelLocked, ...r }) => ({
+        ...r,
+        combinedNsfwLevel: nsfwLevelLocked ? r.nsfwLevel : Math.max(r.nsfwLevel, r.aiNsfwLevel),
+      }));
+      console.timeEnd(consoleTransformKey);
+
+      const consolePushKey = `Push: ${start} - ${end}`;
+      console.log(consolePushKey);
+      console.time(consolePushKey);
+      await updateDocs({
+        indexName: INDEX_ID,
+        documents,
+        batchSize: 100000,
+      });
+      console.timeEnd(consolePushKey);
+    },
+  });
+}
+
 export default ModEndpoint(
   async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
+    if (update === 'nsfw') {
+      await updateNsfw();
+      return res.status(200).json({ ok: true, duration: Date.now() - start });
+    }
+
     const updateMethod: ((idOffset: number) => Promise<number>) | null =
       update === 'user' ? updateUserDetails : update === 'dateFields' ? updateDateFields : null;
 

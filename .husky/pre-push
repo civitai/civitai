@@ -1,3 +1,7 @@
+# To skip this check, do one of these:
+#   HUSKY=0 git push (skip once)
+#   export HUSKY=0 (always skip....briant)
+#   --no-verify (add to the end of most git commands)
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
 username="$(git config user.name)"

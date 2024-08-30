@@ -96,7 +96,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const swapAccount = async (token: EncryptedDataSchema) => {
-    await signIn('account-switch', { callbackUrl: router.asPath, ...token });
+    await signIn('account-switch', { callbackUrl: window.location.href, ...token });
   };
 
   const removeAccount = (id: number) => {

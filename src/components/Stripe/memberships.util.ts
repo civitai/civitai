@@ -1,7 +1,7 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { ProductMetadata } from '~/server/schema/stripe.schema';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useActiveSubscription = ({
@@ -16,18 +16,28 @@ export const useActiveSubscription = ({
     data: subscription,
     isLoading,
     isFetching,
-  } = trpc.stripe.getUserSubscription.useQuery(undefined, {
+  } = trpc.subscriptions.getUserSubscription.useQuery(undefined, {
     enabled:
       !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
   });
 
-  return { subscription, subscriptionLoading: !isMember ? false : isLoading || isFetching };
+  const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
+
+  return {
+    subscription,
+    subscriptionLoading: !isMember ? false : isLoading || isFetching,
+    subscriptionPaymentProvider: subscription?.product?.provider,
+    isFreeTier: !subscription || meta?.tier === 'free',
+  };
 };
 
 export const useCanUpgrade = () => {
   const currentUser = useCurrentUser();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
-  const { data: products = [], isLoading: productsLoading } = trpc.stripe.getPlans.useQuery();
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
+    useActiveSubscription();
+  const { data: products = [], isLoading: productsLoading } = trpc.subscriptions.getPlans.useQuery(
+    {}
+  );
   const features = useFeatureFlags();
 
   if (!currentUser || subscriptionLoading || productsLoading || !features.membershipsV2) {
@@ -38,11 +48,13 @@ export const useCanUpgrade = () => {
     return true;
   }
 
-  if (products.length <= 1) {
+  const availableProducts = products.filter((p) => p.provider === subscriptionPaymentProvider);
+
+  if (availableProducts.length <= 1) {
     return false;
   }
 
-  const metadata = subscription?.product?.metadata as ProductMetadata;
+  const metadata = subscription?.product?.metadata as SubscriptionProductMetadata;
 
   return (
     constants.memberships.tierOrder.indexOf(metadata.tier) + 1 <

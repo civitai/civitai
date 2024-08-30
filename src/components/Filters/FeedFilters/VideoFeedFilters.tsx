@@ -1,9 +1,9 @@
 import { Group, GroupProps } from '@mantine/core';
-import { VideoFiltersDropdown } from '~/components/Image/Filters/VideoFiltersDropdown';
+import { FollowedFilter } from '~/components/Filters/FollowedFilter';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SortFilter } from '../SortFilter';
 import { useFeedFiltersStyles } from './FeedFilters.styles';
-import { FollowedFilter } from '~/components/Filters/FollowedFilter';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function VideoFeedFilters({ ...groupProps }: GroupProps) {
   const { classes } = useFeedFiltersStyles();
@@ -25,7 +25,14 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
           className: classes.subnavDropdown,
         }}
       />
-      <VideoFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} isFeed />
+      <MediaFiltersDropdown
+        size="sm"
+        w="100%"
+        compact
+        className={classes.subnavDropdown}
+        isFeed
+        filterType="videos"
+      />
     </Group>
   );
 }

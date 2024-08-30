@@ -26,8 +26,6 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
-import { Adunit } from '~/components/Ads/AdUnit';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -37,7 +35,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { ImageFiltersDropdown } from '~/components/Image/Filters/ImageFiltersDropdown';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -193,7 +191,6 @@ export default function ImagesAsPostsInfinite({
         >
           <MasonryContainer>
             <Stack spacing="md">
-              <Adunit {...adsRegistry.modelDetailFeedHeader} />
               <Group spacing="xs">
                 <Title order={2}>Gallery</Title>
                 {!isMuted && (
@@ -224,7 +221,7 @@ export default function ImagesAsPostsInfinite({
                 )}
                 <Group ml="auto" spacing={8}>
                   <SortFilter type="modelImages" variant="button" />
-                  <ImageFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
+                  <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
                   <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
                     <ActionIcon
                       radius="xl"

@@ -3,29 +3,26 @@ import {
   Anchor,
   AspectRatio,
   Button,
-  Center,
   Checkbox,
   Divider,
   Group,
-  Loader,
   Modal,
   ModalProps,
-  Paper,
-  Progress,
   ScrollArea,
   Select,
-  SimpleGrid,
   Stack,
   Text,
 } from '@mantine/core';
-import { IconInfoCircle, IconTrash } from '@tabler/icons-react';
+import { NextLink } from '@mantine/next';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -41,11 +38,6 @@ import {
 import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { truncate } from 'lodash-es';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { NextLink } from '@mantine/next';
 import { useCollection } from './collection.utils';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
@@ -177,7 +169,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                 <ImagesInfinite
                   filters={{
                     collectionId: undefined,
-                    username: currentUser.username,
+                    userId: currentUser.id,
                     period: 'AllTime',
                     sort: ImageSort.Newest,
                     hidden: undefined,

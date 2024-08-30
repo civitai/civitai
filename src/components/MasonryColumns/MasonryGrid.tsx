@@ -7,12 +7,11 @@ import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Paper, Text } from '@mantine/core';
-import { Logo } from '~/components/Logo/Logo';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
-import { Adunit } from '~/components/Ads/AdUnit';
-import { adsRegistry } from '~/components/Ads/adsRegistry';
+import { DynamicAd } from '~/components/Ads/AdUnit';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 type Props<TData> = {
   data: TData[];
@@ -61,32 +60,14 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <Paper
-                radius="sm"
-                sx={(theme) => ({
-                  overflow: 'hidden',
-                  width: 320,
-                  background:
-                    theme.colorScheme === 'dark' ? theme.colors.gray[9] : theme.colors.gray[0],
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'flex-end',
-                  flexDirection: 'column',
-                })}
-                pb={10}
-                pt={20}
-                withBorder
-                shadow="sm"
-              >
-                <Stack mb="auto" spacing="xs">
-                  <div style={{ height: 30 }}>
-                    <Image
-                      src={`/images/logo_${theme.colorScheme}_mode.png`}
-                      alt="Civitai logo"
-                      height={30}
-                      width={142}
-                    />
-                  </div>
+              <TwCard className="border p-2 shadow">
+                <div className="mb-auto flex flex-col items-center gap-2">
+                  <Image
+                    src={`/images/logo_${theme.colorScheme}_mode.png`}
+                    alt="Civitai logo"
+                    height={30}
+                    width={142}
+                  />
                   <Text>Become a Member to turn off ads today.</Text>
                   <Button
                     component={NextLink}
@@ -94,14 +75,15 @@ export function MasonryGrid<TData>({
                     compact
                     color="green"
                     variant="outline"
+                    className="w-24"
                   >
                     <Text weight={500}>Do It</Text>
                     <IconCaretRightFilled size={16} />
                   </Button>
-                </Stack>
+                </div>
 
-                <Adunit showRemoveAds {...adsRegistry.masonryGrid} />
-              </Paper>
+                <DynamicAd />
+              </TwCard>
             )}
           </React.Fragment>
         );

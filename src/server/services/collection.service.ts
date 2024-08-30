@@ -1415,6 +1415,8 @@ export function getCollectionItemCount({
   collectionIds: number[];
   status?: CollectionItemStatus;
 }) {
+  if (ids.length === 0) return [];
+
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
   if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
 
@@ -1427,6 +1429,8 @@ export function getCollectionItemCount({
 }
 
 export function getContributorCount({ collectionIds: ids }: { collectionIds: number[] }) {
+  if (ids.length === 0) return [];
+
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
 
   return dbRead.$queryRaw<{ id: number; count: number }[]>`

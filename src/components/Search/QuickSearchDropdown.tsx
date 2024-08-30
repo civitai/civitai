@@ -235,8 +235,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
           defaultValue={availableIndexes[0]}
           // Ensure we disable search targets if they are not enabled
           data={availableIndexes
-            .filter((value) =>
-              features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX
+            .filter(
+              (value) =>
+                (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+                (features.articles ? true : value !== 'articles')
             )
             .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
           rightSection={<IconChevronDown size={16} color="currentColor" />}

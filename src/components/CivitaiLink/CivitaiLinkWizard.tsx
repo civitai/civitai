@@ -24,7 +24,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { PlanBenefitList } from '~/components/Stripe/PlanBenefitList';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';

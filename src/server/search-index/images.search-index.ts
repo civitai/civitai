@@ -49,6 +49,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'baseModel',
     'aspectRatio',
     'nsfwLevel',
+    'combinedNsfwLevel',
     'type',
     'toolNames',
     'techniqueNames',
@@ -104,7 +105,7 @@ type Metrics = {
 
 type ModelVersions = {
   id: number;
-  baseModel: string;
+  baseModel: string[];
   modelVersionIds: number[];
 };
 
@@ -121,6 +122,8 @@ type BaseImage = {
   width: number | null;
   metadata: Prisma.JsonValue;
   nsfwLevel: NsfwLevel;
+  aiNsfwLevel: NsfwLevel;
+  nsfwLevelLocked: boolean;
   postId: number | null;
   needsReview: string | null;
   hideMeta: boolean;
@@ -168,7 +171,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ userId, id, ...imageRecord }) => {
+    .map(({ userId, id, nsfwLevelLocked, ...imageRecord }) => {
       const user = userId ? users[userId] ?? null : null;
 
       if (!user || !userId) {
@@ -180,12 +183,15 @@ const transformData = async ({
       const imageMetrics = metrics.find((m) => m.id === id);
       const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
       const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
-      const baseModel = modelVersions.find((m) => m.id === id)?.baseModel;
+      const baseModel = modelVersions.find((m) => m.id === id)?.baseModel?.find((bm) => !!bm);
 
       return {
         ...imageRecord,
         id,
-        nsfwLevel: parseBitwiseBrowsingLevel(imageRecord.nsfwLevel),
+        nsfwLevel: imageRecord.nsfwLevel,
+        combinedNsfwLevel: nsfwLevelLocked
+          ? imageRecord.nsfwLevel
+          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -283,6 +289,8 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."name",
         i."url",
         i."nsfwLevel",
+        i."aiNsfwLevel",
+        i."nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",
         i."height",
@@ -296,7 +304,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",
-        i."sortAt"
+        COALESCE(p."publishedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}
@@ -371,13 +379,13 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const { rows: modelVersions } = await pgDbRead.query<ModelVersions>(`
         SELECT
           ir."imageId" as id,
-          string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
+          array_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
           array_agg(mv."id") as "modelVersionIds"
         FROM "ImageResource" ir
         JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
         JOIN "Model" m ON mv."modelId" = m."id"
         WHERE ir."imageId" IN (${images.map((i) => i.id).join(',')})
-        GROUP BY ir."imageId", mv."baseModel"
+        GROUP BY ir."imageId"
       `);
 
       return {

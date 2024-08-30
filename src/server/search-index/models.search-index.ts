@@ -101,6 +101,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'fileFormats',
     'lastVersionAtUnix',
     'versions.hashes',
+    'versions.baseModel',
   ];
 
   if (
@@ -140,6 +141,7 @@ const modelSelect = {
   id: true,
   name: true,
   type: true,
+  nsfw: true,
   nsfwLevel: true,
   minor: true,
   status: true,

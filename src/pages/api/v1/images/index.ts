@@ -1,16 +1,9 @@
-import {
-  nsfwLevelMapDeprecated,
-  NsfwLevelDeprecated,
-  getNsfwLevelDeprecatedReverseMapping,
-  nsfwBrowsingLevelsFlag,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
+import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
@@ -19,6 +12,13 @@ import { usernameSchema } from '~/server/schema/user.schema';
 import { getAllImages } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPagination } from '~/server/utils/pagination-helpers';
+import {
+  getNsfwLevelDeprecatedReverseMapping,
+  nsfwBrowsingLevelsFlag,
+  NsfwLevelDeprecated,
+  nsfwLevelMapDeprecated,
+  publicBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { QS } from '~/utils/qs';
 import {
   booleanString,
@@ -26,7 +26,6 @@ import {
   commaDelimitedNumberArray,
   numericString,
 } from '~/utils/zod-helpers';
-import dayjs from 'dayjs';
 
 export const config = {
   api: {
@@ -34,14 +33,16 @@ export const config = {
   },
 };
 
+// TODO merge with getInfiniteImagesSchema
 const imagesEndpointSchema = z.object({
-  limit: numericString(z.number().min(0).max(200)).default(100),
+  limit: numericString(z.number().min(0).max(200)).default(constants.galleryFilterDefaults.limit),
   page: numericString().optional(),
   postId: numericString().optional(),
   modelId: numericString().optional(),
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
   username: usernameSchema.optional(),
+  userId: numericString().optional(),
   period: z.nativeEnum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.nativeEnum(ImageSort).default(constants.galleryFilterDefaults.sort),
   nsfw: z
