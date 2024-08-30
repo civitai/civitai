@@ -82,7 +82,7 @@ BEGIN
     FROM "Image" i
     JOIN "Post" p ON i."postId" = p.id
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-    JOIN "Model" m ON m.id = mv."modelId" AND m.status != 'Deleted'
+    JOIN "Model" m ON m.id = mv."modelId" AND m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
     WHERE i.id = image_id
   ), image_resource_merge AS (
     SELECT
@@ -101,7 +101,7 @@ BEGIN
     LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     WHERE (irh.name IS NULL OR irh.name != 'vae')
-      AND (m.id IS NULL OR m.status != 'Deleted')
+      AND (m.id IS NULL OR m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation'))
       AND (irh.hash IS NULL OR irh.hash != 'e3b0c44298fc') -- Exclude empty hash
   ), image_resource_id AS (
     SELECT
