@@ -12,7 +12,6 @@ import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -38,6 +37,7 @@ import {
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   imagesMetricsSearchIndex,
   imagesSearchIndex,
@@ -89,7 +89,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { UserSettingsSchema } from '~/server/schema/user.schema';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1645,10 +1644,10 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelVersionFindManyArgs['where'] = {
     status: { in: [ModelStatus.Draft, ModelStatus.Training] },
+    uploadType: ModelUploadType.Trained,
     model: {
       userId,
       status: { notIn: [ModelStatus.Deleted] },
-      uploadType: { equals: ModelUploadType.Trained },
     },
   };
 
