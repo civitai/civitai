@@ -13,6 +13,7 @@ import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function VotableTags({
   entityId: id,
@@ -26,6 +27,7 @@ export function VotableTags({
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
+  const { canViewNsfw } = useFeatureFlags();
   const { classes } = useStyles();
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
@@ -38,7 +40,7 @@ export function VotableTags({
   const [showAll, setShowAll] = useLocalStorage({ key: 'showAllTags', defaultValue: false });
   const displayedTags = useMemo(() => {
     if (!tags) return [];
-    const displayTags = [...tags].sort((a, b) => {
+    let displayTags = [...tags].sort((a, b) => {
       const aMod = !getIsPublicBrowsingLevel(a.nsfwLevel);
       const bMod = !getIsPublicBrowsingLevel(b.nsfwLevel);
       const aNew = a.id === 0;
@@ -49,9 +51,11 @@ export function VotableTags({
       if (!aMod && bMod) return 1;
       return 0;
     });
+    if (!canViewNsfw)
+      displayTags = displayTags.filter((x) => getIsPublicBrowsingLevel(x.nsfwLevel));
     if (!collapsible || showAll) return displayTags;
     return displayTags.slice(0, limit);
-  }, [tags, showAll, collapsible, limit]);
+  }, [tags, showAll, collapsible, limit, canViewNsfw]);
 
   if (!initialTags && isLoading)
     return (
