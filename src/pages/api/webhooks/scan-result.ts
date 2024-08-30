@@ -56,9 +56,7 @@ export default WebhookEndpoint(async (req, res) => {
 
   // Update if we made changes...
   let updatedFile: ModelFile | undefined;
-  if (Object.keys(data).length > 0) {
-    updatedFile = await dbWrite.modelFile.update({ where, data });
-  }
+  if (Object.keys(data).length > 0) updatedFile = await dbWrite.modelFile.update({ where, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
