@@ -1,7 +1,7 @@
 import { ButtonProps, Button, Popover, Text, DefaultMantineColor, Group } from '@mantine/core';
 import { ScanResultCode } from '@prisma/client';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from 'dayjs';
 
 type VerifiedFile = {
@@ -65,10 +65,10 @@ export function VerifiedShield({ file, ...props }: Props) {
         </Text>
         <Text pb={5}>{defaultMessage}</Text>
         {virusScanMessage && (
-          <ReactMarkdown className="popover-markdown">{virusScanMessage}</ReactMarkdown>
+          <CustomMarkdown className="popover-markdown">{virusScanMessage}</CustomMarkdown>
         )}
         {pickleScanMessage && (
-          <ReactMarkdown className="popover-markdown">{pickleScanMessage}</ReactMarkdown>
+          <CustomMarkdown className="popover-markdown">{pickleScanMessage}</CustomMarkdown>
         )}
         <Group position="apart">
           {scannedDate && (

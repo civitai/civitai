@@ -304,7 +304,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",
-        COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+        COALESCE(p."publishedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

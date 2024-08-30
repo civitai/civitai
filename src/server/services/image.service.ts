@@ -782,7 +782,7 @@ export const getAllImages = async (
   // [x]
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
-  } else AND.push(Prisma.sql`(p."publishedAt" < now())`);
+  } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   let from = 'FROM "Image" i';
   const joins: string[] = [];
@@ -1675,7 +1675,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   }
-  console.log('filters', filters);
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
   if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));

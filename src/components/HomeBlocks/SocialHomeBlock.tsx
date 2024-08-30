@@ -2,7 +2,7 @@ import { ActionIcon, Box, createStyles, Group, Popover, Stack, Text, Title } fro
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { SocialBlock, SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
@@ -175,13 +175,9 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
                 </Text>
                 {metadata.description && (
                   <Text size="sm" mb="xs">
-                    <ReactMarkdown
-                      allowedElements={['a']}
-                      unwrapDisallowed
-                      className="markdown-content"
-                    >
+                    <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
-                    </ReactMarkdown>
+                    </CustomMarkdown>
                   </Text>
                 )}
                 <Group spacing={4}>
@@ -197,9 +193,9 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
         <Text>
-          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+          <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
-          </ReactMarkdown>
+          </CustomMarkdown>
         </Text>
       )}
     </Stack>

@@ -148,8 +148,8 @@ export default function Pricing() {
                   working on this issue and will notify you when it is resolved.
                 </Text>
                 <Text lh={1.2}>
-                  You are still able to view and manage your subscription, but may not be able to
-                  renew it soon.
+                  You are still able to view and manage your subscription. You may be prompted to
+                  enter additional information to ensure your subscription renews.
                 </Text>
 
                 <Text lh={1.2}>

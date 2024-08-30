@@ -2,7 +2,7 @@
 import { Alert, createStyles, Group, MantineColor, Stack, Sx, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useEffect, useMemo, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import useIsClient from '~/hooks/useIsClient';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
@@ -97,9 +97,9 @@ const Announcement = ({
             {title}
           </Text>
           <Text size="sm" className={classes.text}>
-            <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+            <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
               {content}
-            </ReactMarkdown>
+            </CustomMarkdown>
           </Text>
         </Stack>
       </Group>

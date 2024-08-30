@@ -1,7 +1,7 @@
 import { ModelStatus } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -10,6 +10,7 @@ import { getModelVersionsForSearchIndex } from '~/server/selectors/modelVersion.
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { withRetries } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { dataProcessor } from '~/server/db/db-helpers';
 
 const BATCH_SIZE = 10000;
 const INDEX_ID = MODELS_SEARCH_INDEX;
@@ -19,7 +20,7 @@ const WHERE = (idOffset: number) => ({
 });
 
 const schema = z.object({
-  update: z.enum(['generationCoverage', 'user']),
+  update: z.enum(['generationCoverage', 'user', 'nsfw']),
 });
 
 const updateGenerationCoverage = (idOffset: number) =>
@@ -137,10 +138,80 @@ const updateUser = (idOffset: number) =>
     return updateIndexReadyRecords[updateIndexReadyRecords.length - 1].id;
   });
 
+async function updateNsfw() {
+  await dataProcessor({
+    params: { batchSize: 50000, concurrency: 10, start: 0 },
+    runContext: {
+      on: (event: 'close', listener: () => void) => {
+        // noop
+      },
+    },
+    rangeFetcher: async (ctx) => {
+      const [{ start, end }] = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        WITH dates AS (
+          SELECT
+          MIN("createdAt") as start,
+          MAX("createdAt") as end
+          FROM "Model"
+        )
+        SELECT MIN(id) as start, MAX(id) as end
+        FROM "Model"
+        JOIN dates d ON d.start = "createdAt" OR d.end = "createdAt";
+      `;
+
+      return { start, end };
+    },
+    processor: async ({ start, end }) => {
+      type ModelBase = {
+        id: number;
+        nsfw: boolean;
+      };
+
+      const consoleFetchKey = `Fetch: ${start} - ${end}`;
+      console.log(consoleFetchKey);
+      console.time(consoleFetchKey);
+      const records = await dbRead.$queryRaw<ModelBase[]>`
+        SELECT
+          id,
+          "nsfw"
+        FROM "Model"
+        WHERE id BETWEEN ${start} AND ${end}
+      `;
+      console.timeEnd(consoleFetchKey);
+
+      if (records.length === 0) {
+        console.log(`No updates found:  ${start} - ${end}`);
+        return;
+      }
+
+      const consoleTransformKey = `Transform: ${start} - ${end}`;
+      console.log(consoleTransformKey);
+      console.time(consoleTransformKey);
+      const documents = records;
+      console.timeEnd(consoleTransformKey);
+
+      const consolePushKey = `Push: ${start} - ${end}`;
+      console.log(consolePushKey);
+      console.time(consolePushKey);
+      await updateDocs({
+        indexName: INDEX_ID,
+        documents,
+        batchSize: 50000,
+      });
+      console.timeEnd(consolePushKey);
+    },
+  });
+}
+
 export default ModEndpoint(
   async function updateModelSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
+    if (update === 'nsfw') {
+      await updateNsfw();
+      return res.status(200).json({ ok: true, duration: Date.now() - start });
+    }
+
     const updateMethod: ((idOffset: number) => Promise<number>) | null =
       update === 'generationCoverage'
         ? updateGenerationCoverage

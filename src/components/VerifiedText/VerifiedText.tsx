@@ -9,7 +9,7 @@ import {
 } from '@mantine/core';
 import { ScanResultCode } from '@prisma/client';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from 'dayjs';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
@@ -82,10 +82,10 @@ export function VerifiedText({ file, iconOnly }: Props) {
               </Text>
               <Text pb={5}>{defaultMessage}</Text>
               {virusScanMessage && (
-                <ReactMarkdown className="popover-markdown">{virusScanMessage}</ReactMarkdown>
+                <CustomMarkdown className="popover-markdown">{virusScanMessage}</CustomMarkdown>
               )}
               {pickleScanMessage && (
-                <ReactMarkdown className="popover-markdown">{pickleScanMessage}</ReactMarkdown>
+                <CustomMarkdown className="popover-markdown">{pickleScanMessage}</CustomMarkdown>
               )}
               <Text
                 component="a"
