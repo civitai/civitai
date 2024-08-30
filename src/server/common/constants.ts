@@ -759,7 +759,7 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 };
 
 export const CurrencyConfig: Record<
-  Currency | 'GEN',
+  Currency,
   {
     icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     color: (theme: MantineTheme) => string;
@@ -775,11 +775,6 @@ export const CurrencyConfig: Record<
     icon: IconCurrencyDollar,
     color: (theme) => theme.colors.yellow[7],
     fill: undefined,
-  },
-  GEN: {
-    icon: IconBolt,
-    color: (theme) => theme.colors.blue[4],
-    fill: (theme) => theme.colors.blue[4],
   },
 };
 
