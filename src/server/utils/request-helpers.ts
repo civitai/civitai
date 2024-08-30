@@ -8,3 +8,9 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
 
   return browserUserAgents.some((browser) => userAgent.includes(browser));
 }
+
+type Protocol = 'https' | 'http';
+export function getProtocol(req: NextApiRequest): Protocol {
+  const proto = req.headers['x-forwarded-proto'] ?? 'http';
+  return proto as Protocol;
+}

@@ -14,7 +14,7 @@ BEGIN
       i.id,
       null::int as model_version_id,
       resource->>'name' as name,
-      UPPER(resource->>'hash') as hash,
+      LOWER(resource->>'hash') as hash,
       iif(resource->>'weight' IS NOT NULL, round((resource->>'weight')::double precision * 100)::int, 100) as strength,
       true as detected
     FROM
@@ -28,7 +28,7 @@ BEGIN
       i.id,
       null::int model_version_id,
       (jsonb_each_text(i.meta->'hashes')).key as name,
-      UPPER((jsonb_each_text(i.meta->'hashes')).value) as hash,
+      LOWER((jsonb_each_text(i.meta->'hashes')).value) as hash,
       null::int as strength,
       true as detected
     FROM "Image" i
@@ -41,7 +41,7 @@ BEGIN
       i.id,
       null::int model_version_id,
       COALESCE(i.meta->>'Model','model') as name,
-      UPPER(i.meta->>'Model hash') as hash,
+      LOWER(i.meta->>'Model hash') as hash,
       null::int as strength,
       true as detected
     FROM "Image" i
@@ -69,20 +69,20 @@ BEGIN
       i.id,
       mv.id model_version_id,
       CONCAT(m.name,' - ', mv.name) as name,
-      UPPER(mf.hash) as hash,
+      (
+        SELECT DISTINCT ON ("modelVersionId")
+          LOWER(mfh.hash)
+        FROM "ModelFile" mf
+        JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
+        WHERE mf.type = 'Model' AND mfh.type = 'AutoV2'
+        AND mf."modelVersionId" = mv.id
+      ) as hash,
       null::int as strength,
       false as detected
     FROM "Image" i
     JOIN "Post" p ON i."postId" = p.id
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId" AND m.status != 'Deleted'
-    LEFT JOIN (
-      SELECT mf."modelVersionId", MIN(mfh.hash) hash
-      FROM "ModelFile" mf
-      JOIN "ModelFileHash" mfh ON mfh."fileId" = mf.id
-      WHERE mf.type = 'Model' AND mfh.type = 'AutoV2'
-      GROUP BY mf."modelVersionId"
-    ) mf ON mf."modelVersionId" = p."modelVersionId"
     WHERE i.id = image_id
   ), image_resource_merge AS (
     SELECT
@@ -96,12 +96,13 @@ BEGIN
       COALESCE(mv."publishedAt", mv."createdAt") AS version_date,
       mf.id AS file_id
     FROM image_resource_hashes irh
-    LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash
+    LEFT JOIN "ModelFileHash" mfh ON mfh.hash = irh.hash::citext
     LEFT JOIN "ModelFile" mf ON mf.id = mfh."fileId"
     LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
     LEFT JOIN "Model" m ON m.id = mv."modelId"
     WHERE (irh.name IS NULL OR irh.name != 'vae')
       AND (m.id IS NULL OR m.status != 'Deleted')
+--       AND irh.hash != 'E3B0C44298FC' -- Exclude empty hash
   ), image_resource_id AS (
     SELECT
       irh.id,

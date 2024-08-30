@@ -31,6 +31,7 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -146,7 +147,7 @@ export function createAuthOptions(): NextAuthOptions {
         return session;
       },
       async redirect({ url, baseUrl }) {
-        // console.log('redirect');
+        // console.log('redirect', url, baseUrl);
         if (url.startsWith('/')) return `${baseUrl}${url}`;
         // allow redirects to other civitai domains
         if (isDev || new URL(url).origin.includes('civitai')) return url;
@@ -261,6 +262,7 @@ function getRequestDomainColor(req: NextApiRequest) {
 }
 
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
+  // console.log('nextauth', req.url);
   const customAuthOptions = createAuthOptions();
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another
@@ -276,24 +278,27 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
 
   // Handle domain-specific auth settings
   fixRedirect: if (
-    req.url?.startsWith('/api/auth/signin/') ||
+    req.url?.startsWith('/api/auth/signin') ||
     req.url?.startsWith('/api/auth/signout') ||
-    req.url?.startsWith('/api/auth/callback/')
+    req.url?.startsWith('/api/auth/callback')
   ) {
     const domainColor = getRequestDomainColor(req);
-    req.headers.origin = `https://${req.headers.host}`;
+    const protocol = getProtocol(req);
+    req.headers.origin = `${protocol}://${req.headers.host}`;
+    // console.log('domainColor', domainColor, protocol, req.headers.origin);
     if (!domainColor) break fixRedirect;
 
     // Update the cookie domain
     if (!!customAuthOptions.cookies?.sessionToken?.options?.domain)
-      customAuthOptions.cookies.sessionToken.options.domain = '.' + req.headers.host;
+      customAuthOptions.cookies.sessionToken.options.domain =
+        (req.headers.host !== 'localhost' ? '.' : '') + req.headers.host;
 
     // Update the provider options
     for (const provider of customAuthOptions.providers) {
       // Set the correct redirect uri
       provider.options.authorization ??= {};
       provider.options.authorization.params ??= {};
-      provider.options.authorization.params.redirect_uri = `https://${req.headers.host}/api/auth/callback/${provider.id}`;
+      provider.options.authorization.params.redirect_uri = `${protocol}://${req.headers.host}/api/auth/callback/${provider.id}`;
 
       // Set the correct client id and secret when needed
       const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
