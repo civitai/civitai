@@ -22,6 +22,7 @@ import { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model
 import { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
   deleteVersionById,
@@ -41,6 +42,10 @@ import {
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
+import {
   handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
@@ -51,11 +56,6 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
-import {
-  getMaxEarlyAccessDays,
-  getMaxEarlyAccessModels,
-} from '~/server/utils/early-access-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -89,6 +89,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         vaeId: true,
         trainingDetails: true,
         trainingStatus: true,
+        uploadType: true,
         model: {
           select: {
             id: true,

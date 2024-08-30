@@ -147,6 +147,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         trainedWords: [],
         trainingStatus: TrainingStatus.Pending,
         trainingDetails: { type: trainingModelType as tmTypes },
+        uploadType: ModelUploadType.Trained,
       };
 
       upsertVersionMutation.mutate(versionMutateData, {
@@ -185,6 +186,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                     baseModel: vResponse.baseModel,
                     trainingDetails: vResponse.trainingDetails,
                     trainingStatus: vResponse.trainingStatus,
+                    // uploadType?
                     files: [],
                   },
                   ...old.modelVersions,

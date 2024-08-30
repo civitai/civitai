@@ -1,15 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
-import { modelFileSelect } from './modelFile.selector';
 import { profileImageSelect } from './image.selector';
+import { modelFileSelect } from './modelFile.selector';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   description: true,
   type: true,
-  // TODO [bw]: do we need uploadType here?
+  uploadType: true,
   poi: true,
   nsfwLevel: true,
   allowNoCredit: true,
@@ -124,6 +124,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       settings: true,
       requireAuth: true,
       nsfwLevel: true,
+      uploadType: true,
       metrics: {
         where: { timeframe: 'AllTime' },
         select: {

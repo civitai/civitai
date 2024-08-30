@@ -285,20 +285,20 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const domainColor = getRequestDomainColor(req);
     const protocol = getProtocol(req);
     req.headers.origin = `${protocol}://${req.headers.host}`;
-    // console.log('domainColor', domainColor, protocol, req.headers.origin);
+    const { hostname: reqHostname } = new URL(req.headers.origin);
     if (!domainColor) break fixRedirect;
 
     // Update the cookie domain
     if (!!customAuthOptions.cookies?.sessionToken?.options?.domain)
       customAuthOptions.cookies.sessionToken.options.domain =
-        (req.headers.host !== 'localhost' ? '.' : '') + req.headers.host;
+        (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
 
     // Update the provider options
     for (const provider of customAuthOptions.providers) {
       // Set the correct redirect uri
       provider.options.authorization ??= {};
       provider.options.authorization.params ??= {};
-      provider.options.authorization.params.redirect_uri = `${protocol}://${req.headers.host}/api/auth/callback/${provider.id}`;
+      provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
 
       // Set the correct client id and secret when needed
       const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];

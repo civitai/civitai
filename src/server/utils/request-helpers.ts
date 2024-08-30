@@ -11,6 +11,7 @@ export function isRequestFromBrowser(req: NextApiRequest): boolean {
 
 type Protocol = 'https' | 'http';
 export function getProtocol(req: NextApiRequest): Protocol {
-  const proto = req.headers['x-forwarded-proto'] ?? 'http';
+  const hasHttps = req.headers['origin']?.startsWith('https');
+  const proto = hasHttps ? 'https' : req.headers['x-forwarded-proto'] ?? 'http';
   return proto as Protocol;
 }
