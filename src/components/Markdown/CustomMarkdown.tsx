@@ -1,20 +1,24 @@
+import { Table } from '@mantine/core';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import { ReactMarkdownOptions } from 'react-markdown/lib/react-markdown';
-import rehypeRaw from 'rehype-raw';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
-type CustomOptions = Omit<ReactMarkdownOptions, 'className'> & {
+type CustomOptions = ReactMarkdownOptions & {
   allowExternalVideo?: boolean;
 };
 
-export function CustomMarkdown({ allowExternalVideo, ...options }: CustomOptions) {
+export function CustomMarkdown({
+  allowExternalVideo,
+  components,
+  className = 'markdown-content',
+  ...options
+}: CustomOptions) {
   return (
     <ReactMarkdown
       {...options}
-      rehypePlugins={[rehypeRaw]}
-      className="markdown-content"
+      className={className}
       components={{
+        ...components,
         a: ({ node, href, ...props }) => {
           if (!href) return <a {...props}>{props.children?.[0]}</a>;
           if (
@@ -44,6 +48,13 @@ export function CustomMarkdown({ allowExternalVideo, ...options }: CustomOptions
                 {props.children?.[0]}
               </a>
             </Link>
+          );
+        },
+        table: ({ node, ...props }) => {
+          return (
+            <Table {...props} striped withBorder withColumnBorders>
+              {props.children}
+            </Table>
           );
         },
       }}
