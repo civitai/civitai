@@ -2007,7 +2007,7 @@ export const removeCollectionItem = async ({
   `;
 
   if (!item) {
-    throw throwNotFoundError('Model not found');
+    throw throwNotFoundError('Item not found');
   }
 
   isOwner = item.userId === userId;
