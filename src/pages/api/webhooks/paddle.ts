@@ -98,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const data = (event as ProductCreatedEvent).data;
             const meta = data.customData as SubscriptionProductMetadata;
             if (!meta?.tier) {
-              return;
+              break;
             }
 
             await upsertProductRecord(data);
