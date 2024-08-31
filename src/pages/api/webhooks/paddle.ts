@@ -81,12 +81,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         switch (event.eventType) {
           case EventName.TransactionCompleted:
             const data = (event as TransactionCompletedEvent).data;
-            if (!data.customData && !data.subscriptionId) {
+            if (!data.customData && !data.subscriptionId && data.origin !== 'subscription_charge') {
               throw new Error('Invalid Request');
             }
             const customData = data.customData as TransactionMetadataSchema;
 
-            if (customData?.type === 'buzzPurchase') {
+            if (customData?.type === 'buzzPurchase' || data.origin === 'subscription_charge') {
               await processCompleteBuzzTransaction(event.data as Transaction);
             } else if (data.subscriptionId) {
               await manageSubscriptionTransactionComplete(event.data as TransactionNotification);

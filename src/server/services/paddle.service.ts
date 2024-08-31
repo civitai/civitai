@@ -144,13 +144,23 @@ export const createBuzzPurchaseTransaction = async ({
 };
 
 export const processCompleteBuzzTransaction = async (transaction: Transaction) => {
-  if (!transaction.customData) {
-    throw throwBadRequestError('Custom data is required to complete a buzz transaction.');
+  let meta = transaction.customData as TransactionMetadataSchema;
+
+  if (!meta || meta?.type !== 'buzzPurchase') {
+    const items = transaction.items;
+    const buzzItem = items.find((i) => {
+      const itemMeta = i.price?.customData as TransactionMetadataSchema;
+      return itemMeta?.type === 'buzzPurchase';
+    });
+
+    if (!buzzItem) {
+      throw throwBadRequestError('Could not find buzz item in transaction');
+    }
+
+    meta = buzzItem.price?.customData as TransactionMetadataSchema;
   }
 
-  const meta = transaction.customData as TransactionMetadataSchema;
-
-  if (meta.type !== 'buzzPurchase') {
+  if (!meta || meta?.type !== 'buzzPurchase') {
     throw throwBadRequestError('Only use this method to process buzz purchases.');
   }
 
