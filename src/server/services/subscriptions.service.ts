@@ -107,8 +107,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     },
   });
 
-  if (!subscription)
-    throw throwNotFoundError(`Could not find subscription for user with id: ${userId}`);
+  if (!subscription) return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
 
