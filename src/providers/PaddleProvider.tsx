@@ -62,6 +62,7 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         checkout: {
           settings: {
             theme: 'dark',
+            allowLogout: false,
           },
         },
       }).then((paddleInstance: Paddle | undefined) => {
