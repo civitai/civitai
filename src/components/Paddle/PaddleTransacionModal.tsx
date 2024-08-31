@@ -104,6 +104,7 @@ export const PaddleTransacionModal = ({
 
   useEffect(() => {
     if (
+      !transactionError &&
       !paddleTransactionLoading &&
       !transactionId &&
       !subscriptionLoading &&
@@ -113,6 +114,7 @@ export const PaddleTransacionModal = ({
       getTransaction();
     }
   }, [
+    transactionError,
     subscription,
     subscriptionLoading,
     subscriptionPaymentProvider,
