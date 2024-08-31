@@ -164,13 +164,15 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
     throw throwBadRequestError('Only use this method to process buzz purchases.');
   }
 
+  console.log(meta);
+
   if (meta.buzzTransactionId) {
     // Already processed.
     return;
   }
 
-  const { purchasesMultiplier } = await getMultipliersForUser(meta.userId);
-  const amount = meta.buzzAmount;
+  const { purchasesMultiplier } = await getMultipliersForUser(meta.userId ?? meta.user_id);
+  const amount = meta.buzzAmount ?? meta.buzz_amount;
   const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
 
   // Pay the user:
