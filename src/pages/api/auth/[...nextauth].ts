@@ -15,7 +15,7 @@ import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL, ColorDomain, colorDomains } from '~/server/common/constants';
+import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -76,14 +76,6 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
   };
 
   return adapter;
-}
-
-function getRequestDomainColor(req: AuthedRequest) {
-  const host = req.headers.host;
-  if (!host) return undefined;
-  for (const [color, domain] of Object.entries(colorDomains)) {
-    if (host === domain) return color as ColorDomain;
-  }
 }
 
 type AuthedRequest = {
