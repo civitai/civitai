@@ -169,9 +169,9 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
     return;
   }
 
-  const userId = meta.userId ?? meta.user_id;
+  const userId = meta.user_id ?? meta.userId;
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
-  const amount = meta.buzzAmount ?? meta.buzz_amount;
+  const amount = meta.buzz_amount ?? meta.buzzAmount;
   const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
 
   // Pay the user:
