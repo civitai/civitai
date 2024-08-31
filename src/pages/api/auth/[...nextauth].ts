@@ -78,8 +78,24 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
   return adapter;
 }
 
-export function createAuthOptions(): NextAuthOptions {
-  return {
+function getRequestDomainColor(req: AuthedRequest) {
+  const host = req.headers.host;
+  if (!host) return undefined;
+  for (const [color, domain] of Object.entries(colorDomains)) {
+    if (host === domain) return color as ColorDomain;
+  }
+}
+
+type AuthedRequest = {
+  url?: string;
+  headers: {
+    host?: string;
+    origin?: string;
+    'x-forwarded-proto'?: string;
+  };
+};
+export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
+  const options: NextAuthOptions = {
     adapter: CustomPrismaAdapter(dbWrite),
     session: {
       strategy: 'jwt',
@@ -249,52 +265,33 @@ export function createAuthOptions(): NextAuthOptions {
       error: '/login',
     },
   };
-}
 
-export const authOptions = createAuthOptions();
+  if (!req) return options;
 
-function getRequestDomainColor(req: NextApiRequest) {
-  const host = req.headers.host;
-  if (!host) return undefined;
-  for (const [color, domain] of Object.entries(colorDomains)) {
-    if (host === domain) return color as ColorDomain;
+  // Request specific customizations
+  // -------------------------------
+
+  // Handle request hostname
+  const protocol = getProtocol(req);
+  req.headers.origin = `${protocol}://${req.headers.host}`;
+  const { hostname: reqHostname } = new URL(req.headers.origin);
+
+  // Handle domain-specific cookie
+  const domainColor = getRequestDomainColor(req);
+  if (domainColor && !!options.cookies?.sessionToken?.options?.domain) {
+    options.cookies.sessionToken.options.domain =
+      (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }
-}
-
-export default async function auth(req: NextApiRequest, res: NextApiResponse) {
-  // console.log('nextauth', req.url);
-  const customAuthOptions = createAuthOptions();
-  // Yes, this is intended. Without this, you can't log in to a user
-  // while already logged in as another
-  if (req.url?.startsWith('/api/auth/callback/')) {
-    const callbackUrl = req.cookies[callbackCookieName];
-    if (!callbackUrl?.includes('connect=true')) delete req.cookies[civitaiTokenCookieName];
-  }
-
-  customAuthOptions.events ??= {};
-  // customAuthOptions.events.session = async (message) => {
-  //   console.log('session event', message.session?.user?.email, message.token?.email);
-  // };
 
   // Handle domain-specific auth settings
-  fixRedirect: if (
-    req.url?.startsWith('/api/auth/signin') ||
-    req.url?.startsWith('/api/auth/signout') ||
-    req.url?.startsWith('/api/auth/callback')
+  if (
+    domainColor &&
+    (req.url?.startsWith('/api/auth/signin') ||
+      req.url?.startsWith('/api/auth/signout') ||
+      req.url?.startsWith('/api/auth/callback'))
   ) {
-    const domainColor = getRequestDomainColor(req);
-    const protocol = getProtocol(req);
-    req.headers.origin = `${protocol}://${req.headers.host}`;
-    const { hostname: reqHostname } = new URL(req.headers.origin);
-    if (!domainColor) break fixRedirect;
-
-    // Update the cookie domain
-    if (!!customAuthOptions.cookies?.sessionToken?.options?.domain)
-      customAuthOptions.cookies.sessionToken.options.domain =
-        (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
-
     // Update the provider options
-    for (const provider of customAuthOptions.providers) {
+    for (const provider of options.providers) {
       // Set the correct redirect uri
       provider.options.authorization ??= {};
       provider.options.authorization.params ??= {};
@@ -309,6 +306,24 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }
     }
   }
+
+  return options;
+}
+
+export default async function auth(req: NextApiRequest, res: NextApiResponse) {
+  // console.log('nextauth', req.url);
+  const customAuthOptions = createAuthOptions(req);
+  // Yes, this is intended. Without this, you can't log in to a user
+  // while already logged in as another
+  if (req.url?.startsWith('/api/auth/callback/')) {
+    const callbackUrl = req.cookies[callbackCookieName];
+    if (!callbackUrl?.includes('connect=true')) delete req.cookies[civitaiTokenCookieName];
+  }
+
+  customAuthOptions.events ??= {};
+  // customAuthOptions.events.session = async (message) => {
+  //   console.log('session event', message.session?.user?.email, message.token?.email);
+  // };
 
   customAuthOptions.events.signOut = async (context) => {
     // console.log('signout event', context.user?.email, context.account?.userId);
