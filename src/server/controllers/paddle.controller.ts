@@ -74,12 +74,6 @@ export const processCompleteBuzzTransactionHandler = async ({
 }) => {
   // Get the transaction:
   const transaction = await getTransactionById(input.id);
-  const meta = transaction?.customData as TransactionMetadataSchema;
-
-  if (meta.userId !== ctx.user.id) {
-    throw throwAuthorizationError('You are not authorized to process this transaction');
-  }
-
   // Process the transaction
   await processCompleteBuzzTransaction(transaction);
 };
