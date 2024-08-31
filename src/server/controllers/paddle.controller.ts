@@ -48,7 +48,7 @@ export const createBuzzPurchaseTransactionHandler = async ({
       recaptchaAction: RECAPTCHA_ACTIONS.PADDLE_TRANSACTION,
     });
 
-    if (true || (score || 0) < 0.7) {
+    if ((score || 0) < 0.7) {
       if (reasons.length) {
         throw throwAuthorizationError(
           `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
