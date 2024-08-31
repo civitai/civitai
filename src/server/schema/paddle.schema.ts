@@ -10,8 +10,8 @@ const buzzPurchaseMetadataSchema = z
     userId: z.coerce.number().positive(),
     buzzTransactionId: z.string().optional(),
     // For whatever reason, paddle converts it to snake case.
-    buzz_amount: z.coerce.number().positive(),
-    user_id: z.coerce.number().positive(),
+    buzz_amount: z.coerce.number().positive().optional(),
+    user_id: z.coerce.number().positive().optional(),
   })
   .passthrough();
 
