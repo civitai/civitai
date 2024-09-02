@@ -803,14 +803,18 @@ export const addPostImage = async ({
   try {
     // Read the resources based on complex metadata and hash matches
     const resources = await dbWrite.$queryRaw<
-      ImageResource[]
+      (ImageResource & { modelversionid?: number })[]
     >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
-    // const resourcesJson = JSON.stringify(resources);
+
     const sql: Prisma.Sql[] = resources.map(
       (r) => Prisma.sql`
-      (${r.id}, ${r.modelVersionId}, ${r.name}, ${r.hash}, ${r.strength}, ${r.detected})
+      (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
+        r.detected
+      })
     `
     );
+
+    console.log(resources);
 
     if (resources.length > 0) {
       // Write the resources to the image
