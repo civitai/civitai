@@ -147,21 +147,17 @@ export const processCompleteBuzzTransaction = async (
   transaction: Transaction,
   buzzTransactionExtras?: MixedObject
 ) => {
-  let meta = transaction.customData as TransactionMetadataSchema;
+  const items = transaction.items;
+  const buzzItem = items.find((i) => {
+    const itemMeta = i.price?.customData as TransactionMetadataSchema;
+    return itemMeta?.type === 'buzzPurchase';
+  });
 
-  if (!meta || meta?.type !== 'buzzPurchase') {
-    const items = transaction.items;
-    const buzzItem = items.find((i) => {
-      const itemMeta = i.price?.customData as TransactionMetadataSchema;
-      return itemMeta?.type === 'buzzPurchase';
-    });
-
-    if (!buzzItem) {
-      throw throwBadRequestError('Could not find buzz item in transaction');
-    }
-
-    meta = buzzItem.price?.customData as TransactionMetadataSchema;
+  if (!buzzItem) {
+    throw throwBadRequestError('Could not find buzz item in transaction');
   }
+
+  const meta = buzzItem.price?.customData as TransactionMetadataSchema;
 
   if (!meta || meta?.type !== 'buzzPurchase') {
     throw throwBadRequestError('Only use this method to process buzz purchases.');

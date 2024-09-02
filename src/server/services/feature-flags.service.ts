@@ -99,7 +99,7 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canBuyBuzz: ['public', 'green'],
+  canBuyBuzz: ['public', 'dev'],
   customPaymentProvider: ['public'],
   adsEnabled: ['public', 'blue'],
 });
