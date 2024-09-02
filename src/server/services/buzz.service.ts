@@ -581,7 +581,9 @@ export async function pingBuzzService() {
   try {
     const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
     return response.ok;
-  } catch {
+  } catch (error) {
+    console.log('Failed to ping buzz service');
+    console.error(error);
     return false;
   }
 }
