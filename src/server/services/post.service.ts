@@ -814,8 +814,6 @@ export const addPostImage = async ({
     `
     );
 
-    console.log(resources);
-
     if (resources.length > 0) {
       // Write the resources to the image
       await dbWrite.$executeRaw`
