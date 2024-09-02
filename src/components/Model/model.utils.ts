@@ -162,3 +162,31 @@ export const useToggleCheckpointCoverageMutation = () => {
 
   return { ...toggleMutation, toggle: handleToggle };
 };
+
+export const useQueryModelCollectionShowcase = ({ modelId }: { modelId: number }) => {
+  const { data: showcase, isLoading: loadingCollection } =
+    trpc.model.getCollectionShowcase.useQuery({ id: modelId });
+
+  const {
+    data,
+    models,
+    isLoading: loadingModels,
+    ...rest
+  } = useQueryModels(
+    {
+      collectionId: showcase?.collection.id,
+      sort: ModelSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'published',
+      limit: 10,
+    },
+    { enabled: !loadingCollection && !!showcase?.collection.id, keepPreviousData: true }
+  );
+
+  return {
+    ...rest,
+    collection: showcase?.collection,
+    items: models,
+    isLoading: loadingCollection || loadingModels,
+  };
+};

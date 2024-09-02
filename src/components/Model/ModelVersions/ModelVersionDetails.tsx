@@ -110,6 +110,8 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
+import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
+import { useQueryModelCollectionShowcase } from '~/components/Model/model.utils';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -150,6 +152,8 @@ export function ModelVersionDetails({
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+
+  const { collection } = useQueryModelCollectionShowcase({ modelId: model.id });
 
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
@@ -974,6 +978,21 @@ export function ModelVersionDetails({
               },
             })}
           >
+            {model.meta?.showcaseCollectionId && collection && (
+              <Accordion.Item value="collection-showcase">
+                <Accordion.Control>
+                  <div>
+                    <Text inherit>{collection.name}</Text>
+                    <Text size="xs" color="dimmed">
+                      Collection
+                    </Text>
+                  </div>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <CollectionShowcase modelId={model.id} />
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
                 <Group position="apart">

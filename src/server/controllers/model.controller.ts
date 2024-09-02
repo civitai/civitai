@@ -71,6 +71,7 @@ import {
   getModel,
   getModels,
   getModelsRaw,
+  GetModelsWithImagesAndModelVersions,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
   getTrainingModelsByUserId,
@@ -1647,7 +1648,13 @@ export async function getModelCollectionShowcaseHandler({
       },
       user: ctx.user,
     });
-    // TODO.manuel: Add the collection items to the collection object
+
+    return {
+      collection,
+      items: items
+        .map(({ type, data }) => (type === 'model' ? { ...data } : null))
+        .filter(isDefined),
+    };
   } catch (error) {
     throw throwDbError(error);
   }
