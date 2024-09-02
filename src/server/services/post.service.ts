@@ -805,29 +805,25 @@ export const addPostImage = async ({
     const resources = await dbWrite.$queryRaw<
       ImageResource[]
     >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
-    const resourcesJson = JSON.stringify(resources);
+    // const resourcesJson = JSON.stringify(resources);
+    const sql: Prisma.Sql[] = resources.map(
+      (r) => Prisma.sql`
+      (${r.id}, ${r.modelVersionId}, ${r.name}, ${r.hash}, ${r.strength}, ${r.detected})
+    `
+    );
 
-    // Write the resources to the image
-    await dbWrite.$executeRaw`
-      WITH json_data AS (
-          SELECT
-              jsonb_array_elements(${resourcesJson}::jsonb) AS elem
-      )
+    if (resources.length > 0) {
+      // Write the resources to the image
+      await dbWrite.$executeRaw`
       INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-      SELECT
-          (elem->>'id')::int,
-          (elem->>'modelversionid')::int,
-          elem->>'name',
-          elem->>'hash',
-          (elem->>'strength')::int,
-          (elem->>'detected')::boolean
-      FROM json_data
+      VALUES ${Prisma.join(sql, ',')}
       ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
       SET
           detected = excluded.detected,
           hash = excluded.hash,
           strength = excluded.strength;
     `;
+    }
   } catch (e) {
     console.error(e);
   }
