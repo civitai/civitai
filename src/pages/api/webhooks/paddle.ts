@@ -23,6 +23,7 @@ import {
   upsertSubscription,
 } from '~/server/services/paddle.service';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { paddleTransactionContainsSubscriptionItem } from '~/server/services/subscriptions.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -85,10 +86,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               throw new Error('Invalid Request');
             }
             const customData = data.customData as TransactionMetadataSchema;
+            const containsProductMemberships = await paddleTransactionContainsSubscriptionItem(
+              data
+            );
 
             if (
               data.subscriptionId &&
-              ['subscription_recurring', 'subscription_update'].includes(data.origin)
+              (['subscription_recurring', 'subscription_update'].includes(data.origin) ||
+                containsProductMemberships)
             ) {
               await manageSubscriptionTransactionComplete(event.data as TransactionNotification, {
                 notificationId: event.eventId,
