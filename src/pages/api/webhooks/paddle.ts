@@ -86,10 +86,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
             const customData = data.customData as TransactionMetadataSchema;
 
-            if (customData?.type === 'buzzPurchase' || data.origin === 'subscription_charge') {
-              await processCompleteBuzzTransaction(event.data as Transaction);
-            } else if (data.subscriptionId) {
+            if (
+              data.subscriptionId &&
+              ['subscription_recurring', 'subscription_update'].includes(data.origin)
+            ) {
               await manageSubscriptionTransactionComplete(event.data as TransactionNotification);
+            } else if (
+              customData?.type === 'buzzPurchase' ||
+              data.origin === 'subscription_charge'
+            ) {
+              await processCompleteBuzzTransaction(event.data as Transaction);
             }
 
             break;

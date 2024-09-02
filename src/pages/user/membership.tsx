@@ -48,6 +48,7 @@ import { booleanString } from '~/utils/zod-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { env } from '~/env/client.mjs';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -71,7 +72,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.isGreen || !features.canBuyBuzz) {
       return {
         redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/membership?sync-account=blue`,
           statusCode: 302,
           basePath: false,
         },
@@ -101,9 +102,10 @@ const querySchema = z.object({
 
 export default function UserMembership() {
   const { classes, theme } = useStyles();
-  const { subscription, subscriptionLoading } = useActiveSubscription({
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
+  const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
@@ -136,6 +138,13 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack>
               <Title>My Membership Plan</Title>
+              {subscriptionPaymentProvider !== paymentProvider && (
+                <Alert>
+                  We are currently migrating your account info to our new payment processor, until
+                  this is completed you will be unable to upgrade your subscription. We estimate the
+                  migration will be done September 4th, 2024. Thank you for your patience!
+                </Alert>
+              )}
               {isDrowngrade && downgradedTier && (
                 <Alert>
                   You have successfully downgraded your membership to the{' '}
