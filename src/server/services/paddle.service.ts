@@ -143,7 +143,10 @@ export const createBuzzPurchaseTransaction = async ({
   };
 };
 
-export const processCompleteBuzzTransaction = async (transaction: Transaction) => {
+export const processCompleteBuzzTransaction = async (
+  transaction: Transaction,
+  buzzTransactionExtras?: MixedObject
+) => {
   let meta = transaction.customData as TransactionMetadataSchema;
 
   if (!meta || meta?.type !== 'buzzPurchase') {
@@ -186,6 +189,7 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
     }A total of ${buzzAmount} buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
+      ...buzzTransactionExtras,
     },
   });
 };
@@ -461,7 +465,8 @@ export const upsertSubscription = async (
 };
 
 export const manageSubscriptionTransactionComplete = async (
-  transactionNotification: TransactionNotification
+  transactionNotification: TransactionNotification,
+  buzzTransactionExtras?: MixedObject
 ) => {
   if (!transactionNotification.subscriptionId) {
     return;
@@ -502,7 +507,11 @@ export const manageSubscriptionTransactionComplete = async (
             externalTransactionId,
             amount: meta.monthlyBuzz ?? 3000, // assume a min of 3000.
             description: `Membership bonus`,
-            details: { paddleTransactionId: transactionNotification.id, productId: p.id },
+            details: {
+              paddleTransactionId: transactionNotification.id,
+              productId: p.id,
+              ...buzzTransactionExtras,
+            },
           });
         })
       );

@@ -90,12 +90,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               data.subscriptionId &&
               ['subscription_recurring', 'subscription_update'].includes(data.origin)
             ) {
-              await manageSubscriptionTransactionComplete(event.data as TransactionNotification);
+              await manageSubscriptionTransactionComplete(event.data as TransactionNotification, {
+                notificationId: event.eventId,
+              });
             } else if (
               customData?.type === 'buzzPurchase' ||
               data.origin === 'subscription_charge'
             ) {
-              await processCompleteBuzzTransaction(event.data as Transaction);
+              await processCompleteBuzzTransaction(event.data as Transaction, {
+                notificationId: event.eventId,
+              });
             }
 
             break;
