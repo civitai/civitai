@@ -104,13 +104,24 @@ export const PaddleTransacionModal = ({
 
   useEffect(() => {
     if (
+      !transactionError &&
+      !paddleTransactionLoading &&
+      !transactionId &&
       !subscriptionLoading &&
       (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle)
     ) {
       // Go ahead and automatically trigger the checkout
       getTransaction();
     }
-  }, [subscription, subscriptionLoading, subscriptionPaymentProvider, getTransaction]);
+  }, [
+    transactionError,
+    subscription,
+    subscriptionLoading,
+    subscriptionPaymentProvider,
+    getTransaction,
+    transactionId,
+    paddleTransactionLoading,
+  ]);
 
   const handlePurchaseWithSubscription = useCallback(async () => {
     try {
@@ -140,16 +151,8 @@ export const PaddleTransacionModal = ({
       closeOnClickOutside: false,
       zIndex: 400,
     }),
-    [dialog]
+    []
   );
-
-  if (transactionError && !paddleTransactionLoading) {
-    return (
-      <Modal {...dialog} {...modalProps}>
-        <Error error={transactionError} onClose={dialog.onClose} />
-      </Modal>
-    );
-  }
 
   if (subscriptionLoading || paddleTransactionLoading || processingSuccess) {
     return (
@@ -161,6 +164,14 @@ export const PaddleTransacionModal = ({
 
           <RecaptchaNotice />
         </Stack>
+      </Modal>
+    );
+  }
+
+  if (transactionError && !paddleTransactionLoading && !transactionId) {
+    return (
+      <Modal {...dialog} {...modalProps}>
+        <Error error={transactionError} onClose={dialog.onClose} />
       </Modal>
     );
   }

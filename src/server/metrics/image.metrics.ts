@@ -179,7 +179,7 @@ async function getReactionTasks(ctx: ImageMetricContext) {
     log('getReactionTasks', i + 1, 'of', tasks.length);
 
     await getMetrics(ctx)`
-      -- update image reaction metrics
+      -- get image reaction metrics
       SELECT
         r."imageId",
         tf.timeframe,

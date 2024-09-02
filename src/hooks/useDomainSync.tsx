@@ -4,10 +4,14 @@ import { useEffect } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { colorDomains, ColorDomain } from '~/server/common/constants';
 import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
-async function getSyncToken() {
-  const res = await fetch(`//${env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE}/api/auth/sync`);
+async function getSyncToken(syncAccount: ColorDomain = 'blue') {
+  const domain = colorDomains[syncAccount];
+  const res = await fetch(`//${domain}/api/auth/sync`, {
+    credentials: 'include',
+  });
   if (!res.ok) return null;
   const data = await res.json();
   return data as { token: EncryptedDataSchema; userId: number; username: string; };
@@ -16,13 +20,17 @@ async function getSyncToken() {
 let isSyncing = false;
 export function useDomainSync(currentUser: SessionUser | undefined) {
   const { swapAccount } = useAccountContext();
-  const { isBlue } = useFeatureFlags();
 
   useEffect(() => {
-    if (isBlue) return;
-    if (isSyncing) return;
+    if (isSyncing || typeof window === 'undefined') return;
     isSyncing = true;
-    getSyncToken().then((data) => {
+    const { searchParams, host } = new URL(window.location.href);
+    const syncColor = searchParams.get('sync-account') as ColorDomain | null;
+    if (!syncColor) return;
+    const syncDomain = colorDomains[syncColor];
+    if (!syncDomain || host === syncDomain) return;
+
+    getSyncToken(syncColor).then((data) => {
       if (!data) return;
       const { token, userId, username } = data;
       if (currentUser?.id === userId) return;
@@ -33,7 +41,9 @@ export function useDomainSync(currentUser: SessionUser | undefined) {
         title: 'Syncing account...',
         message: `Switching to ${username} account`,
       });
-      swapAccount(token).catch(() => {});
+      setTimeout(() => {
+        swapAccount(token).catch(() => {});
+      }, 1000);
     });
   }, []);
 }

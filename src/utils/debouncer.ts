@@ -12,14 +12,17 @@ export const createDebouncer = (timeout: number) => {
 export const useDebouncer = (timeout: number) => {
   const timeoutRef = useRef<NodeJS.Timeout | undefined>();
 
-  const handleClearTimeout = () => {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-  };
-  useEffect(handleClearTimeout, []);
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const debouncer = useCallback(
     (func: () => void) => {
-      handleClearTimeout();
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
       timeoutRef.current = setTimeout(func, timeout);
     },
     [timeout]

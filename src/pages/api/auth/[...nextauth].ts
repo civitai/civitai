@@ -15,7 +15,7 @@ import { env } from '~/env/server.mjs';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
@@ -31,6 +31,7 @@ import {
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
 import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
+import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -77,8 +78,16 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
   return adapter;
 }
 
-export function createAuthOptions(): NextAuthOptions {
-  return {
+type AuthedRequest = {
+  url?: string;
+  headers: {
+    host?: string;
+    origin?: string;
+    'x-forwarded-proto'?: string;
+  };
+};
+export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
+  const options: NextAuthOptions = {
     adapter: CustomPrismaAdapter(dbWrite),
     session: {
       strategy: 'jwt',
@@ -146,7 +155,7 @@ export function createAuthOptions(): NextAuthOptions {
         return session;
       },
       async redirect({ url, baseUrl }) {
-        // console.log('redirect');
+        // console.log('redirect', url, baseUrl);
         if (url.startsWith('/')) return `${baseUrl}${url}`;
         // allow redirects to other civitai domains
         if (isDev || new URL(url).origin.includes('civitai')) return url;
@@ -236,7 +245,7 @@ export function createAuthOptions(): NextAuthOptions {
         name: civitaiTokenCookieName,
         options: {
           httpOnly: true,
-          sameSite: 'lax',
+          sameSite: hostname == 'localhost' ? 'lax' : 'none',
           path: '/',
           secure: useSecureCookies,
           domain: hostname == 'localhost' ? hostname : '.' + hostname, // add a . in front so that subdomains are included
@@ -248,12 +257,54 @@ export function createAuthOptions(): NextAuthOptions {
       error: '/login',
     },
   };
+
+  if (!req) return options;
+
+  // Request specific customizations
+  // -------------------------------
+
+  // Handle request hostname
+  const protocol = getProtocol(req);
+  req.headers.origin = `${protocol}://${req.headers.host}`;
+  const { hostname: reqHostname } = new URL(req.headers.origin);
+
+  // Handle domain-specific cookie
+  const domainColor = getRequestDomainColor(req);
+  if (domainColor && !!options.cookies?.sessionToken?.options?.domain) {
+    options.cookies.sessionToken.options.domain =
+      (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
+  }
+
+  // Handle domain-specific auth settings
+  if (
+    domainColor &&
+    (req.url?.startsWith('/api/auth/signin') ||
+      req.url?.startsWith('/api/auth/signout') ||
+      req.url?.startsWith('/api/auth/callback'))
+  ) {
+    // Update the provider options
+    for (const provider of options.providers) {
+      // Set the correct redirect uri
+      provider.options.authorization ??= {};
+      provider.options.authorization.params ??= {};
+      provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
+
+      // Set the correct client id and secret when needed
+      const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
+      const clientSecret = process.env[`${provider.id}_CLIENT_SECRET_${domainColor}`.toUpperCase()];
+      if (clientId && clientSecret) {
+        provider.options.clientId = clientId;
+        provider.options.clientSecret = clientSecret;
+      }
+    }
+  }
+
+  return options;
 }
 
-export const authOptions = createAuthOptions();
-
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
-  const customAuthOptions = createAuthOptions();
+  // console.log('nextauth', req.url);
+  const customAuthOptions = createAuthOptions(req);
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another
   if (req.url?.startsWith('/api/auth/callback/')) {

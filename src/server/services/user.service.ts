@@ -1464,10 +1464,10 @@ export async function amIBlockedByUser({
 export function computeFingerprint({
   fingerprint,
   userId,
-}: ComputeDeviceFingerprintInput & { userId: number }) {
+}: ComputeDeviceFingerprintInput & { userId?: number }) {
   if (!env.FINGERPRINT_SECRET || !env.FINGERPRINT_IV) return fingerprint;
   return encryptText({
-    text: `${fingerprint}:${userId}:${Date.now()}`,
+    text: `${fingerprint}:${userId ?? 0}:${Date.now()}`,
     key: env.FINGERPRINT_SECRET,
     iv: env.FINGERPRINT_IV,
   });

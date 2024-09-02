@@ -19,7 +19,7 @@ import {
   ActionIcon,
   Group,
 } from '@mantine/core';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
@@ -62,6 +62,7 @@ import { generation, getGenerationConfig, samplerOffsets } from '~/server/common
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModeOptions,
+  getBaseModelResourceTypes,
   getIsFlux,
   getIsSdxl,
   getWorkflowDefinitionFeatures,
@@ -326,6 +327,9 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
+
+          const resourceTypes = getBaseModelResourceTypes(baseModel);
+
           return (
             <>
               <ScrollArea
@@ -429,12 +433,12 @@ export function GenerationFormContent() {
                           allowRemove={false}
                           options={{
                             canGenerate: true,
-                            resources: [
-                              {
-                                type: ModelType.Checkpoint,
-                                baseModelSet: !!resources?.length || !!vae ? baseModel : undefined,
-                              },
-                            ],
+                            resources: resourceTypes
+                              .filter((x) => x.type === 'Checkpoint')
+                              .map(({ type, baseModels }) => ({
+                                type,
+                                baseModels: !!resources?.length || !!vae ? baseModels : undefined,
+                              })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
                           hideVersion={isFlux}
                           pb={
@@ -523,8 +527,9 @@ export function GenerationFormContent() {
                                   onCloseModal={() => setOpened(false)}
                                   options={{
                                     canGenerate: true,
-                                    resources:
-                                      getGenerationConfig(baseModel).additionalResourceTypes,
+                                    resources: resourceTypes.filter(
+                                      (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
+                                    ),
                                   }}
                                   hideButton
                                 />
@@ -968,7 +973,7 @@ export function GenerationFormContent() {
                             buttonLabel="Add VAE"
                             options={{
                               canGenerate: true,
-                              resources: [{ type: ModelType.VAE, baseModelSet: baseModel }],
+                              resources: resourceTypes.filter((x) => x.type === 'VAE'),
                             }}
                           />
                         )}
@@ -1078,13 +1083,9 @@ export function GenerationFormContent() {
                         title="Image Generation Status Alert"
                         id={messageHash}
                       >
-                        <ReactMarkdown
-                          allowedElements={['a', 'strong']}
-                          unwrapDisallowed
-                          className="markdown-content"
-                        >
+                        <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
                           {status.message}
-                        </ReactMarkdown>
+                        </CustomMarkdown>
                       </DismissibleAlert>
                     )}
                   </>

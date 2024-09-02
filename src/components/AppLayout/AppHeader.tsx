@@ -93,11 +93,11 @@ import { LoginRedirectReason } from '~/utils/login-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 import { AutocompleteSearch } from '../AutocompleteSearch/AutocompleteSearch';
-import { openBuyBuzzModal } from '../Modals/BuyBuzzModal';
 import { GenerateButton } from '../RunStrategy/GenerateButton';
 import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
 import clsx from 'clsx';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -254,6 +254,7 @@ export function AppHeader({
   renderSearchComponent = defaultRenderSearchComponent,
   fixed = true,
 }: Props) {
+  const onBuyBuzz = useBuyBuzz();
   const currentUser = useCurrentUser();
   const { classes, cx, theme } = useStyles();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
@@ -346,7 +347,7 @@ export function AppHeader({
       },
       {
         href: '/articles/create',
-        visible: !isMuted,
+        visible: !isMuted && features.articles,
         redirectReason: 'create-article',
         label: (
           <Group align="center" spacing="xs">
@@ -696,7 +697,7 @@ export function AppHeader({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openBuyBuzzModal({}, { fullScreen: isMobile });
+                onBuyBuzz({}, { fullScreen: isMobile });
               }}
               compact
             >
@@ -805,7 +806,9 @@ export function AppHeader({
       height={HEADER_HEIGHT}
       fixed={fixed}
       zIndex={200}
-      className={clsx({ ['border-green-8 border-b-[3px]']: features.isGreen })}
+      className={clsx({
+        ['border-green-8 border-b-[3px]']: features.isGreen,
+      })}
     >
       <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
@@ -913,7 +916,7 @@ export function AppHeader({
                           closeMenuOnClick={false}
                           mb={4}
                         >
-                          <Group w="100%" position="apart">
+                          <Group w="100%" position="apart" noWrap>
                             <UserAvatar user={creator ?? currentUser} withUsername />
                             <IconChevronRight />
                           </Group>

@@ -10,46 +10,82 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
 import client from 'prom-client';
+import { isProd } from '~/env/other';
+import { logToAxiom } from '~/server/logging/client';
+
+function logError({ error, name, details }: { error: Error; name: string; details: unknown }) {
+  if (isProd) {
+    logToAxiom({
+      name: `health-check:${name}`,
+      type: 'error',
+      details,
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause,
+    });
+  } else {
+    console.log(`Failed to get a connection to ${name}`);
+    console.error(error);
+  }
+}
 
 const checkFns = {
   async write() {
-    return !!(await dbWrite.user.findUnique({
-      where: { id: -1 },
-      select: { id: true },
+    return !!(await dbWrite.$queryRawUnsafe('SELECT 1').catch((e) => {
+      logError({ error: e, name: 'dbWrite', details: null });
+      return false;
     }));
   },
   async read() {
-    return !!(await dbRead.user.findUnique({
-      where: { id: -1 },
-      select: { id: true },
+    return !!(await dbRead.$queryRawUnsafe('SELECT 1').catch((e) => {
+      logError({ error: e, name: 'dbRead', details: null });
+      return false;
     }));
   },
   async pgWrite() {
-    return !!(await pgDbWrite.query('SELECT 1'));
+    return !!(await pgDbWrite.query('SELECT 1').catch((e) => {
+      logError({ error: e, name: 'pgWrite', details: null });
+      return false;
+    }));
   },
   async pgRead() {
-    return !!(await pgDbWrite.query('SELECT 1'));
+    return !!(await pgDbWrite.query('SELECT 1').catch((e) => {
+      logError({ error: e, name: 'pgRead', details: null });
+      return false;
+    }));
   },
   async searchMetrics() {
     if (metricsSearchClient === null) return true;
-    return await metricsSearchClient.isHealthy();
+    return await metricsSearchClient.isHealthy().catch((e) => {
+      logError({ error: e, name: 'metricsSearch', details: null });
+      return false;
+    });
   },
   async redis() {
     return await redis
       .ping()
       .then((res) => res === 'PONG')
-      .catch(() => false);
+      .catch((e) => {
+        logError({ error: e, name: 'redis', details: null });
+        return false;
+      });
   },
   async clickhouse() {
     return (
       (await clickhouse
         ?.ping()
         .then(({ success }) => success)
-        .catch(() => false)) ?? true
+        .catch((e) => {
+          logError({ error: e, name: 'clickhouse', details: null });
+          return false;
+        })) ?? true
     );
   },
   async buzz() {
-    return await pingBuzzService();
+    return await pingBuzzService().catch((e) => {
+      logError({ error: e, name: 'buzz', details: null });
+      return false;
+    });
   },
 } as const;
 type CheckKey = keyof typeof checkFns;
@@ -72,10 +108,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     Object.entries(checkFns)
       .filter(([name]) => !disabledChecks.includes(name as CheckKey))
       .map(([name, fn]) =>
-        timeoutAsyncFn(fn).then((result) => {
-          if (!result) counters[name as CheckKey].inc();
-          return { [name]: result };
-        })
+        timeoutAsyncFn(fn)
+          .then((result) => {
+            if (!result) counters[name as CheckKey]?.inc();
+            return { [name]: result };
+          })
+          .catch(() => ({ [name]: false }))
       )
   );
   const nonCriticalChecks = JSON.parse(
@@ -87,7 +125,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     const [key, value] = Object.entries(result)[0];
     return nonCriticalChecks.includes(key as CheckKey) || value;
   });
-  if (!healthy) counters.overall.inc();
+  if (!healthy) counters.overall?.inc();
 
   const results = resultsArray.reduce((agg, result) => ({ ...agg, ...result }), {}) as Record<
     CheckKey,

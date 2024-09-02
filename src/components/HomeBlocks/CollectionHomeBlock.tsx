@@ -30,7 +30,6 @@ import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { trpc } from '~/utils/trpc';
 import { shuffle } from '~/utils/array-helpers';
-import ReactMarkdown from 'react-markdown';
 import {
   useHomeBlockStyles,
   useHomeBlockGridStyles,
@@ -41,6 +40,7 @@ import { CollectionMode } from '@prisma/client';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 const icons = {
   model: IconCategory,
@@ -121,13 +121,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                 </Text>
                 {metadata.description && (
                   <Text size="sm" mb="xs">
-                    <ReactMarkdown
-                      allowedElements={['a']}
-                      unwrapDisallowed
-                      className="markdown-content"
-                    >
+                    <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
                       {metadata.description}
-                    </ReactMarkdown>
+                    </CustomMarkdown>
                   </Text>
                 )}
                 {metadata.link && (
@@ -159,9 +155,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       </Group>
       {metadata.description && (metadata.descriptionAlwaysVisible || !currentUser) && (
         <Text>
-          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+          <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
-          </ReactMarkdown>
+          </CustomMarkdown>
         </Text>
       )}
     </Stack>
@@ -181,9 +177,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       </Group>
       {metadata.description && (
         <Text maw={520}>
-          <ReactMarkdown allowedElements={['a']} unwrapDisallowed className="markdown-content">
+          <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
             {metadata.description}
-          </ReactMarkdown>
+          </CustomMarkdown>
         </Text>
       )}
       {metadata.link && (

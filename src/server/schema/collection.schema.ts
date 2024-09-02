@@ -215,3 +215,9 @@ export type GetCollectionPermissionDetails = z.infer<typeof getCollectionPermiss
 export const getCollectionPermissionDetails = z.object({
   ids: z.array(z.number()).min(1),
 });
+
+export type RemoveCollectionItemInput = z.infer<typeof removeCollectionItemInput>;
+export const removeCollectionItemInput = z.object({
+  collectionId: z.coerce.number(),
+  itemId: z.coerce.number(),
+});

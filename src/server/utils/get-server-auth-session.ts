@@ -1,6 +1,6 @@
 import type { GetServerSidePropsContext } from 'next';
 import { getServerSession } from 'next-auth/next';
-import { authOptions } from '~/pages/api/auth/[...nextauth]';
+import { createAuthOptions } from '~/pages/api/auth/[...nextauth]';
 import { getSessionFromBearerToken } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Session } from 'next-auth';
@@ -29,6 +29,7 @@ export const getServerAuthSession = async ({
     return req.context.session as Session | null;
   }
   try {
+    const authOptions = createAuthOptions(req);
     const session = await getServerSession(req, res, authOptions);
     return session;
   } catch (error) {

@@ -36,6 +36,8 @@ async function migrateTagLevels(req: NextApiRequest, res: NextApiResponse) {
       return results.map((r) => r.id);
     },
     processor: async ({ batch, cancelFns, batchNumber, batchCount }) => {
+      if (!batch.length) return;
+
       const { cancel, result } = await pgDbWrite.cancellableQuery(`
         UPDATE "Image" i
           SET "nsfwLevel" = (

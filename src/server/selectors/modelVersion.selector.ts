@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
+import { ModelFileType } from '../common/constants';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';
-import { ModelFileType } from '../common/constants';
 
 export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
@@ -20,6 +20,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   earlyAccessConfig: true,
   description: true,
   vaeId: true,
+  uploadType: true,
   metrics: {
     where: { timeframe: 'AllTime' },
     select: {

@@ -9,6 +9,7 @@ import {
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 const paddle = env.PADDLE_SECRET_KEY
   ? new Paddle(env.PADDLE_SECRET_KEY, {
@@ -50,29 +51,32 @@ const createOneTimeUseBuzzProduct = ({
   buzzAmount: number;
   currency: string;
   metadata?: TransactionMetadataSchema;
-}): ITransactionItemWithPrice => ({
-  quantity: 1,
-  price: {
-    product: {
-      name: `${buzzAmount} Buzz`,
-      // TODO: This must be requested onto Paddle as digital-goods
-      taxCategory: 'standard',
-      imageUrl: '',
+}): ITransactionItemWithPrice => {
+  const buzzAmountWithCommas = numberWithCommas(buzzAmount);
+  return {
+    quantity: 1,
+    price: {
+      product: {
+        name: `${buzzAmountWithCommas} Buzz`,
+        // TODO: This must be requested onto Paddle as digital-goods
+        taxCategory: 'standard',
+        imageUrl: '',
+      },
+      taxMode: 'account_setting',
+      unitPrice: {
+        amount: unitAmount.toString(),
+        currencyCode: currency as CurrencyCode,
+      },
+      name: `One-time payment for ${buzzAmountWithCommas} Buzz`,
+      description: `Purchase of ${buzzAmountWithCommas}`,
+      quantity: {
+        maximum: 1,
+        minimum: 1,
+      },
+      customData: metadata,
     },
-    taxMode: 'account_setting',
-    unitPrice: {
-      amount: unitAmount.toString(),
-      currencyCode: currency as CurrencyCode,
-    },
-    name: `One-time payment for ${buzzAmount} Buzz`,
-    description: `Purchase of ${buzzAmount}`,
-    quantity: {
-      maximum: 1,
-      minimum: 1,
-    },
-    customData: metadata,
-  },
-});
+  };
+};
 
 export const createBuzzTransaction = async ({
   customerId,

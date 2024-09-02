@@ -4,6 +4,8 @@ import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLe
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import Script from 'next/script';
 import { isProd } from '~/env/other';
+import { env } from '~/env/client.mjs';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -26,12 +28,13 @@ export function useAdsContext() {
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState<boolean>(true);
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
 
   // derived value from browsingMode and nsfwOverride
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
-  const adsEnabled = currentUser?.allowAds || !isMember;
+  const adsEnabled = features.adsEnabled && (currentUser?.allowAds || !isMember);
   // const [cmpLoaded, setCmpLoaded] = useState(false);
 
   // const readyRef = useRef<boolean>();

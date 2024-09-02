@@ -143,13 +143,15 @@ export const usersSearchIndex = createSearchIndexUpdateProcessor({
           SELECT u.id
           FROM "User" u
           WHERE ${Prisma.join(where, ' AND ')}
-          ORDER BY u.id ASC
+          ORDER BY "createdAt" ASC
           LIMIT 1
         ) as "startId",
         (
-          SELECT MAX(u.id) FROM "User" u
+          SELECT u.id
+          FROM "User" u
           WHERE ${Prisma.join(where, ' AND ')}
-
+          ORDER BY "createdAt" DESC
+          LIMIT 1
         ) as "endId"
     `;
 

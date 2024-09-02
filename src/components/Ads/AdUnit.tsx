@@ -1,22 +1,9 @@
-import {
-  AdSizes,
-  AnyAdSize,
-  AscendeumAdUnit,
-  AscendeumAdUnitType,
-  ExoclickAdUnit,
-  adSizeImageMap,
-} from '~/components/Ads/ads.utils';
-import { Center, Group, Paper, PaperProps, Text, createStyles } from '@mantine/core';
-import React, { useEffect, useMemo, useRef } from 'react';
+import { AdSizes } from '~/components/Ads/ads.utils';
+import { Text } from '@mantine/core';
+import React, { useEffect, useRef } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
 import Image from 'next/image';
-import { useIsLevelFocused, useStackingContext } from '~/components/Dialog/dialogStore';
 import { NextLink } from '@mantine/next';
-import { ExoclickAd } from '~/components/Ads/Exoclick/ExoclickAd';
-import { AscendeumAd } from '~/components/Ads/AscendeumAds/AscendeumAd';
-import { isDefined } from '~/utils/type-guards';
-import { BrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from 'react-intersection-observer';
@@ -24,7 +11,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { useDeviceFingerprint } from '~/hooks/useDeviceFingerprint';
+import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
   AdSizes & {

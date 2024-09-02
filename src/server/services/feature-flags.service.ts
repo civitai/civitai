@@ -99,15 +99,18 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  customPaymentProvider: ['mod'],
+  canBuyBuzz: ['public', 'green'],
+  customPaymentProvider: ['public'],
+  adsEnabled: ['public', 'blue'],
 });
+
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 
 // --------------------------
 // Logic
 // --------------------------
 const serverDomainMap: Record<ServerAvailability, string | undefined> = {
-  green: isProd ? env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN : undefined,
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
   blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };

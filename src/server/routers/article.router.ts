@@ -33,7 +33,7 @@ export const articleRouter = router({
   getEvents: publicProcedure.query(() => getCivitaiEvents()),
   getById: publicProcedure
     .input(getByIdSchema)
-    .use(isFlagProtected('articles'))
+    // .use(isFlagProtected('articles'))
     .query(({ input, ctx }) =>
       getArticleById({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
     ),

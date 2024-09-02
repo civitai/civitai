@@ -15,11 +15,11 @@ const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const searchableAttributes = [] as const;
 
 const sortableAttributes = [
+   'id', 
   'sortAt',
   'reactionCount',
   'commentCount',
-  'collectedCount',
-  'id',
+  'collectedCount', 
 ] as const;
 
 const filterableAttributes = [
@@ -36,6 +36,7 @@ const filterableAttributes = [
   'tagIds',
   'userId',
   'nsfwLevel',
+  'combinedNsfwLevel',
   'postId',
   'publishedAtUnix',
   'existedAtUnix',
@@ -109,6 +110,8 @@ export type SearchBaseImage = {
   postId: number;
   url: string;
   nsfwLevel: number;
+  aiNsfwLevel: number;
+  nsfwLevelLocked: boolean;
   width: number;
   height: number;
   hash: string;
@@ -164,7 +167,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ publishedAt, ...imageRecord }) => {
+    .map(({ publishedAt, nsfwLevelLocked, ...imageRecord }) => {
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
@@ -182,6 +185,9 @@ const transformData = async ({
       return {
         ...imageRecord,
         ...imageMetrics,
+        combinedNsfwLevel: nsfwLevelLocked
+          ? imageRecord.nsfwLevel
+          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         baseModel,
         modelVersionIds,
         toolIds: imageTools.map((t) => t.toolId),
@@ -232,7 +238,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         SELECT id
         FROM "Image"
         WHERE "updatedAt" > '${lastUpdateIso}'
-          AND "createdAt" < '${lastUpdateIso}'
           AND "postId" IS NOT NULL
         ORDER BY id;
       `);
@@ -266,6 +271,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."postId",
         i."url",
         i."nsfwLevel",
+        i."aiNsfwLevel",
+        i."nsfwLevelLocked",
         i."width",
         i."height",
         i."hash",

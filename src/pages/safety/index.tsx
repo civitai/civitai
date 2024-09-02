@@ -6,7 +6,6 @@ import {
   Grid,
   Group,
   Stack,
-  Table,
   Text,
   Title,
   TypographyStylesProvider,
@@ -15,11 +14,10 @@ import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
 import matter from 'gray-matter';
 import { GetStaticProps, InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
-import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
@@ -400,30 +398,7 @@ function AdditionalContent({ content }: { content: string }) {
           <Text weight={500}>View the full policy</Text>
         </Accordion.Control>
         <Accordion.Panel>
-          <ReactMarkdown
-            rehypePlugins={[rehypeRaw, remarkGfm]}
-            className="markdown-content"
-            components={{
-              a: ({ node, ...props }) => {
-                return (
-                  <Link href={props.href as string}>
-                    <a target={props.href?.includes('http') ? '_blank' : '_self'}>
-                      {props.children?.[0]}
-                    </a>
-                  </Link>
-                );
-              },
-              table: ({ node, ...props }) => {
-                return (
-                  <Table {...props} striped withBorder withColumnBorders>
-                    {props.children}
-                  </Table>
-                );
-              },
-            }}
-          >
-            {content}
-          </ReactMarkdown>
+          <CustomMarkdown rehypePlugins={[rehypeRaw, remarkGfm]}>{content}</CustomMarkdown>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>

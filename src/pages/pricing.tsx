@@ -8,8 +8,6 @@ import {
   Center,
   Loader,
   Alert,
-  Tabs,
-  List,
   ThemeIcon,
   Group,
   createStyles,
@@ -48,6 +46,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { env } from '~/env/client.mjs';
 
 export default function Pricing() {
   const router = useRouter();
@@ -105,7 +104,12 @@ export default function Pricing() {
             Memberships
           </Title>
           <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
-            {`As the leading generative AI community, we're adding new features every week. Help us keep the community thriving by becoming a Supporter and get exclusive perks.`}
+            As the leading generative AI community, we&rsquo;re adding new features every week. Help
+            us keep the community thriving by becoming a Supporter and get exclusive perks.
+          </Text>
+          <Text className={classes.introText} sx={{ lineHeight: 1.25 }}>
+            Your Membership provides full access across all Civitai domains, ensuring the same great
+            benefits and features wherever you explore
           </Text>
         </Stack>
       </Container>
@@ -150,8 +154,8 @@ export default function Pricing() {
                   working on this issue and will notify you when it is resolved.
                 </Text>
                 <Text lh={1.2}>
-                  You are still able to view and manage your subscription, but may not be able to
-                  renew it soon.
+                  You are still able to view and manage your subscription. You may be prompted to
+                  enter additional information to ensure your subscription renews.
                 </Text>
 
                 <Text lh={1.2}>
@@ -304,8 +308,16 @@ const useStyles = createStyles((theme) => ({
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg }) => {
+  resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
+    if (!features?.isGreen || !features.canBuyBuzz)
+      return {
+        redirect: {
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
+          statusCode: 302,
+          basePath: false,
+        },
+      };
   },
 });

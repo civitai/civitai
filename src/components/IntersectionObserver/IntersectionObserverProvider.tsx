@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { generateToken } from '~/utils/string-helpers';
 
 type SizeMapping = { height: number; width: number };
 const sizeMappings = new Map<string, SizeMapping>();
@@ -41,6 +42,7 @@ export function useInView<T extends HTMLElement = HTMLDivElement>({
   const ref = useRef<T>(null);
   const { ready, observe, unobserve } = useProviderContext();
   const [inView, setInView] = useState(initialInView);
+
   const cbRef = useRef<ObserverCallback | null>();
   cbRef.current = callback;
 
@@ -130,9 +132,9 @@ export function IntersectionObserverProvider({
 }) {
   const node = useScrollAreaRef();
   const observerRef = useRef<IntersectionObserver>();
-  const mappingRef = useRef<Map<Element, ObserverCallback>>();
+  const mappingRef = useRef<Map<string, ObserverCallback>>();
   const [ready, setReady] = useState(false);
-  if (!mappingRef.current) mappingRef.current = new Map<Element, ObserverCallback>();
+  if (!mappingRef.current) mappingRef.current = new Map<string, ObserverCallback>();
 
   useEffect(() => {
     // assigne the observer in the effect so that we react has time to assign refs before we initialize
@@ -140,8 +142,10 @@ export function IntersectionObserverProvider({
       observerRef.current = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {
-            const callback = mappingRef.current?.get(entry.target);
-            callback?.(entry.isIntersecting, entry);
+            if (entry.target.id) {
+              const callback = mappingRef.current?.get(entry.target.id);
+              callback?.(entry.isIntersecting, entry);
+            }
           }
         },
         {
@@ -160,13 +164,15 @@ export function IntersectionObserverProvider({
   }, []);
 
   function observe(element: HTMLElement, callback: ObserverCallback) {
+    if (!element.id) element.id = generateToken(8);
     observerRef.current?.observe(element);
-    mappingRef.current?.set(element, callback);
+    mappingRef.current?.set(element.id, callback);
   }
 
   function unobserve(element: HTMLElement) {
+    if (!element.id) return;
     observerRef.current?.unobserve(element);
-    mappingRef.current?.delete(element);
+    mappingRef.current?.delete(element.id);
   }
 
   return (

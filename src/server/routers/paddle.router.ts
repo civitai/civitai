@@ -5,6 +5,7 @@ import {
   updateSubscriptionPlanHandler,
   purchaseBuzzWithSubscriptionHandler,
   getManagementUrlsHandler,
+  getOrCreateCustomerHandler,
 } from '~/server/controllers/paddle.controller';
 import { router, protectedProcedure } from '~/server/trpc';
 import {
@@ -29,4 +30,5 @@ export const paddleRouter = router({
     .input(transactionWithSubscriptionCreateSchema)
     .mutation(purchaseBuzzWithSubscriptionHandler),
   getManagementUrls: protectedProcedure.query(getManagementUrlsHandler),
+  getOrCreateCustomer: protectedProcedure.mutation(getOrCreateCustomerHandler),
 });

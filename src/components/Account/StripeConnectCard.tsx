@@ -19,7 +19,7 @@ import { StripeConnectStatus } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useState } from 'react';
@@ -82,9 +82,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
         <Stack spacing="md">
           <ScrollArea.Autosize maxHeight={500}>
             <Stack>
-              <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
-                {data.content}
-              </ReactMarkdown>
+              <CustomMarkdown rehypePlugins={[rehypeRaw]}>{data.content}</CustomMarkdown>
               <Checkbox
                 checked={acceptedCoC}
                 onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}

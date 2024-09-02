@@ -18,4 +18,22 @@ export const collectionNotifications = createNotificationProcessor({
         : `/collections/${details.collectionId}`,
     }),
   },
+  'beggars-board-rejected': {
+    displayName: 'Beggars board entry declined',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your entry to the Buzz Beggars Board was declined. Try again!`,
+      url: `/collections/3870938`,
+    }),
+  },
+  'beggars-board-expired': {
+    displayName: 'Beggars board entry expired',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your submission to the Buzz Beggars Board has expired. Time to make a new entry!`,
+      url: `/collections/3870938`,
+    }),
+  },
 });

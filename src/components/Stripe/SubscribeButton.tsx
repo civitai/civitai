@@ -71,10 +71,13 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const { paddle, emitter } = usePaddle();
 
-  const { updateSubscription: paddleUpdateSubscription, updatingSubscription: isLoading } =
-    useMutatePaddle();
+  const {
+    updateSubscription: paddleUpdateSubscription,
+    updatingSubscription: isLoading,
+    getOrCreateCustomer,
+  } = useMutatePaddle();
 
-  const handleClick = () => {
+  const handleClick = async () => {
     if (subscription) {
       paddleUpdateSubscription(
         { priceId },
@@ -94,6 +97,13 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
         }
       );
     } else {
+      let customerId = currentUser?.paddleCustomerId;
+
+      if (!currentUser?.paddleCustomerId) {
+        // If this ever happens, first, create the customer id:
+        customerId = await getOrCreateCustomer();
+      }
+
       paddle?.Checkout.open({
         items: [
           {
@@ -102,7 +112,10 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
           },
         ],
         customer: {
-          email: currentUser?.email as string,
+          id: customerId as string,
+        },
+        customData: {
+          userId: currentUser?.id ?? 'N/A',
         },
         settings: {
           showAddDiscounts: false,

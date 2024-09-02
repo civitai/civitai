@@ -1,4 +1,4 @@
-import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
+import { CollectionItemStatus, CollectionReadConfiguration, CollectionType } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
@@ -15,6 +15,7 @@ import {
   GetAllUserCollectionsInputSchema,
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
+  RemoveCollectionItemInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
@@ -34,6 +35,7 @@ import {
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
   getUserCollectionsWithPermissions,
+  removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
   updateCollectionCoverImage,
@@ -43,6 +45,7 @@ import {
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -530,4 +533,23 @@ export const getPermissionDetailsHandler = async ({
     metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
     permissions: permissions.find((p) => p.collectionId === c.id),
   }));
+};
+
+export const removeCollectionItemHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemoveCollectionItemInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    return await removeCollectionItem({
+      ...input,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
+  } catch (error) {
+    throw throwDbError(error);
+  }
 };

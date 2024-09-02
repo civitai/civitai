@@ -9,7 +9,7 @@ import {
   TypographyStylesProvider,
 } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
-import ReactMarkdown from 'react-markdown';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
@@ -67,9 +67,7 @@ export function OnboardingTos() {
             <>
               <Title order={1}>{terms.title}</Title>
               <TypographyStylesProvider>
-                <ReactMarkdown rehypePlugins={[rehypeRaw]} className="markdown-content">
-                  {terms.content}
-                </ReactMarkdown>
+                <CustomMarkdown rehypePlugins={[rehypeRaw]}>{terms.content}</CustomMarkdown>
               </TypographyStylesProvider>
             </>
           )

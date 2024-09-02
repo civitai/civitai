@@ -306,15 +306,15 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+  supporterBadge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
   memberships: {
     tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
-      free: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      silver: '9f174f9f-e823-44af-b969-cd1a1d7efb08',
-      gold: '758f52cb-29f7-4c40-b0fd-1a45b904bd51',
+      free: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      founder: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      bronze: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      silver: 'c06c4d84-11f1-49ca-824c-2d7371c23366',
+      gold: 'eae8457a-8b18-41a5-8ee7-2b99a1c663c6',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -325,7 +325,7 @@ export const constants = {
   freeMembershipDetails: {
     name: 'Free',
     price: 0,
-    badge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+    badge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
     metadata: {
       monthlyBuzz: 0,
       generationLimit: 1,
@@ -632,21 +632,8 @@ export const generation = {
   },
 } as const;
 
-export type ResourceFilter = {
-  type: ModelType;
-  baseModelSet?: BaseModelSetType;
-  baseModels?: BaseModel[];
-};
 export const generationConfig = {
   SD1: {
-    // additionalResourceTypes: [{ type: ModelType.LORA, baseModel: 'SD1' }],
-    additionalResourceTypes: [
-      { type: ModelType.LORA, baseModelSet: 'SD1' },
-      { type: ModelType.DoRA, baseModelSet: 'SD1' },
-      { type: ModelType.LoCon, baseModelSet: 'SD1' },
-      { type: ModelType.TextualInversion, baseModelSet: 'SD1' },
-      { type: ModelType.VAE, baseModelSet: 'SD1' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 512, height: 512 },
       { label: 'Landscape', width: 768, height: 512 },
@@ -669,13 +656,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   SDXL: {
-    additionalResourceTypes: [
-      { type: ModelType.LORA, baseModelSet: 'SDXL' },
-      { type: ModelType.DoRA, baseModelSet: 'SDXL' },
-      { type: ModelType.LoCon, baseModelSet: 'SDXL' },
-      { type: ModelType.TextualInversion, baseModelSet: 'SDXL', baseModels: ['SD 1.5'] },
-      { type: ModelType.VAE, baseModelSet: 'SDXL' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -698,25 +678,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Pony: {
-    additionalResourceTypes: [
-      {
-        type: ModelType.LORA,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      {
-        type: ModelType.DoRA,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      {
-        type: ModelType.LoCon,
-        baseModelSet: 'Pony',
-        baseModels: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
-      },
-      { type: ModelType.TextualInversion, baseModelSet: 'Pony', baseModels: ['SD 1.5'] },
-      { type: ModelType.VAE, baseModelSet: 'SDXL' },
-    ] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -739,7 +700,6 @@ export const generationConfig = {
     } as GenerationResource,
   },
   Flux1: {
-    additionalResourceTypes: [{ type: ModelType.LORA, baseModelSet: 'Flux1' }] as ResourceFilter[],
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
       { label: 'Landscape', width: 1216, height: 832 },
@@ -799,7 +759,7 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 };
 
 export const CurrencyConfig: Record<
-  Currency | 'GEN',
+  Currency,
   {
     icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
     color: (theme: MantineTheme) => string;
@@ -815,11 +775,6 @@ export const CurrencyConfig: Record<
     icon: IconCurrencyDollar,
     color: (theme) => theme.colors.yellow[7],
     fill: undefined,
-  },
-  GEN: {
-    icon: IconBolt,
-    color: (theme) => theme.colors.blue[4],
-    fill: (theme) => theme.colors.blue[4],
   },
 };
 
@@ -867,3 +822,17 @@ export const milestoneNotificationFix = '2024-04-20';
 
 export const orchestratorIntegrationDate = new Date('7-12-2024');
 export const downloadGeneratedImagesByDate = increaseDate(orchestratorIntegrationDate, 30, 'days');
+
+export const colorDomains = {
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+};
+export type ColorDomain = keyof typeof colorDomains;
+export function getRequestDomainColor(req: { headers: { host?: string } }) {
+  const { host } = req.headers;
+  if (!host) return undefined;
+  for (const [color, domain] of Object.entries(colorDomains)) {
+    if (host === domain) return color as ColorDomain;
+  }
+}

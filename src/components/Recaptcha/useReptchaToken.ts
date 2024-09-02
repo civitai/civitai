@@ -5,10 +5,7 @@ import { RecaptchaAction } from '../../server/common/constants';
 import { useDebouncer } from '../../utils/debouncer';
 import { isDev } from '~/env/other';
 
-export const useRecaptchaToken = (
-  action: RecaptchaAction,
-  onGetToken?: (token: string) => void
-) => {
+export const useRecaptchaToken = (action: RecaptchaAction, fetchOnReady = true) => {
   const { ready } = useContext(RecaptchaContext);
   const [loading, setLoading] = useState(false);
   const [token, setToken] = useState<string | null>(null);
@@ -28,12 +25,12 @@ export const useRecaptchaToken = (
 
     setToken(null);
     setLoading(true);
+    setError(null);
 
     try {
       if (isDev) {
         const token = 'dev-recaptcha-token';
         setToken(token);
-        onGetToken?.(token);
 
         return token;
       }
@@ -43,7 +40,6 @@ export const useRecaptchaToken = (
       });
 
       setToken(token);
-      onGetToken?.(token);
 
       return token;
     } catch (error: any) {
@@ -54,12 +50,12 @@ export const useRecaptchaToken = (
   }, [ready, loading, action]);
 
   useEffect(() => {
-    if (ready) {
+    if (ready && fetchOnReady) {
       debouncer(() => {
         getToken();
       });
     }
-  }, [ready]);
+  }, [ready, fetchOnReady]);
 
   return {
     token,
