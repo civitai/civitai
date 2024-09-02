@@ -95,10 +95,30 @@ export const getUserWithProfile = async ({
       select: { ...userWithProfileSelect, publicSettings: true },
     });
 
+    // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
+    // Ideally, using dbRead.
+    const stats = await dbRead.userStat.findFirst({
+      where: {
+        userId: user.id,
+      },
+      select: {
+        ratingAllTime: true,
+        ratingCountAllTime: true,
+        downloadCountAllTime: true,
+        favoriteCountAllTime: true,
+        thumbsUpCountAllTime: true,
+        followerCountAllTime: true,
+        reactionCountAllTime: true,
+        uploadCountAllTime: true,
+        generationCountAllTime: true,
+      },
+    });
+
     const { profile } = user;
 
     return {
       ...user,
+      stats: stats,
       profile: {
         ...profile,
         privacySettings: (profile?.privacySettings ?? {}) as PrivacySettingsSchema,
