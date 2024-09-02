@@ -72,7 +72,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.isGreen || !features.canBuyBuzz) {
       return {
         redirect: {
-          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/membership?sync-account=blue`,
+          destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
           statusCode: 302,
           basePath: false,
         },
