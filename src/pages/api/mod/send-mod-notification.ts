@@ -1,12 +1,14 @@
-import { notificationSingleRowFull } from '~/server/jobs/send-notifications';
-import { createNotification } from '~/server/services/notification.service';
+import {
+  createNotification,
+  createNotificationPendingRow,
+} from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   try {
-    const result = notificationSingleRowFull.safeParse(req.body);
+    const result = createNotificationPendingRow.safeParse(req.body);
     if (!result.success) return res.status(400).send(result.error.message);
 
     await createNotification(result.data);
