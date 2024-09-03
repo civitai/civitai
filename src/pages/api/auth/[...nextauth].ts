@@ -86,6 +86,7 @@ type AuthedRequest = {
     'x-forwarded-proto'?: string;
   };
 };
+
 export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   const options: NextAuthOptions = {
     adapter: CustomPrismaAdapter(dbWrite),
@@ -109,7 +110,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
     },
     callbacks: {
       async signIn({ account, email, user }) {
-        // console.log('signIn', account?.userId);
+        // console.log(new Date().toISOString() + ' ::', 'signIn', { account, email, user });
         if (account?.provider === 'discord' && !!account.scope) await updateAccountScope(account);
         if (
           account?.provider === 'email' &&
@@ -133,7 +134,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         return true;
       },
       async jwt({ token, user, trigger }) {
-        // console.log('jwt', token.email);
+        // console.log(new Date().toISOString() + ' ::', 'jwt', token.email, token.id, trigger);
         if (trigger === 'update') {
           await invalidateSession(Number(token.sub));
           token.user = await getSessionUser({ userId: Number(token.sub) });
@@ -148,8 +149,9 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         return token;
       },
       async session({ session, token }) {
-        // console.log('session', session.user?.email);
+        // console.log(new Date().toISOString() + ' ::', 'session', session.user?.email);
         const newToken = await refreshToken(token);
+        // console.log(new Date().toISOString() + ' ::', newToken?.name);
         if (!newToken?.user) return {} as Session;
         session.user = (newToken.user ? newToken.user : session.user) as Session['user'];
         return session;
@@ -303,7 +305,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
 }
 
 export default async function auth(req: NextApiRequest, res: NextApiResponse) {
-  // console.log('nextauth', req.url);
+  // console.log(new Date().toISOString() + ' ::', 'nextauth', req.url);
   const customAuthOptions = createAuthOptions(req);
   // Yes, this is intended. Without this, you can't log in to a user
   // while already logged in as another

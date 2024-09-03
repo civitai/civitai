@@ -110,7 +110,8 @@ module.exports = {
         '.aspect-portrait': {
           aspectRatio: '7 / 9'
         },
-        '.card': {}
+        '.card': {},
+        '.absolute-center': {}
       }),
       addVariant('not-first', ({ modifySelectors, separator }) => {
         modifySelectors(({ className }) => {

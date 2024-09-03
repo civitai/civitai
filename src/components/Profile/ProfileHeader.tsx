@@ -6,7 +6,6 @@ import React, { useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -18,6 +17,7 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 const useStyles = createStyles((theme) => ({
   message: {
@@ -137,11 +137,13 @@ export function ProfileHeader({ username }: { username: string }) {
                 {!safe ? (
                   <MediaHash {...image} style={{ width: '100%', height: '100%' }} />
                 ) : (
-                  <ImagePreview
-                    image={image}
-                    edgeImageProps={{ width: 1920 }}
-                    radius="md"
-                    style={{ width: '100%' }}
+                  <EdgeMedia
+                    src={image.url}
+                    name={image.name ?? image.id.toString()}
+                    alt={image.name ?? undefined}
+                    type={image.type}
+                    width={Math.min(image.width ?? 1920, 1920)}
+                    className="w-full max-w-full absolute-center"
                   />
                 )}
                 <div className={classes.coverImageNSFWActions}>
