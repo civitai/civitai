@@ -8,6 +8,7 @@ import {
   ModelEngagementType,
   Prisma,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -57,6 +58,7 @@ import {
   throwConflictError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
@@ -70,9 +72,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { encryptText } from '~/server/utils/key-generator';
-import dayjs from 'dayjs';
-import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -644,6 +643,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     };
   }
 
+  // console.log(new Date().toISOString() + ' ::', 'running query');
+  // console.trace();
+
+  // TODO switch from prisma, or try to make this a direct/raw query
   const response = await dbWrite.user.findFirst({
     where,
     include: {
