@@ -95,10 +95,9 @@ export const createBuzzTransaction = async ({
 }) => {
   const paddle = getPaddle();
   return paddle.transactions.create({
-    customData: metadata,
     customerId: customerId,
     items: [
-      createOneTimeUseBuzzProduct({ unitAmount, buzzAmount, currency }),
+      createOneTimeUseBuzzProduct({ unitAmount, buzzAmount, currency, metadata }),
       ...(includedItems ?? []),
     ],
   });
