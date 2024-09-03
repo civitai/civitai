@@ -143,6 +143,13 @@ export const createBuzzPurchaseTransaction = async ({
   };
 };
 
+export const getBuzzPurchaseItem = (transaction: TransactionNotification) => {
+  return transaction.items.find((i) => {
+    const itemMeta = i.price?.customData as TransactionMetadataSchema;
+    return itemMeta?.type === 'buzzPurchase';
+  });
+};
+
 export const processCompleteBuzzTransaction = async (
   transaction: Transaction,
   buzzTransactionExtras?: MixedObject

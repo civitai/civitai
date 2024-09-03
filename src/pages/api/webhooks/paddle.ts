@@ -16,6 +16,7 @@ import {
 } from '@paddle/paddle-node-sdk';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import {
+  getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
   processCompleteBuzzTransaction,
   upsertPriceRecord,
@@ -82,13 +83,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         switch (event.eventType) {
           case EventName.TransactionCompleted:
             const data = (event as TransactionCompletedEvent).data;
-            if (!data.customData && !data.subscriptionId && data.origin !== 'subscription_charge') {
-              throw new Error('Invalid Request');
-            }
-            const customData = data.customData as TransactionMetadataSchema;
+            const buzzPurchaseItem = getBuzzPurchaseItem(data);
             const containsProductMemberships = await paddleTransactionContainsSubscriptionItem(
               data
             );
+
+            if (!buzzPurchaseItem && !containsProductMemberships) {
+              throw new Error("Completed transaction doesn't contain buzz or membership items");
+            }
 
             if (
               data.subscriptionId &&
@@ -98,10 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               await manageSubscriptionTransactionComplete(event.data as TransactionNotification, {
                 notificationId: event.eventId,
               });
-            } else if (
-              customData?.type === 'buzzPurchase' ||
-              data.origin === 'subscription_charge'
-            ) {
+            } else if (buzzPurchaseItem || data.origin === 'subscription_charge') {
               await processCompleteBuzzTransaction(event.data as Transaction, {
                 notificationId: event.eventId,
               });
