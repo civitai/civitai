@@ -26,7 +26,7 @@ export const postMetrics = createMetricProcessor({
     log('postMetrics update', fetchTasks.length, 'tasks');
     await limitConcurrency(fetchTasks, 5);
 
-    // Update the the metrics
+    // Update the post metrics
     //---------------------------------------
     const updateTasks = chunk(Object.values(ctx.updates), 1000).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
@@ -72,6 +72,44 @@ export const postMetrics = createMetricProcessor({
       log('update metrics', i + 1, 'of', updateTasks.length, 'done');
     });
     await limitConcurrency(updateTasks, 3);
+
+    // Update the age groups
+    //---------------------------------------
+    const ageGroupUpdatesQuery = await ctx.pg.cancellableQuery<{ postId: number }>(`
+      SELECT "postId"
+      FROM "PostMetric" pm
+      JOIN "Post" p ON p.id = pm."postId"
+      WHERE
+        (p."publishedAt" IS NULL AND "ageGroup" IS NOT NULL) OR
+        ("ageGroup" IS NULL AND p."publishedAt" IS NOT NULL) OR
+        ("ageGroup" = 'Year' AND p."publishedAt" < now() - interval '1 year') OR
+        ("ageGroup" = 'Month' AND p."publishedAt" < now() - interval '1 month') OR
+        ("ageGroup" = 'Week' AND p."publishedAt" < now() - interval '1 week') OR
+        ("ageGroup" = 'Day' AND p."publishedAt" < now() - interval '1 day')
+    `);
+    ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
+    const ageGroupUpdates = await ageGroupUpdatesQuery.result();
+    const affectedIds = ageGroupUpdates.map((x) => x.postId);
+    if (affectedIds.length) {
+      const ageGroupTasks = chunk(affectedIds, 500).map((ids, i) => async () => {
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
+        await executeRefresh(ctx)`
+          UPDATE "PostMetric" pm
+          SET "ageGroup" = CASE
+              WHEN p."publishedAt" IS NULL THEN NULL
+              WHEN p."publishedAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+              ELSE 'AllTime'::"MetricTimeframe"
+          END
+          FROM "Post" p
+          WHERE pm."postId" = p.id AND pm."postId" IN (${ids});
+        `;
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
+      });
+      await limitConcurrency(ageGroupTasks, 10);
+    }
   },
   async clearDay(ctx) {
     log('clearDay');
@@ -81,27 +119,6 @@ export const postMetrics = createMetricProcessor({
       WHERE timeframe = 'Day'
         AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
-  },
-  rank: {
-    table: 'PostRank',
-    primaryKey: 'postId',
-    indexes: [
-      'reactionCountAllTimeRank',
-      'reactionCountDayRank',
-      'reactionCountWeekRank',
-      'reactionCountMonthRank',
-      'reactionCountYearRank',
-      'commentCountAllTimeRank',
-      'commentCountDayRank',
-      'commentCountWeekRank',
-      'commentCountMonthRank',
-      'commentCountYearRank',
-      'collectedCountAllTimeRank',
-      'collectedCountDayRank',
-      'collectedCountWeekRank',
-      'collectedCountMonthRank',
-      'collectedCountYearRank',
-    ],
   },
 });
 

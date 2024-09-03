@@ -2496,7 +2496,6 @@ export const getImagesForPosts = async ({
       tippedAmountCount: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
-      reactions?: ReviewReactions[];
       hasMeta: boolean;
       onSite: boolean;
     }[]
@@ -2528,53 +2527,37 @@ export const getImagesForPosts = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      ${Prisma.raw(`
-        jsonb_build_object(
-          'prompt', i.meta->>'prompt',
-          'negativePrompt', i.meta->>'negativePrompt',
-          'cfgScale', i.meta->>'cfgScale',
-          'steps', i.meta->>'steps',
-          'sampler', i.meta->>'sampler',
-          'seed', i.meta->>'seed',
-          'hashes', i.meta->>'hashes',
-          'clipSkip', i.meta->>'clipSkip',
-          'Clip skip', i.meta->>'Clip skip'
-        ) as "meta",
-      `)}
       COALESCE(im."cryCount", 0) "cryCount",
       COALESCE(im."laughCount", 0) "laughCount",
       COALESCE(im."likeCount", 0) "likeCount",
       COALESCE(im."dislikeCount", 0) "dislikeCount",
       COALESCE(im."heartCount", 0) "heartCount",
       COALESCE(im."commentCount", 0) "commentCount",
-      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount",
-      (
-        SELECT jsonb_agg(reaction)
-        FROM "ImageReaction"
-        WHERE "imageId" = i.id
-        AND "userId" = ${userId}
-      ) reactions
+      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
     FROM "Image" i
     LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
   `;
   const imageIds = images.map((i) => i.id);
-  const rawTags =
-    imageIds?.length > 0
-      ? await dbRead.imageTag.findMany({
-          where: { imageId: { in: imageIds } },
-          select: {
-            imageId: true,
-            tagId: true,
-          },
-        })
-      : [];
+  const tagIds = await tagIdsForImagesCache.fetch(imageIds);
+  let userReactions: Record<number, ReviewReactions[]> | undefined;
+  if (userId) {
+    const reactionsRaw = await dbRead.imageReaction.findMany({
+      where: { imageId: { in: imageIds }, userId },
+      select: { imageId: true, reaction: true },
+    });
+    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
+      acc[imageId] ??= [] as ReviewReactions[];
+      acc[imageId].push(reaction);
+      return acc;
+    }, {} as Record<number, ReviewReactions[]>);
+  }
 
-  return images.map(({ reactions, ...i }) => ({
+  return images.map((i) => ({
     ...i,
-    tagIds: rawTags.filter((t) => t.imageId === i.id).map((t) => t.tagId),
-    reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
+    tagIds: tagIds[i.id]?.tags,
+    reactions: userReactions?.[i.id] ?? [],
   }));
 };
 

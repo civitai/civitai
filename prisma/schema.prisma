@@ -1145,7 +1145,6 @@ model Post {
   thread          Thread?
   helper          PostHelper?
   stats           PostStat?
-  rank            PostRank?
   metrics         PostMetric[]
   resourceHelper  PostResourceHelper[]
   imageTags       PostImageTag[]
@@ -3738,52 +3737,6 @@ model PostStat {
   reactionCountMonth   Int  @default(0)
   reactionCountYear    Int  @default(0)
   reactionCountAllTime Int  @default(0)
-}
-
-/// @view
-model PostRank {
-  postId                    Int  @id
-  post                      Post @relation(fields: [postId], references: [id], onDelete: NoAction)
-  cryCountDayRank           Int  @default(0)
-  cryCountWeekRank          Int  @default(0)
-  cryCountMonthRank         Int  @default(0)
-  cryCountYearRank          Int  @default(0)
-  cryCountAllTimeRank       Int  @default(0)
-  dislikeCountDayRank       Int  @default(0)
-  dislikeCountWeekRank      Int  @default(0)
-  dislikeCountMonthRank     Int  @default(0)
-  dislikeCountYearRank      Int  @default(0)
-  dislikeCountAllTimeRank   Int  @default(0)
-  heartCountDayRank         Int  @default(0)
-  heartCountWeekRank        Int  @default(0)
-  heartCountMonthRank       Int  @default(0)
-  heartCountYearRank        Int  @default(0)
-  heartCountAllTimeRank     Int  @default(0)
-  laughCountDayRank         Int  @default(0)
-  laughCountWeekRank        Int  @default(0)
-  laughCountMonthRank       Int  @default(0)
-  laughCountYearRank        Int  @default(0)
-  laughCountAllTimeRank     Int  @default(0)
-  likeCountDayRank          Int  @default(0)
-  likeCountWeekRank         Int  @default(0)
-  likeCountMonthRank        Int  @default(0)
-  likeCountYearRank         Int  @default(0)
-  likeCountAllTimeRank      Int  @default(0)
-  commentCountDayRank       Int  @default(0)
-  commentCountWeekRank      Int  @default(0)
-  commentCountMonthRank     Int  @default(0)
-  commentCountYearRank      Int  @default(0)
-  commentCountAllTimeRank   Int  @default(0)
-  reactionCountDayRank      Int  @default(0)
-  reactionCountWeekRank     Int  @default(0)
-  reactionCountMonthRank    Int  @default(0)
-  reactionCountYearRank     Int  @default(0)
-  reactionCountAllTimeRank  Int  @default(0)
-  collectedCountDayRank     Int  @default(0)
-  collectedCountWeekRank    Int  @default(0)
-  collectedCountMonthRank   Int  @default(0)
-  collectedCountYearRank    Int  @default(0)
-  collectedCountAllTimeRank Int  @default(0)
 }
 
 /// @view
