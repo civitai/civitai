@@ -55,6 +55,8 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { isDefined } from '~/utils/type-guards';
+import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -92,6 +94,7 @@ export function ModelCategoryCard({
   const hasReview = reviewedModels.includes(id);
   const { hiddenUsers: hiddenUsers, hiddenModels: hiddenModels } = useHiddenPreferencesContext();
   const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
+  const { setMenuItems } = useModelCardContextMenu();
 
   const modelText = (
     <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
@@ -147,83 +150,118 @@ export function ModelCategoryCard({
     </IconBadge>
   );
 
-  const reportOption = (
-    <LoginRedirect reason="report-model" key="report">
+  const reportOption = {
+    key: 'report-model',
+    component: (
+      <LoginRedirect reason="report-model" key="report">
+        <Menu.Item
+          icon={<IconFlag size={14} stroke={1.5} />}
+          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+            e.preventDefault();
+            e.stopPropagation();
+            openContext('report', { entityType: ReportEntity.Model, entityId: id });
+          }}
+        >
+          Report Resource
+        </Menu.Item>
+      </LoginRedirect>
+    ),
+  };
+
+  const reportImageOption = image
+    ? {
+        key: 'report-content',
+        component: (
+          <LoginRedirect reason="report-content" key="report-image">
+            <Menu.Item
+              icon={<IconFlag size={14} stroke={1.5} />}
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                e.preventDefault();
+                e.stopPropagation();
+                openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+              }}
+            >
+              Report Image
+            </Menu.Item>
+          </LoginRedirect>
+        ),
+      }
+    : null;
+
+  const blockTagsOption = {
+    key: 'block-tags',
+    component: (
       <Menu.Item
-        icon={<IconFlag size={14} stroke={1.5} />}
+        key="block-tags"
+        icon={<IconTagOff size={14} stroke={1.5} />}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Model, entityId: id });
+          openContext('blockModelTags', { modelId: id });
         }}
       >
-        Report Resource
+        {`Hide content with these tags`}
       </Menu.Item>
-    </LoginRedirect>
-  );
+    ),
+  };
 
-  const reportImageOption = image && (
-    <LoginRedirect reason="report-content" key="report-image">
-      <Menu.Item
-        icon={<IconFlag size={14} stroke={1.5} />}
-        onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
-        }}
-      >
-        Report Image
-      </Menu.Item>
-    </LoginRedirect>
-  );
-
-  const blockTagsOption = (
-    <Menu.Item
-      key="block-tags"
-      icon={<IconTagOff size={14} stroke={1.5} />}
-      onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openContext('blockModelTags', { modelId: id });
-      }}
-    >
-      {`Hide content with these tags`}
-    </Menu.Item>
-  );
-  let contextMenuItems: React.ReactNode[] = [];
+  let contextMenuItems: { key: string; component: React.ReactNode }[] = [];
   if (features.collections) {
-    contextMenuItems = contextMenuItems.concat([
-      <AddToCollectionMenuItem
-        key="add-to-collection"
-        onClick={() =>
-          openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
-        }
-      />,
-    ]);
+    contextMenuItems.push({
+      key: 'add-to-collection',
+      component: (
+        <AddToCollectionMenuItem
+          key="add-to-collection"
+          onClick={() =>
+            openContext('addToCollection', { modelId: data.id, type: CollectionType.Model })
+          }
+        />
+      ),
+    });
   }
 
-  contextMenuItems = contextMenuItems.concat([
-    <ToggleSearchableMenuItem
-      entityType="Model"
-      entityId={data.id}
-      key="toggle-searchable-menu-item"
-    />,
-  ]);
+  contextMenuItems.push({
+    component: (
+      <ToggleSearchableMenuItem
+        entityType="Model"
+        entityId={data.id}
+        key="toggle-searchable-menu-item"
+      />
+    ),
+    key: 'toggle-searchable-menu-item',
+  });
 
   if (currentUser?.id === user.id) {
-    contextMenuItems = contextMenuItems.concat([
-      <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />,
-    ]);
+    contextMenuItems.push({
+      key: 'add-to-showcase',
+      component: (
+        <AddToShowcaseMenuItem key="add-to-showcase" entityType="Model" entityId={data.id} />
+      ),
+    });
   }
 
-  if (currentUser?.id !== user.id)
-    contextMenuItems = contextMenuItems.concat([
-      <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
-      <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
-      reportOption,
-      reportImageOption,
-    ]);
+  if (currentUser?.id !== user.id) {
+    contextMenuItems.push(
+      ...[
+        {
+          key: 'hide-model',
+          component: <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
+        },
+        {
+          key: 'hide-button',
+          component: <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
+        },
+        reportOption,
+        reportImageOption,
+      ].filter(isDefined)
+    );
+  }
+
   if (currentUser) contextMenuItems.splice(2, 0, blockTagsOption);
+
+  if (setMenuItems) {
+    contextMenuItems = setMenuItems(data, contextMenuItems);
+  }
 
   useEffect(() => {
     if (!modelId || modelId !== data.id) return;
@@ -282,8 +320,8 @@ export function ModelCategoryCard({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
-                        {contextMenuItems.map((el, index) => (
-                          <React.Fragment key={index}>{el}</React.Fragment>
+                        {contextMenuItems.map((el) => (
+                          <React.Fragment key={el.key}>{el.component}</React.Fragment>
                         ))}
                       </Menu.Dropdown>
                     </Menu>

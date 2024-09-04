@@ -24,6 +24,11 @@ export default function Account({ providers }: Props) {
   const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
+  const handleRefreshSession = async () => {
+    await currentUser?.refresh();
+    window?.location.reload();
+  }
+
   return (
     <>
       <Meta title="Manage your Account - Civitai" />
@@ -52,7 +57,7 @@ export default function Account({ providers }: Props) {
           <DeleteCard />
           <Divider label="Extras" />
           <Group spacing="sm">
-            <Button variant="subtle" onClick={() => currentUser?.refresh()}>
+            <Button variant="subtle" onClick={handleRefreshSession}>
               Refresh my session
             </Button>
           </Group>

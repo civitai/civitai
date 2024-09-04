@@ -1,17 +1,16 @@
 import { ReviewReactions } from '@prisma/client';
-import { cloneElement, useCallback, useMemo, useState } from 'react';
+import { cloneElement, useCallback, useMemo } from 'react';
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { trpc } from '~/utils/trpc';
-import { devtools } from 'zustand/middleware';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
 
 /**NOTES**
-  Why use zustand?
-    - When a user adds a reaction, we're not going to invalidate the react-query cache of parent data. This means that, if a user were to navigate to another page and then come back, the reaction data from the react-query cache would not be accurate.
-*/
+ Why use zustand?
+ - When a user adds a reaction, we're not going to invalidate the react-query cache of parent data. This means that, if a user were to navigate to another page and then come back, the reaction data from the react-query cache would not be accurate.
+ */
 type ReactionStore = {
   reactions: Record<string, Partial<Record<string, boolean>>>;
   toggleReaction: ({
@@ -86,11 +85,11 @@ export function ReactionButton({
   const count = useMemo(() => {
     if (hasReactedInitial) {
       const optimisticCount = initialCount > 0 ? initialCount : 1;
-      return hasReacted ? optimisticCount : optimisticCount - 1;
+      return hasReacted ? optimisticCount : Math.max(0, optimisticCount - 1);
     } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
-  const { mutate } = trpc.reaction.toggle.useMutation();
+  const { mutate, isLoading } = trpc.reaction.toggle.useMutation();
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -110,7 +109,7 @@ export function ReactionButton({
     );
   };
 
-  const canClick = !!currentUser && !readonly;
+  const canClick = !!currentUser && !readonly && !isLoading;
   const child = children({ hasReacted, count, reaction, canClick });
 
   if (noEmpty && count < 1) return null;

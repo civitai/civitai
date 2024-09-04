@@ -65,6 +65,7 @@ import {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { getPeriods } from '~/server/utils/enum-helpers';
 
 type GetAllPostsRaw = {
   id: number;
@@ -171,12 +172,19 @@ export const getPostsInfinite = async ({
     cacheTags.push(`posts-modelVersion:${modelVersionId}`);
   }
 
-  const joins: string[] = [];
+  const joins: string[] = [
+    `${
+      draftOnly ? 'LEFT ' : ''
+    }JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
+  ];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`p."publishedAt" < now()`);
+    AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
-      AND.push(Prisma.raw(`p."publishedAt" > now() - INTERVAL '1 ${period.toLowerCase()}'`));
+      const ageGroups = getPeriods(period);
+      AND.push(
+        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[]`
+      );
     }
 
     if (!!tags?.length)
@@ -189,8 +197,8 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
-    else AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+    if (draftOnly) AND.push(Prisma.sql`pm."ageGroup" IS NULL`);
+    else AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
   }
 
   if (browsingLevel) {
@@ -238,13 +246,15 @@ export const getPostsInfinite = async ({
 
   // sorting
   let orderBy = 'p."publishedAt" DESC NULLS LAST';
-  if (sort === PostSort.MostComments) orderBy = `r."commentCount${period}Rank"`;
-  else if (sort === PostSort.MostReactions) orderBy = `r."reactionCount${period}Rank"`;
-  else if (sort === PostSort.MostCollected) orderBy = `r."collectedCount${period}Rank"`;
-  const includeRank = orderBy.startsWith('r.');
-  if (includeRank) {
-    const optionalRank = !!(username || modelVersionId || ids || collectionId);
-    joins.push(`${optionalRank ? 'LEFT ' : ''}JOIN "PostRank" r ON r."postId" = p.id`);
+  if (sort === PostSort.MostComments) {
+    orderBy = `pm."commentCount" DESC`;
+    AND.push(Prisma.sql`pm."commentCount" > 0`);
+  } else if (sort === PostSort.MostReactions) {
+    orderBy = `pm."reactionCount" DESC`;
+    AND.push(Prisma.sql`pm."reactionCount" > 0`);
+  } else if (sort === PostSort.MostCollected) {
+    orderBy = `pm."collectedCount" DESC`;
+    AND.push(Prisma.sql`pm."collectedCount" > 0`);
   }
 
   // cursor
@@ -300,17 +310,13 @@ export const getPostsInfinite = async ({
       p."collectionId",
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       p."availability",
-      (
-        SELECT jsonb_build_object(
-          'cryCount', COALESCE(pm."cryCount", 0),
-          'laughCount', COALESCE(pm."laughCount", 0),
-          'likeCount', COALESCE(pm."likeCount", 0),
-          'dislikeCount', COALESCE(pm."dislikeCount", 0),
-          'heartCount', COALESCE(pm."heartCount", 0),
-          'commentCount', COALESCE(pm."commentCount", 0)
-        ) "stats"
-        FROM "PostMetric" pm
-        WHERE pm."postId" = p.id AND pm."timeframe" = ${period}::"MetricTimeframe"
+      jsonb_build_object(
+        'cryCount', COALESCE(pm."cryCount", 0),
+        'laughCount', COALESCE(pm."laughCount", 0),
+        'likeCount', COALESCE(pm."likeCount", 0),
+        'dislikeCount', COALESCE(pm."dislikeCount", 0),
+        'heartCount', COALESCE(pm."heartCount", 0),
+        'commentCount', COALESCE(pm."commentCount", 0)
       ) "stats",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
     FROM "Post" p
@@ -803,31 +809,29 @@ export const addPostImage = async ({
   try {
     // Read the resources based on complex metadata and hash matches
     const resources = await dbWrite.$queryRaw<
-      ImageResource[]
+      (ImageResource & { modelversionid?: number })[]
     >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
-    const resourcesJson = JSON.stringify(resources);
 
-    // Write the resources to the image
-    await dbWrite.$executeRaw`
-      WITH json_data AS (
-          SELECT
-              jsonb_array_elements(${resourcesJson}::jsonb) AS elem
-      )
+    const sql: Prisma.Sql[] = resources.map(
+      (r) => Prisma.sql`
+      (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
+        r.detected
+      })
+    `
+    );
+
+    if (resources.length > 0) {
+      // Write the resources to the image
+      await dbWrite.$executeRaw`
       INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-      SELECT
-          (elem->>'id')::int,
-          (elem->>'modelversionid')::int,
-          elem->>'name',
-          elem->>'hash',
-          (elem->>'strength')::int,
-          (elem->>'detected')::boolean
-      FROM json_data
+      VALUES ${Prisma.join(sql, ',')}
       ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
       SET
           detected = excluded.detected,
           hash = excluded.hash,
           strength = excluded.strength;
     `;
+    }
   } catch (e) {
     console.error(e);
   }

@@ -84,19 +84,6 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
       leaderboardCosmetic: true,
     },
   },
-  stats: {
-    select: {
-      ratingAllTime: true,
-      ratingCountAllTime: true,
-      downloadCountAllTime: true,
-      favoriteCountAllTime: true,
-      thumbsUpCountAllTime: true,
-      followerCountAllTime: true,
-      reactionCountAllTime: true,
-      uploadCountAllTime: true,
-      generationCountAllTime: true,
-    },
-  },
   profile: {
     select: {
       bio: true,

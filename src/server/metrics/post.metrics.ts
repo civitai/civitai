@@ -1,21 +1,117 @@
 import { chunk } from 'lodash-es';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, sleep, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+import { PostMetric } from '@prisma/client';
+import dayjs from 'dayjs';
+import { templateHandler } from '~/server/db/db-helpers';
 
 const log = createLogger('metrics:post');
 
 export const postMetrics = createMetricProcessor({
   name: 'Post',
-  async update(ctx) {
-    const tasks = (await Promise.all([
+  async update(baseCtx) {
+    // Update the context to include the update record
+    const ctx = baseCtx as MetricContext;
+    ctx.updates = {};
+
+    // Get the metric tasks
+    //---------------------------------------
+    const fetchTasks = (await Promise.all([
       getReactionTasks(ctx),
       getCommentTasks(ctx),
       getCollectionTasks(ctx),
     ]).then((x) => x.flat())) as Task[];
-    log('postMetrics update', tasks.length, 'tasks');
-    await limitConcurrency(tasks, 5);
+    log('postMetrics update', fetchTasks.length, 'tasks');
+    await limitConcurrency(fetchTasks, 5);
+
+    // Update the post metrics
+    //---------------------------------------
+    const updateTasks = chunk(Object.values(ctx.updates), 1000).map((batch, i) => async () => {
+      ctx.jobContext.checkIfCanceled();
+      log('update metrics', i + 1, 'of', updateTasks.length);
+
+      const batchJson = JSON.stringify(batch);
+      const metricInsertColumns = metrics.map((key) => `"${key}" INT[]`).join(', ');
+      const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
+      const metricValues = metrics
+        .map(
+          (key) => `
+        CASE
+          WHEN tf.timeframe = 'Day' THEN COALESCE(d."${key}"[1], im."${key}", 0)
+          WHEN tf.timeframe = 'Month' THEN COALESCE(d."${key}"[2], im."${key}", 0)
+          WHEN tf.timeframe = 'Week' THEN COALESCE(d."${key}"[3], im."${key}", 0)
+          WHEN tf.timeframe = 'Year' THEN COALESCE(d."${key}"[4], im."${key}", 0)
+          WHEN tf.timeframe = 'AllTime' THEN COALESCE(d."${key}"[5], im."${key}", 0)
+        END as "${key}"
+      `
+        )
+        .join(',\n');
+      const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
+
+      await executeRefresh(ctx)`
+        -- update post metrics
+        WITH data AS (SELECT * FROM jsonb_to_recordset('${batchJson}') AS x("postId" INT, ${metricInsertColumns}))
+        INSERT INTO "PostMetric" ("postId", "timeframe", "updatedAt", ${metricInsertKeys})
+        SELECT
+          d."postId",
+          tf.timeframe,
+          NOW() as "updatedAt",
+          ${metricValues}
+        FROM data d
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
+        LEFT JOIN "PostMetric" im ON im."postId" = d."postId" AND im."timeframe" = tf.timeframe
+        WHERE EXISTS (SELECT 1 FROM "Post" WHERE id = d."postId") -- ensure the post exists
+        ON CONFLICT ("postId", "timeframe") DO UPDATE
+          SET
+            ${metricOverrides},
+            "updatedAt" = NOW()
+      `;
+      await sleep(1000);
+      log('update metrics', i + 1, 'of', updateTasks.length, 'done');
+    });
+    await limitConcurrency(updateTasks, 3);
+
+    // Update the age groups
+    //---------------------------------------
+    const ageGroupUpdatesQuery = await ctx.pg.cancellableQuery<{ postId: number }>(`
+      SELECT "postId"
+      FROM "PostMetric" pm
+      JOIN "Post" p ON p.id = pm."postId"
+      WHERE
+        (p."publishedAt" IS NULL AND "ageGroup" IS NOT NULL) OR
+        ("ageGroup" IS NULL AND p."publishedAt" IS NOT NULL) OR
+        ("ageGroup" IS NOT NULL AND p."publishedAt" > now()) OR
+        ("ageGroup" = 'Year' AND p."publishedAt" < now() - interval '1 year') OR
+        ("ageGroup" = 'Month' AND p."publishedAt" < now() - interval '1 month') OR
+        ("ageGroup" = 'Week' AND p."publishedAt" < now() - interval '1 week') OR
+        ("ageGroup" = 'Day' AND p."publishedAt" < now() - interval '1 day')
+    `);
+    ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
+    const ageGroupUpdates = await ageGroupUpdatesQuery.result();
+    const affectedIds = ageGroupUpdates.map((x) => x.postId);
+    if (affectedIds.length) {
+      const ageGroupTasks = chunk(affectedIds, 500).map((ids, i) => async () => {
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
+        await executeRefresh(ctx)`
+          UPDATE "PostMetric" pm
+          SET "ageGroup" = CASE
+              WHEN p."publishedAt" IS NULL THEN NULL
+              WHEN p."publishedAt" > now() THEN NULL -- future posts
+              WHEN p."publishedAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
+              WHEN p."publishedAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
+              ELSE 'AllTime'::"MetricTimeframe"
+          END
+          FROM "Post" p
+          WHERE pm."postId" = p.id AND pm."postId" IN (${ids});
+        `;
+        log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
+      });
+      await limitConcurrency(ageGroupTasks, 10);
+    }
   },
   async clearDay(ctx) {
     log('clearDay');
@@ -26,30 +122,9 @@ export const postMetrics = createMetricProcessor({
         AND "updatedAt" > date_trunc('day', now() - interval '1 day');
     `;
   },
-  rank: {
-    table: 'PostRank',
-    primaryKey: 'postId',
-    indexes: [
-      'reactionCountAllTimeRank',
-      'reactionCountDayRank',
-      'reactionCountWeekRank',
-      'reactionCountMonthRank',
-      'reactionCountYearRank',
-      'commentCountAllTimeRank',
-      'commentCountDayRank',
-      'commentCountWeekRank',
-      'commentCountMonthRank',
-      'commentCountYearRank',
-      'collectedCountAllTimeRank',
-      'collectedCountDayRank',
-      'collectedCountWeekRank',
-      'collectedCountMonthRank',
-      'collectedCountYearRank',
-    ],
-  },
 });
 
-async function getReactionTasks(ctx: MetricProcessorRunContext) {
+async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
   const affected = await getAffected(ctx)`
     -- get recent post image reactions
@@ -63,21 +138,18 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update post reaction metrics
-      INSERT INTO "PostMetric" ("postId", timeframe, ${snippets.reactionMetricNames})
+
+    await getMetrics(ctx)`
+      -- get post reaction metrics
       SELECT
         i."postId",
         tf.timeframe,
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
       JOIN "Image" i ON i.id = r."imageId"
-      JOIN "Post" p ON p.id = i."postId" -- Make sure it exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE i."postId" IN (${ids})
       GROUP BY i."postId", tf.timeframe
-      ON CONFLICT ("postId", timeframe) DO UPDATE
-        SET ${snippets.reactionMetricUpserts}, "updatedAt" = NOW()
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -85,7 +157,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
   return tasks;
 }
 
-async function getCommentTasks(ctx: MetricProcessorRunContext) {
+async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent post comments
     SELECT DISTINCT
@@ -98,21 +170,17 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update post comment counts
-      INSERT INTO "PostMetric" ("postId", timeframe, "commentCount")
+    await getMetrics(ctx)`
+      -- get post comment metrics
       SELECT
         t."postId",
         tf.timeframe,
-        ${snippets.timeframeSum('c."createdAt"')}
+        ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
-      JOIN "CommentV2" c ON t."id" = c."threadId"
-      JOIN "Post" p ON p.id = t."postId" -- Make sure it exists
+      JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE t."postId" IS NOT NULL AND t."postId" IN (${ids})
+      WHERE t."postId" IN (${ids})
       GROUP BY t."postId", tf.timeframe
-      ON CONFLICT ("postId", timeframe) DO UPDATE
-        SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = NOW()
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -120,35 +188,75 @@ async function getCommentTasks(ctx: MetricProcessorRunContext) {
   return tasks;
 }
 
-async function getCollectionTasks(ctx: MetricProcessorRunContext) {
+async function getCollectionTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent post collections
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "postId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update post collection counts
-      INSERT INTO "PostMetric" ("postId", timeframe, "collectedCount")
+    await getMetrics(ctx)`
+      -- get post collection metrics
       SELECT
         ci."postId",
         tf.timeframe,
-        ${snippets.timeframeSum('ci."createdAt"')}
+        ${snippets.timeframeSum('ci."createdAt"')} "collectedCount"
       FROM "CollectionItem" ci
-      JOIN "Post" p ON p.id = ci."postId" -- Make sure it exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
-      WHERE ci."postId" IS NOT NULL AND ci."postId" IN (${ids})
+      WHERE ci."postId" IN (${ids})
       GROUP BY ci."postId", tf.timeframe
-      ON CONFLICT ("postId", timeframe) DO UPDATE
-        SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = NOW()
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
+}
+
+type MetricKey = keyof PostMetric;
+type TimeframeData = [number, number, number, number, number];
+type MetricContext = MetricProcessorRunContext & {
+  updates: Record<number, Record<MetricKey, TimeframeData | number>>;
+  lastViewUpdate: dayjs.Dayjs;
+  setLastViewUpdate: () => void;
+};
+const metrics = [
+  'heartCount',
+  'likeCount',
+  'dislikeCount',
+  'laughCount',
+  'cryCount',
+  'commentCount',
+  'collectedCount',
+] as const;
+const timeframeOrder = ['Day', 'Week', 'Month', 'Year', 'AllTime'] as const;
+
+function getMetrics(ctx: MetricContext) {
+  return templateHandler(async (sql) => {
+    const query = await ctx.pg.cancellableQuery<PostMetric>(sql);
+    ctx.jobContext.on('cancel', query.cancel);
+    const data = await query.result();
+    if (!data.length) return;
+
+    for (const row of data) {
+      const postId = row.postId;
+      const { timeframe } = row;
+      if (!timeframe) continue;
+      const timeframeIndex = timeframeOrder.indexOf(timeframe);
+      if (timeframeIndex === -1) continue;
+
+      ctx.updates[postId] ??= { postId } as Record<MetricKey, TimeframeData | number>;
+      for (const key of Object.keys(row) as MetricKey[]) {
+        if (key === 'postId' || key === 'timeframe') continue;
+        const value = row[key];
+        if (value == null) continue;
+        ctx.updates[postId][key] ??= [0, 0, 0, 0, 0];
+        (ctx.updates[postId][key] as TimeframeData)[timeframeIndex] = Number(value);
+      }
+    }
+  });
 }

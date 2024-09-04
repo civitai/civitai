@@ -7,6 +7,7 @@ import {
 import { Context } from '~/server/createContext';
 import {
   createBuzzPurchaseTransaction,
+  createCustomer,
   processCompleteBuzzTransaction,
   purchaseBuzzWithSubscription,
   updateSubscriptionPlan,
@@ -73,16 +74,6 @@ export const processCompleteBuzzTransactionHandler = async ({
 }) => {
   // Get the transaction:
   const transaction = await getTransactionById(input.id);
-  const meta = transaction?.customData as TransactionMetadataSchema;
-
-  if (meta.type !== 'buzzPurchase') {
-    throw throwNotFoundError('Cannot process a non-buzz transaction');
-  }
-
-  if (meta.userId !== ctx.user.id) {
-    throw throwAuthorizationError('You are not authorized to process this transaction');
-  }
-
   // Process the transaction
   await processCompleteBuzzTransaction(transaction);
 };
@@ -221,6 +212,16 @@ export const purchaseBuzzWithSubscriptionHandler = async ({
       userId: ctx.user.id,
       ...input,
     });
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const getOrCreateCustomerHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const user = { id: ctx.user.id, email: ctx.user.email as string };
+    const customer = await createCustomer(user);
+    return customer;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

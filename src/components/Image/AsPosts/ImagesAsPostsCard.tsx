@@ -229,16 +229,16 @@ export function ImagesAsPostsCard({
         />
       )}
       <MasonryCard
-        withBorder
+        withBorder={!cosmetic}
         shadow="sm"
-        p={0}
         height={height}
         ref={ref}
-        className={cx(classes.card)}
+        // Hard setting padding className to be !important for the frame to work
+        className={cx(classes.card, cosmetic && `!p-1.5`)}
         frameDecoration={cosmetic}
       >
         {data.user.id !== -1 && (
-          <Paper p="xs" radius={0}>
+          <Paper p="xs" radius={0} className={cx(cosmetic && 'rounded-t-lg')}>
             {inView && (
               <Group spacing={8} align="flex-start" position="apart" noWrap>
                 <UserAvatar
@@ -296,7 +296,7 @@ export function ImagesAsPostsCard({
         )}
         <div className={classes.container}>
           <div className={classes.blurHash}>
-            <MediaHash {...image} />
+            <MediaHash {...image} className={cx(cosmetic && 'rounded-b-lg')} />
           </div>
           <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
             {inView && (
@@ -304,7 +304,7 @@ export function ImagesAsPostsCard({
                 {data.images.length === 1 ? (
                   <ImageGuard2 image={image}>
                     {(safe) => (
-                      <div className={classes.imageContainer}>
+                      <div className={cx(classes.imageContainer, cosmetic && 'rounded-b-lg')}>
                         {image.onSite && <OnsiteIndicator />}
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (

@@ -1,12 +1,13 @@
 import { ModelFile, ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { createNotification } from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -122,6 +123,28 @@ export default WebhookEndpoint(async (req, res) => {
   }
   await deleteFilesForModelVersionCache(file.modelVersionId);
 
+  if (scanResult.fixed?.includes('sshs_hash')) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: file.modelVersionId },
+      select: { id: true, name: true, model: { select: { userId: true, id: true, name: true } } },
+    });
+
+    if (version?.model?.userId) {
+      await createNotification({
+        category: NotificationCategory.System,
+        type: 'model-hash-fix',
+        key: `model-hash-fix:${version.model.id}:${file.id}`,
+        details: {
+          modelId: version.model.id,
+          versionId: version.id,
+          modelName: version.model.name,
+          versionName: version.name,
+        },
+        userId: version.model.userId,
+      });
+    }
+  }
+
   res.status(200).json({ ok: true });
 });
 
@@ -187,6 +210,7 @@ type ScanResult = {
   hashes: Record<ModelHashType, string>;
   metadata: MixedObject;
   conversions: Record<'safetensors' | 'ckpt', ConversionResult>;
+  fixed?: string[];
 };
 
 type ConversionResult = {

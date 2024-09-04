@@ -39,7 +39,7 @@ export type GetUserBuzzAccountSchema = z.infer<typeof getUserBuzzAccountSchema>;
 export const getUserBuzzAccountSchema = z.object({
   // This is the user id
   accountId: z.number().min(0),
-  accountType: z.enum(buzzAccountTypes).optional(),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
 });
 
 export type GetEarnPotentialSchema = z.infer<typeof getEarnPotentialSchema>;
@@ -160,7 +160,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
-  accountType: z.enum(buzzAccountTypes).default('user'),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).default('user')),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;

@@ -77,14 +77,17 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { removeTags, toPascalCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '../Meta/Meta';
+import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
+import { isDefined } from '~/utils/type-guards';
+import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
-  const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(Object.values(ModelSort))
     : query.sort ?? ModelSort.Newest;
+  const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
@@ -114,52 +117,72 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
       };
 
   return (
-    <Stack spacing="xs">
-      <IsClient>
-        {!isContestCollection && (
-          <>
-            <Group position="apart" spacing={0}>
-              <SortFilter
-                type="models"
-                value={sort}
-                onChange={(x) => set({ sort: x as ModelSort })}
-              />
-              <Group spacing="xs">
-                <ModelFiltersDropdown />
+    <ModelContextMenuProvider
+      setMenuItems={(data, menuItems) => {
+        const items = menuItems.filter((m) => m.key !== 'add-to-collection');
+        const isOwnerOrMod =
+          currentUser?.id === collection.user.id ||
+          currentUser?.id === data.user.id ||
+          currentUser?.isModerator;
+
+        if (isOwnerOrMod) {
+          items.unshift({
+            key: 'remove-from-collection',
+            component: (
+              <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={data.id} />
+            ),
+          });
+        }
+        return items.filter(isDefined);
+      }}
+    >
+      <Stack spacing="xs">
+        <IsClient>
+          {!isContestCollection && (
+            <>
+              <Group position="apart" spacing={0}>
+                <SortFilter
+                  type="models"
+                  value={sort}
+                  onChange={(x) => set({ sort: x as ModelSort })}
+                />
+                <Group spacing="xs">
+                  <ModelFiltersDropdown />
+                </Group>
               </Group>
-            </Group>
-            <CategoryTags />
-          </>
-        )}
-        {isContestCollection && collection.tags.length > 0 && (
-          <Select
-            label="Collection Categories"
-            value={query.collectionTagId?.toString() ?? 'all'}
-            onChange={(x) =>
-              set({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
-            }
-            placeholder="All"
-            data={[
-              {
-                value: 'all',
-                label: 'All',
-              },
-              ...collection.tags.map((tag) => ({
-                value: tag.id.toString(),
-                label: toPascalCase(tag.name),
-              })),
-            ]}
-            clearable
+              <CategoryTags />
+            </>
+          )}
+          {isContestCollection && collection.tags.length > 0 && (
+            <Select
+              label="Collection Categories"
+              value={query.collectionTagId?.toString() ?? 'all'}
+              onChange={(x) =>
+                set({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
+              }
+              placeholder="All"
+              data={[
+                {
+                  value: 'all',
+                  label: 'All',
+                },
+                ...collection.tags.map((tag) => ({
+                  value: tag.id.toString(),
+                  label: toPascalCase(tag.name),
+                })),
+              ]}
+              clearable
+            />
+          )}
+          <ModelsInfinite
+            filters={{
+              // For contest collections, we should always have a clean slate.
+              ...filters,
+            }}
           />
-        )}
-        <ModelsInfinite
-          filters={{
-            // For contest collections, we should always have a clean slate.
-            ...filters,
-          }}
-        />
-      </IsClient>
-    </Stack>
+        </IsClient>
+      </Stack>
+    </ModelContextMenuProvider>
   );
 };
 
@@ -176,6 +199,7 @@ const ImageCollection = ({
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useContext();
+  const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
@@ -202,37 +226,47 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        if (!permissions || !permissions.manage || !image.id) return null;
+        const isOwnerOrMod =
+          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        const canUpdateCover = !permissions || !permissions.manage || !image.id;
+
         return (
-          <Menu.Item
-            icon={
-              // @ts-ignore: transparent variant actually works here.
-              <ThemeIcon color="pink.7" variant="transparent" size="xs">
-                <IconPhoto size={16} stroke={1.5} />
-              </ThemeIcon>
-            }
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              updateCollectionCoverImageMutation.mutate(
-                {
-                  id: collection.id,
-                  imageId: image.id,
-                },
-                {
-                  onSuccess: async () => {
-                    showSuccessNotification({
-                      title: 'Cover image updated',
-                      message: 'Collection cover image has been updated',
-                    });
-                    await utils.collection.getById.invalidate({ id: collection.id });
-                  },
+          <>
+            {canUpdateCover && (
+              <Menu.Item
+                icon={
+                  // @ts-ignore: transparent variant actually works here.
+                  <ThemeIcon color="pink.7" variant="transparent" size="xs">
+                    <IconPhoto size={16} stroke={1.5} />
+                  </ThemeIcon>
                 }
-              );
-            }}
-          >
-            Use as cover image
-          </Menu.Item>
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  updateCollectionCoverImageMutation.mutate(
+                    {
+                      id: collection.id,
+                      imageId: image.id,
+                    },
+                    {
+                      onSuccess: async () => {
+                        showSuccessNotification({
+                          title: 'Cover image updated',
+                          message: 'Collection cover image has been updated',
+                        });
+                        await utils.collection.getById.invalidate({ id: collection.id });
+                      },
+                    }
+                  );
+                }}
+              >
+                Use as cover image
+              </Menu.Item>
+            )}
+            {isOwnerOrMod && (
+              <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
+            )}
+          </>
         );
       }}
     >

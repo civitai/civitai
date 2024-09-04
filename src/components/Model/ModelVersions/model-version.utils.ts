@@ -7,7 +7,7 @@ import {
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const MIN_DONATION_GOAL = 1000;
-export const MAX_DONATION_GOAL = 1000000;
+export const MAX_DONATION_GOAL = 1000000000;
 
 export const useQueryModelVersionsEngagement = (
   { modelId, versionId }: { modelId: number; versionId: number },

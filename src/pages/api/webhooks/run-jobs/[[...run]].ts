@@ -10,6 +10,7 @@ import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
@@ -110,6 +111,7 @@ export const jobs: Job[] = [
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
+  collectionGameProcessing,
 ];
 
 const log = createLogger('jobs', 'green');

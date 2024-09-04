@@ -43,7 +43,7 @@ export function InViewLoader({
 
   return (
     <div ref={ref} className={className} style={style}>
-      {children}
+      {inView && children}
     </div>
   );
 }

@@ -306,15 +306,15 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+  supporterBadge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
   memberships: {
     tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
-      free: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      founder: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      bronze: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
-      silver: '9f174f9f-e823-44af-b969-cd1a1d7efb08',
-      gold: '758f52cb-29f7-4c40-b0fd-1a45b904bd51',
+      free: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      founder: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      bronze: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
+      silver: 'c06c4d84-11f1-49ca-824c-2d7371c23366',
+      gold: 'eae8457a-8b18-41a5-8ee7-2b99a1c663c6',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -325,7 +325,7 @@ export const constants = {
   freeMembershipDetails: {
     name: 'Free',
     price: 0,
-    badge: 'f2ca7cb5-66af-4403-8645-949a65ac42dc',
+    badge: '69e4b7fd-129f-45bc-889b-81a846aa0d13',
     metadata: {
       monthlyBuzz: 0,
       generationLimit: 1,
@@ -829,3 +829,10 @@ export const colorDomains = {
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 export type ColorDomain = keyof typeof colorDomains;
+export function getRequestDomainColor(req: { headers: { host?: string } }) {
+  const { host } = req.headers;
+  if (!host) return undefined;
+  for (const [color, domain] of Object.entries(colorDomains)) {
+    if (host === domain) return color as ColorDomain;
+  }
+}

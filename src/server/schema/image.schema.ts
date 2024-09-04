@@ -249,7 +249,7 @@ export const ingestImageSchema = z.object({
   type: z.nativeEnum(MediaType).optional(),
   height: z.coerce.number().nullish(),
   width: z.coerce.number().nullish(),
-  prompt: z.string().optional(),
+  prompt: z.string().nullish(),
 });
 
 const imageInclude = z.enum([

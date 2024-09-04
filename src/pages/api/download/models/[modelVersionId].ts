@@ -3,7 +3,7 @@ import requestIp from 'request-ip';
 import { z } from 'zod';
 
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { colorDomains, constants, getRequestDomainColor } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { playfab } from '~/server/playfab/client';
 import { REDIS_KEYS } from '~/server/redis/client';
@@ -47,6 +47,9 @@ const downloadLimiter = createLimiter({
 
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
+    const colorDomain = getRequestDomainColor(req);
+    if (colorDomain !== 'blue') return res.redirect(`https://${colorDomains.blue}${req.url}`);
+
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
       res.status(status);

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { immer } from 'zustand/middleware/immer';
 import { create } from 'zustand';
-import { Modal, Stack, ThemeIcon, Title, Text, Button, Group } from '@mantine/core';
+import { Modal, Stack, Title, Text, Button, Group } from '@mantine/core';
+import { Badge } from '~/components/Newsroom/Assets/Badge';
 
 export function UpdateRequiredWatcher() {
   const updateRequired = useIsUpdatedRequired();
@@ -19,13 +20,13 @@ export function UpdateRequiredWatcher() {
       closeOnClickOutside={false}
     >
       <Stack align="center">
-        <ThemeIcon size={120} radius={100} color="blue" variant="light">
-          <Text size={64}>🎉</Text>
-        </ThemeIcon>
-        <Title order={3}>New version available!</Title>
-        <Text>{`It's time to refresh your browser to get the latest features. If you don't things may not work as expected.`}</Text>
+        <div className="relative size-[120px]">
+          <Badge />
+        </div>
+        <Title order={3}>New Civitai version available!</Title>
+        <Text>{`It's time to refresh your browser to get the latest features from Civitai. If you don't, things may not work as expected.`}</Text>
         <Button onClick={() => window.location.reload()} radius="xl" size="lg">
-          Update Now
+          Update Now 🎉
         </Button>
         <Group spacing={4}>
           <Text>😬</Text>

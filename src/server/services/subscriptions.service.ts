@@ -1,3 +1,4 @@
+import { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { PaymentProvider } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
@@ -8,6 +9,7 @@ import {
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
+import { isDefined } from '~/utils/type-guards';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('subscriptions', 'blue');
@@ -107,8 +109,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     },
   });
 
-  if (!subscription)
-    throw throwNotFoundError(`Could not find subscription for user with id: ${userId}`);
+  if (!subscription) return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
 
@@ -122,3 +123,25 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
   };
 };
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
+
+export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
+  const priceIds = data.items.map((i) => i.price?.id).filter(isDefined);
+
+  if (priceIds.length === 0) {
+    return false;
+  }
+
+  const products = await dbRead.product.findMany({
+    where: {
+      provider: PaymentProvider.Paddle,
+      prices: { some: { id: { in: priceIds } } },
+    },
+  });
+
+  const nonFreeProducts = products.filter((p) => {
+    const meta = p.metadata as SubscriptionProductMetadata;
+    return meta?.[env.TIER_METADATA_KEY] !== 'free';
+  });
+
+  return nonFreeProducts.length > 0;
+};
