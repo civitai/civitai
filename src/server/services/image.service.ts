@@ -1997,7 +1997,9 @@ const getImageMetrics = async (ids: number[]) => {
 
   return [...pgData, ...clickData].reduce((acc, row) => {
     const { imageId, ...rest } = row;
-    acc[imageId] = rest;
+    acc[imageId] = Object.fromEntries(
+      Object.entries(rest).map(([k, v]) => [k, isDefined(v) ? Math.max(0, v) : v])
+    ) as Omit<PgDataType, 'imageId'>;
     return acc;
   }, {} as { [p: number]: Omit<PgDataType, 'imageId'> });
 };

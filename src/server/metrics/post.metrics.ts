@@ -82,6 +82,7 @@ export const postMetrics = createMetricProcessor({
       WHERE
         (p."publishedAt" IS NULL AND "ageGroup" IS NOT NULL) OR
         ("ageGroup" IS NULL AND p."publishedAt" IS NOT NULL) OR
+        ("ageGroup" IS NOT NULL AND p."publishedAt" > now()) OR
         ("ageGroup" = 'Year' AND p."publishedAt" < now() - interval '1 year') OR
         ("ageGroup" = 'Month' AND p."publishedAt" < now() - interval '1 month') OR
         ("ageGroup" = 'Week' AND p."publishedAt" < now() - interval '1 week') OR
@@ -97,6 +98,7 @@ export const postMetrics = createMetricProcessor({
           UPDATE "PostMetric" pm
           SET "ageGroup" = CASE
               WHEN p."publishedAt" IS NULL THEN NULL
+              WHEN p."publishedAt" > now() THEN NULL -- future posts
               WHEN p."publishedAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
               WHEN p."publishedAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
               WHEN p."publishedAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
@@ -192,7 +194,7 @@ async function getCollectionTasks(ctx: MetricContext) {
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "postId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {

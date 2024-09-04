@@ -65,6 +65,7 @@ import {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { getPeriods } from '~/server/utils/enum-helpers';
 
 type GetAllPostsRaw = {
   id: number;
@@ -172,13 +173,27 @@ export const getPostsInfinite = async ({
   }
 
   const joins: string[] = [
-    `JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
+    `${
+      draftOnly ? 'LEFT ' : ''
+    }JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
   ];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
+    AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL AND p."publishedAt" < now())`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
-      AND.push(Prisma.sql`pm."ageGroup" = ${period}::"MetricTimeframe"`);
+      if (sort !== 'Newest') {
+        const ageGroups = getPeriods(period);
+        AND.push(
+          Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+        );
+      } else {
+        const interval = period.toLowerCase();
+        AND.push(
+          Prisma.sql`p."publishedAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(
+            interval
+          )}'`
+        );
+      }
     }
 
     if (!!tags?.length)

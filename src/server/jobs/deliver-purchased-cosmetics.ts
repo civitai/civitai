@@ -12,7 +12,7 @@ export const deliverPurchasedCosmetics = createJob(
         -- Deliver purchased cosmetics
         with recent_purchases AS (
           SELECT
-            u.id "userId",
+            p."userId",
             COALESCE(pdl.id, pd.id) "productId",
             p."createdAt"
           FROM "Purchase" p
@@ -22,7 +22,6 @@ export const deliverPurchasedCosmetics = createJob(
               AND jsonb_typeof(pd.metadata->'level') != 'undefined'
               AND jsonb_typeof(pdl.metadata->'level') != 'undefined'
               AND (pdl.metadata->>'level')::int <= (pd.metadata->>'level')::int
-          JOIN "User" u ON u."customerId" = p."customerId"
           WHERE p."createdAt" >= ${lastDelivered}
         )
         INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
