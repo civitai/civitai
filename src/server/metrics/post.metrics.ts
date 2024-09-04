@@ -194,7 +194,7 @@ async function getCollectionTasks(ctx: MetricContext) {
     SELECT DISTINCT
       "postId" AS id
     FROM "CollectionItem"
-    WHERE "createdAt" > '${ctx.lastUpdate}'
+    WHERE "postId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
   `;
 
   const tasks = chunk(affected, 100).map((ids, i) => async () => {
