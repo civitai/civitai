@@ -172,7 +172,9 @@ export const getPostsInfinite = async ({
   }
 
   const joins: string[] = [
-    `JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
+    `${
+      draftOnly ? 'LEFT' : ''
+    } JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
   ];
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
