@@ -28,8 +28,9 @@ import { usePaddle } from '~/providers/PaddleProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { useMutatePaddle } from '~/components/Paddle/util';
-import { Turnstile } from '@marsidev/react-turnstile';
+import { DEFAULT_SCRIPT_ID, SCRIPT_URL, Turnstile } from '@marsidev/react-turnstile';
 import { env } from '~/env/client.mjs';
+import Script from 'next/script';
 
 const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
   <Stack>
@@ -43,7 +44,7 @@ const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
       {error}
     </AlertWithIcon>
 
-    <RecaptchaNotice />
+    {/* <RecaptchaNotice /> */}
 
     <Center>
       <Button onClick={onClose}>Close this window</Button>
@@ -170,7 +171,7 @@ export const PaddleTransacionModal = ({
             <Loader />
           </Center>
 
-          <RecaptchaNotice />
+          {/* <RecaptchaNotice /> */}
         </Stack>
       </Modal>
     );
@@ -290,6 +291,7 @@ export const PaddleTransacionModal = ({
             onError={() => setCaptchaState({ status: 'error', token: null })}
             onExpire={(token) => setCaptchaState({ status: 'expired', token })}
             siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
+            injectScript={false}
           />
         )}
       </Stack>

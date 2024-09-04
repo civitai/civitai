@@ -104,6 +104,7 @@ export function OnboardingTos() {
           onError={() => setCaptchaState({ status: 'error', token: null })}
           onExpire={(token) => setCaptchaState({ status: 'expired', token })}
           siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
+          injectScript={false}
         />
       )}
     </Stack>
