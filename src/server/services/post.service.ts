@@ -178,7 +178,7 @@ export const getPostsInfinite = async ({
     }JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
   ];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
+    AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL AND p."publishedAt" < now())`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
       const ageGroups = getPeriods(period);
