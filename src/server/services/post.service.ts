@@ -197,8 +197,8 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`(pm."ageGroup" IS NULL AND p."publishedAt" IS NULL)`);
-    else AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL OR p."publishedAt" IS NOT NULL)`);
+    if (draftOnly) AND.push(Prisma.sql`pm."ageGroup" IS NULL`);
+    else AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
   }
 
   if (browsingLevel) {
