@@ -1,20 +1,20 @@
-import { Button, Group, Text, GroupProps, useMantineTheme, Badge } from '@mantine/core';
+import { Badge, Button, Group, GroupProps, Text, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
 import { ReviewReactions } from '@prisma/client';
 import { IconBolt, IconHeart, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
-
-import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
-import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
-import { ReactionButton, useReactionsStore } from './ReactionButton';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
-import { abbreviateNumber } from '~/utils/number-helpers';
+
+import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useReactionSettingsContext } from '~/components/Reaction/ReactionSettingsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
+import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { ReactionButton, useReactionsStore } from './ReactionButton';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -247,7 +247,8 @@ function ReactionBadge({
         '&[data-disabled]': {
           cursor: 'default',
           color: theme.fn.variant({ variant: 'light', color }).color,
-          background: 'transparent !important',
+          ...(!hasReacted && { background: 'transparent !important' }),
+          // TODO: there is a little pop-in here as it changes from grey to lightblue due to being disabled
         },
         '&:hover': {
           background: theme.fn.rgba(theme.fn.variant({ variant: 'light', color }).background!, 0.4),
