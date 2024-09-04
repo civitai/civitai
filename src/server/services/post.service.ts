@@ -181,10 +181,19 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL AND p."publishedAt" < now())`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
-      const ageGroups = getPeriods(period);
-      AND.push(
-        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[]`
-      );
+      if (sort !== 'Newest') {
+        const ageGroups = getPeriods(period);
+        AND.push(
+          Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+        );
+      } else {
+        const interval = period.toLowerCase();
+        AND.push(
+          Prisma.sql`p."publishedAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(
+            interval
+          )}'`
+        );
+      }
     }
 
     if (!!tags?.length)
