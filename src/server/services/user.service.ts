@@ -640,7 +640,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // Get UserId from Token
   if (!userId && token) {
     const now = new Date();
-    const result = await dbRead.apiKey.findFirst({
+    const result = await dbWrite.apiKey.findFirst({
       where: { key: token, OR: [{ expiresAt: { gte: now } }, { expiresAt: null }] },
       select: { userId: true },
     });
