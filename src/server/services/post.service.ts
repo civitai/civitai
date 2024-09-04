@@ -65,6 +65,7 @@ import {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { getPeriods } from '~/server/utils/enum-helpers';
 
 type GetAllPostsRaw = {
   id: number;
@@ -173,14 +174,17 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [
     `${
-      draftOnly ? 'LEFT' : ''
-    } JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
+      draftOnly ? 'LEFT ' : ''
+    }JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
   ];
   if (!isOwnerRequest) {
     AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
 
     if (period !== 'AllTime' && periodMode !== 'stats') {
-      AND.push(Prisma.sql`pm."ageGroup" = ${period}::"MetricTimeframe"`);
+      const ageGroups = getPeriods(period);
+      AND.push(
+        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[]`
+      );
     }
 
     if (!!tags?.length)
@@ -193,8 +197,8 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`pm."ageGroup" IS NULL`);
-    else AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
+    if (draftOnly) AND.push(Prisma.sql`(pm."ageGroup" IS NULL AND p."publishedAt" IS NULL)`);
+    else AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL OR p."publishedAt" IS NOT NULL)`);
   }
 
   if (browsingLevel) {
