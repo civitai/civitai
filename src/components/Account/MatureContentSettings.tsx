@@ -1,13 +1,13 @@
 import { Group, Switch, Text, Stack, createStyles, Card } from '@mantine/core';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export function MatureContentSettings() {
   const { classes, cx } = useStyles();
 
-  const showNsfw = useContentSettings((x) => x.showNsfw);
-  const blurNsfw = useContentSettings((x) => x.blurNsfw);
-  const setState = useContentSettings((x) => x.setState);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const setState = useBrowsingSettings((x) => x.setState);
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleShowNsfw = () => setState((state) => ({ showNsfw: !state.showNsfw }));

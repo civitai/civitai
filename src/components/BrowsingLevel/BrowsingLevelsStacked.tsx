@@ -1,5 +1,5 @@
 import { Group, Paper, Switch, Text, createStyles } from '@mantine/core';
-import { useContentSettings, useToggleBrowsingLevel } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import {
   BrowsingLevel,
   browsingLevelDescriptions,
@@ -21,7 +21,7 @@ export function BrowsingLevelsStacked() {
 }
 
 function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
-  const browsingLevel = useContentSettings((x) => x.browsingLevel);
+  const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
   const { classes, cx } = useStyles();

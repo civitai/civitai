@@ -3,7 +3,7 @@ import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
@@ -26,10 +26,10 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
-  const showNsfw = useContentSettings((x) => x.showNsfw);
-  const blurNsfw = useContentSettings((x) => x.blurNsfw);
-  const disableHidden = useContentSettings((x) => x.disableHidden);
-  const setState = useContentSettings((x) => x.setState);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const disableHidden = useBrowsingSettings((x) => x.disableHidden);
+  const setState = useBrowsingSettings((x) => x.setState);
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));

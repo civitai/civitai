@@ -7,7 +7,7 @@ import {
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BrowsingLevel,
@@ -24,7 +24,7 @@ export function ExplainHiddenImages({
   const { classes } = useStyles();
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
-  const showNsfw = useContentSettings((x) => x.showNsfw);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
   const { setBrowsingLevelOverride } = useBrowsingModeOverrideContext();
   if (!hasHidden) return null;

@@ -7,7 +7,7 @@ import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -83,7 +83,7 @@ type UseImageGuardProps = {
 
 function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const currentUser = useCurrentUser();
-  const blurNsfw = useContentSettings((x) => x.blurNsfw);
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
   const { nsfwLevel = 0, ...rest } = useImageStore(image);

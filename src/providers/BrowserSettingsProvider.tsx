@@ -13,9 +13,8 @@ import { devtools } from 'zustand/middleware';
 const Context = createContext<ContentSettingsStore | null>(null);
 
 const debouncer = createDebouncer(1000);
-export function ContentSettingsProvider({ children }: { children: React.ReactNode }) {
+export function BrowserSettingsProvider({ children }: { children: React.ReactNode }) {
   const { type, settings } = useCivitaiSessionContext();
-  console.log({ type, settings });
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onError: (error) => {
       showErrorNotification({
@@ -60,7 +59,7 @@ function getChanged<T extends Record<string, unknown>>(curr: T, prev: T) {
   }, {});
 }
 
-export function useContentSettings<T>(selector: (state: StoreState & StoreStateActions) => T) {
+export function useBrowsingSettings<T>(selector: (state: StoreState & StoreStateActions) => T) {
   const store = useContext(Context);
   if (!store) throw new Error('Missing ContentSettingsProvider');
   return useStore(store, selector);
@@ -98,7 +97,7 @@ function createContentSettingsStore(state: StoreState) {
 }
 
 export function useToggleBrowsingLevel() {
-  const setState = useContentSettings((x) => x.setState);
+  const setState = useBrowsingSettings((x) => x.setState);
   return function (level: BrowsingLevel) {
     setState((state) => ({
       browsingLevel: Flags.hasFlag(state.browsingLevel, level)

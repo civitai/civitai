@@ -12,7 +12,7 @@ import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 const BrowsingModeOverrideCtx = createContext<{
   browsingLevelOverride?: number;
@@ -44,7 +44,7 @@ export function BrowsingModeOverrideProvider({
 }
 
 export function useBrowsingLevelDebounced() {
-  const browsingLevel = useContentSettings((x) => x.browsingLevel);
+  const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const [debounced] = useDebouncedValue(browsingLevel, 500);
   return useDeferredValue(debounced ?? browsingLevel);
 }

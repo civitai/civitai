@@ -1,5 +1,5 @@
 import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
-import { useContentSettings, useToggleBrowsingLevel } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevels,
@@ -19,7 +19,7 @@ export function BrowsingLevelsGrouped(props: GroupProps) {
 }
 
 function BrowsingLevelLabel({ level }: { level: BrowsingLevel }) {
-  const browsingLevel = useContentSettings((x) => x.browsingLevel);
+  const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
   const { classes } = useStyles();

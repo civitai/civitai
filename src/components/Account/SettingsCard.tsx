@@ -1,7 +1,7 @@
 import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -124,8 +124,8 @@ export function SettingsCard() {
 }
 
 function AutoplayGifsToggle() {
-  const autoplayGifs = useContentSettings((x) => x.autoplayGifs);
-  const setState = useContentSettings((x) => x.setState);
+  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const setState = useBrowsingSettings((x) => x.setState);
 
   return (
     <Switch

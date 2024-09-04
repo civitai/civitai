@@ -2,7 +2,7 @@ import { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import {
@@ -79,7 +79,7 @@ type DumbProps = {
   ) => void;
 } & SortFilterComponentProps;
 function DumbSortFilter({ type, value, onChange, ...props }: DumbProps) {
-  const showNsfw = useContentSettings((x) => x.showNsfw);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { canViewNsfw } = useFeatureFlags();
   const sharedProps = {
     label: value,

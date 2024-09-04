@@ -1,14 +1,14 @@
 import { Switch } from '@mantine/core';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function AdContent() {
   const currentUser = useCurrentUser();
-  const allowAds = useContentSettings((x) => x.allowAds);
-  const setState = useContentSettings((x) => x.setState);
+  const allowAds = useBrowsingSettings((x) => x.allowAds);
+  const setState = useBrowsingSettings((x) => x.setState);
 
   const updateUserSettingsMutation = trpc.user.setSettings.useMutation({
     async onSuccess() {

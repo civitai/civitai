@@ -35,7 +35,7 @@ import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { ProfilePreview } from '~/components/Modals/UserProfileEditModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';

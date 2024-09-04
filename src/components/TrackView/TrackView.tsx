@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 // import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useContentSettings } from '~/providers/ContentSettingsProvider';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -18,7 +18,7 @@ export function TrackView({
   const observedEntityId = useRef<number | null>(null);
 
   const status = 'Off';
-  const nsfw = useContentSettings((x) => x.showNsfw);
+  const nsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
 
   useEffect(() => {

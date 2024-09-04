@@ -58,7 +58,7 @@ import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PaddleProvider } from '~/providers/PaddleProvider';
-import { ContentSettingsProvider } from '~/providers/ContentSettingsProvider';
+import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -146,7 +146,7 @@ function MyApp(props: CustomAppProps) {
                 <CookiesProvider value={cookies}>
                   <AccountProvider>
                     <CivitaiSessionProvider>
-                      <ContentSettingsProvider>
+                      <BrowserSettingsProvider>
                         <SignalProvider>
                           <ActivityReportingProvider>
                             <ReferralsProvider>
@@ -186,7 +186,7 @@ function MyApp(props: CustomAppProps) {
                             </ReferralsProvider>
                           </ActivityReportingProvider>
                         </SignalProvider>
-                      </ContentSettingsProvider>
+                      </BrowserSettingsProvider>
                     </CivitaiSessionProvider>
                   </AccountProvider>
                 </CookiesProvider>
