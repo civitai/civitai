@@ -28,6 +28,8 @@ import { usePaddle } from '~/providers/PaddleProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { useMutatePaddle } from '~/components/Paddle/util';
+import { Turnstile } from '@marsidev/react-turnstile';
+import { env } from '~/env/client.mjs';
 
 const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
   <Stack>
@@ -48,6 +50,8 @@ const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
     </Center>
   </Stack>
 );
+
+type CaptchaState = { status: 'success' | 'error' | 'expired' | null; token: string | null };
 
 export const PaddleTransacionModal = ({
   unitAmount,
@@ -71,6 +75,7 @@ export const PaddleTransacionModal = ({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>();
   const [processingSuccess, setProcessingSuccess] = useState(false);
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({ status: null, token: null });
 
   const onCheckoutComplete = useCallback(
     (data?: CheckoutEventsData) => {
@@ -108,10 +113,11 @@ export const PaddleTransacionModal = ({
       !paddleTransactionLoading &&
       !transactionId &&
       !subscriptionLoading &&
-      (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle)
+      (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle) &&
+      captchaState.status === 'success'
     ) {
       // Go ahead and automatically trigger the checkout
-      getTransaction();
+      getTransaction(captchaState.token);
     }
   }, [
     transactionError,
@@ -121,6 +127,8 @@ export const PaddleTransacionModal = ({
     getTransaction,
     transactionId,
     paddleTransactionLoading,
+    captchaState.status,
+    captchaState.token,
   ]);
 
   const handlePurchaseWithSubscription = useCallback(async () => {
@@ -266,14 +274,24 @@ export const PaddleTransacionModal = ({
           <Divider size="sm" label="OR" my="sm" labelPosition="center" />
           <Button
             variant="outline"
-            onClick={getTransaction}
+            onClick={() => getTransaction(captchaState.token)}
             disabled={purchasingBuzzWithSubscription}
             radius="xl"
           >
             Use a different payment method
           </Button>
         </Stack>
-        <RecaptchaNotice />
+        {/* <RecaptchaNotice /> */}
+
+        {env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY && (
+          <Turnstile
+            options={{ size: 'invisible' }}
+            onSuccess={(token) => setCaptchaState({ status: 'success', token })}
+            onError={() => setCaptchaState({ status: 'error', token: null })}
+            onExpire={(token) => setCaptchaState({ status: 'expired', token })}
+            siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
+          />
+        )}
       </Stack>
     </Modal>
   );
