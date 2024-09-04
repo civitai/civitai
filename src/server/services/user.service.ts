@@ -10,7 +10,7 @@ import {
 } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import { constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
@@ -72,6 +72,8 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { redis } from '~/server/redis/client';
+import { SessionUser } from 'next-auth';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -634,14 +636,28 @@ export const updateAccountScope = async ({
 
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
-  const where: Prisma.UserWhereInput = { deletedAt: null };
-  if (userId) where.id = userId;
-  else if (token) {
+
+  // Get UserId from Token
+  if (!userId && token) {
     const now = new Date();
-    where.keys = {
-      some: { key: token, OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
-    };
+    const result = await dbRead.apiKey.findFirst({
+      where: { key: token, expiresAt: { gte: now } },
+      select: { userId: true },
+    });
+    if (!result) return undefined;
+    userId = result.userId;
   }
+  if (!userId) return undefined;
+
+  // Get from cache
+  // ----------------------------------
+  const cacheKey = `session:data:${userId}`;
+  const cachedResult = await redis.packed.get<SessionUser>(cacheKey);
+  if (cachedResult) return cachedResult;
+
+  // On cache miss get from database
+  // ----------------------------------
+  const where: Prisma.UserWhereInput = { deletedAt: null, id: userId };
 
   // console.log(new Date().toISOString() + ' ::', 'running query');
   // console.trace();
@@ -711,7 +727,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   const userSettings = userSettingsSchema.safeParse(settings ?? {});
 
-  return {
+  const sessionUser: SessionUser = {
     ...rest,
     image: profilePicture?.url ?? rest.image,
     tier,
@@ -725,6 +741,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         : true,
     // feedbackToken,
   };
+  await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
+
+  return sessionUser;
 };
 
 export const removeAllContent = async ({ id }: { id: number }) => {

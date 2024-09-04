@@ -4,6 +4,7 @@ import { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { redis } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
+import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { createLogger } from '~/utils/logging';
 
@@ -69,7 +70,7 @@ export async function refreshToken(token: JWT) {
 }
 
 function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
-  if (!session || session.deletedAt) {
+  if (!session) {
     token.user = undefined;
     return;
   }
@@ -87,16 +88,20 @@ function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUser>) {
 }
 
 export async function invalidateSession(userId: number) {
-  await redis.set(`session:${userId}`, new Date().toISOString(), {
-    EX: DEFAULT_EXPIRATION, // 30 days
-  });
+  await Promise.all([
+    redis.set(`session:${userId}`, new Date().toISOString(), {
+      EX: DEFAULT_EXPIRATION, // 30 days
+    }),
+    redis.del(`session:data:${userId}`),
+  ]);
   log(`Scheduling refresh session for user ${userId}`);
 }
 
-export function invalidateAllSessions(asOf: Date | undefined = new Date()) {
+export async function invalidateAllSessions(asOf: Date | undefined = new Date()) {
   redis.set('session:all', asOf.toISOString(), {
     EX: DEFAULT_EXPIRATION, // 30 days
   });
+  await clearCacheByPattern(`session:data:*`);
   log(`Scheduling session refresh for all users`);
 }
 
