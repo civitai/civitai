@@ -101,7 +101,6 @@ export function BountyCard({ data }: Props) {
       : countdownBadge;
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

@@ -56,7 +56,6 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

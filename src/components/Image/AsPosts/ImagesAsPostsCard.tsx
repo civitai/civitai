@@ -213,7 +213,6 @@ export function ImagesAsPostsCard({
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
@@ -423,7 +422,6 @@ export function ImagesAsPostsCard({
                     {data.images.map((image, index) => {
                       const shouldAnimate = shouldAnimateByDefault({
                         ...image,
-                        forceDisabled: currentUser?.autoplayGifs,
                       });
 
                       return (

@@ -7,6 +7,7 @@ import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -82,6 +83,7 @@ type UseImageGuardProps = {
 
 function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const currentUser = useCurrentUser();
+  const blurNsfw = useContentSettings((x) => x.blurNsfw);
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
   const { nsfwLevel = 0, ...rest } = useImageStore(image);
@@ -93,7 +95,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const userId = image.userId ?? image.user?.id;
   const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
-  const shouldBlur = (currentUser?.blurNsfw ?? true) && !showUnprocessed;
+  const shouldBlur = blurNsfw && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
 

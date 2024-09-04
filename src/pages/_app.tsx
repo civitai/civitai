@@ -22,7 +22,6 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { CustomNextPage } from '~/components/AppLayout/createPage';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { BrowsingModeProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -31,7 +30,6 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
@@ -46,7 +44,7 @@ import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { PaypalProvider } from '~/providers/PaypalProvider';
+// import { PaypalProvider } from '~/providers/PaypalProvider';
 import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -60,6 +58,7 @@ import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PaddleProvider } from '~/providers/PaddleProvider';
+import { ContentSettingsProvider } from '~/providers/ContentSettingsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -145,9 +144,9 @@ function MyApp(props: CustomAppProps) {
             >
               <FeatureFlagsProvider flags={flags}>
                 <CookiesProvider value={cookies}>
-                  <BrowsingModeProvider>
-                    <AccountProvider>
-                      <CivitaiSessionProvider>
+                  <AccountProvider>
+                    <CivitaiSessionProvider>
+                      <ContentSettingsProvider>
                         <SignalProvider>
                           <ActivityReportingProvider>
                             <ReferralsProvider>
@@ -187,9 +186,9 @@ function MyApp(props: CustomAppProps) {
                             </ReferralsProvider>
                           </ActivityReportingProvider>
                         </SignalProvider>
-                      </CivitaiSessionProvider>
-                    </AccountProvider>
-                  </BrowsingModeProvider>
+                      </ContentSettingsProvider>
+                    </CivitaiSessionProvider>
+                  </AccountProvider>
                 </CookiesProvider>
               </FeatureFlagsProvider>
             </SessionProvider>

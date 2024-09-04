@@ -17,6 +17,10 @@ export function DownloadImage({
   const [progress, setProgress] = useState(0);
 
   async function onClick() {
+    if (!url) {
+      console.error('missing url for DownloadImage component');
+      return;
+    }
     try {
       setLoading(true);
       const xhr = new XMLHttpRequest();

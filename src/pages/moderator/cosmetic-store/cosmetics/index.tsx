@@ -24,6 +24,7 @@ import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus, CosmeticType } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
 import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
@@ -34,6 +35,7 @@ import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { ProfilePreview } from '~/components/Modals/UserProfileEditModal';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
 import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
@@ -157,9 +159,10 @@ export const CosmeticPreview = ({
     { username: currentUser ? currentUser.username : '' },
     { enabled: !!currentUser?.username && isProfileRelated }
   );
+  const browsingLevel = useBrowsingLevelDebounced();
   const { data: images = [] } = trpc.cosmeticShop.getPreviewImages.useQuery(
     {
-      browsingLevel: currentUser?.browsingLevel ?? 0,
+      browsingLevel: browsingLevel,
     },
     {
       enabled: !!currentUser && !isProfileRelated,

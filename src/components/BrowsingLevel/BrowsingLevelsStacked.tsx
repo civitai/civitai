@@ -1,14 +1,12 @@
 import { Group, Paper, Switch, Text, createStyles } from '@mantine/core';
-import {
-  useBrowsingModeContext,
-  useIsBrowsingLevelSelected,
-} from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useContentSettings, useToggleBrowsingLevel } from '~/providers/ContentSettingsProvider';
 import {
   BrowsingLevel,
   browsingLevelDescriptions,
   browsingLevelLabels,
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
   const { classes } = useStyles();
@@ -23,8 +21,9 @@ export function BrowsingLevelsStacked() {
 }
 
 function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
-  const isSelected = useIsBrowsingLevelSelected(level);
-  const { toggleBrowsingLevel } = useBrowsingModeContext();
+  const browsingLevel = useContentSettings((x) => x.browsingLevel);
+  const isSelected = Flags.hasFlag(browsingLevel, level);
+  const toggleBrowsingLevel = useToggleBrowsingLevel();
   const { classes, cx } = useStyles();
 
   return (

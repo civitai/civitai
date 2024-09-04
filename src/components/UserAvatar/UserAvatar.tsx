@@ -16,7 +16,7 @@ import {
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconUser } from '@tabler/icons-react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl, useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -91,7 +91,6 @@ export function UserAvatar({
   withDecorations = true,
   withOverlay = false,
 }: Props) {
-  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const { canViewNsfw } = useFeatureFlags();
 
@@ -101,6 +100,9 @@ export function UserAvatar({
   );
 
   const avatarUser = user ?? { ...fallbackUser, cosmetics: [] };
+  const imageUrl = useGetEdgeUrl(avatarUser?.image, {
+    width: typeof avatarSize === 'number' ? avatarSize : 96,
+  });
 
   // If using a userId, show loading
   if (isInitialLoading)
@@ -206,16 +208,7 @@ export function UserAvatar({
             ) : (
               <Avatar
                 src={
-                  avatarUser.image && !blockedProfilePicture && !userDeleted
-                    ? getEdgeUrl(avatarUser.image, {
-                        width: typeof avatarSize === 'number' ? avatarSize : 96,
-                        anim: currentUser
-                          ? !currentUser.autoplayGifs
-                            ? false
-                            : undefined
-                          : undefined,
-                      })
-                    : undefined
+                  avatarUser.image && !blockedProfilePicture && !userDeleted ? imageUrl : undefined
                 }
                 alt={
                   avatarUser.username && !userDeleted

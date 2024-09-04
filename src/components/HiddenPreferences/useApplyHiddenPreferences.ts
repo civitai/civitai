@@ -110,7 +110,7 @@ type FilterPreferencesProps<TKey, TData> = {
   showHidden?: boolean;
   showImageless?: boolean;
   disabled?: boolean;
-  currentUser: CivitaiSessionUser | null;
+  currentUser: ReturnType<typeof useCurrentUser>;
   allowLowerLevels?: boolean;
   canViewNsfw: boolean;
 };

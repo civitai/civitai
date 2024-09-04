@@ -1,6 +1,7 @@
 import { useContext, createContext, ReactNode, useMemo, useDeferredValue } from 'react';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 import { HiddenTag } from '~/server/services/user-preferences.service';
 
 export type HiddenPreferencesState = {
@@ -23,7 +24,7 @@ export const useHiddenPreferencesContext = () => {
 export const HiddenPreferencesProvider = ({ children }: { children: ReactNode }) => {
   const { data, isLoading } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
-  const disableHidden = currentUser?.disableHidden;
+  const disableHidden = useContentSettings((x) => x.disableHidden);
 
   const hidden = useMemo(() => {
     const moderatedTags = data.hiddenTags.filter((x) => !!x.nsfwLevel);

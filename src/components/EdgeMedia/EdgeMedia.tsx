@@ -4,6 +4,7 @@ import { IconPlayerPlayFilled } from '@tabler/icons-react';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
 import { VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
 
@@ -49,7 +50,6 @@ export function EdgeMedia({
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
-  // const currentUser = useCurrentUser();
 
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');

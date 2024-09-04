@@ -31,7 +31,6 @@ export function PostCard({ data }: Props) {
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

@@ -66,7 +66,6 @@ export function GenericImageCard({
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
   const isImageEntity = entityType === 'Image';
 

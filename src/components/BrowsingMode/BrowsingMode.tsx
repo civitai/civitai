@@ -1,10 +1,9 @@
 import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
-import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 import { constants } from '~/server/common/constants';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
@@ -27,12 +26,13 @@ type BrowsingModeIconProps = {
 };
 
 export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
-  const { toggleBlurNsfw, toggleDisableHidden, useStore } = useBrowsingModeContext();
-  const { blurNsfw } = useStore((state) => state);
-  const currentUser = useCurrentUser();
-  const showNsfw = currentUser?.showNsfw;
-  // const blurNsfw = currentUser?.blurNsfw;
-  const disableHidden = currentUser?.disableHidden;
+  const showNsfw = useContentSettings((x) => x.showNsfw);
+  const blurNsfw = useContentSettings((x) => x.blurNsfw);
+  const disableHidden = useContentSettings((x) => x.disableHidden);
+  const setState = useContentSettings((x) => x.setState);
+
+  const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
+  const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
 
   return (
     <div id="browsing-mode">
@@ -68,7 +68,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
             </Stack>
             <Checkbox
               checked={blurNsfw}
-              onChange={(e) => toggleBlurNsfw(e.target.checked)}
+              onChange={toggleBlurNsfw}
               label="Blur mature content (R+)"
               size="md"
             />
@@ -78,7 +78,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
         <Group position="apart">
           <Checkbox
             checked={!disableHidden}
-            onChange={(e) => toggleDisableHidden(!e.target.checked)}
+            onChange={toggleDisableHidden}
             label={
               <Text>
                 Apply{' '}

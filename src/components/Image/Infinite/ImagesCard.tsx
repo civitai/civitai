@@ -64,7 +64,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

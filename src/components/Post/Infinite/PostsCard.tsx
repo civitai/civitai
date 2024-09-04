@@ -8,8 +8,6 @@ import { PostReactions } from '~/components/Reaction/Reactions';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
-import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
@@ -35,7 +33,6 @@ export function PostsCard({
 
   const shouldAnimate = shouldAnimateByDefault({
     ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

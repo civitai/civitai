@@ -47,7 +47,6 @@ function UnroutedImageCard({ data }: Props) {
 
   const shouldAnimate = shouldAnimateByDefault({
     ...data,
-    forceDisabled: !currentUser?.autoplayGifs,
   });
 
   return (

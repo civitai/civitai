@@ -1,11 +1,13 @@
-import { isEmpty } from 'lodash-es';
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import {
+  CurrentUser,
+  useCivitaiSessionContext,
+} from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { AuthorizationError } from '~/utils/errorHandling';
 import { postgresSlugify } from '~/utils/string-helpers';
 
 export function useCurrentUser() {
   const user = useCivitaiSessionContext();
-  return user;
+  return user.type === 'authed' ? (user as CurrentUser) : null;
 }
 
 export function useCurrentUserRequired() {

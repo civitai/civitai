@@ -257,7 +257,6 @@ export function ModelCard({ data, forceInView }: Props) {
     ? shouldAnimateByDefault({
         type: image.type,
         metadata: image.metadata as VideoMetadata,
-        forceDisabled: !currentUser?.autoplayGifs,
       })
     : false;
 

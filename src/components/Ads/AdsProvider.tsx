@@ -6,6 +6,7 @@ import Script from 'next/script';
 import { isProd } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useContentSettings } from '~/providers/ContentSettingsProvider';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -34,7 +35,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
-  const adsEnabled = features.adsEnabled && (currentUser?.allowAds || !isMember);
+  const allowAds = useContentSettings((x) => x.allowAds);
+  const adsEnabled = features.adsEnabled && (allowAds || !isMember);
   // const [cmpLoaded, setCmpLoaded] = useState(false);
 
   // const readyRef = useRef<boolean>();

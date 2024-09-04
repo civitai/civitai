@@ -31,6 +31,7 @@ import {
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
   ToggleUserBountyEngagementsInput,
+  UpdateContentSettingsInput,
   UserMeta,
   UserSettingsInput,
   userSettingsSchema,
@@ -1482,4 +1483,24 @@ export async function requestAdToken({ userId }: { userId: number }) {
   await dbWrite.adToken.create({ data: { userId, expiresAt, token } });
 
   return key;
+}
+
+export async function updateContentSettings({
+  userId,
+  blurNsfw,
+  showNsfw,
+  browsingLevel,
+  ...data
+}: UpdateContentSettingsInput & { userId: number }) {
+  if (blurNsfw !== undefined || showNsfw !== undefined || browsingLevel !== undefined) {
+    await dbWrite.user.update({
+      where: { id: userId },
+      data: { blurNsfw, showNsfw, browsingLevel },
+    });
+  }
+  if (Object.keys(data).length > 0) {
+    const settings = await getUserSettings(userId);
+    await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
+  }
+  await invalidateSession(userId);
 }
