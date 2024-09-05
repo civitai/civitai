@@ -43,12 +43,11 @@ export const deliverPurchasedCosmetics = createJob(
         -- Deliver supporter upgrade cosmetic
         INSERT INTO "UserCosmetic"("userId", "cosmeticId", "claimKey")
         SELECT
-          u.id "userId",
+          p."userId" "userId",
           c.id as "cosmeticId",
           'claimed'
         FROM "Purchase" p
         JOIN "Product" pd ON pd.id = p."productId"
-        JOIN "User" u ON u."customerId" = p."customerId"
         JOIN "Cosmetic" c ON c.name = 'Grandfather Badge'
         WHERE p."createdAt" >= ${lastDelivered}
           AND jsonb_typeof(pd.metadata->'level') != 'undefined'
