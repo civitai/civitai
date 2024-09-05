@@ -28,8 +28,8 @@ import { useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -63,7 +63,6 @@ export function ImagesAsPostsCard({
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
 
   const { modelVersions, showModerationOptions, model, filters } =
@@ -211,10 +210,6 @@ export function ImagesAsPostsCard({
   const isOP = data.user.id === model?.user.id;
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
 
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-  });
-
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
 
   return (
@@ -340,7 +335,8 @@ export function ImagesAsPostsCard({
                         >
                           <>
                             {safe && (
-                              <EdgeMedia
+                              <EdgeMedia2
+                                metadata={image.metadata}
                                 src={image.url}
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
@@ -349,7 +345,6 @@ export function ImagesAsPostsCard({
                                 placeholder="empty"
                                 className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
-                                anim={shouldAnimate}
                                 skip={getSkipValue(image)}
                                 fadeIn
                               />
@@ -420,10 +415,6 @@ export function ImagesAsPostsCard({
                     }}
                   >
                     {data.images.map((image, index) => {
-                      const shouldAnimate = shouldAnimateByDefault({
-                        ...image,
-                      });
-
                       return (
                         <Carousel.Slide key={image.id}>
                           {slidesInView.includes(index) && (
@@ -469,7 +460,8 @@ export function ImagesAsPostsCard({
                                         <MediaHash {...image} />
                                       </div>
                                       {safe && (
-                                        <EdgeMedia
+                                        <EdgeMedia2
+                                          metadata={image.metadata}
                                           src={image.url}
                                           name={image.name ?? image.id.toString()}
                                           alt={image.name ?? undefined}
@@ -478,7 +470,6 @@ export function ImagesAsPostsCard({
                                           placeholder="empty"
                                           className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
-                                          anim={shouldAnimate}
                                           skip={getSkipValue(image)}
                                           fadeIn
                                         />

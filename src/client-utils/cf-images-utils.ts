@@ -98,7 +98,6 @@ const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
 
 export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
   const currentUser = useCurrentUser();
-  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
   const inferredType = videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext))
     ? 'video'
     : 'image';
@@ -116,7 +115,6 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
     transcode = true;
     anim = anim ?? true;
   }
-  if (!autoplayGifs) anim = false;
 
   if (!anim) type = 'image';
 
@@ -136,6 +134,6 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
 
 export function useGetEdgeUrl(src?: string | null, options: Omit<EdgeUrlProps, 'src'> = {}) {
   const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
-  if (!autoplayGifs) options.anim = false;
+  if (!options.anim && !autoplayGifs) options.anim = false;
   return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs]);
 }

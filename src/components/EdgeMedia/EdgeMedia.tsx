@@ -3,9 +3,11 @@ import { MediaType } from '@prisma/client';
 import { IconPlayerPlayFilled } from '@tabler/icons-react';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
-import { VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
+import { ImageMetadata, VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -18,6 +20,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     html5Controls?: boolean;
     onMutedChange?: (muted: boolean) => void;
     videoRef?: React.ForwardedRef<EdgeVideoRef>;
+    metadata?: ImageMetadata | VideoMetadata;
   };
 
 export function EdgeMedia({
@@ -117,6 +120,21 @@ export function EdgeMedia({
     default:
       return <Text align="center">Unsupported media type</Text>;
   }
+}
+
+export function EdgeMedia2({
+  metadata,
+  ...props
+}: Omit<EdgeMediaProps, 'type' | 'metadata'> & {
+  metadata?: MixedObject | null;
+  type: MediaType;
+}) {
+  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const anim =
+    props.anim ??
+    shouldAnimateByDefault({ type: props.type, metadata, forceDisabled: !autoplayGifs });
+
+  return <EdgeMedia {...props} anim={anim} />;
 }
 
 const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) => {

@@ -17,8 +17,8 @@ import { useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
@@ -29,7 +29,6 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -43,7 +42,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images } = useImagesContext();
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
 
@@ -62,10 +60,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-  });
-
   return (
     <TwCosmeticWrapper cosmetic={image.cosmetic?.data}>
       <TwCard ref={ref} style={{ height }}>
@@ -80,12 +74,12 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   <>
                     <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
                       {safe ? (
-                        <EdgeMedia
+                        <EdgeMedia2
+                          metadata={image.metadata}
                           src={image.url}
                           className={cx(sharedClasses.image, { [classes.blocked]: isBlocked })}
                           name={image.name ?? image.id.toString()}
                           alt={image.name ?? undefined}
-                          anim={shouldAnimate}
                           skip={getSkipValue(image)}
                           type={image.type}
                           width={450}

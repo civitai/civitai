@@ -1,6 +1,6 @@
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
@@ -8,7 +8,7 @@ import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
@@ -64,9 +64,6 @@ export function GenericImageCard({
     }
   })();
 
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-  });
   const isImageEntity = entityType === 'Image';
 
   const cardContent = (
@@ -93,7 +90,8 @@ export function GenericImageCard({
                     </>
                   )}
                   {safe ? (
-                    <EdgeMedia
+                    <EdgeMedia2
+                      metadata={image.metadata}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
                       alt={image.name ?? undefined}
@@ -103,7 +101,6 @@ export function GenericImageCard({
                           ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
                           : DEFAULT_EDGE_IMAGE_WIDTH
                       }
-                      anim={shouldAnimate}
                       skip={getSkipValue(image)}
                       placeholder="empty"
                       className={sharedClasses.image}

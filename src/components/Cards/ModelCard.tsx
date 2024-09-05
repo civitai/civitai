@@ -15,7 +15,7 @@ import React from 'react';
 // import { z } from 'zod';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -24,7 +24,7 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, baseModelSets, constants } from '~/server/common/constants';
+import { BaseModel, constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -44,8 +44,6 @@ import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { useInView } from '~/hooks/useInView';
-import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -53,8 +51,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { IconNose } from '~/components/SVG/IconNose';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { VideoMetadata } from '~/server/schema/media.schema';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
-import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 
@@ -253,12 +250,6 @@ export function ModelCard({ data, forceInView }: Props) {
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
-  const shouldAnimate = image
-    ? shouldAnimateByDefault({
-        type: image.type,
-        metadata: image.metadata as VideoMetadata,
-      })
-    : false;
 
   return (
     <FeedCard
@@ -428,7 +419,8 @@ export function ModelCard({ data, forceInView }: Props) {
                           className={data.cosmetic ? classes.frameAdjustment : undefined}
                           style={{ height: '100%' }}
                         >
-                          <EdgeMedia
+                          <EdgeMedia2
+                            metadata={image.metadata as MixedObject}
                             src={image.url}
                             name={image.name ?? image.id.toString()}
                             alt={image.name ?? undefined}
@@ -442,7 +434,6 @@ export function ModelCard({ data, forceInView }: Props) {
                             className={classes.image}
                             // loading="lazy"
                             wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                            anim={shouldAnimate}
                             skip={getSkipValue({
                               type: image.type,
                               metadata: image.metadata as VideoMetadata,

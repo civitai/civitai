@@ -24,7 +24,7 @@ import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -36,7 +36,7 @@ import { DaysFromNow } from '../Dates/DaysFromNow';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { shouldAnimateByDefault, getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const IMAGE_CARD_WIDTH = 450;
@@ -99,9 +99,6 @@ export function BountyCard({ data }: Props) {
       : expired
       ? expiredBadge
       : countdownBadge;
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-  });
 
   return (
     <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
@@ -139,7 +136,8 @@ export function BountyCard({ data }: Props) {
                   />
                 </Group>
                 {safe ? (
-                  <EdgeMedia
+                  <EdgeMedia2
+                    metadata={image.metadata}
                     src={image.url}
                     name={image.name ?? image.id.toString()}
                     alt={
@@ -150,7 +148,6 @@ export function BountyCard({ data }: Props) {
                         : undefined
                     }
                     type={image.type}
-                    anim={shouldAnimate}
                     width={IMAGE_CARD_WIDTH}
                     className={classes.image}
                     skip={getSkipValue(image)}

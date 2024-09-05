@@ -2,7 +2,7 @@ import { createStyles, Group, keyframes, Stack, Text, UnstyledButton } from '@ma
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useRouter } from 'next/router';
 import { BountyGetEntries } from '~/types/router';
@@ -17,8 +17,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -47,16 +46,11 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const { classes: awardedStyles } = useStyles();
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
   const router = useRouter();
-  const currentUser = useCurrentUser();
   const { user, images, awardedUnitAmountTotal } = data;
   const image = images?.[0];
   const reactions = data?.reactions ?? [];
   const stats = data?.stats ?? null;
   const isAwarded = awardedUnitAmountTotal > 0;
-
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-  });
 
   return (
     <FeedCard
@@ -142,7 +136,8 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                   </Stack>
 
                   {safe ? (
-                    <EdgeMedia
+                    <EdgeMedia2
+                      metadata={image.metadata}
                       src={image.url}
                       name={image.name ?? image.id.toString()}
                       type={image.type}
@@ -154,7 +149,6 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       width={IMAGE_CARD_WIDTH}
                       className={classes.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}
-                      anim={shouldAnimate}
                       skip={getSkipValue(image)}
                     />
                   ) : (

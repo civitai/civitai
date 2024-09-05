@@ -725,6 +725,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // let feedbackToken: string | undefined;
   // if (!!user.username && !!user.email)
   //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
+  // console.log({ settings });
 
   const userSettings = userSettingsSchema.safeParse(settings ?? {});
 
