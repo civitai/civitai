@@ -357,7 +357,7 @@ export const upsertSubscription = async (
   const userSubscription = await dbRead.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true },
+    select: { id: true, status: true },
   });
 
   const userHasSubscription = !!userSubscription;
@@ -436,7 +436,7 @@ export const upsertSubscription = async (
     }),
   ]);
 
-  if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
+  if (userSubscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
     await playfab.trackEvent(user.id, {
       eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
       productId: data.productId,
