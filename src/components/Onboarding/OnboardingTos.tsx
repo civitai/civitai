@@ -15,33 +15,34 @@ import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWi
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import rehypeRaw from 'rehype-raw';
-import { Turnstile } from '@marsidev/react-turnstile';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
-import { env } from '~/env/client.mjs';
 import { useState } from 'react';
-
-type CaptchaState = { status: 'success' | 'error' | 'expired' | null; token: string | null };
+import { CaptchaState, TurnstileWidget } from '~/components/TurnstileWidget/TurnstileWidget';
 
 export function OnboardingTos() {
-  const [captchaState, setCaptchaState] = useState<CaptchaState>({ status: null, token: null });
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({
+    status: null,
+    token: null,
+    error: null,
+  });
 
   const { next } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {
+    if (captchaState.status !== 'success')
+      return showErrorNotification({
+        title: 'Cannot save',
+        error: new Error(captchaState.error ?? 'Captcha token expired. Please try again.'),
+      });
+
     if (!captchaState.token)
       return showErrorNotification({
         title: 'Cannot save',
         error: new Error('Captcha token is missing'),
-      });
-
-    if (captchaState.status !== 'success')
-      return showErrorNotification({
-        title: 'Cannot save',
-        error: new Error('Captcha token expired. Please try again.'),
       });
 
     mutate(
@@ -51,6 +52,7 @@ export function OnboardingTos() {
   };
 
   const { data: terms, isLoading: termsLoading } = trpc.content.get.useQuery({ slug: 'tos' });
+  console.log(captchaState);
 
   return (
     <Stack>
@@ -97,16 +99,19 @@ export function OnboardingTos() {
           </Button>
         </Group>
       )}
-      {env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY && (
-        <Turnstile
-          options={{ size: 'invisible' }}
-          onSuccess={(token) => setCaptchaState({ status: 'success', token })}
-          onError={() => setCaptchaState({ status: 'error', token: null })}
-          onExpire={(token) => setCaptchaState({ status: 'expired', token })}
-          siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
-          injectScript={false}
-        />
-      )}
+      <TurnstileWidget
+        onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+        onError={(error) =>
+          setCaptchaState({
+            status: 'error',
+            token: null,
+            error: `There was an error generating the captcha: ${error}`,
+          })
+        }
+        onExpire={(token) =>
+          setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+        }
+      />
     </Stack>
   );
 }
