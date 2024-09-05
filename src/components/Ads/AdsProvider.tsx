@@ -7,6 +7,7 @@ import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { isProd } from '~/env/other';
+import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -121,12 +122,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   __html: `
                   window.googletag.cmd.push(function () {
                     googletag.pubads().addEventListener("impressionViewable", (event) => {
-                      dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
+                      dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: event.slot}));
                     });
-                    //  googletag.pubads().addEventListener("slotVisibilityChanged", (event) => {
-                    //   console.log(event)
-                    //   // dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
-                    // });
                   });
                 `,
                 }}
@@ -136,6 +133,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   if (success !== undefined) setAdsBlocked(!success);
                 }}
               />
+              <ImpressionTracker />
             </>
           )}
           <div id="uniconsent-config" />

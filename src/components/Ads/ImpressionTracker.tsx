@@ -14,23 +14,30 @@ export function ImpressionTracker() {
   useEffect(() => {
     const listener = ((e: CustomEvent) => {
       if (!adsEnabled || adsBlocked) return;
-      const elemId = e.detail.elemId;
+
+      const slot = e.detail;
+      const elemId = slot.getSlotElementId();
+      const outOfPage = slot.getOutOfPage();
       const elem = document.getElementById(elemId);
       const exists = !!elem;
 
-      console.log({ ...e.detail, exists });
+      console.log({ ...e.detail, exists, outOfPage });
 
-      if (worker && exists && currentUser) {
+      if (worker && exists && currentUser && !outOfPage) {
         const adId = elemId.split('-')[0];
-        const impressions = impressionsDictionary[adId];
-        const lastIndex = impressions.length - 1;
         const now = Date.now();
+        const impressions = impressionsDictionary[adId];
+        const lastImpression = impressions[impressions.length - 1];
+        if (now - lastImpression >= 10 * 1000) {
+          console.log('record impression');
+          impressionsDictionary[adId].push(now);
 
-        worker.send('recordAdImpression', {
-          userId: currentUser.id,
-          fingerprint,
-          adId,
-        });
+          worker.send('recordAdImpression', {
+            userId: currentUser.id,
+            fingerprint,
+            adId,
+          });
+        }
       }
     }) as EventListener;
 
@@ -44,6 +51,3 @@ export function ImpressionTracker() {
 }
 
 const impressionsDictionary: Record<string, number[]> = {};
-
-type ImpressionStore = Record<string, number[]>;
-const useImpressionStore = create<ImpressionStore>(() => ({}));

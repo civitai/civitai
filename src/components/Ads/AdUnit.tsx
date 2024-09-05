@@ -134,35 +134,39 @@ export function ModelAndImagePageAdUnit() {
 }
 
 function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const currentUser = useCurrentUser();
-  const { adsEnabled, adsBlocked } = useAdsContext();
-  const { worker } = useSignalContext();
-  const { fingerprint } = useDeviceFingerprint();
+  // const ref = useRef<HTMLDivElement | null>(null);
+  // const currentUser = useCurrentUser();
+  // const { adsEnabled, adsBlocked } = useAdsContext();
+  // const { worker } = useSignalContext();
+  // const { fingerprint } = useDeviceFingerprint();
 
-  useEffect(() => {
-    const listener = ((e: CustomEvent) => {
-      const wrapper = ref.current;
-      if (!wrapper || !adsEnabled || adsBlocked) return;
-      const elemId = e.detail.elemId;
-      const exists = !!wrapper.querySelector(`#${elemId}`);
+  // useEffect(() => {
+  //   const listener = ((e: CustomEvent) => {
+  //     const wrapper = ref.current;
+  //     if (!wrapper || !adsEnabled || adsBlocked) return;
+  //     const slot = e.detail;
+  //     const elemId = slot.getSlotElementId();
+  //     const outOfPage = slot.getOutOfPage();
+  //     const exists = !!wrapper.querySelector(`#${elemId}`);
 
-      console.log({ ...e.detail, exists });
+  //     console.log({ ...e.detail, exists, outOfPage });
 
-      if (worker && exists && currentUser) {
-        worker.send('recordAdImpression', {
-          userId: currentUser.id,
-          fingerprint,
-          adId: elemId.split('-')[0],
-        });
-      }
-    }) as EventListener;
+  //     if (worker && exists && currentUser && !outOfPage) {
+  //       const adId = elemId.split('-')[0];
 
-    window.addEventListener('civitai-ad-impression', listener);
-    return () => {
-      window.removeEventListener('civitai-ad-impression', listener);
-    };
-  }, [adsEnabled, fingerprint, worker, adsBlocked]);
+  //       worker.send('recordAdImpression', {
+  //         userId: currentUser.id,
+  //         fingerprint,
+  //         adId,
+  //       });
+  //     }
+  //   }) as EventListener;
+
+  //   window.addEventListener('civitai-ad-impression', listener);
+  //   return () => {
+  //     window.removeEventListener('civitai-ad-impression', listener);
+  //   };
+  // }, [adsEnabled, fingerprint, worker, adsBlocked, currentUser]);
 
   return <div ref={ref} {...props} />;
 }
