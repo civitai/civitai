@@ -98,10 +98,10 @@ const featureFlags = createFeatureFlags({
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
-  canViewNsfw: ['public'],
+  canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
-  adsEnabled: ['public'],
+  adsEnabled: ['public', 'blue'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -136,10 +136,13 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
   );
   if (!availableServers.length || !host) serverMatch = true;
   else {
-    const domains = Object.entries(serverDomainMap)
-      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability))
-      .map(([key, domain]) => domain);
-    serverMatch = domains.some((domain) => host === domain);
+    const domains = Object.entries(serverDomainMap).filter(
+      ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
+    );
+    serverMatch = domains.some(([key, domain]) => {
+      if (key === 'blue' && host === 'stage.civitai.com') return true;
+      return host === domain;
+    });
     // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
   }
