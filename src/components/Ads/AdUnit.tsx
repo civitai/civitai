@@ -136,7 +136,7 @@ export function ModelAndImagePageAdUnit() {
 function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
   // const ref = useRef<HTMLDivElement | null>(null);
   // const currentUser = useCurrentUser();
-  // const { adsEnabled, adsBlocked } = useAdsContext();
+  // const { adsEnabled, adsBlocked } = useAdsContext();`
   // const { worker } = useSignalContext();
   // const { fingerprint } = useDeviceFingerprint();
 
@@ -168,5 +168,5 @@ function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
   //   };
   // }, [adsEnabled, fingerprint, worker, adsBlocked, currentUser]);
 
-  return <div ref={ref} {...props} />;
+  return <div {...props} />;
 }
