@@ -3,6 +3,7 @@ import { env } from '~/env/server.mjs';
 import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { z } from 'zod';
 
 // Taken from package as they don't export it :shrug:
 // enum ClassificationReason {
@@ -84,5 +85,35 @@ export async function createRecaptchaAssesment({
     };
   } else {
     throw throwBadRequestError('Provided token does not match performed action');
+  }
+}
+
+type SiteVerifyResponse = z.infer<typeof siteVerifyResponseSchema>;
+const siteVerifyResponseSchema = z.object({
+  success: z.boolean(),
+  challenge_ts: z.coerce.date().optional(),
+  hostname: z.string().optional(),
+  'error-codes': z.array(z.string()),
+  action: z.string().optional(),
+  cdata: z.string().optional(),
+});
+
+export async function verifyCaptchaToken({ token, ip }: { token: string; ip?: string }) {
+  const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      secret: env.CLOUDFLARE_TURNSTILE_SECRET,
+      response: token,
+      remoteip: ip,
+    }),
+  });
+  if (!result.ok) throw throwBadRequestError('No response from captcha service');
+
+  const outcome = (await result.json()) as SiteVerifyResponse;
+  if (outcome.success) {
+    return true;
+  } else {
+    throw throwBadRequestError('Unable to verify captcha token');
   }
 }

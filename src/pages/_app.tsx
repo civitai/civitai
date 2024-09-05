@@ -160,22 +160,20 @@ function MyApp(props: CustomAppProps) {
                                           zIndex={9999}
                                         >
                                           <BrowserRouterProvider>
-                                            <RecaptchaWidgetProvider>
-                                              <GenerationProvider>
-                                                <IntersectionObserverProvider>
-                                                  <BaseLayout>
-                                                    <ChatContextProvider>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        <StripeSetupSuccessProvider />
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </ChatContextProvider>
-                                                  </BaseLayout>
-                                                </IntersectionObserverProvider>
-                                              </GenerationProvider>
-                                            </RecaptchaWidgetProvider>
+                                            <GenerationProvider>
+                                              <IntersectionObserverProvider>
+                                                <BaseLayout>
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      <StripeSetupSuccessProvider />
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </IntersectionObserverProvider>
+                                            </GenerationProvider>
                                           </BrowserRouterProvider>
                                         </NotificationsProvider>
                                       </CivitaiLinkProvider>

@@ -1,8 +1,6 @@
 import { CurrencyCode } from '@paddle/paddle-js';
 import { useState, useCallback } from 'react';
-import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
-import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
 import { useDebouncer } from '~/utils/debouncer';
 
 export const usePaddleBuzzTransaction = ({
@@ -16,48 +14,48 @@ export const usePaddleBuzzTransaction = ({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const createTransactionMutation = trpc.paddle.createBuzzPurchaseTransaction.useMutation();
-  const { getToken, loading: isLoadingToken } = useRecaptchaToken(
-    RECAPTCHA_ACTIONS.PADDLE_TRANSACTION,
-    false
+
+  const getTransaction = useCallback(
+    (captchaToken: string | null) => async () => {
+      if (isLoading || createTransactionMutation.isLoading) return;
+
+      setTransactionId(null);
+      setError(null);
+      setIsLoading(true);
+
+      try {
+        if (!captchaToken) {
+          throw new Error('Unable to get captcha token.');
+        }
+
+        const data = await createTransactionMutation.mutateAsync({
+          unitAmount,
+          currency,
+          recaptchaToken: captchaToken,
+        });
+
+        setTransactionId(data.transactionId);
+      } catch (err: any) {
+        setError(err?.message ?? err ?? 'An error occurred');
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [unitAmount, currency, createTransactionMutation, isLoading]
   );
 
-  const getTransaction = useCallback(async () => {
-    if (isLoading || createTransactionMutation.isLoading || isLoadingToken) return;
-
-    setTransactionId(null);
-    setError(null);
-    setIsLoading(true);
-
-    try {
-      const recaptchaToken = await getToken();
-
-      if (!recaptchaToken) {
-        throw new Error('Unable to get recaptcha token.');
-      }
-
-      const data = await createTransactionMutation.mutateAsync({
-        unitAmount,
-        currency,
-        recaptchaToken: recaptchaToken as string,
-      });
-
-      setTransactionId(data.transactionId);
-    } catch (err: any) {
-      setError(err?.message ?? err ?? 'An error occurred');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [unitAmount, currency, getToken, createTransactionMutation]);
-
   const debouncer = useDebouncer(300);
-  const debouncedGetTransaction = useCallback(() => {
-    debouncer(getTransaction);
-  }, [getTransaction, debouncer]);
+  const debouncedGetTransaction = useCallback(
+    (captchaToken: string | null) => {
+      debouncer(getTransaction(captchaToken));
+    },
+    [getTransaction, debouncer]
+  );
 
   return {
     error,
     transactionId,
-    isLoading: isLoading || isLoadingToken,
+    isLoading,
     getTransaction: debouncedGetTransaction,
   };
 };
