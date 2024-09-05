@@ -1,8 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
-import { NotificationSingleRowFull } from '~/server/jobs/send-notifications';
+import { notificationSingleRowFull } from '~/server/jobs/send-notifications';
 import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import {
@@ -14,7 +15,6 @@ import {
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 type NotificationsRaw = {
@@ -26,12 +26,15 @@ type NotificationsRaw = {
   read: boolean;
 };
 
-export const createNotification = async (
-  data: Omit<NotificationSingleRowFull, 'userId'> & {
-    userId?: number;
-    userIds?: number[];
-  }
-) => {
+export const createNotificationPendingRow = notificationSingleRowFull
+  .omit({ userId: true })
+  .extend({
+    userId: z.number().optional(),
+    userIds: z.array(z.number()).optional(),
+  });
+export type CreateNotificationPendingRow = z.infer<typeof createNotificationPendingRow>;
+
+export const createNotification = async (data: CreateNotificationPendingRow) => {
   try {
     if (!data.userIds) data.userIds = [];
     if (data.userId) data.userIds.push(data.userId);
@@ -40,16 +43,9 @@ export const createNotification = async (
     const userNotificationSettings = await dbRead.userNotificationSettings.findMany({
       where: { userId: { in: data.userIds }, type: data.type },
     });
-    // TODO fix below for multiple userIds
-    //   also, does this block notifications from users youve blocked? we'd have to know the "origin" user
-    const blockedUsers = await Promise.all([
-      BlockedUsers.getCached({ userId: data.userId }),
-      BlockedByUsers.getCached({ userId: data.userId }),
-    ]);
-    const blocked = [...new Set([...blockedUsers].flatMap((x) => x.map((u) => u.id)))];
+    // TODO handle defaultDisabled
     const targets = data.userIds.filter(
-      (x) =>
-        !userNotificationSettings.some((y) => y.userId === x) && !blocked.includes(x) && x !== -1
+      (x) => !userNotificationSettings.some((y) => y.userId === x) && x !== -1
     );
     // If the user has this notification type disabled, don't create a notification.
     if (targets.length === 0) return;

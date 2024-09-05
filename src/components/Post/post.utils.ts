@@ -11,7 +11,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericString, numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
 
@@ -33,7 +33,7 @@ const postQueryParamSchema = z
     sort: z.nativeEnum(PostSort),
     collectionId: numericString(),
     section: z.enum(['published', 'draft']),
-    followed: z.coerce.boolean(),
+    followed: booleanString().optional(),
   })
   .partial();
 

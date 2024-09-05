@@ -986,7 +986,6 @@ export default function ModelDetailsV2({
               <ModelVersionDetails
                 model={model}
                 version={selectedVersion}
-                user={currentUser}
                 onFavoriteClick={handleToggleFavorite}
                 onBrowseClick={() => {
                   gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });

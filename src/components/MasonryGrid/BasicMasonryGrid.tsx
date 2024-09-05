@@ -1,7 +1,8 @@
 import { ScrollArea } from '@mantine/core';
 import { useElementSize } from '@mantine/hooks';
 import { useMasonry, UseMasonryOptions, usePositioner, useResizeObserver } from 'masonic';
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useState } from 'react';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 
 /**
  * Taken from https://github.com/jaredLunde/mini-virtual-list/blob/5791a19581e25919858c43c37a2ff0eabaf09bfe/src/index.tsx#L414
@@ -11,8 +12,6 @@ const useScroller = <T extends HTMLElement = HTMLElement>(
 ): { scrollTop: number; isScrolling: boolean } => {
   const [isScrolling, setIsScrolling] = useState(false);
   const [scrollTop, setScrollTop] = useState(0);
-
-  const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
   useIsomorphicLayoutEffect(() => {
     const { current } = ref;

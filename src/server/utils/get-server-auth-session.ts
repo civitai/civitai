@@ -1,10 +1,10 @@
 import type { GetServerSidePropsContext } from 'next';
+import { Session } from 'next-auth';
 import { getServerSession } from 'next-auth/next';
+import { env } from '~/env/server.mjs';
 import { createAuthOptions } from '~/pages/api/auth/[...nextauth]';
 import { getSessionFromBearerToken } from '~/server/utils/session-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { Session } from 'next-auth';
-import { env } from '~/env/server.mjs';
 
 // Next API route example - /pages/api/restricted.ts
 export const getServerAuthSession = async ({

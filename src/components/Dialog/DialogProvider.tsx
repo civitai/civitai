@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
+import { Freeze } from '~/components/Freeze/Freeze';
 
 type DialogState = {
   opened: boolean;
@@ -45,7 +46,9 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <React.Fragment key={dialog.id.toString()}>{createRenderElement(dialog, i)}</React.Fragment>
+        <Freeze freeze={dialogs.length !== i + 1} key={dialog.id.toString()}>
+          {createRenderElement(dialog, i)}
+        </Freeze>
       ))}
     </>
   );

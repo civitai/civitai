@@ -143,22 +143,28 @@ export const createBuzzPurchaseTransaction = async ({
   };
 };
 
-export const processCompleteBuzzTransaction = async (transaction: Transaction) => {
-  let meta = transaction.customData as TransactionMetadataSchema;
+export const getBuzzPurchaseItem = (transaction: TransactionNotification) => {
+  return transaction.items.find((i) => {
+    const itemMeta = i.price?.customData as TransactionMetadataSchema;
+    return itemMeta?.type === 'buzzPurchase';
+  });
+};
 
-  if (!meta || meta?.type !== 'buzzPurchase') {
-    const items = transaction.items;
-    const buzzItem = items.find((i) => {
-      const itemMeta = i.price?.customData as TransactionMetadataSchema;
-      return itemMeta?.type === 'buzzPurchase';
-    });
+export const processCompleteBuzzTransaction = async (
+  transaction: Transaction,
+  buzzTransactionExtras?: MixedObject
+) => {
+  const items = transaction.items;
+  const buzzItem = items.find((i) => {
+    const itemMeta = i.price?.customData as TransactionMetadataSchema;
+    return itemMeta?.type === 'buzzPurchase';
+  });
 
-    if (!buzzItem) {
-      throw throwBadRequestError('Could not find buzz item in transaction');
-    }
-
-    meta = buzzItem.price?.customData as TransactionMetadataSchema;
+  if (!buzzItem) {
+    throw throwBadRequestError('Could not find buzz item in transaction');
   }
+
+  const meta = buzzItem.price?.customData as TransactionMetadataSchema;
 
   if (!meta || meta?.type !== 'buzzPurchase') {
     throw throwBadRequestError('Only use this method to process buzz purchases.');
@@ -186,6 +192,7 @@ export const processCompleteBuzzTransaction = async (transaction: Transaction) =
     }A total of ${buzzAmount} buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
+      ...buzzTransactionExtras,
     },
   });
 };
@@ -339,10 +346,6 @@ export const upsertSubscription = async (
     select: {
       id: true,
       paddleCustomerId: true,
-      subscriptionId: true,
-      subscription: {
-        select: { updatedAt: true, status: true },
-      },
     },
   });
 
@@ -351,8 +354,14 @@ export const upsertSubscription = async (
       `User with customerId: ${subscriptionNotification.customerId} not found`
     );
 
-  const userHasSubscription = !!user.subscriptionId;
-  const isSameSubscriptionItem = user.subscriptionId === subscriptionNotification.id;
+  const userSubscription = await dbRead.customerSubscription.findFirst({
+    // I rather we trust this than the subscriptionId on the user.
+    where: { userId: user.id },
+    select: { id: true, status: true },
+  });
+
+  const userHasSubscription = !!userSubscription;
+  const isSameSubscriptionItem = userSubscription?.id === subscriptionNotification.id;
 
   const startingNewSubscription =
     isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
@@ -375,7 +384,7 @@ export const upsertSubscription = async (
 
   if (startingNewSubscription) {
     log('upsertSubscription :: Subscription id changed, deleting old subscription');
-    if (user.subscriptionId && user?.subscription) {
+    if (userSubscription) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
@@ -387,7 +396,7 @@ export const upsertSubscription = async (
   const data = {
     id: subscriptionNotification.id,
     userId: user.id,
-    metadata: {},
+    metadata: subscriptionNotification?.customData ?? {},
     status: subscriptionNotification.status,
     // as far as I can tell, there are never multiple items in this array
     priceId: mainSubscriptionItem.price?.id as string,
@@ -427,7 +436,7 @@ export const upsertSubscription = async (
     }),
   ]);
 
-  if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
+  if (userSubscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
     await playfab.trackEvent(user.id, {
       eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
       productId: data.productId,
@@ -461,7 +470,8 @@ export const upsertSubscription = async (
 };
 
 export const manageSubscriptionTransactionComplete = async (
-  transactionNotification: TransactionNotification
+  transactionNotification: TransactionNotification,
+  buzzTransactionExtras?: MixedObject
 ) => {
   if (!transactionNotification.subscriptionId) {
     return;
@@ -502,7 +512,11 @@ export const manageSubscriptionTransactionComplete = async (
             externalTransactionId,
             amount: meta.monthlyBuzz ?? 3000, // assume a min of 3000.
             description: `Membership bonus`,
-            details: { paddleTransactionId: transactionNotification.id, productId: p.id },
+            details: {
+              paddleTransactionId: transactionNotification.id,
+              productId: p.id,
+              ...buzzTransactionExtras,
+            },
           });
         })
       );

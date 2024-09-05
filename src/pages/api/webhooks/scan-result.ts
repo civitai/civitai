@@ -1,11 +1,13 @@
-import { ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
+import { ModelFile, ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
+import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { createNotification } from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -53,34 +55,9 @@ export default WebhookEndpoint(async (req, res) => {
     if (!data.exists) await unpublish(file.modelVersionId);
   }
 
-  if (tasks.includes('Convert')) {
-    // TODO justin: handle conversion result
-    // TODO koen: include the new size in the conversionOutput
-    // const [format, { url, hashes, conversionOutput }] = Object.entries(scanResult.conversions)[0];
-    // const baseUrl = url.split('?')[0];
-    // const convertedName = baseUrl.split('/').pop();
-    // if (convertedName) {
-    //   await dbWrite.modelFile.create({
-    //     data: {
-    //       name: convertedName,
-    //       sizeKB,
-    //       modelVersionId: file.modelVersionId,
-    //       url: baseUrl,
-    //       type: file.type,
-    //       metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
-    //       hashes: {
-    //         create: Object.entries(hashes).map(([type, hash]) => ({
-    //           type: hashTypeMap[type.toLowerCase()] as ModelHashType,
-    //           hash,
-    //         })),
-    //       },
-    //     },
-    //   });
-    // }
-  }
-
   // Update if we made changes...
-  if (Object.keys(data).length > 0) await dbWrite.modelFile.update({ where, data });
+  let updatedFile: ModelFile | undefined;
+  if (Object.keys(data).length > 0) updatedFile = await dbWrite.modelFile.update({ where, data });
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
@@ -97,6 +74,38 @@ export default WebhookEndpoint(async (req, res) => {
       }),
     ]);
 
+    // Hanlde file conversion
+    if (tasks.includes('Convert') && scanResult.conversions) {
+      const [format, { url, hashes, sizeKB }] = Object.entries(scanResult.conversions)[0];
+      const baseUrl = url.split('?')[0];
+      const convertedName = baseUrl.split('/').pop();
+      if (convertedName) {
+        const existingFile = updatedFile ?? file;
+        await dbWrite.modelFile.create({
+          data: {
+            name: convertedName,
+            sizeKB,
+            modelVersionId: existingFile.modelVersionId,
+            url: baseUrl,
+            type: existingFile.type,
+            metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
+            hashes: {
+              create: Object.entries(hashes).map(([type, hash]) => ({
+                type: hashTypeMap[type.toLowerCase()] as ModelHashType,
+                hash,
+              })),
+            },
+            scannedAt: existingFile.scannedAt,
+            rawScanResult: existingFile.rawScanResult ?? Prisma.JsonNull,
+            virusScanResult: existingFile.virusScanResult,
+            virusScanMessage: existingFile.virusScanMessage,
+            pickleScanResult: existingFile.pickleScanResult,
+            pickleScanMessage: existingFile.pickleScanMessage,
+          },
+        });
+      }
+    }
+
     // Update search index
     const version = await dbRead.modelVersion.findUnique({
       where: { id: file.modelVersionId },
@@ -110,6 +119,29 @@ export default WebhookEndpoint(async (req, res) => {
         },
       ]);
       await dataForModelsCache.bust(version.modelId);
+    }
+  }
+  await deleteFilesForModelVersionCache(file.modelVersionId);
+
+  if (scanResult.fixed?.includes('sshs_hash')) {
+    const version = await dbRead.modelVersion.findUnique({
+      where: { id: file.modelVersionId },
+      select: { id: true, name: true, model: { select: { userId: true, id: true, name: true } } },
+    });
+
+    if (version?.model?.userId) {
+      await createNotification({
+        category: NotificationCategory.System,
+        type: 'model-hash-fix',
+        key: `model-hash-fix:${version.model.id}:${file.id}`,
+        details: {
+          modelId: version.model.id,
+          versionId: version.id,
+          modelName: version.model.name,
+          versionName: version.name,
+        },
+        userId: version.model.userId,
+      });
     }
   }
 
@@ -178,11 +210,13 @@ type ScanResult = {
   hashes: Record<ModelHashType, string>;
   metadata: MixedObject;
   conversions: Record<'safetensors' | 'ckpt', ConversionResult>;
+  fixed?: string[];
 };
 
 type ConversionResult = {
   url: string;
   hashes: Record<ModelHashType, string>;
+  sizeKB: number;
   conversionOutput: string;
 };
 

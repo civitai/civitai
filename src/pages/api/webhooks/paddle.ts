@@ -16,6 +16,7 @@ import {
 } from '@paddle/paddle-node-sdk';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import {
+  getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
   processCompleteBuzzTransaction,
   upsertPriceRecord,
@@ -23,6 +24,7 @@ import {
   upsertSubscription,
 } from '~/server/services/paddle.service';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { paddleTransactionContainsSubscriptionItem } from '~/server/services/subscriptions.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -81,15 +83,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         switch (event.eventType) {
           case EventName.TransactionCompleted:
             const data = (event as TransactionCompletedEvent).data;
-            if (!data.customData && !data.subscriptionId && data.origin !== 'subscription_charge') {
-              throw new Error('Invalid Request');
-            }
-            const customData = data.customData as TransactionMetadataSchema;
+            const buzzPurchaseItem = getBuzzPurchaseItem(data);
+            const containsProductMemberships = await paddleTransactionContainsSubscriptionItem(
+              data
+            );
 
-            if (customData?.type === 'buzzPurchase' || data.origin === 'subscription_charge') {
-              await processCompleteBuzzTransaction(event.data as Transaction);
-            } else if (data.subscriptionId) {
-              await manageSubscriptionTransactionComplete(event.data as TransactionNotification);
+            if (!buzzPurchaseItem && !containsProductMemberships) {
+              throw new Error("Completed transaction doesn't contain buzz or membership items");
+            }
+
+            if (
+              data.subscriptionId &&
+              (['subscription_recurring', 'subscription_update'].includes(data.origin) ||
+                containsProductMemberships)
+            ) {
+              await manageSubscriptionTransactionComplete(event.data as TransactionNotification, {
+                notificationId: event.eventId,
+              });
+            } else if (buzzPurchaseItem || data.origin === 'subscription_charge') {
+              await processCompleteBuzzTransaction(event.data as Transaction, {
+                notificationId: event.eventId,
+              });
             }
 
             break;

@@ -1,6 +1,12 @@
 import { Button, Group, Stack, Text, ThemeIcon } from '@mantine/core';
 import { NotificationProps, showNotification } from '@mantine/notifications';
-import { IconBolt, IconCheck, IconExclamationMark, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconBolt,
+  IconCheck,
+  IconExclamationMark,
+  IconX,
+} from '@tabler/icons-react';
 
 export function showErrorNotification({
   error,
@@ -136,5 +142,25 @@ export function showConfirmNotification({
     title,
     autoClose,
     disallowClose: true,
+  });
+}
+
+export function showExpiredCaptchaTokenNotification({
+  onRetryClick,
+}: {
+  onRetryClick: VoidFunction;
+}) {
+  showNotification({
+    icon: <IconAlertTriangle size={18} />,
+    color: 'yellow',
+    title: 'Captcha token expired',
+    message: (
+      <div>
+        <Text inherit>Your token expired, click the button below to reset your token</Text>
+        <Button size="sm" variant="subtle" onClick={onRetryClick}>
+          Reset
+        </Button>
+      </div>
+    ),
   });
 }

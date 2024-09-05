@@ -8,7 +8,6 @@ import {
   ModalProps,
   Divider,
   Text,
-  Alert,
   Group,
   Paper,
   useMantineTheme,
@@ -17,8 +16,6 @@ import {
 import { PaymentProvider } from '@prisma/client';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useTrackEvent } from '../TrackView/track.utils';
-import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -28,6 +25,11 @@ import { usePaddle } from '~/providers/PaddleProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { useMutatePaddle } from '~/components/Paddle/util';
+import {
+  CaptchaState,
+  TurnstilePrivacyNotice,
+  TurnstileWidget,
+} from '~/components/TurnstileWidget/TurnstileWidget';
 
 const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
   <Stack>
@@ -41,7 +43,7 @@ const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
       {error}
     </AlertWithIcon>
 
-    <RecaptchaNotice />
+    <TurnstilePrivacyNotice />
 
     <Center>
       <Button onClick={onClose}>Close this window</Button>
@@ -71,6 +73,11 @@ export const PaddleTransacionModal = ({
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>();
   const [processingSuccess, setProcessingSuccess] = useState(false);
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({
+    status: null,
+    token: null,
+    error: null,
+  });
 
   const onCheckoutComplete = useCallback(
     (data?: CheckoutEventsData) => {
@@ -108,10 +115,11 @@ export const PaddleTransacionModal = ({
       !paddleTransactionLoading &&
       !transactionId &&
       !subscriptionLoading &&
-      (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle)
+      (!subscription || subscriptionPaymentProvider !== PaymentProvider.Paddle) &&
+      captchaState.status === 'success'
     ) {
       // Go ahead and automatically trigger the checkout
-      getTransaction();
+      getTransaction(captchaState.token);
     }
   }, [
     transactionError,
@@ -121,6 +129,8 @@ export const PaddleTransacionModal = ({
     getTransaction,
     transactionId,
     paddleTransactionLoading,
+    captchaState.status,
+    captchaState.token,
   ]);
 
   const handlePurchaseWithSubscription = useCallback(async () => {
@@ -154,7 +164,12 @@ export const PaddleTransacionModal = ({
     []
   );
 
-  if (subscriptionLoading || paddleTransactionLoading || processingSuccess) {
+  if (
+    subscriptionLoading ||
+    paddleTransactionLoading ||
+    processingSuccess ||
+    (captchaState.status !== 'error' && !captchaState.token)
+  ) {
     return (
       <Modal {...dialog} {...modalProps}>
         <Stack spacing="md">
@@ -162,16 +177,32 @@ export const PaddleTransacionModal = ({
             <Loader />
           </Center>
 
-          <RecaptchaNotice />
+          <TurnstilePrivacyNotice />
+          <TurnstileWidget
+            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+            onError={(error) =>
+              setCaptchaState({
+                status: 'error',
+                token: null,
+                error: `There was an error generating the captcha: ${error}`,
+              })
+            }
+            onExpire={(token) =>
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+            }
+          />
         </Stack>
       </Modal>
     );
   }
 
-  if (transactionError && !paddleTransactionLoading && !transactionId) {
+  if (
+    (transactionError && !paddleTransactionLoading && !transactionId) ||
+    captchaState.status === 'error'
+  ) {
     return (
       <Modal {...dialog} {...modalProps}>
-        <Error error={transactionError} onClose={dialog.onClose} />
+        <Error error={captchaState.error ?? transactionError ?? ''} onClose={dialog.onClose} />
       </Modal>
     );
   }
@@ -266,14 +297,24 @@ export const PaddleTransacionModal = ({
           <Divider size="sm" label="OR" my="sm" labelPosition="center" />
           <Button
             variant="outline"
-            onClick={getTransaction}
+            onClick={() =>
+              captchaState.status === 'success' ? getTransaction(captchaState.token) : undefined
+            }
             disabled={purchasingBuzzWithSubscription}
             radius="xl"
           >
             Use a different payment method
           </Button>
         </Stack>
-        <RecaptchaNotice />
+
+        <TurnstilePrivacyNotice />
+        <TurnstileWidget
+          onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+          onError={(error) => setCaptchaState({ status: 'error', token: null, error })}
+          onExpire={(token) =>
+            setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+          }
+        />
       </Stack>
     </Modal>
   );

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 // import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { AddViewSchema } from '~/server/schema/track.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -13,13 +14,11 @@ export function TrackView({
   nsfw: nsfwOverride,
   nsfwLevel,
 }: AddViewSchema) {
-  const currentUser = useCurrentUser();
   const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
 
   const status = 'Off';
-  // const status = useAdViewSatus();
-  const nsfw = currentUser?.showNsfw ?? false;
+  const nsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
 
   useEffect(() => {

@@ -50,3 +50,9 @@ declare module 'next-auth' {
     error?: string;
   }
 }
+
+interface TokenUser {
+  id: number;
+  username: string;
+  isModerator?: boolean;
+}

@@ -1,14 +1,16 @@
 import { Group, Switch, Text, Stack, createStyles, Card } from '@mantine/core';
-import { useBrowsingModeContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export function MatureContentSettings() {
-  const currentUser = useCurrentUser();
-  const { toggleBlurNsfw, toggleShowNsfw } = useBrowsingModeContext();
-  const showNsfw = currentUser?.showNsfw;
-  const blurNsfw = currentUser?.blurNsfw;
   const { classes, cx } = useStyles();
+
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
+  const setState = useBrowsingSettings((x) => x.setState);
+
+  const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
+  const toggleShowNsfw = () => setState((state) => ({ showNsfw: !state.showNsfw }));
 
   return (
     <Stack>
@@ -20,7 +22,7 @@ export function MatureContentSettings() {
             position="apart"
             noWrap
             className={cx({ [classes.active]: showNsfw })}
-            onClick={() => toggleShowNsfw()}
+            onClick={toggleShowNsfw}
           >
             <div>
               <Text weight={500}>Show mature content</Text>
@@ -28,7 +30,7 @@ export function MatureContentSettings() {
                 {`By enabling mature content, you confirm you are over the age of 18.`}
               </Text>
             </div>
-            <Switch checked={showNsfw} onChange={(e) => toggleShowNsfw(e.target.checked)} />
+            <Switch checked={showNsfw} onChange={toggleShowNsfw} />
           </Group>
         </Card.Section>
         <Card.Section withBorder className={classes.root}>
@@ -38,17 +40,13 @@ export function MatureContentSettings() {
             position="apart"
             noWrap
             className={cx({ [classes.active]: showNsfw && blurNsfw })}
-            onClick={() => toggleBlurNsfw()}
+            onClick={toggleBlurNsfw}
           >
             <Text color={!showNsfw ? 'dimmed' : undefined}>
               <Text weight={500}>Blur mature content</Text>
               <Text size="sm">Blur images and videos that are marked as mature</Text>
             </Text>
-            <Switch
-              disabled={!showNsfw}
-              checked={showNsfw && blurNsfw}
-              onChange={(e) => toggleBlurNsfw(e.target.checked)}
-            />
+            <Switch disabled={!showNsfw} checked={showNsfw && blurNsfw} onChange={toggleBlurNsfw} />
           </Group>
         </Card.Section>
       </Card>
