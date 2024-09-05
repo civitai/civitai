@@ -725,7 +725,6 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // let feedbackToken: string | undefined;
   // if (!!user.username && !!user.email)
   //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
-  // console.log({ settings });
 
   const userSettings = userSettingsSchema.safeParse(settings ?? {});
 
@@ -1513,12 +1512,18 @@ export async function updateContentSettings({
   blurNsfw,
   showNsfw,
   browsingLevel,
+  autoplayGifs,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
-  if (blurNsfw !== undefined || showNsfw !== undefined || browsingLevel !== undefined) {
+  if (
+    blurNsfw !== undefined ||
+    showNsfw !== undefined ||
+    browsingLevel !== undefined ||
+    autoplayGifs !== undefined
+  ) {
     await dbWrite.user.update({
       where: { id: userId },
-      data: { blurNsfw, showNsfw, browsingLevel },
+      data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
   }
   if (Object.keys(data).length > 0) {
