@@ -4,8 +4,8 @@ import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { MAX_TAGS, MIN_THRESHOLD } from '~/components/Training/Form/TrainingAutoTagModal';
-import { getCaptionAsList } from '~/components/Training/Form/TrainingImages';
+import { maxTags, minThreshold } from '~/components/Training/Form/TrainingAutoLabelModal';
+import { getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -134,7 +134,7 @@ export const useOrchestratorUpdateSignal = () => {
 
     if (!isDefined(jobProperties)) return;
     const { modelId } = jobProperties;
-    const { updateImage, setAutoCaptioning } = trainingStore;
+    const { updateImage, setAutoLabeling } = trainingStore;
 
     if (type === 'Failed') {
       showErrorNotification({
@@ -142,7 +142,7 @@ export const useOrchestratorUpdateSignal = () => {
         title: 'Failed to auto-tag',
         autoClose: false,
       });
-      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling });
       return;
     }
 
@@ -159,19 +159,19 @@ export const useOrchestratorUpdateSignal = () => {
       const storeState = useTrainingImageStore.getState();
       const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
 
-      const blacklist = getCaptionAsList(autoCaptioning.blacklist ?? '');
-      const prependList = getCaptionAsList(autoCaptioning.prependTags ?? '');
-      const appendList = getCaptionAsList(autoCaptioning.appendTags ?? '');
+      const blacklist = getTextTagsAsList(autoCaptioning.blacklist ?? '');
+      const prependList = getTextTagsAsList(autoCaptioning.prependTags ?? '');
+      const appendList = getTextTagsAsList(autoCaptioning.appendTags ?? '');
 
       if (returnData.length === 0) {
-        setAutoCaptioning(modelId, { ...autoCaptioning, fails: [...autoCaptioning.fails, k] });
+        setAutoLabeling(modelId, { ...autoCaptioning, fails: [...autoCaptioning.fails, k] });
       } else {
         let tags = returnData
           .sort(([, a], [, b]) => b - a)
           .filter(
-            (t) => t[1] >= (autoCaptioning.threshold ?? MIN_THRESHOLD) && !blacklist.includes(t[0])
+            (t) => t[1] >= (autoCaptioning.threshold ?? minThreshold) && !blacklist.includes(t[0])
           )
-          .slice(0, autoCaptioning.maxTags ?? MAX_TAGS)
+          .slice(0, autoCaptioning.maxTags ?? maxTags)
           .map((t) => t[0]);
 
         tags = [...prependList, ...tags, ...appendList];
@@ -181,7 +181,7 @@ export const useOrchestratorUpdateSignal = () => {
           caption: tags.join(', '),
           appendCaption: autoCaptioning.overwrite === 'append',
         });
-        setAutoCaptioning(modelId, { ...autoCaptioning, successes: autoCaptioning.successes + 1 });
+        setAutoLabeling(modelId, { ...autoCaptioning, successes: autoCaptioning.successes + 1 });
       }
     });
 
@@ -194,7 +194,7 @@ export const useOrchestratorUpdateSignal = () => {
           autoCaptioning.successes === 1 ? '' : 's'
         }. Failures: ${autoCaptioning.fails.length}`,
       });
-      setAutoCaptioning(modelId, { ...defaultTrainingState.autoCaptioning });
+      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling });
     }
   };
   useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);

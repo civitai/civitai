@@ -482,6 +482,43 @@ export const autoTagHandler = async ({
   return response.data;
 };
 
+export const autoCaptionHandler = async ({
+  url,
+  modelId,
+  userId,
+}: AutoTagInput & {
+  userId: number;
+}) => {
+  const { url: getUrl } = await getGetUrl(url);
+  const { key, bucket } = parseKey(url);
+  if (!bucket) throw throwBadRequestError('Invalid URL');
+
+  const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
+    mediaUrl: getUrl,
+    modelId,
+    properties: { userId, modelId },
+    retries: 0,
+  };
+
+  // const response = await getOrchestratorCaller(new Date()).imageAutoTag({
+  //   payload,
+  // });
+  //
+  // if (response.status === 429) {
+  //   deleteObject(bucket, key).catch();
+  //   throw throwRateLimitError();
+  // }
+  //
+  // if (!response.ok) {
+  //   deleteObject(bucket, key).catch();
+  //   throw throwBadRequestError(
+  //     'We are not able to process your request at this time. Please try again later.'
+  //   );
+  // }
+  //
+  // return response.data;
+};
+
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
   try {
     const modelData = await dbWrite.$queryRaw<{ id: number; job_id: string | null }[]>`

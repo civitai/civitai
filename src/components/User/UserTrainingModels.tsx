@@ -612,8 +612,12 @@ export default function UserTrainingModels() {
               value: modalData.file?.metadata?.numImages || 0,
             },
             {
-              label: 'Captions',
+              label: 'Labels',
               value: modalData.file?.metadata?.numCaptions || 0,
+            },
+            {
+              label: 'Label Type',
+              value: modalData.file?.metadata?.labelType ?? 'tag',
             },
             // TODO make the base model prettier when custom
             {

@@ -9,6 +9,7 @@ import {
   moveAssetInput,
 } from '~/server/schema/training.schema';
 import {
+  autoCaptionHandler,
   autoTagHandler,
   createTrainingRequest,
   createTrainingRequestDryRun,
@@ -42,6 +43,10 @@ export const trainingRouter = router({
     .input(autoTagInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => autoTagHandler({ ...input, userId: ctx.user.id })),
+  autoCaption: guardedProcedure
+    .input(autoTagInput)
+    .use(isFlagProtected('imageTraining'))
+    .mutation(({ input, ctx }) => autoCaptionHandler({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))

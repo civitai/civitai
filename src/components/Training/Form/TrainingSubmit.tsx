@@ -493,8 +493,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   value: thisNumImages || 0,
                 },
                 {
-                  label: 'Captions',
+                  label: 'Labels',
                   value: thisMetadata?.numCaptions || 0,
+                },
+                {
+                  label: 'Label Type',
+                  value: thisMetadata?.labelType ?? 'tag',
                 },
               ]}
             />

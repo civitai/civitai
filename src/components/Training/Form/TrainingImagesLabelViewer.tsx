@@ -28,7 +28,7 @@ import {
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
-import { blankTagStr, getCaptionAsList } from '~/components/Training/Form/TrainingImages';
+import { blankTagStr, getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
 import {
   defaultTrainingState,
   getShortNameFromUrl,
@@ -62,7 +62,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const TrainingImagesCaptions = ({
+export const TrainingImagesLabels = ({
   imgData,
   modelId,
   selectedTags,
@@ -75,12 +75,12 @@ export const TrainingImagesCaptions = ({
   const { classes } = useStyles();
   const [addCaptionTxt, setAddCaptionTxt] = useState('');
 
-  const { autoCaptioning } = useTrainingImageStore(
+  const { autoLabeling } = useTrainingImageStore(
     (state) => state[modelId] ?? { ...defaultTrainingState }
   );
   const { updateImage } = trainingStore;
 
-  const tags = getCaptionAsList(imgData.caption);
+  const tags = getTextTagsAsList(imgData.caption);
 
   const removeCaption = (tagToRemove: string) => {
     const newTags = tags.filter((c) => c !== tagToRemove);
@@ -134,7 +134,7 @@ export const TrainingImagesCaptions = ({
               >
                 <Text>{cap}</Text>
                 <ActionIcon
-                  disabled={autoCaptioning.isRunning}
+                  disabled={autoLabeling.isRunning}
                   size={14}
                   variant="transparent"
                   className={classes.trash}
@@ -155,7 +155,7 @@ export const TrainingImagesCaptions = ({
       <Textarea
         placeholder="Add captions..."
         autosize
-        disabled={autoCaptioning.isRunning}
+        disabled={autoLabeling.isRunning}
         minRows={1}
         maxRows={4}
         value={addCaptionTxt}
@@ -193,7 +193,7 @@ export const TrainingImagesCaptions = ({
   );
 };
 
-export const TrainingImagesCaptionViewer = ({
+export const TrainingImagesLabelViewer = ({
   selectedTags,
   setSelectedTags,
   modelId,
@@ -215,7 +215,7 @@ export const TrainingImagesCaptionViewer = ({
 
   const removeCaptions = (tags: string[]) => {
     const newImageList = imageList.map((i) => {
-      const capts = getCaptionAsList(i.caption).filter((c) => !tags.includes(c));
+      const capts = getTextTagsAsList(i.caption).filter((c) => !tags.includes(c));
       return { ...i, caption: capts.join(', ') };
     });
     setImageList(modelId, newImageList);
@@ -223,7 +223,7 @@ export const TrainingImagesCaptionViewer = ({
 
   useEffect(() => {
     const imageTags = imageList
-      .flatMap((i) => getCaptionAsList(i.caption))
+      .flatMap((i) => getTextTagsAsList(i.caption))
       .filter((v) => (tagSearchInput.length > 0 ? v.includes(tagSearchInput) : v));
     const tagCounts = imageTags.reduce(
       (a: { [key: string]: number }, c) => (a[c] ? ++a[c] : (a[c] = 1), a),
@@ -232,7 +232,7 @@ export const TrainingImagesCaptionViewer = ({
     // .reduce((a, c) => (a[c] = a[c] || 0, a[c]++, a), {})
     const sortedTagCounts = Object.entries(tagCounts).sort(([, a], [, b]) => b - a);
 
-    const uncaptionedImages = imageList.filter((i) => getCaptionAsList(i.caption).length === 0);
+    const uncaptionedImages = imageList.filter((i) => getTextTagsAsList(i.caption).length === 0);
     if (uncaptionedImages.length && !tagSearchInput.length) {
       setTagList([[blankTagStr, uncaptionedImages.length], ...sortedTagCounts]);
     } else {
