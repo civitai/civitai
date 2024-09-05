@@ -54,10 +54,10 @@ export async function refreshToken(token: JWT) {
       userDate && allInvalidationDate
         ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
         : userDate ?? allInvalidationDate;
-    shouldRefresh =
-      !!invalidationDate &&
-      !!token.signedAt &&
-      new Date(token.signedAt as number) < invalidationDate;
+
+    if (invalidationDate && token.signedAt) {
+      shouldRefresh = invalidationDate.getTime() > (token.signedAt as number);
+    }
   }
 
   if (!shouldRefresh) return token;

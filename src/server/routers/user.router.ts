@@ -64,6 +64,7 @@ import {
   updateBrowsingModeSchema,
   setLeaderboardEligbilitySchema,
   computeDeviceFingerprintSchema,
+  updateContentSettingsSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -76,6 +77,7 @@ import {
   updateUserById,
   computeFingerprint,
   requestAdToken,
+  updateContentSettings,
 } from '~/server/services/user.service';
 import {
   guardedProcedure,
@@ -191,4 +193,7 @@ export const userRouter = router({
       computeFingerprint({ fingerprint: input.fingerprint, userId: ctx.user?.id })
     ),
   requestAdToken: protectedProcedure.mutation(({ ctx }) => requestAdToken({ userId: ctx.user.id })),
+  updateContentSettings: protectedProcedure
+    .input(updateContentSettingsSchema)
+    .mutation(({ input, ctx }) => updateContentSettings({ userId: ctx.user.id, ...input })),
 });

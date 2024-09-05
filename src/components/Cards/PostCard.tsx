@@ -2,7 +2,7 @@ import { Group, Stack, Text, UnstyledButton } from '@mantine/core';
 import React from 'react';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { PostsInfiniteModel } from '~/server/services/post.service';
@@ -17,7 +17,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { CosmeticEntity } from '@prisma/client';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 
 const IMAGE_CARD_WIDTH = 332;
 
@@ -28,11 +28,6 @@ export function PostCard({ data }: Props) {
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
-
-  const shouldAnimate = shouldAnimateByDefault({
-    ...image,
-    forceDisabled: !currentUser?.autoplayGifs,
-  });
 
   return (
     <FeedCard href={`/posts/${data.id}`} aspectRatio="square" frameDecoration={data.cosmetic}>
@@ -71,11 +66,11 @@ export function PostCard({ data }: Props) {
                   className={data.cosmetic ? classes.frameAdjustment : undefined}
                   style={{ height: '100%' }}
                 >
-                  <EdgeMedia
+                  <EdgeMedia2
+                    metadata={image.metadata}
                     src={image.url}
                     name={image.name ?? image.id.toString()}
                     alt={image.name}
-                    anim={shouldAnimate}
                     skip={getSkipValue(image)}
                     type={image.type}
                     width={IMAGE_CARD_WIDTH}

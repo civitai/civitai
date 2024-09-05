@@ -14,7 +14,7 @@ import {
 import { IconChevronLeft, IconCircleCheck, IconLogout, IconLogout2 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { Dispatch, SetStateAction, useState } from 'react';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl, useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   type CivitaiAccount,
   useAccountContext,
@@ -109,7 +109,6 @@ const ActionButtons = ({ close }: { close: () => void }) => {
 };
 
 const UserRow = ({ data }: { data: CivitaiAccount }) => {
-  const currentUser = useCurrentUser();
   const theme = useMantineTheme();
 
   const { avatarUrl, email, username, active } = data;
@@ -117,19 +116,14 @@ const UserRow = ({ data }: { data: CivitaiAccount }) => {
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
+  const imageUrl = useGetEdgeUrl(avatarUrl, { width: 96 });
+
   return (
     <>
       <Group spacing={8}>
         <Tooltip label={email}>
           <Avatar
-            src={
-              !!avatarUrl
-                ? getEdgeUrl(avatarUrl, {
-                    width: 96,
-                    anim: currentUser ? (!currentUser.autoplayGifs ? false : undefined) : undefined,
-                  })
-                : undefined
-            }
+            src={imageUrl}
             alt={email}
             radius="xl"
             size="sm"

@@ -16,6 +16,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
@@ -24,13 +25,13 @@ import { trpc } from '~/utils/trpc';
 
 export function CommentDiscussionMenu({
   comment,
-  user,
   size = 'xs',
   hideLockOption = false,
   ...props
 }: Props) {
   const queryUtils = trpc.useContext();
   const dialog = useDialogContext();
+  const user = useCurrentUser();
 
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
@@ -235,7 +236,6 @@ export function CommentDiscussionMenu({
 
 type Props = MenuProps & {
   comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
-  user?: SessionUser | null;
   size?: MantineNumberSize;
   hideLockOption?: boolean;
 };
