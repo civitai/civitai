@@ -167,9 +167,9 @@ export function DynamicAd() {
       {({ isMobile }) => {
         const id = isMobile ? 'civitaicom47764' : 'civitaicom47455';
         return (
-          <ImpressionTracker adId={id} className="w-full overflow-hidden">
+          <ImpressionTracker2 className="w-full overflow-hidden">
             <div id={id} />
-          </ImpressionTracker>
+          </ImpressionTracker2>
         );
       }}
     </AdWrapper>
@@ -195,4 +195,38 @@ export function ModelAndImagePageAdUnit() {
       </AdWrapper>
     </div>
   );
+}
+
+function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const currentUser = useCurrentUser();
+  const { adsEnabled, adsBlocked } = useAdsContext();
+  const { worker } = useSignalContext();
+  const { fingerprint } = useDeviceFingerprint();
+
+  useEffect(() => {
+    const listener = ((e: CustomEvent) => {
+      const wrapper = ref.current;
+      if (!wrapper || !adsEnabled || adsBlocked) return;
+      const elemId = e.detail.elemId;
+      const exists = !!wrapper.querySelector(`#${elemId}`);
+
+      console.log({ ...e.detail, exists });
+
+      if (worker && exists && currentUser) {
+        worker.send('recordAdImpression', {
+          userId: currentUser.id,
+          fingerprint,
+          adId: elemId.split('-')[0],
+        });
+      }
+    }) as EventListener;
+
+    window.addEventListener('ad-impression', listener);
+    return () => {
+      window.removeEventListener('ad-impression', listener);
+    };
+  }, [adsEnabled, fingerprint, worker, adsBlocked]);
+
+  return <div ref={ref} {...props} />;
 }

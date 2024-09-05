@@ -3,10 +3,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import Script from 'next/script';
-import { isProd } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { isProd } from '~/env/other';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -114,6 +114,19 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
                 }}
               />
+              <Script
+                id="ads-custom"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
+                  window.googletag.cmd.push(function () {
+                    googletag.pubads().addEventListener("impressionViewable", (event) => {
+                      dispatchEvent(new CustomEvent('ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
+                    });
+                  });
+                `,
+                }}
+              />
               <TcfapiSuccess
                 onSuccess={(success) => {
                   if (success !== undefined) setAdsBlocked(!success);
@@ -142,6 +155,12 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
   }, []);
 
   return null;
+}
+
+declare global {
+  interface Window {
+    __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
+  }
 }
 
 // const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';
