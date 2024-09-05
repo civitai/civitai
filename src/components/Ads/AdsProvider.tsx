@@ -121,8 +121,12 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   __html: `
                   window.googletag.cmd.push(function () {
                     googletag.pubads().addEventListener("impressionViewable", (event) => {
-                      dispatchEvent(new CustomEvent('ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
+                      dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
                     });
+                    //  googletag.pubads().addEventListener("slotVisibilityChanged", (event) => {
+                    //   console.log(event)
+                    //   // dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: { elemId: event.slot.getSlotElementId() }}));
+                    // });
                   });
                 `,
                 }}

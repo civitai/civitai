@@ -97,70 +97,6 @@ function AdWrapper({
   );
 }
 
-const impression_duration = 1000;
-function ImpressionTracker({
-  children,
-  adId,
-  ...props
-}: React.HTMLAttributes<HTMLDivElement> & { adId: string }) {
-  const currentUser = useCurrentUser();
-  const node = useScrollAreaRef();
-  const { worker } = useSignalContext();
-  const { fingerprint } = useDeviceFingerprint();
-
-  const enterViewRef = useRef<Date>();
-  const impressionTrackedRef = useRef<boolean>();
-
-  const fingerprintRef = useRef<string>();
-  if (!fingerprintRef.current) fingerprintRef.current = fingerprint;
-
-  const trackImpressionRef = useRef<VoidFunction>();
-  if (!trackImpressionRef.current) {
-    trackImpressionRef.current = function () {
-      const enterDate = enterViewRef.current;
-      const exitDate = new Date();
-      if (worker && enterDate && currentUser && !impressionTrackedRef.current) {
-        const diff = exitDate.getTime() - enterDate.getTime();
-        if (diff < impression_duration) return;
-        impressionTrackedRef.current = true;
-        worker.send('recordAdImpression', {
-          userId: currentUser.id,
-          duration: diff,
-          fingerprint: fingerprintRef.current,
-          adId,
-        });
-      }
-    };
-  }
-
-  const { ref, inView } = useInView({
-    root: node?.current,
-    threshold: 0.5,
-  });
-
-  useEffect(() => {
-    if (inView) enterViewRef.current = new Date();
-    else if (enterViewRef.current) trackImpressionRef.current?.();
-  }, [inView]);
-
-  useEffect(() => {
-    const handler = trackImpressionRef.current;
-    if (!handler) return;
-    window.addEventListener('beforeunload', handler);
-
-    return () => {
-      handler();
-      window.removeEventListener('beforeunload', handler);
-    };
-  }, []);
-
-  return (
-    <div ref={ref} {...props}>
-      {children}
-    </div>
-  );
-}
-
 export function DynamicAd() {
   return (
     <AdWrapper width={300} height={250}>
@@ -187,9 +123,9 @@ export function ModelAndImagePageAdUnit() {
         {({ isMobile }) => {
           const id = isMobile ? 'civitaicom47765' : 'civitaicom47763';
           return (
-            <ImpressionTracker adId={id} className="w-full overflow-hidden">
+            <ImpressionTracker2 className="w-full overflow-hidden">
               <div id={id} />
-            </ImpressionTracker>
+            </ImpressionTracker2>
           );
         }}
       </AdWrapper>
@@ -222,9 +158,9 @@ function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
       }
     }) as EventListener;
 
-    window.addEventListener('ad-impression', listener);
+    window.addEventListener('civitai-ad-impression', listener);
     return () => {
-      window.removeEventListener('ad-impression', listener);
+      window.removeEventListener('civitai-ad-impression', listener);
     };
   }, [adsEnabled, fingerprint, worker, adsBlocked]);
 
