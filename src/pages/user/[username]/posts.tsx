@@ -23,7 +23,7 @@ export default function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
     replace,
-    query: { followed = undefined, section: querySection, ...query },
+    query: { followed = false, section: querySection, ...query },
   } = usePostQueryParams();
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;

@@ -178,23 +178,7 @@ export const getPostsInfinite = async ({
     }JOIN "PostMetric" pm ON pm."postId" = p.id AND pm."timeframe" = 'AllTime'::"MetricTimeframe"`,
   ];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`(pm."ageGroup" IS NOT NULL AND p."publishedAt" < now())`);
-
-    if (period !== 'AllTime' && periodMode !== 'stats') {
-      if (sort !== 'Newest') {
-        const ageGroups = getPeriods(period);
-        AND.push(
-          Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
-        );
-      } else {
-        const interval = period.toLowerCase();
-        AND.push(
-          Prisma.sql`p."publishedAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(
-            interval
-          )}'`
-        );
-      }
-    }
+    AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
 
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
@@ -208,6 +192,20 @@ export const getPostsInfinite = async ({
   } else {
     if (draftOnly) AND.push(Prisma.sql`pm."ageGroup" IS NULL`);
     else AND.push(Prisma.sql`pm."ageGroup" IS NOT NULL`);
+  }
+
+  if (period !== 'AllTime' && periodMode !== 'stats') {
+    if (draftOnly) {
+      const interval = period.toLowerCase();
+      AND.push(
+        Prisma.sql`p."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
+      );
+    } else {
+      const ageGroups = getPeriods(period);
+      AND.push(
+        Prisma.sql`pm."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
+      );
+    }
   }
 
   if (browsingLevel) {
