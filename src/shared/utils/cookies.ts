@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { booleanString } from '~/utils/zod-helpers';
 
 const cookiesSchema = z.object({
-  showNsfw: booleanString().optional(),
-  blurNsfw: booleanString().optional(),
-  browsingLevel: z.coerce.number().optional(),
+  // showNsfw: booleanString().optional(),
+  // blurNsfw: booleanString().optional(),
+  // browsingLevel: z.coerce.number().optional(),
   disableHidden: booleanString().optional(),
   mode: z.enum(['SFW', 'NSFW', 'All']).optional(),
   referrals: z
@@ -20,9 +20,9 @@ const cookiesSchema = z.object({
 
 function parseCookiesObj(cookies: TmpCookiesObj) {
   return {
-    showNsfw: cookies?.['nsfw'],
-    blurNsfw: cookies?.['blur'],
-    browsingLevel: cookies?.['level'],
+    // showNsfw: cookies?.['nsfw'],
+    // blurNsfw: cookies?.['blur'],
+    // browsingLevel: cookies?.['level'],
     disableHidden: cookies?.['disableHidden'],
     mode: cookies?.['mode'],
     referrals: {

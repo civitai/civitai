@@ -207,6 +207,7 @@ export const userSettingsSchema = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
+  disableHidden: z.boolean().optional(),
   gallerySettings: modelGallerySettingsSchema
     .omit({ pinnedPosts: true, images: true })
     .partial()
@@ -270,3 +271,13 @@ export type UserMeta = z.infer<typeof userMeta>;
 
 export type ComputeDeviceFingerprintInput = z.infer<typeof computeDeviceFingerprintSchema>;
 export const computeDeviceFingerprintSchema = z.object({ fingerprint: z.string() });
+
+export type UpdateContentSettingsInput = z.infer<typeof updateContentSettingsSchema>;
+export const updateContentSettingsSchema = z.object({
+  showNsfw: z.boolean().optional(),
+  blurNsfw: z.boolean().optional(),
+  browsingLevel: z.number().optional(),
+  disableHidden: z.boolean().optional(),
+  allowAds: z.boolean().optional(),
+  autoplayGifs: z.boolean().optional(),
+});
