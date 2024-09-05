@@ -149,7 +149,6 @@ export function OnboardingBuzz() {
               Done
             </Button>
           </Group>
-          {/* <RecaptchaNotice /> */}
           {showReferral && (
             <Button
               variant="subtle"

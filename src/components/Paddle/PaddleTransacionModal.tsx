@@ -164,8 +164,6 @@ export const PaddleTransacionModal = ({
     []
   );
 
-  console.log({ captchaState });
-
   if (
     subscriptionLoading ||
     paddleTransactionLoading ||

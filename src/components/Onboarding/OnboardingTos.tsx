@@ -5,6 +5,7 @@ import {
   Loader,
   ScrollArea,
   Stack,
+  Text,
   Title,
   TypographyStylesProvider,
 } from '@mantine/core';
@@ -20,7 +21,11 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useState } from 'react';
-import { CaptchaState, TurnstileWidget } from '~/components/TurnstileWidget/TurnstileWidget';
+import {
+  CaptchaState,
+  TurnstilePrivacyNotice,
+  TurnstileWidget,
+} from '~/components/TurnstileWidget/TurnstileWidget';
 
 export function OnboardingTos() {
   const [captchaState, setCaptchaState] = useState<CaptchaState>({
@@ -52,7 +57,6 @@ export function OnboardingTos() {
   };
 
   const { data: terms, isLoading: termsLoading } = trpc.content.get.useQuery({ slug: 'tos' });
-  console.log(captchaState);
 
   return (
     <Stack>
@@ -99,6 +103,7 @@ export function OnboardingTos() {
           </Button>
         </Group>
       )}
+      <TurnstilePrivacyNotice />
       <TurnstileWidget
         onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
         onError={(error) =>
@@ -112,6 +117,11 @@ export function OnboardingTos() {
           setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
         }
       />
+      {captchaState.status === 'error' && (
+        <Text size="xs" color="red">
+          {captchaState.error}
+        </Text>
+      )}
     </Stack>
   );
 }
