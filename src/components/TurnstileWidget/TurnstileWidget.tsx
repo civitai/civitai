@@ -29,11 +29,12 @@ export function TurnstileWidget(props: Props) {
       options={{ size: 'invisible' }}
       {...props}
       onExpire={handleExpired}
+      injectScript={false}
     />
   );
 }
 
-type Props = Omit<TurnstileProps, 'siteKey'>;
+type Props = Omit<TurnstileProps, 'siteKey' | 'injectScript'>;
 
 export function TurnstilePrivacyNotice(props: TextProps) {
   return (
