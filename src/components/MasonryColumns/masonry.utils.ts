@@ -40,7 +40,7 @@ export function useMasonryColumns<TData>(
 ) {
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
-  const adsReallyAreEnabled = adsEnabled && !getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
 
   return useMemo(
     () =>

@@ -41,7 +41,7 @@ export function MasonryGrid<TData>({
 
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
-  const adsReallyAreEnabled = adsEnabled && !getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const items = useMemo(
     () => createAdFeed({ data, columnCount, showAds: adsReallyAreEnabled }),
     [columnCount, data, adsReallyAreEnabled]
