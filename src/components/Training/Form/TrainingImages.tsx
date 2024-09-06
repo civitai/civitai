@@ -18,6 +18,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
   useMantineTheme,
@@ -30,6 +31,7 @@ import { ModelFileVisibility } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconCheck,
+  IconCloudOff,
   IconFileDownload,
   IconInfoCircle,
   IconTags,
@@ -56,6 +58,7 @@ import {
   TrainingImagesTags,
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
@@ -855,6 +858,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const totalLabeled = imageList.filter((i) => i.label && i.label.length > 0).length;
 
+  useCatchNavigation({
+    unsavedChanges:
+      !isEqual(imageList, initialImageList) ||
+      !isEqual(shareDataset, initialShareDataset) ||
+      !isEqual(ownRights, initialOwnRights) ||
+      !isEqual(labelType, initialLabelType),
+    // message: ``,
+  });
+
   return (
     <>
       <Stack>
@@ -1054,10 +1066,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         )}
 
         {loadingZip ? (
-          <Center style={{ flexDirection: 'column' }}>
+          <Center mt="md" style={{ flexDirection: 'column' }}>
             <Loader />
             <Text>Parsing existing images...</Text>
           </Center>
+        ) : imageList.length > 0 && filteredImages.length === 0 ? (
+          <Stack mt="md" align="center">
+            <ThemeIcon size={64} radius={100}>
+              <IconCloudOff size={64 / 1.6} />
+            </ThemeIcon>
+            <Text size={20} align="center">
+              No images found
+            </Text>
+          </Stack>
         ) : (
           // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
           <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>

@@ -1,4 +1,14 @@
-import { Button, Group, Input, Modal, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Group,
+  Input,
+  Modal,
+  SegmentedControl,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import React, { useState } from 'react';
@@ -346,7 +356,7 @@ const AutoCaptionSection = ({
         value={autoCaptioning.temperature}
         min={autoLabelLimits.caption.temperature.min}
         max={autoLabelLimits.caption.temperature.max}
-        // precision={2}
+        precision={2}
         step={0.01}
         onChange={(value) => {
           setAutoCaptioning(modelId, { temperature: value });
@@ -396,6 +406,7 @@ export const AutoLabelModal = ({ modelId }: { modelId: number }) => {
       <Stack>
         <Text>Label Type</Text>
         <TrainingImagesLabelTypeSelect modelId={modelId} />
+        <Divider />
         {labelType === 'tag' ? (
           <AutoTagSection modelId={modelId} handleClose={handleClose} />
         ) : (
