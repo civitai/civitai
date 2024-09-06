@@ -2,7 +2,7 @@ import { User } from '@prisma/client';
 import { Session } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { generateSecretHash } from '~/server/utils/key-generator';
@@ -93,6 +93,7 @@ export async function invalidateSession(userId: number) {
       EX: DEFAULT_EXPIRATION, // 30 days
     }),
     redis.del(`session:data:${userId}`),
+    redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
   ]);
   log(`Scheduling refresh session for user ${userId}`);
 }
