@@ -43,10 +43,17 @@ export function BrowsingModeOverrideProvider({
   );
 }
 
-export function useBrowsingLevelDebounced() {
+function useBrowsingLevel() {
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
-  const level = browsingLevelOverride ?? browsingLevel;
-  const [debounced] = useDebouncedValue(level, 500);
-  return useDeferredValue(debounced ?? level);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  if (browsingLevelOverride) return browsingLevelOverride;
+  if (!showNsfw) return publicBrowsingLevelsFlag;
+  return browsingLevel;
+}
+
+export function useBrowsingLevelDebounced() {
+  const browsingLevel = useBrowsingLevel();
+  const [debounced] = useDebouncedValue(browsingLevel, 500);
+  return useDeferredValue(debounced ?? browsingLevel);
 }
