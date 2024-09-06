@@ -244,6 +244,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialOwnRights,
     initialShareDataset,
     autoLabeling,
+    autoCaptioning,
   } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
 
   const [page, setPage] = useState(1);
@@ -672,7 +673,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setAutoLabeling(model.id, { isRunning: true });
 
     if (labelType === 'tag') submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
-    else submitCaptionMutation.mutate({ modelId: model.id, url: autoLabeling.url });
+    else
+      submitCaptionMutation.mutate({
+        modelId: model.id,
+        url: autoLabeling.url,
+        temperature: autoCaptioning.temperature,
+        maxNewTokens: autoCaptioning.maxNewTokens,
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 

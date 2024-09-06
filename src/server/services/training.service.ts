@@ -513,7 +513,7 @@ export const autoCaptionHandler = async ({
     retries: 0,
     model: 'joy-caption-pre-alpha',
     temperature,
-    maxNewTokens: maxNewTokens,
+    maxNewTokens,
   };
 
   const response = await getOrchestratorCaller(new Date()).imageAutoCaption({
