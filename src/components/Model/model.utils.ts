@@ -178,7 +178,7 @@ export const useQueryModelCollectionShowcase = ({ modelId }: { modelId: number }
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
-      limit: 10,
+      limit: 5,
     },
     { enabled: !loadingCollection && !!showcase?.collection.id, keepPreviousData: true }
   );

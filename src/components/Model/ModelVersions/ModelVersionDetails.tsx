@@ -38,7 +38,6 @@ import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
-import { SessionUser } from 'next-auth';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
@@ -976,7 +975,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           >
             {model.meta?.showcaseCollectionId && collection && (
               <Accordion.Item value="collection-showcase">
-                <Accordion.Control>
+                <Accordion.Control className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4">
                   <div>
                     <Text inherit>{collection.name}</Text>
                     <Text size="xs" color="dimmed">
