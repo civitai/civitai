@@ -21,21 +21,18 @@ export function ImpressionTracker() {
       const elem = document.getElementById(elemId);
       const exists = !!elem;
 
-      console.log({ exists, outOfPage });
-
       if (worker && exists && currentUser && !outOfPage) {
-        const adId = elemId.split('-')[0];
         const now = Date.now();
-        const impressions = impressionsDictionary[adId] ?? [];
+        const impressions = impressionsDictionary[elemId] ?? [];
         const lastImpression = impressions[impressions.length - 1];
         if (!lastImpression || now - lastImpression >= 10 * 1000) {
           console.log('record impression');
-          impressionsDictionary[adId] = [...impressions, now];
+          impressionsDictionary[elemId] = [...impressions, now];
 
           worker.send('recordAdImpression', {
             userId: currentUser.id,
             fingerprint,
-            adId,
+            adId: elemId.split('-')[0],
           });
         }
       }
