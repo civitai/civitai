@@ -21,14 +21,14 @@ export function ImpressionTracker() {
       const elem = document.getElementById(elemId);
       const exists = !!elem;
 
-      console.log({ ...e.detail, exists, outOfPage });
+      console.log({ exists, outOfPage });
 
       if (worker && exists && currentUser && !outOfPage) {
         const adId = elemId.split('-')[0];
         const now = Date.now();
         const impressions = impressionsDictionary[adId] ?? [];
         const lastImpression = impressions[impressions.length - 1];
-        if (now - lastImpression >= 10 * 1000) {
+        if (!lastImpression || now - lastImpression >= 10 * 1000) {
           console.log('record impression');
           impressionsDictionary[adId] = [...impressions, now];
 

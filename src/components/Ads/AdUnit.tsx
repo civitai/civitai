@@ -12,6 +12,8 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
   AdSizes & {
@@ -31,11 +33,12 @@ function AdWrapper({
   const currentUser = useCurrentUser();
   const isClient = useIsClient();
   const { adsBlocked, adsEnabled, isMember } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   // const focused = useIsLevelFocused();
 
-  if (!adsEnabled) return null;
+  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
 
   const Component = component === 'div' ? 'div' : TwCard;
 

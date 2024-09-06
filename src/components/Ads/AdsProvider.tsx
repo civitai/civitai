@@ -33,8 +33,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const features = useFeatureFlags();
 
   // derived value from browsingMode and nsfwOverride
-  const browsingLevel = useBrowsingLevelDebounced();
-  const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
@@ -62,7 +60,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     <AdsContext.Provider
       value={{
         adsBlocked: adsBlocked,
-        adsEnabled: adsEnabled && !nsfw,
+        adsEnabled: adsEnabled,
         username: currentUser?.username,
         providers: adProviders,
         isMember,

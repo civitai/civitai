@@ -5,6 +5,8 @@ import {
 import { useMemo } from 'react';
 import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -37,6 +39,8 @@ export function useMasonryColumns<TData>(
   withAds?: boolean
 ) {
   const { adsEnabled } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const adsReallyAreEnabled = adsEnabled && !getIsSafeBrowsingLevel(browsingLevel) && withAds;
 
   return useMemo(
     () =>
@@ -47,9 +51,9 @@ export function useMasonryColumns<TData>(
         imageDimensions,
         adjustDimensions,
         maxItemHeight,
-        adsEnabled && withAds
+        adsReallyAreEnabled
       ),
-      [data, columnWidth, columnCount, maxItemHeight, adsEnabled] // eslint-disable-line
+    [data, columnWidth, columnCount, maxItemHeight, adsReallyAreEnabled] // eslint-disable-line
   );
 }
 
