@@ -478,8 +478,8 @@ export const manageSubscriptionTransactionComplete = async (
   }
 
   if (
-    (transactionNotification.details?.totals?.total ?? 0) === 0 &&
-    (transactionNotification.details?.totals?.discount ?? 0) === 0
+    transactionNotification.details?.totals?.total === '0' &&
+    transactionNotification.details?.totals?.discount === '0'
   ) {
     // Free trial or payment method update.
     return;
