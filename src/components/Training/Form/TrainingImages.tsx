@@ -41,16 +41,22 @@ import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
-  TrainingImagesLabels,
-  TrainingImagesLabelViewer,
-} from '~/components/Training/Form/TrainingImagesLabelViewer';
+  TrainingImagesCaptions,
+  TrainingImagesCaptionViewer,
+} from '~/components/Training/Form/TrainingImagesCaptionViewer';
+import {
+  TrainingImagesSwitchLabel,
+  TrainingImagesTags,
+  TrainingImagesTagViewer,
+} from '~/components/Training/Form/TrainingImagesTagViewer';
+import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -60,7 +66,6 @@ import {
   getShortNameFromUrl,
   type ImageDataType,
   LabelTypes,
-  labelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
@@ -116,7 +121,8 @@ const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
 
-const labelDescriptions: { [p in LabelTypes]: string } = {
+// TODO insert line breaks
+export const labelDescriptions: { [p in LabelTypes]: string } = {
   tag: 'Short, comma-separated descriptions. Ex: "dolphin, ocean, jumping, gorgeous scenery".',
   caption:
     'Natural language, long-form sentences. Ex: "There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of a setting sun."',
@@ -137,7 +143,6 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
     (state) => state[modelId] ?? { ...defaultTrainingState }
   );
   const { setLabelType } = trainingStore;
-  const [labelValue, setLabelValue] = useState<LabelTypes>(labelType);
 
   // I mean, this could probably be better
   const firstLabel = imageList[0]?.label;
@@ -146,6 +151,8 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
     firstLabel?.split(',').length < firstLabel?.length * 0.1 // not many commas
       ? 'caption'
       : 'tag';
+
+  const [labelValue, setLabelValue] = useState<LabelTypes>(estimatedType);
 
   const handleSelect = () => {
     setLabelType(modelId, labelValue);
@@ -177,7 +184,7 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
         </Group>
         <SegmentedControl
           value={labelValue}
-          data={labelTypes.map((l) => ({
+          data={constants.autoLabel.labelTypes.map((l) => ({
             label: capitalize(l),
             value: l,
           }))}
@@ -216,6 +223,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     labelType,
     ownRights,
     shareDataset,
+    initialLabelType,
     initialOwnRights,
     initialShareDataset,
     autoLabeling,
@@ -226,6 +234,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [searchCaption, setSearchCaption] = useState<string>('');
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -569,7 +578,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto tag',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling, type: autoLabeling.type });
+      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
     },
   });
   const submitCaptionMutation = trpc.training.autoCaption.useMutation({
@@ -580,7 +589,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto caption',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling, type: autoLabeling.type });
+      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
     },
   });
 
@@ -645,29 +654,38 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (autoLabeling.isRunning || !autoLabeling.url) return;
     setAutoLabeling(model.id, { isRunning: true });
 
-    if (autoLabeling.type === 'tag')
-      submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
+    if (labelType === 'tag') submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
     else submitCaptionMutation.mutate({ modelId: model.id, url: autoLabeling.url });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
-  const filteredImages = imageList.filter((i) => {
-    if (!selectedTags.length) return true;
-    const capts: string[] = [];
-    if (selectedTags.includes(blankTagStr) && getTextTagsAsList(i.caption).length === 0)
-      capts.push(blankTagStr);
-    const mergedCapts = capts.concat(
-      getTextTagsAsList(i.caption).filter((c) => selectedTags.includes(c))
-    );
-    return mergedCapts.length > 0;
-  });
+  const filteredImages = useMemo(() => {
+    return imageList.filter((i) => {
+      if (labelType === 'tag') {
+        if (!selectedTags.length) return true;
+        const capts: string[] = [];
+        if (selectedTags.includes(blankTagStr) && getTextTagsAsList(i.label).length === 0)
+          capts.push(blankTagStr);
+        const mergedCapts = capts.concat(
+          getTextTagsAsList(i.label).filter((c) => selectedTags.includes(c))
+        );
+        return mergedCapts.length > 0;
+      } else {
+        if (!searchCaption.length && !selectedTags.length) return true;
+        if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
+        return searchCaption.length > 0
+          ? i.label.toLowerCase().includes(searchCaption.toLowerCase())
+          : false;
+      }
+    });
+  }, [imageList, labelType, selectedTags, searchCaption]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
       setPage(1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTags]);
+  }, [selectedTags, searchCaption]);
 
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
@@ -806,17 +824,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
-      // if no captions, warn
-      if (imageList.filter((i) => i.caption.length > 0).length === 0) {
+      // if no labels, warn
+      if (imageList.filter((i) => i.label.length > 0).length === 0) {
         return openConfirmModal({
           title: (
             <Group spacing="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">Missing captions</Text>
+              <Text size="lg">Missing labels</Text>
             </Group>
           ),
           children:
-            'You have not provided any captions for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
+            'You have not provided any labels for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Continue' },
           centered: true,
           onConfirm: handleNextAfterCheck,
@@ -835,7 +853,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const totalCaptioned = imageList.filter((i) => i.caption && i.caption.length > 0).length;
+  const totalLabeled = imageList.filter((i) => i.label && i.label.length > 0).length;
 
   return (
     <>
@@ -893,14 +911,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Text
                 style={{ lineHeight: '22px' }}
                 color={
-                  totalCaptioned === 0
+                  totalLabeled === 0
                     ? theme.colors.red[5]
-                    : totalCaptioned < imageList.length
+                    : totalLabeled < imageList.length
                     ? theme.colors.orange[5]
                     : theme.colors.green[5]
                 }
               >
-                {`${totalCaptioned} / ${imageList.length} captioned`}
+                {`${totalLabeled} / ${imageList.length} labeled`}
               </Text>
             </Paper>
             <Tooltip
@@ -909,6 +927,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             >
               <Button
                 compact
+                color="violet"
                 disabled={autoLabeling.isRunning || !connected}
                 style={!connected ? { pointerEvents: 'initial' } : undefined}
                 onClick={() =>
@@ -918,10 +937,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   })
                 }
               >
-                <Group spacing="xs">
+                <Group spacing={4}>
                   <IconTags size={16} />
                   <Text>Auto Label</Text>
-                  <Badge color="green">NEW</Badge>
+                  <Badge color="green" variant="filled" size="sm" ml={4}>
+                    NEW
+                  </Badge>
                 </Group>
               </Button>
             </Tooltip>
@@ -931,7 +952,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               loading={zipping}
               onClick={() => handleNextAfterCheck(true)}
             >
-              {/*TODO may need to adjust spacing*/}
               <IconFileDownload size={16} />
               <Text inline ml={4}>
                 Download
@@ -1010,13 +1030,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </Paper>
         )}
 
-        {imageList.length > 0 && (
-          <TrainingImagesLabelViewer
-            selectedTags={selectedTags}
-            setSelectedTags={setSelectedTags}
-            modelId={model.id}
-            numImages={filteredImages.length}
-          />
+        {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
+
+        {imageList.length > 0 ? (
+          labelType === 'tag' ? (
+            <TrainingImagesTagViewer
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+              modelId={model.id}
+              numImages={filteredImages.length}
+            />
+          ) : (
+            <TrainingImagesCaptionViewer
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+              searchCaption={searchCaption}
+              setSearchCaption={setSearchCaption}
+              numImages={filteredImages.length}
+            />
+          )
+        ) : (
+          <></>
         )}
 
         {loadingZip ? (
@@ -1091,11 +1125,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         />
                       </div>
                     </Card.Section>
-                    <TrainingImagesLabels
-                      imgData={imgData}
-                      modelId={model.id}
-                      selectedTags={selectedTags}
-                    />
+                    {labelType === 'tag' ? (
+                      <TrainingImagesTags
+                        imgData={imgData}
+                        modelId={model.id}
+                        selectedTags={selectedTags}
+                      />
+                    ) : (
+                      <TrainingImagesCaptions
+                        imgData={imgData}
+                        modelId={model.id}
+                        searchCaption={searchCaption}
+                      />
+                    )}
                   </Card>
                 );
               })}

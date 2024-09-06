@@ -4,7 +4,6 @@ import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { maxTags, minThreshold } from '~/components/Training/Form/TrainingAutoLabelModal';
 import { getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
@@ -127,6 +126,8 @@ export const useOrchestratorUpdateSignal = () => {
     jobType: string;
     type: Orchestrator.JobStatus;
   }) => {
+    console.log(jobType);
+
     if (jobType !== 'MediaTagging') return;
 
     // TODO we could handle Initialized | Claimed | Succeeded
@@ -134,6 +135,9 @@ export const useOrchestratorUpdateSignal = () => {
 
     if (!isDefined(jobProperties)) return;
     const { modelId } = jobProperties;
+    const { autoLabeling, autoTagging, autoCaptioning } = useTrainingImageStore(
+      (state) => state[modelId] ?? { ...defaultTrainingState }
+    );
     const { updateImage, setAutoLabeling } = trainingStore;
 
     if (type === 'Failed') {
@@ -156,8 +160,8 @@ export const useOrchestratorUpdateSignal = () => {
 
     Object.entries(returnData).forEach(([k, v]) => {
       const returnData = Object.entries(v);
-      const storeState = useTrainingImageStore.getState();
-      const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
+      // const storeState = useTrainingImageStore.getState();
+      // const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
 
       const blacklist = getTextTagsAsList(autoCaptioning.blacklist ?? '');
       const prependList = getTextTagsAsList(autoCaptioning.prependTags ?? '');
@@ -186,15 +190,15 @@ export const useOrchestratorUpdateSignal = () => {
     });
 
     if (isDone) {
-      const storeState = useTrainingImageStore.getState();
-      const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
+      // const storeState = useTrainingImageStore.getState();
+      // const { autoCaptioning } = storeState[modelId] ?? { ...defaultTrainingState };
       showSuccessNotification({
         title: 'Images auto-tagged successfully!',
         message: `Tagged ${autoCaptioning.successes} image${
           autoCaptioning.successes === 1 ? '' : 's'
         }. Failures: ${autoCaptioning.fails.length}`,
       });
-      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(modelId, { ...defaultTrainingState.autoLabeling, type: autoLabeling.type });
     }
   };
   useSignalConnection(SignalMessages.OrchestratorUpdate, onUpdate);

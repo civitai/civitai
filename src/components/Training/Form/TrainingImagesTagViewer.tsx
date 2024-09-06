@@ -8,10 +8,13 @@ import {
   Group,
   Menu,
   Paper,
+  SegmentedControl,
+  SegmentedControlProps,
   Stack,
   Text,
   Textarea,
   TextInput,
+  Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
@@ -28,14 +31,21 @@ import {
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
-import { blankTagStr, getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
+import {
+  blankTagStr,
+  getTextTagsAsList,
+  labelDescriptions,
+} from '~/components/Training/Form/TrainingImages';
+import { constants } from '~/server/common/constants';
 import {
   defaultTrainingState,
   getShortNameFromUrl,
   ImageDataType,
+  LabelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
+import { titleCase } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => ({
   tagOverlay: {
@@ -62,7 +72,65 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const TrainingImagesLabels = ({
+export const TrainingImagesLabelTypeSelect = ({
+  modelId,
+  ...controlProps
+}: {
+  modelId: number;
+} & Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
+  const { labelType } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+  const { setLabelType } = trainingStore;
+
+  return (
+    <SegmentedControl
+      value={labelType}
+      data={constants.autoLabel.labelTypes.map((l) => ({
+        label: (
+          // <Group position="center">
+          //   <Text>{capitalize(l)}</Text>
+          //   <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }} withinPortal>
+          //     <Text>{labelDescriptions[l]}</Text>
+          //   </InfoPopover>
+          // </Group>
+          <Tooltip maw={350} multiline label={labelDescriptions[l]} withinPortal>
+            <Text>{titleCase(l)}</Text>
+          </Tooltip>
+        ),
+        value: l,
+      }))}
+      onChange={(v) => setLabelType(modelId, v as LabelTypes)}
+      radius="sm"
+      fullWidth
+      {...controlProps}
+    />
+  );
+};
+
+export const TrainingImagesSwitchLabel = ({ modelId }: { modelId: number }) => {
+  const theme = useMantineTheme();
+
+  return (
+    <Paper
+      px="md"
+      py="xs"
+      shadow="xs"
+      radius="sm"
+      withBorder
+      style={{
+        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+      }}
+    >
+      <Group>
+        <Text>Label Type</Text>
+        <TrainingImagesLabelTypeSelect modelId={modelId} sx={{ flexGrow: 1 }} />
+      </Group>
+    </Paper>
+  );
+};
+
+export const TrainingImagesTags = ({
   imgData,
   modelId,
   selectedTags,
@@ -73,29 +141,29 @@ export const TrainingImagesLabels = ({
 }) => {
   const theme = useMantineTheme();
   const { classes } = useStyles();
-  const [addCaptionTxt, setAddCaptionTxt] = useState('');
+  const [addTagTxt, setAddTagTxt] = useState('');
 
   const { autoLabeling } = useTrainingImageStore(
     (state) => state[modelId] ?? { ...defaultTrainingState }
   );
   const { updateImage } = trainingStore;
 
-  const tags = getTextTagsAsList(imgData.caption);
+  const tags = getTextTagsAsList(imgData.label);
 
-  const removeCaption = (tagToRemove: string) => {
+  const removeTag = (tagToRemove: string) => {
     const newTags = tags.filter((c) => c !== tagToRemove);
 
     updateImage(modelId, {
       matcher: getShortNameFromUrl(imgData),
-      caption: newTags.join(', '),
+      label: newTags.join(', '),
     });
   };
 
-  const addCaptions = () => {
+  const addTags = () => {
     updateImage(modelId, {
       matcher: getShortNameFromUrl(imgData),
-      caption: addCaptionTxt,
-      appendCaption: true,
+      label: addTagTxt,
+      appendLabel: true,
     });
   };
 
@@ -138,7 +206,7 @@ export const TrainingImagesLabels = ({
                   size={14}
                   variant="transparent"
                   className={classes.trash}
-                  onClick={() => removeCaption(cap)}
+                  onClick={() => removeTag(cap)}
                 >
                   <IconX size={12} />
                 </ActionIcon>
@@ -147,28 +215,28 @@ export const TrainingImagesLabels = ({
           </Group>
         ) : (
           <Text lh={1} py={3} align="center" size="sm" fs="italic">
-            No Captions
+            No Tags
           </Text>
         )}
       </Paper>
 
       <Textarea
-        placeholder="Add captions..."
+        placeholder="Add tags..."
         autosize
         disabled={autoLabeling.isRunning}
         minRows={1}
         maxRows={4}
-        value={addCaptionTxt}
+        value={addTagTxt}
         onChange={(event) => {
-          setAddCaptionTxt(event.target.value);
+          setAddTagTxt(event.target.value);
         }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             if (!e.shiftKey) {
               e.preventDefault();
-              if (!addCaptionTxt.length) return;
-              addCaptions();
-              setAddCaptionTxt('');
+              if (!addTagTxt.length) return;
+              addTags();
+              setAddTagTxt('');
             }
           }
         }}
@@ -178,11 +246,11 @@ export const TrainingImagesLabels = ({
           <ActionIcon
             h="100%"
             onClick={() => {
-              if (!addCaptionTxt.length) return;
-              addCaptions();
-              setAddCaptionTxt('');
+              if (!addTagTxt.length) return;
+              addTags();
+              setAddTagTxt('');
             }}
-            // disabled={!addCaptionTxt.length}
+            // disabled={!addTagTxt.length}
             sx={{ borderRadius: 0 }}
           >
             <IconPlus />
@@ -193,7 +261,7 @@ export const TrainingImagesLabels = ({
   );
 };
 
-export const TrainingImagesLabelViewer = ({
+export const TrainingImagesTagViewer = ({
   selectedTags,
   setSelectedTags,
   modelId,
@@ -213,17 +281,17 @@ export const TrainingImagesLabelViewer = ({
   const [tagSearchInput, setTagSearchInput] = useState<string>('');
   const [tagList, setTagList] = useState<[string, number][]>([]);
 
-  const removeCaptions = (tags: string[]) => {
+  const removeTags = (tags: string[]) => {
     const newImageList = imageList.map((i) => {
-      const capts = getTextTagsAsList(i.caption).filter((c) => !tags.includes(c));
-      return { ...i, caption: capts.join(', ') };
+      const capts = getTextTagsAsList(i.label).filter((c) => !tags.includes(c));
+      return { ...i, label: capts.join(', ') };
     });
     setImageList(modelId, newImageList);
   };
 
   useEffect(() => {
     const imageTags = imageList
-      .flatMap((i) => getTextTagsAsList(i.caption))
+      .flatMap((i) => getTextTagsAsList(i.label))
       .filter((v) => (tagSearchInput.length > 0 ? v.includes(tagSearchInput) : v));
     const tagCounts = imageTags.reduce(
       (a: { [key: string]: number }, c) => (a[c] ? ++a[c] : (a[c] = 1), a),
@@ -232,15 +300,15 @@ export const TrainingImagesLabelViewer = ({
     // .reduce((a, c) => (a[c] = a[c] || 0, a[c]++, a), {})
     const sortedTagCounts = Object.entries(tagCounts).sort(([, a], [, b]) => b - a);
 
-    const uncaptionedImages = imageList.filter((i) => getTextTagsAsList(i.caption).length === 0);
-    if (uncaptionedImages.length && !tagSearchInput.length) {
-      setTagList([[blankTagStr, uncaptionedImages.length], ...sortedTagCounts]);
+    const untaggedImages = imageList.filter((i) => getTextTagsAsList(i.label).length === 0);
+    if (untaggedImages.length && !tagSearchInput.length) {
+      setTagList([[blankTagStr, untaggedImages.length], ...sortedTagCounts]);
     } else {
       setTagList(sortedTagCounts);
     }
 
     setSelectedTags((s) =>
-      s.filter((st) => (st === blankTagStr ? uncaptionedImages.length > 0 : imageTags.includes(st)))
+      s.filter((st) => (st === blankTagStr ? untaggedImages.length > 0 : imageTags.includes(st)))
     );
   }, [imageList, setSelectedTags, tagSearchInput]);
 
@@ -248,19 +316,17 @@ export const TrainingImagesLabelViewer = ({
 
   return (
     <Accordion variant="contained" transitionDuration={0}>
-      <Accordion.Item value="caption-viewer">
+      <Accordion.Item value="tag-viewer">
         <Accordion.Control>
           <Group spacing="xs">
-            <Text>Caption Viewer</Text>
+            <Text>Tag Viewer</Text>
+            <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
+              {numImages}
+            </Badge>
             {selectedTags.length > 0 && (
-              <>
-                <Badge color="red" leftSection={<IconTag size={14} />}>
-                  {selectedTags.length}
-                </Badge>
-                <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
-                  {numImages}
-                </Badge>
-              </>
+              <Badge color="red" leftSection={<IconTag size={14} />}>
+                {selectedTags.length}
+              </Badge>
             )}
           </Group>
         </Accordion.Control>
@@ -304,10 +370,10 @@ export const TrainingImagesLabelViewer = ({
                     icon={<IconTrash size={14} />}
                     onClick={() =>
                       openConfirmModal({
-                        title: 'Remove these captions?',
+                        title: 'Remove these tags?',
                         children: (
                           <Stack>
-                            <Text>The following captions will be removed from all images:</Text>
+                            <Text>The following tags will be removed from all images:</Text>
                             <Group>
                               {selectedTagsNonBlank.map((st) => (
                                 <Badge key={st}>{st}</Badge>
@@ -317,7 +383,7 @@ export const TrainingImagesLabelViewer = ({
                         ),
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
                         centered: true,
-                        onConfirm: () => removeCaptions(selectedTagsNonBlank),
+                        onConfirm: () => removeTags(selectedTagsNonBlank),
                       })
                     }
                   >
@@ -349,7 +415,7 @@ export const TrainingImagesLabelViewer = ({
             </Group>
             {!tagList.length ? (
               <Text size="md" my="sm" align="center">
-                No captions to display.
+                No tags to display.
               </Text>
             ) : (
               <Chip.Group

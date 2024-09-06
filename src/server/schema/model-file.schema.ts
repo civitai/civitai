@@ -1,7 +1,6 @@
 import { ModelFileVisibility, TrainingStatus } from '@prisma/client';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { labelTypes } from '~/store/training.store';
 
 export type TrainingResults = z.infer<typeof trainingResultsSchema>;
 export const trainingResultsSchema = z.object({
@@ -45,7 +44,7 @@ export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
-  labelType: z.enum(labelTypes).nullish(),
+  labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),

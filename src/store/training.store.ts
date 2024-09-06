@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
+import { constants } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
@@ -23,9 +24,7 @@ type UpdateImageDataType = Partial<ImageDataType> & {
 };
 
 // -- Auto Label
-export const labelTypes = ['tag', 'caption'] as const;
-export type LabelTypes = (typeof labelTypes)[number];
-// rename to LabelType
+export type LabelTypes = (typeof constants.autoLabel.labelTypes)[number];
 
 export const autoLabelLimits = {
   tag: {
@@ -92,7 +91,6 @@ export const autoCaptionSchema = autoLabelSchema.extend({
 export type AutoCaptionSchemaType = z.infer<typeof autoCaptionSchema>;
 
 export type AutoLabelType = {
-  type: LabelTypes;
   url: string | null;
   isRunning: boolean;
   total: number;
@@ -187,7 +185,6 @@ export const defaultTrainingState: TrainingDataState = {
   initialOwnRights: false,
   initialShareDataset: false,
   autoLabeling: {
-    type: 'tag',
     url: null,
     isRunning: false,
     total: 0,
@@ -223,16 +220,24 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
           const shortName = getShortNameFromUrl(i);
           if (shortName === matcher) {
+            let newLabel = i.label;
+            if (label !== undefined) {
+              if (appendLabel && i.label.length > 0) {
+                if (state[modelId]!.labelType === 'tag') {
+                  newLabel = `${i.label}, ${label}`;
+                } else {
+                  newLabel = `${i.label} ${label}`; // TODO newline? am i saving newlines?
+                }
+              } else {
+                newLabel = label;
+              }
+            }
+
             return {
               url: url ?? i.url,
               name: name ?? i.name,
               type: type ?? i.type,
-              caption:
-                caption !== undefined
-                  ? appendCaption && i.caption.length > 0
-                    ? `${i.caption}, ${caption}`
-                    : caption
-                  : i.caption,
+              label: newLabel,
             };
           }
           return i;

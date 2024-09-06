@@ -27,11 +27,11 @@ export const TrainingEditTagsModal = ({
 
   const handleConfirm = () => {
     const newImageList = imageList.map((i) => {
-      const capts = getTextTagsAsList(i.caption).map((c) => {
+      const capts = getTextTagsAsList(i.label).map((c) => {
         const foundVal = tagChange[c];
         return foundVal && foundVal.length ? foundVal : c;
       });
-      return { ...i, caption: capts.join(', ') };
+      return { ...i, label: capts.join(', ') };
     });
     setImageList(modelId, newImageList);
     setSelectedTags([]);
@@ -39,7 +39,7 @@ export const TrainingEditTagsModal = ({
   };
 
   return (
-    <Modal {...dialog} centered size="md" radius="md" title="Replace captions">
+    <Modal {...dialog} centered size="md" radius="md" title="Replace tags">
       <Stack>
         <Grid align="center">
           {selectedTags.map((st) => (

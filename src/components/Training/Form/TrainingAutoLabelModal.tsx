@@ -1,21 +1,11 @@
-import {
-  Button,
-  Group,
-  Input,
-  Modal,
-  SegmentedControl,
-  Stack,
-  Text,
-  Title,
-  Tooltip,
-} from '@mantine/core';
+import { Button, Group, Input, Modal, SegmentedControl, Stack, Text, Tooltip } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
 import JSZip from 'jszip';
-import { capitalize } from 'lodash-es';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { TrainingImagesLabelTypeSelect } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { UploadType } from '~/server/common/enums';
@@ -27,7 +17,6 @@ import {
   defaultTrainingState,
   getShortNameFromUrl,
   LabelTypes,
-  labelTypes,
   overwriteList,
   trainingStore,
   useTrainingImageStore,
@@ -398,27 +387,16 @@ const AutoCaptionSection = ({
 export const AutoLabelModal = ({ modelId }: { modelId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { autoLabeling } = useTrainingImageStore(
+  const { labelType } = useTrainingImageStore(
     (state) => state[modelId] ?? { ...defaultTrainingState }
   );
-  const { setAutoLabeling } = trainingStore;
 
   return (
     <Modal {...dialog} centered size="md" radius="md" title="Automatically label your images">
       <Stack>
-        {/* TODO explanation */}
-        <Title>Labelling Type</Title>
-        <SegmentedControl
-          value={autoLabeling.type}
-          data={labelTypes.map((l) => ({
-            label: capitalize(l),
-            value: l,
-          }))}
-          onChange={(l) => setAutoLabeling(modelId, { type: l as LabelTypes })}
-          radius="sm"
-          fullWidth
-        />
-        {autoLabeling.type === 'tag' ? (
+        <Text>Label Type</Text>
+        <TrainingImagesLabelTypeSelect modelId={modelId} />
+        {labelType === 'tag' ? (
           <AutoTagSection modelId={modelId} handleClose={handleClose} />
         ) : (
           <AutoCaptionSection modelId={modelId} handleClose={handleClose} />
