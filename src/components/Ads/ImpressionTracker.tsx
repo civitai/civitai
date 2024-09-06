@@ -26,11 +26,11 @@ export function ImpressionTracker() {
       if (worker && exists && currentUser && !outOfPage) {
         const adId = elemId.split('-')[0];
         const now = Date.now();
-        const impressions = impressionsDictionary[adId];
+        const impressions = impressionsDictionary[adId] ?? [];
         const lastImpression = impressions[impressions.length - 1];
         if (now - lastImpression >= 10 * 1000) {
           console.log('record impression');
-          impressionsDictionary[adId].push(now);
+          impressionsDictionary[adId] = [...impressions, now];
 
           worker.send('recordAdImpression', {
             userId: currentUser.id,
