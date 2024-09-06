@@ -6,6 +6,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
 import {
+  cancelSubscriptionPlan,
   createBuzzPurchaseTransaction,
   createCustomer,
   processCompleteBuzzTransaction,
@@ -106,41 +107,9 @@ export const cancelSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<
       throw throwBadRequestError('Current subscription is not managed by Paddle');
     }
 
-    const paddleSubscription = await getPaddleSubscription({
-      subscriptionId: subscription.id,
-    });
-
-    if (!paddleSubscription) {
-      throw throwNotFoundError('Paddle subscription not found');
-    }
-
-    const plans = await getPlans({
-      includeFree: true,
-      paymentProvider: PaymentProvider.Paddle,
-    });
-
-    const freePlan = plans.find((p) => {
-      const meta = p.metadata as SubscriptionProductMetadata;
-      return meta?.tier === 'free';
-    });
-
-    if (!freePlan || (!freePlan.defaultPriceId && !freePlan.prices.length)) {
-      // Cancel through paddle as we don't have a Free plan for whatever reason.
-      return {
-        url: paddleSubscription.managementUrls?.cancel,
-        canceled: false,
-      };
-    }
-
-    await updateSubscriptionPlan({
+    return await cancelSubscriptionPlan({
       userId: ctx.user.id,
-      priceId: freePlan.defaultPriceId ?? freePlan.prices[0].id,
     });
-
-    return {
-      url: undefined,
-      canceled: true,
-    };
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

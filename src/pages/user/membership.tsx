@@ -69,7 +69,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!features?.isGreen || !features.canBuyBuzz) {
+    if (!features?.isGreen || !features?.canBuyBuzz) {
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
@@ -255,7 +255,7 @@ export default function UserMembership() {
                           <StripeManageSubscriptionButton>
                             <Menu.Item>View Details</Menu.Item>
                           </StripeManageSubscriptionButton>
-                          {!subscription?.canceledAt && (
+                          {!subscription?.canceledAt && !isFree && (
                             <Menu.Item
                               onClick={() => {
                                 dialogStore.trigger({
