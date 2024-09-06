@@ -1,6 +1,8 @@
 import { MediaType } from '@prisma/client';
+import { useMemo } from 'react';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 // from options available in CF Flexible variants:
 // https://developers.cloudflare.com/images/cloudflare-images/transform/flexible-variants/
@@ -49,7 +51,7 @@ export function getEdgeUrl(
     gamma,
     optimized,
     skip,
-  }: Omit<EdgeUrlProps, 'src'>
+  }: Omit<EdgeUrlProps, 'src'> = {}
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 
@@ -96,7 +98,6 @@ const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
 
 export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
   const currentUser = useCurrentUser();
-
   const inferredType = videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext))
     ? 'video'
     : 'image';
@@ -112,7 +113,7 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
     anim = false;
   } else if (type === 'video') {
     transcode = true;
-    anim = anim ?? currentUser?.autoplayGifs ?? true;
+    anim = anim ?? true;
   }
 
   if (!anim) type = 'image';
@@ -129,4 +130,10 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
     }),
     type,
   };
+}
+
+export function useGetEdgeUrl(src?: string | null, options: Omit<EdgeUrlProps, 'src'> = {}) {
+  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  if (!options.anim && !autoplayGifs) options.anim = false;
+  return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs]);
 }

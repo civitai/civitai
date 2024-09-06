@@ -91,7 +91,7 @@ export function CommentDiscussionItem({ data: comment }: Props) {
           withUsername
           linkToProfile
         />
-        <CommentDiscussionMenu comment={comment} user={currentUser} hideLockOption />
+        <CommentDiscussionMenu comment={comment} hideLockOption />
       </Group>
 
       <ContentClamp maxHeight={100}>

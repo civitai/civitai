@@ -12,6 +12,8 @@ import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { DynamicAd } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 type Props<TData> = {
   data: TData[];
@@ -38,9 +40,11 @@ export function MasonryGrid<TData>({
   });
 
   const { adsEnabled } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const items = useMemo(
-    () => createAdFeed({ data, columnCount, showAds: adsEnabled && withAds }),
-    [columnCount, data, adsEnabled, withAds]
+    () => createAdFeed({ data, columnCount, showAds: adsReallyAreEnabled }),
+    [columnCount, data, adsReallyAreEnabled]
   );
 
   return items.length ? (

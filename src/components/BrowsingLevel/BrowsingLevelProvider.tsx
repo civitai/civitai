@@ -1,135 +1,18 @@
-import React, { createContext, useContext, useDeferredValue, useEffect, useState } from 'react';
+import React, { createContext, useContext, useDeferredValue, useMemo, useState } from 'react';
 import {
   BrowsingLevel,
-  allBrowsingLevelsFlag,
+  browsingModeDefaults,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { useCookies } from '~/providers/CookiesProvider';
 import { Flags } from '~/shared/utils';
 import { setCookie } from '~/utils/cookies-helpers';
-import { createStore, useStore } from 'zustand';
 import { trpc } from '~/utils/trpc';
-import { useDebouncer } from '~/utils/debouncer';
-import { useSession } from 'next-auth/react';
+import { createDebouncer } from '~/utils/debouncer';
 import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
-import { deleteCookie } from 'cookies-next';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-
-type StoreState = {
-  showNsfw: boolean;
-  blurNsfw: boolean;
-  browsingLevel: number;
-  disableHidden?: boolean;
-};
-type BrowsingModeStore = ReturnType<typeof createBrowsingModeStore>;
-const createBrowsingModeStore = (props: StoreState) =>
-  createStore<StoreState>(() => ({ ...props }));
-
-function useBrowsingModeStore<T>(selector: (state: StoreState) => T) {
-  const store = useContext(BrowsingModeCtx);
-  if (!store) throw new Error('missing BrowsingModeProvider');
-  return useStore(store, selector);
-}
-
-const BrowsingModeCtx = createContext<BrowsingModeStore | null>(null);
-export function useBrowsingModeContext() {
-  const store = useContext(BrowsingModeCtx);
-  if (!store) throw new Error('missing BrowsingModeProvider');
-  return {
-    ...store,
-    useStore: useBrowsingModeStore,
-    toggleShowNsfw: (showNsfw?: boolean) =>
-      store.setState((state) => {
-        const _showNsfw = showNsfw ?? !state.showNsfw;
-        // const browsingLevel = getBrowsingLevelFromShowNsfw(_showNsfw);
-        // return { showNsfw: _showNsfw, browsingLevel };
-        return { showNsfw: _showNsfw };
-      }),
-    toggleBlurNsfw: (blurNsfw?: boolean) =>
-      store.setState((state) => ({ blurNsfw: blurNsfw ?? !state.blurNsfw })),
-    toggleBrowsingLevel: (level: BrowsingLevel) => {
-      store.setState((state) => {
-        const instance = state.browsingLevel;
-        const browsingLevel = !instance
-          ? level
-          : Flags.hasFlag(instance, level)
-          ? Flags.removeFlag(instance, level)
-          : Flags.addFlag(instance, level);
-        return { browsingLevel };
-      });
-    },
-    toggleDisableHidden: (hidden?: boolean) =>
-      store.setState((state) => ({ disableHidden: hidden ?? !state.disableHidden })),
-  };
-}
-
-function updateCookieValues({ browsingLevel, blurNsfw, showNsfw, disableHidden }: StoreState) {
-  setCookie('level', browsingLevel);
-  setCookie('blur', blurNsfw);
-  setCookie('nsfw', showNsfw);
-  setCookie('disableHidden', disableHidden);
-  deleteCookie('mode');
-}
-
-export function BrowsingModeProvider({ children }: { children: React.ReactNode }) {
-  const { status, data } = useSession();
-  const isAuthed = status === 'authenticated';
-  const currentUser = data?.user;
-  const debouncer = useDebouncer(1000);
-  const cookies = useCookies();
-  const { mutate } = trpc.user.updateBrowsingMode.useMutation();
-  const { canViewNsfw } = useFeatureFlags();
-  const [store, setStore] = useState(createBrowsingModeStore(getStoreInitialValues()));
-
-  function getStoreInitialValues() {
-    if (!canViewNsfw || !currentUser)
-      return { showNsfw: false, blurNsfw: true, browsingLevel: publicBrowsingLevelsFlag };
-
-    let showNsfw = currentUser.showNsfw;
-    let browsingLevel = currentUser.browsingLevel;
-    // if cookies.mode is present, then this is the user's first time accessing this feature
-    if (cookies.mode) {
-      showNsfw = false;
-      browsingLevel = allBrowsingLevelsFlag;
-    }
-
-    return {
-      showNsfw,
-      blurNsfw: currentUser.blurNsfw,
-      browsingLevel,
-      disableHidden: cookies.disableHidden,
-    };
-  }
-
-  useDidUpdate(() => {
-    if (isAuthed) {
-      setStore(createBrowsingModeStore(getStoreInitialValues()));
-    }
-  }, [isAuthed]);
-
-  // update the cookie to reflect the browsingLevel state of the current tab
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (store && document.visibilityState === 'visible') updateCookieValues(store.getState());
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [store]);
-
-  useEffect(() => {
-    if (store && isAuthed) {
-      return store.subscribe((state, prevState) => {
-        updateCookieValues(state);
-        const disableHiddenChanged = state.disableHidden !== prevState.disableHidden;
-        if (currentUser && !disableHiddenChanged) debouncer(() => mutate({ ...state }));
-      });
-    }
-  }, [store, isAuthed]);
-
-  return <BrowsingModeCtx.Provider value={store}>{children}</BrowsingModeCtx.Provider>;
-}
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 const BrowsingModeOverrideCtx = createContext<{
   browsingLevelOverride?: number;
@@ -160,25 +43,17 @@ export function BrowsingModeOverrideProvider({
   );
 }
 
-/** returns the user selected browsing level or the system default browsing level */
-export function useBrowsingLevel() {
+function useBrowsingLevel() {
   const { browsingLevelOverride } = useBrowsingModeOverrideContext();
-  const { useStore } = useBrowsingModeContext();
-  const browsingLevel = useStore((x) => x.browsingLevel);
-  const showNsfw = useStore((x) => x.showNsfw);
+  const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   if (browsingLevelOverride) return browsingLevelOverride;
   if (!showNsfw) return publicBrowsingLevelsFlag;
-  return !browsingLevel ? publicBrowsingLevelsFlag : browsingLevel;
+  return browsingLevel;
 }
 
 export function useBrowsingLevelDebounced() {
   const browsingLevel = useBrowsingLevel();
   const [debounced] = useDebouncedValue(browsingLevel, 500);
   return useDeferredValue(debounced ?? browsingLevel);
-}
-
-export function useIsBrowsingLevelSelected(level: BrowsingLevel) {
-  const { useStore } = useBrowsingModeContext();
-  const browsingLevel = useStore((x) => x.browsingLevel);
-  return Flags.hasFlag(browsingLevel, level);
 }

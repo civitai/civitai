@@ -148,3 +148,9 @@ export const toggleableBrowsingCategories = [
     relatedTags: [{ id: 2470, name: 'political' }],
   },
 ];
+
+export const browsingModeDefaults = {
+  showNsfw: false,
+  blurNsfw: true,
+  browsingLevel: publicBrowsingLevelsFlag,
+};

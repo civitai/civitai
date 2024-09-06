@@ -10,7 +10,7 @@ export const useIsClient = () => {
 export const IsClientProvider = ({ children }: { children: React.ReactNode }) => {
   const [isClient, setClient] = useState(false);
 
-  useIsomorphicEffect(() => {
+  useEffect(() => {
     setClient(true);
   }, []);
 

@@ -153,20 +153,4 @@ const useStyles = createStyles((theme) => ({
       },
     },
   },
-  wrapper: {
-    // Fallback
-    ['@supports not (aspect-ratio: 16 / 9)']: {
-      '&:before': {
-        float: 'left',
-        paddingTop: '56.25%',
-        content: '""',
-      },
-
-      '&:after': {
-        display: 'block',
-        content: '""',
-        clear: 'both',
-      },
-    },
-  },
 }));

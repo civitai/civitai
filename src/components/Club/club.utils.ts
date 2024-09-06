@@ -761,7 +761,6 @@ export const useQueryClubs = (
     ...options,
   });
   const currentUser = useCurrentUser();
-  const showNsfw = currentUser?.showNsfw;
 
   const {
     hiddenImages: hiddenImages,
@@ -782,7 +781,7 @@ export const useQueryClubs = (
     //   hiddenUsers,
     //   showNsfw,
     // });
-  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden, showNsfw]);
+  }, [data?.pages, hiddenImages, hiddenTags, hiddenUsers, currentUser, isLoadingHidden]);
 
   return { data, clubs, ...rest };
 };

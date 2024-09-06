@@ -27,7 +27,7 @@ import { env } from '~/env/client.mjs';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features }) => {
-    if (!features?.isGreen)
+    if (!features?.canBuyBuzz)
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/purchase/buzz?sync-account=blue`,

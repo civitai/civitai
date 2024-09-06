@@ -1,6 +1,7 @@
 import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -30,13 +31,14 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
         <Divider label="Image Preferences" mb={-12} />
         <Group noWrap grow>
-          <Switch
+          {/* <Switch
             name="autoplayGifs"
             label="Autoplay GIFs"
             checked={user.autoplayGifs}
             disabled={isLoading}
             onChange={(e) => mutate({ id: user.id, autoplayGifs: e.target.checked })}
-          />
+          /> */}
+          <AutoplayGifsToggle />
           <Select
             label="Preferred Format"
             name="imageFormat"
@@ -118,5 +120,19 @@ export function SettingsCard() {
         )}
       </Stack>
     </Card>
+  );
+}
+
+function AutoplayGifsToggle() {
+  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
+  const setState = useBrowsingSettings((x) => x.setState);
+
+  return (
+    <Switch
+      name="autoplayGifs"
+      label="Autoplay GIFs"
+      checked={autoplayGifs}
+      onChange={(e) => setState({ autoplayGifs: e.target.checked })}
+    />
   );
 }

@@ -3,7 +3,7 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -21,7 +21,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { getSkipValue, shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 function UnroutedImageCard({ data }: Props) {
@@ -30,13 +30,13 @@ function UnroutedImageCard({ data }: Props) {
   });
   const router = useRouter();
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
+  // const currentUser = useCurrentUser();
 
-  const cardDecoration = data.user.cosmetics?.find(
-    ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
-  ) as (typeof data.user.cosmetics)[number] & {
-    data?: { lights?: number; upgradedLights?: number };
-  };
+  // const cardDecoration = data.user.cosmetics?.find(
+  //   ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
+  // ) as (typeof data.user.cosmetics)[number] & {
+  //   data?: { lights?: number; upgradedLights?: number };
+  // };
 
   const originalAspectRatio = data.width && data.height ? data.width / data.height : 1;
   const onSite = data.onSite;
@@ -44,11 +44,6 @@ function UnroutedImageCard({ data }: Props) {
     originalAspectRatio > 1
       ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
       : DEFAULT_EDGE_IMAGE_WIDTH;
-
-  const shouldAnimate = shouldAnimateByDefault({
-    ...data,
-    forceDisabled: !currentUser?.autoplayGifs,
-  });
 
   return (
     <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
@@ -95,7 +90,8 @@ function UnroutedImageCard({ data }: Props) {
                   className={data.cosmetic ? sharedClasses.frameAdjustment : undefined}
                   style={{ height: '100%' }}
                 >
-                  <EdgeMedia
+                  <EdgeMedia2
+                    metadata={data.metadata}
                     src={data.url}
                     name={data.name ?? data.id.toString()}
                     alt={data.name ?? undefined}
@@ -103,7 +99,6 @@ function UnroutedImageCard({ data }: Props) {
                     width={imageWidth}
                     className={sharedClasses.image}
                     wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                    anim={shouldAnimate}
                     skip={getSkipValue(data)}
                     loading="lazy"
                     contain

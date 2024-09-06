@@ -110,6 +110,7 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -123,13 +124,8 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function ModelVersionDetails({
-  model,
-  version,
-  user,
-  onBrowseClick,
-  onFavoriteClick,
-}: Props) {
+export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteClick }: Props) {
+  const user = useCurrentUser();
   const { classes } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
@@ -1277,7 +1273,6 @@ export function ModelVersionDetails({
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
-  user?: SessionUser | null;
   onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
 };
