@@ -168,37 +168,3 @@ export function AdUnit({ children, keys }: { children?: React.ReactElement; keys
 }
 
 AdUnit.Content = AdUnitContent;
-
-export function AdUnitOld({ keys }: { keys: AdUnitKey[] }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const details = getAdUnitDetails(keys);
-  const [width, setWidth] = useState<number>();
-  const item = width ? details.find((x) => x.width <= width) : undefined;
-
-  useIsomorphicLayoutEffect(() => {
-    if (ref.current) {
-      setWidth(ref.current.clientWidth);
-      const observer = new MutationObserver((records) => {
-        const elem = records[0];
-        if (!elem) return;
-        setWidth((elem.target as HTMLDivElement).clientWidth);
-      });
-      observer.observe(ref.current, { attributes: true, attributeFilter: ['clientWidth'] });
-      return () => observer.disconnect();
-    }
-  }, []);
-
-  return (
-    <AdWrapper ref={ref} width={item?.width} height={item?.height}>
-      {item && (
-        <>
-          {item.type === 'dynamic' ? (
-            <pgs-ad data-pg-ad-spot={item.id}></pgs-ad>
-          ) : (
-            <div id={item.id}></div>
-          )}
-        </>
-      )}
-    </AdWrapper>
-  );
-}
