@@ -159,10 +159,10 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
   const { setLabelType } = trainingStore;
 
   // I mean, this could probably be better
-  const firstLabel = imageList[0]?.label;
+  const firstLabel = imageList.find((i) => i.label.length > 0)?.label;
   const estimatedType =
-    firstLabel?.length > 80 && // long string
-    firstLabel?.split(',').length < firstLabel?.length * 0.1 // not many commas
+    (firstLabel?.length ?? 0) > 80 && // long string
+    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.1 // not many commas
       ? 'caption'
       : 'tag';
 

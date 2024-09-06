@@ -226,7 +226,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
                 if (state[modelId]!.labelType === 'tag') {
                   newLabel = `${i.label}, ${label}`;
                 } else {
-                  newLabel = `${i.label} ${label}`; // TODO newline? am i saving newlines?
+                  newLabel = `${i.label}\n${label}`;
                 }
               } else {
                 newLabel = label;

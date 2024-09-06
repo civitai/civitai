@@ -10,7 +10,7 @@ import {
   Text,
   TextInput,
 } from '@mantine/core';
-import { IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
+import { IconFilter, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { HighlightWithinTextarea } from 'react-highlight-within-textarea';
 import { blankTagStr } from '~/components/Training/Form/TrainingImages';
@@ -104,6 +104,11 @@ export const TrainingImagesCaptionViewer = ({
             <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
               {numImages}
             </Badge>
+            {(selectedTags.length > 0 || searchCaption.length > 0) && (
+              <Badge color="red" leftSection={<IconFilter size={14} />}>
+                {(selectedTags.length > 0 ? 1 : 0) + (searchCaption.length > 0 ? 1 : 0)}
+              </Badge>
+            )}
           </Group>
         </Accordion.Control>
         <Accordion.Panel>
