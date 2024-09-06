@@ -3,6 +3,7 @@ import { getModelData } from '~/server/controllers/training.controller';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  autoCaptionInput,
   autoTagInput,
   createTrainingRequestDryRunSchema,
   createTrainingRequestSchema,
@@ -44,7 +45,7 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => autoTagHandler({ ...input, userId: ctx.user.id })),
   autoCaption: guardedProcedure
-    .input(autoTagInput)
+    .input(autoCaptionInput)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => autoCaptionHandler({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure

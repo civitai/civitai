@@ -12,6 +12,7 @@ import {
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import {
+  AutoCaptionInput,
   AutoTagInput,
   CreateTrainingRequestDryRunInput,
   CreateTrainingRequestInput,
@@ -444,6 +445,16 @@ export type AutoTagResponse = {
     [key: string]: number;
   };
 };
+export type CaptionDataResponse = {
+  [key: string]: {
+    joyCaption: {
+      caption: string;
+    };
+  };
+};
+export type AutoCaptionResponse = {
+  [key: string]: string;
+};
 
 export const autoTagHandler = async ({
   url,
@@ -486,37 +497,42 @@ export const autoCaptionHandler = async ({
   url,
   modelId,
   userId,
-}: AutoTagInput & {
+  temperature,
+  maxNewTokens,
+}: AutoCaptionInput & {
   userId: number;
 }) => {
   const { url: getUrl } = await getGetUrl(url);
   const { key, bucket } = parseKey(url);
   if (!bucket) throw throwBadRequestError('Invalid URL');
 
-  const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
+  const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
     modelId,
     properties: { userId, modelId },
     retries: 0,
+    model: 'joy-caption-pre-alpha',
+    temperature,
+    maxNewTokens: maxNewTokens,
   };
 
-  // const response = await getOrchestratorCaller(new Date()).imageAutoTag({
-  //   payload,
-  // });
-  //
-  // if (response.status === 429) {
-  //   deleteObject(bucket, key).catch();
-  //   throw throwRateLimitError();
-  // }
-  //
-  // if (!response.ok) {
-  //   deleteObject(bucket, key).catch();
-  //   throw throwBadRequestError(
-  //     'We are not able to process your request at this time. Please try again later.'
-  //   );
-  // }
-  //
-  // return response.data;
+  const response = await getOrchestratorCaller(new Date()).imageAutoCaption({
+    payload,
+  });
+
+  if (response.status === 429) {
+    deleteObject(bucket, key).catch();
+    throw throwRateLimitError();
+  }
+
+  if (!response.ok) {
+    deleteObject(bucket, key).catch();
+    throw throwBadRequestError(
+      'We are not able to process your request at this time. Please try again later.'
+    );
+  }
+
+  return response.data;
 };
 
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {

@@ -100,6 +100,16 @@ class OrchestratorCaller extends HttpCaller {
     });
   }
 
+  public imageAutoCaption({
+    payload,
+  }: {
+    payload: Orchestrator.Training.ImageAutoCaptionJobPayload;
+  }) {
+    return this.post<Orchestrator.Training.ImageAutoCaptionJobResponse>('/v1/consumer/jobs', {
+      payload: { $type: 'mediaCaptioning', ...payload },
+    });
+  }
+
   public getEventById({ id, take, descending }: Orchestrator.Events.QueryParams) {
     return this.get<Orchestrator.Events.GetResponse>(`/v1/producer/jobs/${id}/events`, {
       queryParams: { take, descending },
