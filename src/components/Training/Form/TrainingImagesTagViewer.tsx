@@ -78,7 +78,7 @@ export const TrainingImagesLabelTypeSelect = ({
 }: {
   modelId: number;
 } & Omit<SegmentedControlProps, 'data' | 'onChange' | 'value'>) => {
-  const { labelType } = useTrainingImageStore(
+  const { labelType, autoLabeling } = useTrainingImageStore(
     (state) => state[modelId] ?? { ...defaultTrainingState }
   );
   const { setLabelType } = trainingStore;
@@ -103,6 +103,7 @@ export const TrainingImagesLabelTypeSelect = ({
       onChange={(v) => setLabelType(modelId, v as LabelTypes)}
       radius="sm"
       fullWidth
+      disabled={autoLabeling.isRunning}
       {...controlProps}
     />
   );
