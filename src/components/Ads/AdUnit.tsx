@@ -5,6 +5,7 @@ import React, {
   createContext,
   forwardRef,
   useContext,
+  useEffect,
   useRef,
   useState,
 } from 'react';
@@ -17,6 +18,8 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useInView } from 'react-intersection-observer';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;
@@ -25,14 +28,23 @@ type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
 };
 
 const AdWrapper = forwardRef<HTMLDivElement, AdWrapperProps>(
-  ({ children, className, width, height, style, ...props }, ref) => {
+  ({ children, className, width, height, style, ...props }) => {
+    const node = useScrollAreaRef();
     const currentUser = useCurrentUser();
     const isClient = useIsClient();
+    const [visible, setVisible] = useState(false);
     const { adsBlocked, adsEnabled, isMember } = useAdsContext();
     const browsingLevel = useBrowsingLevelDebounced();
     const isMobile =
       typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
     // const focused = useIsLevelFocused();
+
+    const { ref, inView } = useInView({ root: node?.current, rootMargin: '300px 0px' });
+    useEffect(() => {
+      if (inView && !visible) {
+        setVisible(true);
+      }
+    }, [inView]);
 
     if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
 
@@ -56,7 +68,7 @@ const AdWrapper = forwardRef<HTMLDivElement, AdWrapperProps>(
               </NextLink>
             ) : (
               <div className="w-full overflow-hidden">
-                {typeof children === 'function' ? children({ isMobile }) : children}
+                {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
               </div>
             )}
 
