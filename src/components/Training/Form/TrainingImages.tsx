@@ -43,7 +43,7 @@ import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -124,11 +124,22 @@ const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
 
-// TODO insert line breaks
-export const labelDescriptions: { [p in LabelTypes]: string } = {
-  tag: 'Short, comma-separated descriptions. Ex: "dolphin, ocean, jumping, gorgeous scenery".',
-  caption:
-    'Natural language, long-form sentences. Ex: "There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of a setting sun."',
+export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
+  tag: (
+    <Stack spacing={0}>
+      <Text>Short, comma-separated descriptions.</Text>
+      <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
+    </Stack>
+  ),
+  caption: (
+    <Stack spacing={0}>
+      <Text>Natural language, long-form sentences.</Text>
+      <Text fs="italic">
+        Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
+        a setting sun.&quot;
+      </Text>
+    </Stack>
+  ),
 };
 
 export const getTextTagsAsList = (txt: string) => {
@@ -176,14 +187,17 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
       }
     >
       <Stack>
-        <Text>You&apos;ve included some labeling (.txt) files. Which type are they?</Text>
+        <Stack spacing={0}>
+          <Text>You&apos;ve included some labeling (.txt) files.</Text>{' '}
+          <Text>Which type are they?</Text>
+        </Stack>
         <Group spacing="xs">
-          <Text size="sm">Currently using: </Text>
+          <Text size="sm">Current type: </Text>
           <Badge>{labelType}</Badge>
         </Group>
         <Group spacing="xs">
-          <Text size="sm"> Estimated type: </Text>
-          <Badge>{estimatedType}</Badge>
+          <Text size="sm">Estimated type: </Text>
+          <Badge color={labelType === estimatedType ? 'blue' : 'red'}>{estimatedType}</Badge>
         </Group>
         <SegmentedControl
           value={labelValue}
