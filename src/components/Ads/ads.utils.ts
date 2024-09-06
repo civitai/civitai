@@ -53,13 +53,13 @@ export const useConsentManager = create<{ targeting?: boolean }>()(
 
 type AdDensity = [columns: number, interval: [min: number, max: number]];
 const adDensity: AdDensity[] = [
-  [1, [6, 10]],
-  [2, [7, 12]],
-  [3, [8, 14]],
-  [4, [9, 15]],
-  [5, [10, 14]],
-  [6, [12, 15]],
-  [7, [14, 20]],
+  [1, [5, 7]],
+  [2, [6, 9]],
+  [3, [7, 10]],
+  [4, [8, 11]],
+  [5, [9, 12]],
+  [6, [10, 13]],
+  [7, [12, 18]],
 ];
 
 interface IAdUnit {
