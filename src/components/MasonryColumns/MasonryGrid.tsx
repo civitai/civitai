@@ -1,16 +1,16 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Button, Stack, createStyles, useMantineTheme } from '@mantine/core';
+import { Button, createStyles, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
-import { Paper, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
-import { DynamicAd } from '~/components/Ads/AdUnit';
+import { AdUnit } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -86,7 +86,7 @@ export function MasonryGrid<TData>({
                   </Button>
                 </div>
 
-                <DynamicAd />
+                <AdUnit keys={['300x250:Dynamic_Feeds']} />
               </TwCard>
             )}
           </React.Fragment>
