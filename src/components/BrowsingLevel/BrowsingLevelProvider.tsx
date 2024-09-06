@@ -44,7 +44,9 @@ export function BrowsingModeOverrideProvider({
 }
 
 export function useBrowsingLevelDebounced() {
+  const { browsingLevelOverride } = useBrowsingModeOverrideContext();
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
-  const [debounced] = useDebouncedValue(browsingLevel, 500);
-  return useDeferredValue(debounced ?? browsingLevel);
+  const level = browsingLevelOverride ?? browsingLevel;
+  const [debounced] = useDebouncedValue(level, 500);
+  return useDeferredValue(debounced ?? level);
 }
