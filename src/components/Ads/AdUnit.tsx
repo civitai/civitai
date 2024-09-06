@@ -1,17 +1,13 @@
 import { AdSizes } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { NextLink } from '@mantine/next';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useInView } from 'react-intersection-observer';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
@@ -59,10 +55,10 @@ function AdWrapper({
                 height={height}
               />
             </NextLink>
-          ) : typeof children === 'function' ? (
-            children({ isMobile })
           ) : (
-            children
+            <div className="w-full overflow-hidden">
+              {typeof children === 'function' ? children({ isMobile }) : children}
+            </div>
           )}
 
           <div className="flex w-full justify-between">
@@ -105,11 +101,7 @@ export function DynamicAd() {
     <AdWrapper width={300} height={250}>
       {({ isMobile }) => {
         const id = isMobile ? 'civitaicom47764' : 'civitaicom47455';
-        return (
-          <ImpressionTracker2 className="w-full overflow-hidden">
-            <div id={id} />
-          </ImpressionTracker2>
-        );
+        return <div id={id} />;
       }}
     </AdWrapper>
   );
@@ -125,51 +117,19 @@ export function ModelAndImagePageAdUnit() {
       <AdWrapper component="TwCard" className="border p-2 shadow" width={300} height={250}>
         {({ isMobile }) => {
           const id = isMobile ? 'civitaicom47765' : 'civitaicom47763';
-          return (
-            <ImpressionTracker2 className="w-full overflow-hidden">
-              <div id={id} />
-            </ImpressionTracker2>
-          );
+          return <div id={id} />;
         }}
       </AdWrapper>
     </div>
   );
 }
 
-function ImpressionTracker2(props: React.HTMLAttributes<HTMLDivElement>) {
-  // const ref = useRef<HTMLDivElement | null>(null);
-  // const currentUser = useCurrentUser();
-  // const { adsEnabled, adsBlocked } = useAdsContext();`
-  // const { worker } = useSignalContext();
-  // const { fingerprint } = useDeviceFingerprint();
-
-  // useEffect(() => {
-  //   const listener = ((e: CustomEvent) => {
-  //     const wrapper = ref.current;
-  //     if (!wrapper || !adsEnabled || adsBlocked) return;
-  //     const slot = e.detail;
-  //     const elemId = slot.getSlotElementId();
-  //     const outOfPage = slot.getOutOfPage();
-  //     const exists = !!wrapper.querySelector(`#${elemId}`);
-
-  //     console.log({ ...e.detail, exists, outOfPage });
-
-  //     if (worker && exists && currentUser && !outOfPage) {
-  //       const adId = elemId.split('-')[0];
-
-  //       worker.send('recordAdImpression', {
-  //         userId: currentUser.id,
-  //         fingerprint,
-  //         adId,
-  //       });
-  //     }
-  //   }) as EventListener;
-
-  //   window.addEventListener('civitai-ad-impression', listener);
-  //   return () => {
-  //     window.removeEventListener('civitai-ad-impression', listener);
-  //   };
-  // }, [adsEnabled, fingerprint, worker, adsBlocked, currentUser]);
-
-  return <div {...props} />;
-}
+// export function LeaderboardAd_A() {
+//   return (
+//     <AdWrapper>
+//       {({ isMobile }) =>
+//         isMobile ? <div id="civitaicom47760"></div> : <div id="civitaicom47456"></div>
+//       }
+//     </AdWrapper>
+//   );
+// }
