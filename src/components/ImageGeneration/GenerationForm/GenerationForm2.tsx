@@ -250,7 +250,10 @@ export function GenerationFormContent() {
       try {
         await mutateAsync({
           resources,
-          params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
+          params: {
+            ...params,
+            nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+          },
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
             : undefined,
@@ -740,7 +743,7 @@ export function GenerationFormContent() {
                   />
                 </div>
 
-                {!isFlux && (
+                {!isFlux && featureFlags.canViewNsfw && (
                   <div className="my-2 flex flex-wrap justify-between gap-3">
                     <InputSwitch
                       name="nsfw"
