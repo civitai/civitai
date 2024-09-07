@@ -184,7 +184,7 @@ export const PaddleTransacionModal = ({
                   <Text>
                     Seems we&rsquo;re having trouble connecting you with our payment processor, Try
                     to <RefreshSessionButton />, use a different browser or trying again later. If
-                    you&rsquo;re still unable to checkout, please contact support
+                    you&rsquo;re still unable to checkout, please contact support{' '}
                     <Anchor href="https://civitai.com/support">here</Anchor>
                   </Text>
                 </Alert>

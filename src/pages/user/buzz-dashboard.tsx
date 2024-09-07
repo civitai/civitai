@@ -125,8 +125,7 @@ export default function UserBuzzDashboard() {
                   <Text>
                     Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz.
                     Try to <RefreshSessionButton />, if that doesn&rsquo;t work please contact
-                    support
-                    <Anchor href="https://civitai.com/support">here</Anchor>
+                    support <Anchor href="https://civitai.com/support">here</Anchor>
                   </Text>
                 </Alert>
               )}
