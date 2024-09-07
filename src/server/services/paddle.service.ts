@@ -14,6 +14,7 @@ import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
+  getPaddleCustomerSubscriptions,
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
@@ -404,9 +405,8 @@ export const upsertSubscription = async (
     productId: mainSubscriptionItem.price?.productId as string,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
     cancelAt:
-      subscriptionNotification.scheduledChange?.action === 'cancel' &&
-      subscriptionNotification.currentBillingPeriod?.endsAt
-        ? new Date(subscriptionNotification.currentBillingPeriod?.endsAt)
+      subscriptionNotification.scheduledChange?.action === 'cancel'
+        ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
         : null,
     canceledAt: subscriptionNotification.scheduledChange?.action === 'cancel' ? new Date() : null,
     currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
@@ -644,4 +644,61 @@ export const updateSubscriptionPlan = async ({
   } catch (e) {
     return new Error('Failed to update subscription');
   }
+};
+
+export const refreshSubscription = async ({ userId }: { userId: number }) => {
+  let customerId = '';
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { paddleCustomerId: true, email: true, id: true, subscriptionId: true },
+  });
+
+  const customerSubscription = await dbRead.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: {
+        in: ['active', 'trialing'],
+      },
+    },
+  });
+
+  if (!user?.email && !user?.paddleCustomerId) {
+    throw throwBadRequestError('Email is required to create a customer');
+  }
+
+  if (!user?.paddleCustomerId) {
+    customerId = await createCustomer({ id: userId, email: user.email as string });
+  } else {
+    customerId = user.paddleCustomerId;
+  }
+
+  const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
+
+  if (subscriptions.length === 0) {
+    throwBadRequestError('No active subscriptions found on Paddle');
+  }
+
+  const subscription = subscriptions[0];
+
+  if (customerSubscription && customerSubscription.id !== subscription.id) {
+    // This is a different subscription, we should update the user.
+    await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
+    await dbWrite.user.update({ where: { id: userId }, data: { subscriptionId: null } });
+  }
+
+  // This should trigger an update...
+  await updatePaddleSubscription({
+    subscriptionId: subscription.id,
+    customData: {
+      ...subscription.customData,
+      refreshed: new Date().toISOString(),
+    },
+  });
+
+  await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+
+  await invalidateSession(userId);
+  await getMultipliersForUser(userId, true);
+
+  return true;
 };

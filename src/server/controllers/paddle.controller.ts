@@ -11,6 +11,7 @@ import {
   createCustomer,
   processCompleteBuzzTransaction,
   purchaseBuzzWithSubscription,
+  refreshSubscription,
   updateSubscriptionPlan,
 } from '~/server/services/paddle.service';
 import {
@@ -191,6 +192,14 @@ export const getOrCreateCustomerHandler = async ({ ctx }: { ctx: DeepNonNullable
     const user = { id: ctx.user.id, email: ctx.user.email as string };
     const customer = await createCustomer(user);
     return customer;
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const refreshSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    return await refreshSubscription({ userId: ctx.user.id });
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

@@ -49,6 +49,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { env } from '~/env/client.mjs';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { PaymentProvider } from '@prisma/client';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -252,9 +253,11 @@ export default function UserMembership() {
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
-                          <StripeManageSubscriptionButton>
-                            <Menu.Item>View Details</Menu.Item>
-                          </StripeManageSubscriptionButton>
+                          {subscriptionPaymentProvider === PaymentProvider.Stripe && (
+                            <StripeManageSubscriptionButton>
+                              <Menu.Item>View Details</Menu.Item>
+                            </StripeManageSubscriptionButton>
+                          )}
                           {!subscription?.canceledAt && !isFree && (
                             <Menu.Item
                               onClick={() => {
@@ -271,6 +274,13 @@ export default function UserMembership() {
                       </Menu>
                     </Group>
                   </Group>
+                  {subscription.cancelAt && (
+                    <Text color="red">
+                      Your membership will be canceled on{' '}
+                      {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
+                      benefits on that date.
+                    </Text>
+                  )}
                 </Stack>
               </Paper>
 
