@@ -1,4 +1,5 @@
 import {
+  Alert,
   Center,
   Container,
   createStyles,
@@ -109,11 +110,17 @@ export default function UserBuzzDashboard() {
 
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md">
+              {isMember && rewardsMultiplier === 1 && features.membershipsV2 && (
+                <Alert color="red" title="Looks like we have an issue!">
+                  Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz. Try
+                  refreshing your session, if that doesn&rsquo;t work please contact us at
+                  support@civitai.com
+                </Alert>
+              )}
               <Group position="apart">
                 <Title order={3} id="rewards">
                   Other ways you can earn Buzz
                 </Title>
-
                 {isMember && rewardsMultiplier > 1 && features.membershipsV2 && (
                   <Tooltip multiline label="Your membership makes rewards worth more!">
                     <Stack spacing={0}>
@@ -191,7 +198,13 @@ export default function UserBuzzDashboard() {
               )}
             </Stack>
           </Paper>
-          <Text mt={-16} size="sm" mb="xs" align="right">Still looking for ways to get more Buzz? Consider posting to the <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">Buzz Beggars Board</Text>.</Text>
+          <Text mt={-16} size="sm" mb="xs" align="right">
+            Still looking for ways to get more Buzz? Consider posting to the{' '}
+            <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">
+              Buzz Beggars Board
+            </Text>
+            .
+          </Text>
           <EarlyAccessRewards />
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward />}

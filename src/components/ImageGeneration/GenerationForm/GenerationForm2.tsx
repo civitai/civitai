@@ -93,6 +93,7 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -143,6 +144,7 @@ export function GenerationFormContent() {
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
+  const { subscription, meta: subscriptionMeta } = useActiveSubscription();
 
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
@@ -152,6 +154,7 @@ export function GenerationFormContent() {
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
+  const subscriptionMismatch = subscription ? subscriptionMeta?.tier !== status.tier : false;
 
   const { errors } = form.formState;
 
@@ -984,6 +987,15 @@ export function GenerationFormContent() {
               </ScrollArea>
               <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
                 <DailyBoostRewardClaim />
+                {subscriptionMismatch && (
+                  <DismissibleAlert color="red" title="Subscription Mismatch">
+                    <Text size="xs">
+                      Looks like we&rsquo;re having trouble correctly applying your membership
+                      bonuses, try refreshing your session, if that doesn&rsquo;t work please
+                      contact us at support@civitai.com
+                    </Text>
+                  </DismissibleAlert>
+                )}
                 {promptWarning ? (
                   <div>
                     <Alert color="red" title="Prohibited Prompt">

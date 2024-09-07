@@ -194,8 +194,9 @@ export default function UserMembership() {
               {subscriptionPaymentProvider !== paymentProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
-                  this is completed you will be unable to upgrade your subscription. We estimate the
-                  migration will be done September 4th, 2024. Thank you for your patience!
+                  this is completed you will be unable to upgrade your subscription. Migration is
+                  taking a bit longer than expected, but we are working hard to get it done as soon
+                  as possible.
                 </Alert>
               )}
               {isDrowngrade && downgradedTier && (
