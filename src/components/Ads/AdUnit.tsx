@@ -27,87 +27,84 @@ type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   children: React.ReactNode | ((args: { isMobile: boolean }) => React.ReactNode);
 };
 
-const AdWrapper = forwardRef<HTMLDivElement, AdWrapperProps>(
-  ({ children, className, width, height, style, ...props }) => {
-    const node = useScrollAreaRef();
-    const currentUser = useCurrentUser();
-    const isClient = useIsClient();
-    const [visible, setVisible] = useState(false);
-    const { adsBlocked, adsEnabled, isMember } = useAdsContext();
-    const browsingLevel = useBrowsingLevelDebounced();
-    const isMobile =
-      typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
-    // const focused = useIsLevelFocused();
+const AdWrapper = ({ children, className, width, height, style, ...props }: AdWrapperProps) => {
+  const node = useScrollAreaRef();
+  const currentUser = useCurrentUser();
+  const isClient = useIsClient();
+  const [visible, setVisible] = useState(false);
+  const { adsBlocked, adsEnabled, isMember } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const isMobile =
+    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  // const focused = useIsLevelFocused();
 
-    const { ref, inView } = useInView({ root: node?.current, rootMargin: '300px 0px' });
-    useEffect(() => {
-      if (inView && !visible) {
-        setVisible(true);
-      }
-    }, [inView]);
+  const { ref, inView } = useInView({ root: node?.current, rootMargin: '300px 0px' });
+  useEffect(() => {
+    if (inView && !visible) {
+      setVisible(true);
+    }
+  }, [inView]);
 
-    if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
+  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
 
-    return (
-      <div
-        ref={ref}
-        className={clsx('flex flex-col items-center justify-between', className)}
-        style={{ ...style, minHeight: height ? height + 20 : undefined, minWidth: width }}
-        {...props}
-      >
-        {isClient && adsBlocked !== undefined && height && width && (
-          <>
-            {adsBlocked ? (
-              <NextLink href="/pricing" className="flex">
-                <Image
-                  src={`/images/support-us/${width}x${height}.jpg`}
-                  alt="Please support civitai and creators by disabling adblock"
-                  width={width}
-                  height={height}
-                />
-              </NextLink>
+  return (
+    <div
+      ref={ref}
+      className={clsx('flex flex-col items-center justify-between', className)}
+      style={{ ...style, minHeight: height ? height + 20 : undefined, minWidth: width }}
+      {...props}
+    >
+      {isClient && adsBlocked !== undefined && height && width && (
+        <>
+          {adsBlocked ? (
+            <NextLink href="/pricing" className="flex">
+              <Image
+                src={`/images/support-us/${width}x${height}.jpg`}
+                alt="Please support civitai and creators by disabling adblock"
+                width={width}
+                height={height}
+              />
+            </NextLink>
+          ) : (
+            <div className="w-full overflow-hidden">
+              {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
+            </div>
+          )}
+
+          <div className="flex w-full justify-between">
+            {!isMember ? (
+              <Text
+                component={NextLink}
+                td="underline"
+                href="/pricing"
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Remove ads
+              </Text>
             ) : (
-              <div className="w-full overflow-hidden">
-                {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
-              </div>
+              <div />
             )}
 
-            <div className="flex w-full justify-between">
-              {!isMember ? (
-                <Text
-                  component={NextLink}
-                  td="underline"
-                  href="/pricing"
-                  color="dimmed"
-                  size="xs"
-                  align="center"
-                >
-                  Remove ads
-                </Text>
-              ) : (
-                <div />
-              )}
-
-              {currentUser && (
-                <Text
-                  component={NextLink}
-                  td="underline"
-                  href={`/ad-feedback?Username=${currentUser.username}`}
-                  color="dimmed"
-                  size="xs"
-                  align="center"
-                >
-                  Feedback
-                </Text>
-              )}
-            </div>
-          </>
-        )}
-      </div>
-    );
-  }
-);
-AdWrapper.displayName = 'AdWrapper';
+            {currentUser && (
+              <Text
+                component={NextLink}
+                td="underline"
+                href={`/ad-feedback?Username=${currentUser.username}`}
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Feedback
+              </Text>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 type ContextState = {
   ref: MutableRefObject<HTMLDivElement | null>;
