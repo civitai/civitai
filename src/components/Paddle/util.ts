@@ -8,12 +8,18 @@ import {
 import { trpc } from '~/utils/trpc';
 
 export const useMutatePaddle = () => {
+  const queryUtils = trpc.useUtils();
   const processCompleteBuzzTransactionMutation =
     trpc.paddle.processCompleteBuzzTransaction.useMutation();
   const updateSubscriptionMutation = trpc.paddle.updateSubscription.useMutation();
   const cancelSubscriptionMutation = trpc.paddle.cancelSubscription.useMutation();
   const purchaseBuzzWithSubscription = trpc.paddle.purchaseBuzzWithSubscription.useMutation();
   const getOrCreateCustomerIdMutation = trpc.paddle.getOrCreateCustomer.useMutation();
+  const refreshSubscriptionMutation = trpc.paddle.refreshSubscription.useMutation({
+    onSuccess: () => {
+      queryUtils.subscriptions.getUserSubscription.invalidate(undefined);
+    },
+  });
 
   const handleProcessCompleteBuzzTransaction = (data: GetByIdStringInput) => {
     return processCompleteBuzzTransactionMutation.mutateAsync(data);
@@ -40,6 +46,10 @@ export const useMutatePaddle = () => {
     return getOrCreateCustomerIdMutation.mutateAsync();
   };
 
+  const handleRefreshSubscription = () => {
+    return refreshSubscriptionMutation.mutateAsync();
+  };
+
   return {
     processCompleteBuzzTransaction: handleProcessCompleteBuzzTransaction,
     processingCompleteBuzzTransaction: processCompleteBuzzTransactionMutation.isLoading,
@@ -51,6 +61,8 @@ export const useMutatePaddle = () => {
     purchasingBuzzWithSubscription: purchaseBuzzWithSubscription.isLoading,
     getOrCreateCustomer: handleGetOrCreateCustomer,
     gettingOrCreateCustomer: getOrCreateCustomerIdMutation.isLoading,
+    refreshSubscription: handleRefreshSubscription,
+    refreshingSubscription: refreshSubscriptionMutation.isLoading,
   };
 };
 

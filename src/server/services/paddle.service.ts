@@ -14,6 +14,7 @@ import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
+  getPaddleCustomerSubscriptions,
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
@@ -42,6 +43,7 @@ import {
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
+import { env } from '~/env/server.mjs';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -402,11 +404,11 @@ export const upsertSubscription = async (
     priceId: mainSubscriptionItem.price?.id as string,
     productId: mainSubscriptionItem.price?.productId as string,
     cancelAtPeriodEnd: isCancelingSubscription ? true : false,
-    cancelAt: null,
-    canceledAt:
+    cancelAt:
       subscriptionNotification.scheduledChange?.action === 'cancel'
-        ? new Date(subscriptionNotification.scheduledChange.effectiveAt)
+        ? new Date(subscriptionNotification.scheduledChange?.effectiveAt)
         : null,
+    canceledAt: subscriptionNotification.scheduledChange?.action === 'cancel' ? new Date() : null,
     currentPeriodStart: subscriptionNotification.currentBillingPeriod?.startsAt
       ? new Date(subscriptionNotification.currentBillingPeriod?.startsAt)
       : undefined,
@@ -500,7 +502,7 @@ export const manageSubscriptionTransactionComplete = async (
 
   await dbWrite.purchase.createMany({ data: purchases });
 
-  const plans = await getPlans({ paymentProvider: PaymentProvider.Paddle });
+  const plans = await getPlans({ paymentProvider: PaymentProvider.Paddle, includeInactive: true });
 
   // Don't check for subscription active because there is a chance it hasn't been updated yet
   const paidPlans = plans.filter((p) => {
@@ -529,6 +531,63 @@ export const manageSubscriptionTransactionComplete = async (
         })
       );
     }).catch(handleLogError);
+  }
+};
+
+export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => {
+  const subscription = await dbRead.customerSubscription.findFirst({
+    select: {
+      id: true,
+      product: {
+        select: {
+          id: true,
+          metadata: true,
+        },
+      },
+    },
+    where: {
+      userId,
+      status: {
+        in: ['active', 'trialing'],
+      },
+      product: {
+        provider: PaymentProvider.Paddle,
+      },
+    },
+  });
+
+  if (!subscription) {
+    throw throwNotFoundError('No active subscription found');
+  }
+
+  const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
+
+  if (!paddleSubscription) {
+    throw throwNotFoundError(
+      'This subscription does not seem active on Paddle. Please contact support.'
+    );
+  }
+
+  const meta = subscription.product.metadata as SubscriptionProductMetadata;
+  const isFreeTier = env.TIER_METADATA_KEY ? meta[env.TIER_METADATA_KEY] === 'free' : false;
+
+  try {
+    await updatePaddleSubscription({
+      subscriptionId: subscription.id,
+      scheduledChange: {
+        action: 'cancel',
+        effectiveAt: isFreeTier ? 'immediately' : 'next_billing_period',
+      },
+    });
+
+    await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
+
+    return true;
+  } catch (e) {
+    return new Error('Failed to cancel subscription');
   }
 };
 
@@ -593,4 +652,61 @@ export const updateSubscriptionPlan = async ({
   } catch (e) {
     return new Error('Failed to update subscription');
   }
+};
+
+export const refreshSubscription = async ({ userId }: { userId: number }) => {
+  let customerId = '';
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { paddleCustomerId: true, email: true, id: true, subscriptionId: true },
+  });
+
+  const customerSubscription = await dbRead.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: {
+        in: ['active', 'trialing'],
+      },
+    },
+  });
+
+  if (!user?.email && !user?.paddleCustomerId) {
+    throw throwBadRequestError('Email is required to create a customer');
+  }
+
+  if (!user?.paddleCustomerId) {
+    customerId = await createCustomer({ id: userId, email: user.email as string });
+  } else {
+    customerId = user.paddleCustomerId;
+  }
+
+  const subscriptions = await getPaddleCustomerSubscriptions({ customerId });
+
+  if (subscriptions.length === 0) {
+    throwBadRequestError('No active subscriptions found on Paddle');
+  }
+
+  const subscription = subscriptions[0];
+
+  if (customerSubscription && customerSubscription.id !== subscription.id) {
+    // This is a different subscription, we should update the user.
+    await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
+    await dbWrite.user.update({ where: { id: userId }, data: { subscriptionId: null } });
+  }
+
+  // This should trigger an update...
+  await updatePaddleSubscription({
+    subscriptionId: subscription.id,
+    customData: {
+      ...subscription.customData,
+      refreshed: new Date().toISOString(),
+    },
+  });
+
+  await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+
+  await invalidateSession(userId);
+  await getMultipliersForUser(userId, true);
+
+  return true;
 };

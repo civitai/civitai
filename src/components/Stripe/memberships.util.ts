@@ -28,6 +28,8 @@ export const useActiveSubscription = ({
     subscriptionLoading: !isMember ? false : isLoading || isFetching,
     subscriptionPaymentProvider: subscription?.product?.provider,
     isFreeTier: !subscription || meta?.tier === 'free',
+    tier: meta?.tier ?? currentUser?.tier ?? 'free',
+    meta,
   };
 };
 

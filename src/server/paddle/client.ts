@@ -142,6 +142,16 @@ export const updateTransaction = ({
   });
 };
 
+export const getPaddleCustomerSubscriptions = async ({ customerId }: { customerId: string }) => {
+  const paddle = getPaddle();
+  const collection = await paddle.subscriptions.list({
+    customerId: [customerId],
+    status: ['active'],
+  });
+
+  return collection.next();
+};
+
 export const getPaddleSubscription = ({ subscriptionId }: { subscriptionId: string }) => {
   const paddle = getPaddle();
   return paddle.subscriptions.get(subscriptionId);

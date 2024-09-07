@@ -49,6 +49,10 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { env } from '~/env/client.mjs';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { PaymentProvider } from '@prisma/client';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useMutatePaddle } from '~/components/Paddle/util';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -69,7 +73,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!features?.isGreen || !features.canBuyBuzz) {
+    if (!features?.isGreen || !features?.canBuyBuzz) {
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/user/membership?sync-account=blue`,
@@ -105,6 +109,7 @@ export default function UserMembership() {
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
+  const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
@@ -113,13 +118,61 @@ export default function UserMembership() {
   const isDrowngrade = query.success ? query.data?.downgraded : false;
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
   const isUpdate = query.success ? query.data?.updated : false;
+  const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+  const handleRefreshSubscription = async () => {
+    try {
+      await refreshSubscription();
+      showSuccessNotification({
+        title: 'Subscription refreshed',
+        message: 'Your subscription has been successfully refreshed',
+      });
+    } catch (error: any) {
+      console.error('Failed to refresh subscription', error);
+      showErrorNotification({
+        title: 'Failed to refresh subscription',
+        error: error?.message ?? 'An error occurred while refreshing your subscription',
+      });
+    }
+  };
 
-  if (subscriptionLoading || !subscription) {
+  if (subscriptionLoading) {
     return (
       <Container size="lg">
         <Center>
           <Loader />
         </Center>
+      </Container>
+    );
+  }
+
+  if (!subscription) {
+    return (
+      <Container size="md">
+        <Alert color="red" title="No active subscription">
+          <Stack>
+            <Text>
+              We could not find an active subscription for your account. If you believe this is a
+              mistake, you may try refreshing your session on your settings.
+            </Text>
+
+            {currentUser?.paddleCustomerId && (
+              <>
+                <Text>
+                  If you have signed up for a subscription with our new Paddle payment processor,
+                  click the button below to sync your account.
+                </Text>
+
+                <Button
+                  color="yellow"
+                  loading={refreshingSubscription}
+                  onClick={handleRefreshSubscription}
+                >
+                  Refresh now
+                </Button>
+              </>
+            )}
+          </Stack>
+        </Alert>
       </Container>
     );
   }
@@ -141,8 +194,9 @@ export default function UserMembership() {
               {subscriptionPaymentProvider !== paymentProvider && (
                 <Alert>
                   We are currently migrating your account info to our new payment processor, until
-                  this is completed you will be unable to upgrade your subscription. We estimate the
-                  migration will be done September 4th, 2024. Thank you for your patience!
+                  this is completed you will be unable to upgrade your subscription. Migration is
+                  taking a bit longer than expected, but we are working hard to get it done as soon
+                  as possible.
                 </Alert>
               )}
               {isDrowngrade && downgradedTier && (
@@ -154,8 +208,8 @@ export default function UserMembership() {
               )}
               {isUpdate && (
                 <Alert>
-                  Your membership has been successfully updated. It may take a few seconds for your
-                  new plan to take effect. If you don&rsquo;t see the changes after refreshing the
+                  Your membership has been successfully updated. It may take a few minutes for your
+                  update to take effect. If you don&rsquo;t see the changes after refreshing the
                   page in a few minutes, please contact support.
                 </Alert>
               )}
@@ -252,10 +306,12 @@ export default function UserMembership() {
                           </ActionIcon>
                         </Menu.Target>
                         <Menu.Dropdown>
-                          <StripeManageSubscriptionButton>
-                            <Menu.Item>View Details</Menu.Item>
-                          </StripeManageSubscriptionButton>
-                          {!subscription?.canceledAt && (
+                          {subscriptionPaymentProvider === PaymentProvider.Stripe && (
+                            <StripeManageSubscriptionButton>
+                              <Menu.Item>View Details</Menu.Item>
+                            </StripeManageSubscriptionButton>
+                          )}
+                          {!subscription?.canceledAt && !isFree && (
                             <Menu.Item
                               onClick={() => {
                                 dialogStore.trigger({
@@ -271,6 +327,13 @@ export default function UserMembership() {
                       </Menu>
                     </Group>
                   </Group>
+                  {subscription.cancelAt && (
+                    <Text color="red">
+                      Your membership will be canceled on{' '}
+                      {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
+                      benefits on that date.
+                    </Text>
+                  )}
                 </Stack>
               </Paper>
 
