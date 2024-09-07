@@ -259,6 +259,7 @@ export const PaddleCancelMembershipButton = ({
             title: 'You have been successfully downgraded to our Free tier.',
             message: 'You will no longer be billed for your subscription',
           });
+          window?.location.reload();
         }
       },
     });
