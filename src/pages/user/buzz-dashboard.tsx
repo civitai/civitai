@@ -110,13 +110,16 @@ export default function UserBuzzDashboard() {
 
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md">
-              {isMember && rewardsMultiplier === 1 && features.membershipsV2 && (
-                <Alert color="red" title="Looks like we have an issue!">
-                  Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz. Try
-                  refreshing your session, if that doesn&rsquo;t work please contact us at
-                  support@civitai.com
-                </Alert>
-              )}
+              {isMember &&
+                !multipliersLoading &&
+                rewardsMultiplier === 1 &&
+                features.membershipsV2 && (
+                  <Alert color="red" title="Looks like we have an issue!">
+                    Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz.
+                    Try refreshing your session, if that doesn&rsquo;t work please contact us at
+                    support@civitai.com
+                  </Alert>
+                )}
               <Group position="apart">
                 <Title order={3} id="rewards">
                   Other ways you can earn Buzz
