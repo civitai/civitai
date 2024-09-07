@@ -43,7 +43,7 @@ import {
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
-import { env } from 'node:process';
+import { env } from '~/env/server.mjs';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
