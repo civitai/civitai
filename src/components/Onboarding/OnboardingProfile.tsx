@@ -31,14 +31,17 @@ export function OnboardingProfile() {
   const debouncer = useDebouncer(500);
   const [username, setUsername] = useState('');
   const [typing, setTyping] = useState(false);
-  const { data: usernameAvailable, isRefetching: usernameAvailableLoading } =
-    trpc.user.usernameAvailable.useQuery({ username }, { enabled: username.length >= 3 });
+  const {
+    data: usernameAvailable,
+    isRefetching: refetchingUsernameAvailable,
+    isInitialLoading: loadingUsarnameAvailable,
+  } = trpc.user.usernameAvailable.useQuery({ username }, { enabled: username.length >= 3 });
 
   const form = useForm({
     schema,
     mode: 'onChange',
     shouldUnregister: false,
-    defaultValues: { ...currentUser },
+    defaultValues: { email: currentUser?.email, username: currentUser?.username },
   });
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
@@ -64,7 +67,8 @@ export function OnboardingProfile() {
   const buttonDisabled =
     !form.formState.isValid ||
     typing ||
-    (form.formState.isDirty && (!usernameAvailable || usernameAvailableLoading));
+    (form.formState.isDirty &&
+      (!usernameAvailable || refetchingUsernameAvailable || loadingUsarnameAvailable));
 
   return (
     <Container size="xs" px={0}>
@@ -79,7 +83,7 @@ export function OnboardingProfile() {
               label="Username"
               clearable={false}
               rightSection={
-                usernameAvailableLoading ? (
+                refetchingUsernameAvailable ? (
                   <Loader size="sm" mr="xs" />
                 ) : (
                   usernameAvailable !== undefined && (

@@ -1,7 +1,6 @@
 import {
   throwAuthorizationError,
   throwBadRequestError,
-  throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
@@ -16,13 +15,11 @@ import {
 } from '~/server/services/paddle.service';
 import {
   TransactionCreateInput,
-  TransactionMetadataSchema,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
-import { createRecaptchaAssesment } from '~/server/recaptcha/client';
+import { verifyCaptchaToken } from '~/server/recaptcha/client';
 import { getPaddleSubscription, getTransactionById } from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
@@ -42,23 +39,10 @@ export const createBuzzPurchaseTransactionHandler = async ({
     }
 
     const { recaptchaToken } = input;
-
     if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-    const { score, reasons } = await createRecaptchaAssesment({
-      token: recaptchaToken,
-      recaptchaAction: RECAPTCHA_ACTIONS.PADDLE_TRANSACTION,
-    });
-
-    if ((score || 0) < 0.7) {
-      if (reasons.length) {
-        throw throwAuthorizationError(
-          `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
-        );
-      } else {
-        throw throwAuthorizationError('We could not verify the authenticity of your request.');
-      }
-    }
+    const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
+    if (!validCaptcha) throw throwAuthorizationError('Captcha Failed. Please try again.');
 
     const user = { id: ctx.user.id, email: ctx.user.email as string };
     return await createBuzzPurchaseTransaction({ user, ...input });

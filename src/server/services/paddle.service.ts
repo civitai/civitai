@@ -478,6 +478,14 @@ export const manageSubscriptionTransactionComplete = async (
   if (!transactionNotification.subscriptionId) {
     return;
   }
+
+  if (
+    transactionNotification.details?.totals?.total === '0' &&
+    transactionNotification.details?.totals?.discount === '0'
+  ) {
+    // Free trial or payment method update.
+    return;
+  }
   // Check if user exists and has a customerId
   // Use write db to avoid replication lag between webhook requests
   const user = await dbWrite.user.findUniqueOrThrow({

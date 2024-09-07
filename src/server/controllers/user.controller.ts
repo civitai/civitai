@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants, RECAPTCHA_ACTIONS } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import {
   NotificationCategory,
   OnboardingComplete,
@@ -110,7 +110,7 @@ import { Flags } from '~/shared/utils';
 import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
-import { createRecaptchaAssesment } from '../recaptcha/client';
+import { verifyCaptchaToken } from '../recaptcha/client';
 import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
@@ -267,23 +267,11 @@ export const completeOnboardingHandler = async ({
 
     switch (input.step) {
       case OnboardingSteps.TOS:
-        // const { recaptchaToken } = input;
-        // if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+        const { recaptchaToken } = input;
+        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-        // const { score, reasons } = await createRecaptchaAssesment({
-        //   token: recaptchaToken,
-        //   recaptchaAction: RECAPTCHA_ACTIONS.COMPLETE_ONBOARDING,
-        // });
-
-        // if ((score || 0) < 0.5) {
-        //   if (reasons.length) {
-        //     throw throwAuthorizationError(
-        //       `Recaptcha Failed. The following reasons were detected: ${reasons.join(', ')}`
-        //     );
-        //   } else {
-        //     throw throwAuthorizationError('We could not verify the authenticity of your request.');
-        //   }
-        // }
+        const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
+        if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;

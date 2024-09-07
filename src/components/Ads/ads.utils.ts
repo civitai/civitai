@@ -53,13 +53,13 @@ export const useConsentManager = create<{ targeting?: boolean }>()(
 
 type AdDensity = [columns: number, interval: [min: number, max: number]];
 const adDensity: AdDensity[] = [
-  [1, [6, 10]],
-  [2, [7, 12]],
-  [3, [8, 14]],
-  [4, [9, 15]],
-  [5, [10, 14]],
-  [6, [12, 15]],
-  [7, [14, 20]],
+  [1, [5, 7]],
+  [2, [6, 9]],
+  [3, [7, 10]],
+  [4, [8, 11]],
+  [5, [9, 12]],
+  [6, [10, 13]],
+  [7, [12, 18]],
 ];
 
 interface IAdUnit {
@@ -178,3 +178,52 @@ export const adSizeImageMap: Record<AnyAdSize, (typeof placeholderImageSizes)[nu
 };
 
 // #endregion
+
+const adDefinitions = {
+  '728x90:Leaderboard_A': 'civitaicom47456',
+  '320x50:Leaderboard_A': 'civitaicom47760',
+  '728x90:Leaderboard_B': 'civitaicom47457',
+  '320x50:Leaderboard_B': 'civitaicom47761',
+  '728x90:Leaderboard_C': 'civitaicom47458',
+  '320x50:Leaderboard_C': 'civitaicom47762',
+  '300x250:Dynamic_Feeds': 'civitaicom47455',
+  '300x600:Dynamic_Feeds': 'civitaicom47453',
+  '300x250:model_image_pages': 'civitaicom47763',
+};
+const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
+
+type AdDefinitionKey = keyof typeof adDefinitions;
+
+type Split<S extends string, D extends string> = string extends S
+  ? string[]
+  : S extends ''
+  ? []
+  : S extends `${infer T}${D}${infer U}`
+  ? [T, ...Split<U, D>]
+  : [S];
+
+export type AdUnitKey = AdDefinitionKey | Split<AdDefinitionKey, ':'>[1];
+
+export type AdUnitDetail = ReturnType<typeof getAdUnitDetails>[number];
+export function getAdUnitDetails(args: AdUnitKey[]) {
+  const keys = args
+    .reduce<AdDefinitionKey[]>((acc, adUnitKey) => {
+      if (adUnitKey in adDefinitions) return [...acc, adUnitKey as AdDefinitionKey];
+      return [...acc, ...adDefinitionKeys.filter((key) => key.includes(adUnitKey))];
+    }, [])
+    .sort()
+    .reverse();
+
+  return keys.map((key) => {
+    const [size, name] = key.split(':');
+    const [width, height] = size.split('x').map(Number);
+    const type = name === 'Dynamic_Feeds' ? ('dynamic' as const) : ('static' as const);
+    return {
+      width,
+      height,
+      key,
+      type,
+      id: adDefinitions[key],
+    };
+  });
+}
