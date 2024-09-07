@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Center,
   Container,
   createStyles,
@@ -39,6 +40,8 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { NextLink } from '@mantine/next';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -67,6 +70,7 @@ export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const { classes } = useBuzzDashboardStyles();
   const isMember = currentUser?.isMember;
+  const { isFreeTier } = useActiveSubscription();
   const { query } = useRouter();
   const features = useFeatureFlags();
 
@@ -89,6 +93,12 @@ export default function UserBuzzDashboard() {
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
+  const showMismatchAlert =
+    isMember &&
+    !multipliersLoading &&
+    rewardsMultiplier === 1 &&
+    features.membershipsV2 &&
+    !isFreeTier;
 
   return (
     <>
@@ -110,16 +120,16 @@ export default function UserBuzzDashboard() {
 
           <Paper withBorder className={classes.tileCard} h="100%">
             <Stack p="md">
-              {isMember &&
-                !multipliersLoading &&
-                rewardsMultiplier === 1 &&
-                features.membershipsV2 && (
-                  <Alert color="red" title="Looks like we have an issue!">
+              {showMismatchAlert && (
+                <Alert color="red" title="Looks like we have an issue!">
+                  <Text>
                     Looks like your subscription isn&rsquo;t correctly applying benefits or Buzz.
-                    Try refreshing your session, if that doesn&rsquo;t work please contact us at
-                    support@civitai.com
-                  </Alert>
-                )}
+                    Try to <RefreshSessionButton />, if that doesn&rsquo;t work please contact
+                    support
+                    <Anchor href="https://civitai.com/support">here</Anchor>
+                  </Text>
+                </Alert>
+              )}
               <Group position="apart">
                 <Title order={3} id="rewards">
                   Other ways you can earn Buzz

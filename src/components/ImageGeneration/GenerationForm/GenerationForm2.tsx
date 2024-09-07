@@ -94,6 +94,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -995,8 +996,8 @@ export function GenerationFormContent() {
                   >
                     <Text size="xs">
                       Looks like we&rsquo;re having trouble correctly applying your membership
-                      bonuses, try refreshing your session, if that doesn&rsquo;t work please
-                      contact us at support@civitai.com
+                      bonuses, try to <RefreshSessionButton />, if that doesn&rsquo;t work please
+                      contact us here <Anchor href="https://civitai.com/support">here</Anchor>
                     </Text>
                   </DismissibleAlert>
                 )}
