@@ -988,7 +988,11 @@ export function GenerationFormContent() {
               <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
-                  <DismissibleAlert color="red" title="Subscription Mismatch">
+                  <DismissibleAlert
+                    id="subscription-mismatch-generator-alert"
+                    color="red"
+                    title="Subscription Mismatch"
+                  >
                     <Text size="xs">
                       Looks like we&rsquo;re having trouble correctly applying your membership
                       bonuses, try refreshing your session, if that doesn&rsquo;t work please
