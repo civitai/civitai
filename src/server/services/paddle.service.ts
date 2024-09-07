@@ -11,6 +11,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
+  cancelPaddleSubscription,
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
@@ -572,13 +573,10 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
   const isFreeTier = env.TIER_METADATA_KEY ? meta[env.TIER_METADATA_KEY] === 'free' : false;
 
   try {
-    await updatePaddleSubscription({
-      subscriptionId: subscription.id,
-      scheduledChange: {
-        action: 'cancel',
-        effectiveAt: isFreeTier ? 'immediately' : 'next_billing_period',
-      },
-    });
+    await cancelPaddleSubscription(
+      subscription.id,
+      isFreeTier ? 'immediately' : 'next_billing_period'
+    );
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 

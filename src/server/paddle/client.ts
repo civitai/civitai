@@ -180,3 +180,11 @@ export const getCustomerLatestTransaction = async ({ customerId }: { customerId:
 
   return data[0];
 };
+
+export const cancelPaddleSubscription = (
+  subscriptionId: string,
+  effectiveFrom: 'next_billing_period' | 'immediately' = 'next_billing_period'
+) => {
+  const paddle = getPaddle();
+  return paddle.subscriptions.cancel(subscriptionId, { effectiveFrom });
+};
