@@ -10,9 +10,7 @@ const schema = z.object({
 export default WebhookEndpoint(async (req, res) => {
   const { imageIds } = schema.parse(req.query);
 
-  console.log({ imageIds });
-
-  // await Promise.all(imageIds.map((imageId) => ingestImageById({ id: imageId })));
+  await Promise.all(imageIds.map((imageId) => ingestImageById({ id: imageId })));
 
   res.status(200).json({ imageIds });
 });
