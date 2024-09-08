@@ -20,6 +20,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useDebouncer } from '~/utils/debouncer';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;
@@ -158,23 +159,22 @@ export function AdUnit({
   const details = getAdUnitDetails(keys);
   const [width, setWidth] = useState<number>();
   const item = width ? details.find((x) => x.width <= width) : undefined;
+  const debouncer = useDebouncer(300);
+  const prevWidthRef = useRef<number | null>(null);
 
   useIsomorphicLayoutEffect(() => {
-    const node = ref.current;
+    const node = ref.current?.parentElement ?? ref.current;
     if (node) {
-      let clientWidth = node.clientWidth;
-      if (node.style.display === 'none') {
-        node.style.removeProperty('display');
-        clientWidth = node.clientWidth;
-        node.style.setProperty('display', 'none');
-      }
-      setWidth(clientWidth);
-      const observer = new MutationObserver((records) => {
-        const elem = records[0];
-        if (!elem) return;
-        setWidth((elem.target as HTMLDivElement).parentElement?.clientWidth);
+      setWidth(getClientWidth(node));
+      const observer = new ResizeObserver((entries) => {
+        const clientWidth = entries[0].target.clientWidth;
+        const widthChanged = prevWidthRef.current !== clientWidth;
+        if (!widthChanged) return;
+
+        prevWidthRef.current = clientWidth;
+        debouncer(() => setWidth(clientWidth));
       });
-      observer.observe(node, { attributes: true, attributeFilter: ['clientWidth'] });
+      observer.observe(node);
       return () => observer.disconnect();
     }
   }, []);
@@ -198,3 +198,13 @@ export function AdUnit({
 }
 
 AdUnit.Content = AdUnitContent;
+
+function getClientWidth(node: HTMLElement) {
+  if (node.style.display !== 'none') return node.clientWidth;
+  else {
+    node.style.removeProperty('display');
+    const clientWidth = node.clientWidth;
+    node.style.setProperty('display', 'none');
+    return clientWidth;
+  }
+}
