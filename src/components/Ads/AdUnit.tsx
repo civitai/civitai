@@ -36,6 +36,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const browsingLevel = useBrowsingLevelDebounced();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const { withFeedback } = useAdUnitContext();
   // const focused = useIsLevelFocused();
 
   const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
@@ -51,7 +52,11 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
     <div
       ref={ref}
       className={clsx('flex flex-col items-center justify-between', className)}
-      style={{ ...style, minHeight: height ? height + 20 : undefined, minWidth: width }}
+      style={{
+        ...style,
+        minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
+        minWidth: width,
+      }}
       {...props}
     >
       {isClient && adsBlocked !== undefined && height && width && (
@@ -71,35 +76,39 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
             </div>
           )}
 
-          <div className="flex w-full justify-between">
-            {!isMember ? (
-              <Text
-                component={NextLink}
-                td="underline"
-                href="/pricing"
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Remove ads
-              </Text>
-            ) : (
-              <div />
-            )}
+          {withFeedback && (
+            <>
+              <div className="flex w-full justify-between">
+                {!isMember ? (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href="/pricing"
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Remove ads
+                  </Text>
+                ) : (
+                  <div />
+                )}
 
-            {currentUser && (
-              <Text
-                component={NextLink}
-                td="underline"
-                href={`/ad-feedback?Username=${currentUser.username}`}
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Feedback
-              </Text>
-            )}
-          </div>
+                {currentUser && (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href={`/ad-feedback?Username=${currentUser.username}`}
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Feedback
+                  </Text>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -107,8 +116,8 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
 };
 
 type ContextState = {
-  ref: MutableRefObject<HTMLDivElement | null>;
   item: AdUnitDetail;
+  withFeedback?: boolean;
 };
 
 const AdUnitContext = createContext<ContextState | null>(null);
@@ -136,7 +145,14 @@ function AdUnitContent() {
   );
 }
 
-export function AdUnit({ children, keys }: { children?: React.ReactElement; keys: AdUnitKey[] }) {
+export function AdUnit({
+  keys,
+  withFeedback,
+  children,
+  className,
+  style,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { keys: AdUnitKey[]; withFeedback?: boolean }) {
   const { adsEnabled } = useAdsContext();
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
@@ -166,9 +182,14 @@ export function AdUnit({ children, keys }: { children?: React.ReactElement; keys
   if (!adsEnabled) return null;
 
   return (
-    <div className="flex w-full" ref={ref} style={!item ? { display: 'none' } : undefined}>
+    <div
+      className={clsx('flex w-full', className)}
+      ref={ref}
+      style={!item ? { display: 'none', ...style } : style}
+      {...props}
+    >
       {item && (
-        <AdUnitContext.Provider value={{ ref, item }}>
+        <AdUnitContext.Provider value={{ item, withFeedback }}>
           {children ?? <AdUnitContent />}
         </AdUnitContext.Provider>
       )}

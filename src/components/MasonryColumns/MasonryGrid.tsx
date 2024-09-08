@@ -86,7 +86,7 @@ export function MasonryGrid<TData>({
                   </Button>
                 </div>
 
-                <AdUnit keys={['300x250:Dynamic_Feeds']} />
+                <AdUnit keys={['300x250:Dynamic_Feeds']} withFeedback />
               </TwCard>
             )}
           </React.Fragment>
