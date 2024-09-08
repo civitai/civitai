@@ -19,7 +19,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
           style={{ margin: 0, flex: 1, zIndex: 10 }}
           pb="md"
         >
-          <AdUnit keys={['728x90:Leaderboard_B']} className="justify-center pb-3" />
+          <AdUnit keys={['Leaderboard_B']} className="justify-center pb-3" />
           {children}
         </MasonryProvider>
       </IsClient>
