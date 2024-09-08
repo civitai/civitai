@@ -55,8 +55,8 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
       className={clsx('flex flex-col items-center justify-between', className)}
       style={{
         ...style,
-        minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
-        minWidth: width,
+        height: height ? height + (withFeedback ? 20 : 0) : undefined,
+        width: width,
       }}
       {...props}
     >

@@ -64,7 +64,7 @@ const adDensity: AdDensity[] = [
 ];
 
 const adDefinitions = {
-  '728x90:Leaderboard_A': 'civitaicom47456',
+  '970x250:Leaderboard_A': 'civitaicom47456',
   '320x50:Leaderboard_A': 'civitaicom47760',
   '728x90:Leaderboard_B': 'civitaicom47457',
   '320x50:Leaderboard_B': 'civitaicom47761',
