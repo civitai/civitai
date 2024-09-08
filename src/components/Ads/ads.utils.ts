@@ -74,6 +74,34 @@ const adDefinitions = {
   '300x600:Dynamic_Feeds': 'civitaicom47453',
   '300x250:model_image_pages': 'civitaicom47763',
 };
+
+const adUnits = {
+  Leaderboard_A: [
+    { size: '970x250', id: 'civitaicom47456' },
+    { size: '320x50', id: 'civitaicom47760' },
+  ],
+  Leaderboard_B: [
+    { size: '970x250', id: 'civitaicom47457' },
+    { size: '320x50', id: 'civitaicom47761' },
+  ],
+  Leaderboard_C: [
+    { size: '970x250', id: 'civitaicom47458' },
+    { size: '320x50', id: 'civitaicom47762' },
+  ],
+  Model_Image_Pages: [
+    { size: '300x250', id: 'civitaicom47763' },
+    { size: '300x250', id: 'civitaicom47765' },
+  ],
+  Dynamic_Square: [
+    { size: '300x250', id: 'civitaicom47455' },
+    { size: '300x250', id: 'civitaicom47764' },
+  ],
+  Dynamic_Portrait: [
+    { size: '300x600', id: 'civitaicom47453' },
+    { size: '300x600', id: 'civitaicom47454' },
+  ],
+};
+
 const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
 
 type AdDefinitionKey = keyof typeof adDefinitions;
