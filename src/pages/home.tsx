@@ -76,7 +76,7 @@ export default function Home() {
         >
           <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
-              const showAds = i % 2 === 0 && i > 0;
+              const showAds = i % 2 === 1 && i > 0;
               return (
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
