@@ -38,6 +38,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const { withFeedback } = useAdUnitContext();
+  const { item } = useAdUnitContext();
   // const focused = useIsLevelFocused();
 
   const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
@@ -72,7 +73,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
               />
             </NextLink>
           ) : (
-            <div className="w-full overflow-hidden">
+            <div className="w-full overflow-hidden" key={item.id}>
               {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
             </div>
           )}
