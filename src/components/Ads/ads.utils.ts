@@ -1,10 +1,12 @@
+import { useMemo, useRef } from 'react';
+import { getRandom } from '~/utils/array-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
-export type AdFeedItem<T> = { type: 'data'; data: T } | { type: 'ad' };
+export type AdFeedItem<T> = { type: 'data'; data: T } | { type: 'ad'; data: AdUnitDetail };
 export type AdFeed<T> = AdFeedItem<T>[];
 
 type AdMatrix = {
-  indices: number[];
+  indices: Array<{ index: number } & AdUnitDetail>;
   lastIndex: number;
 };
 
@@ -13,16 +15,17 @@ const adMatrices: Record<string, AdMatrix> = {};
 export function createAdFeed<T>({
   data,
   columnCount,
-  showAds,
+  keys,
 }: {
   data: T[];
   columnCount: number;
-  showAds?: boolean;
+  /** pass multiple keys to randomize the adunits */
+  keys?: AdUnitKey[];
 }): AdFeed<T> {
   const interval =
     adDensity.find(([columns]) => columns === columnCount)?.[1] ??
     adDensity[adDensity.length - 1][1];
-  if (!showAds || !interval) return data.map((data) => ({ type: 'data', data }));
+  if (!keys || !interval) return data.map((data) => ({ type: 'data', data }));
   const key = interval.join('_');
   adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
   const adMatrix = adMatrices[key];
@@ -32,13 +35,17 @@ export function createAdFeed<T>({
     const min = adMatrix.lastIndex + lower + 1;
     const max = adMatrix.lastIndex + upper;
     const index = getRandomInt(min, max);
-    adMatrix.indices.push(index);
+    const key = getRandom(keys);
+    const [item] = getAdUnitDetails([key]);
+    adMatrix.indices.push({ index, ...item });
     adMatrix.lastIndex = index;
   }
+  const indices = adMatrix.indices.map((x) => x.index);
 
   return data.reduce<AdFeed<T>>((acc, item, i) => {
-    if (adMatrix.indices.includes(i)) {
-      acc.push({ type: 'ad' });
+    const adMatrixIndex = indices.indexOf(i);
+    if (adMatrixIndex > -1) {
+      acc.push({ type: 'ad', data: adMatrix.indices[adMatrixIndex] });
     }
     acc.push({ type: 'data', data: item });
     return acc;

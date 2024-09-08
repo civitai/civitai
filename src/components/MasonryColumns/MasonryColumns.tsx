@@ -68,7 +68,7 @@ export function MasonryColumns<TData>({
                 {data.type === 'data' &&
                   createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
                 {data.type === 'ad' && (
-                  <AdUnit className="justify-center" keys={['300x250:Dynamic_Feeds']} withFeedback>
+                  <AdUnit className="justify-center" keys={[data.data.key]} withFeedback>
                     <TwCard className="border p-2 shadow">
                       <AdUnit.Content />
                     </TwCard>
