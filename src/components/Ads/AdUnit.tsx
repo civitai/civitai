@@ -20,6 +20,7 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useDebouncer } from '~/utils/debouncer';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;
@@ -36,6 +37,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const browsingLevel = useBrowsingLevelDebounced();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const { withFeedback } = useAdUnitContext();
   // const focused = useIsLevelFocused();
 
   const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
@@ -51,7 +53,11 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
     <div
       ref={ref}
       className={clsx('flex flex-col items-center justify-between', className)}
-      style={{ ...style, minHeight: height ? height + 20 : undefined, minWidth: width }}
+      style={{
+        ...style,
+        minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
+        minWidth: width,
+      }}
       {...props}
     >
       {isClient && adsBlocked !== undefined && height && width && (
@@ -71,35 +77,39 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
             </div>
           )}
 
-          <div className="flex w-full justify-between">
-            {!isMember ? (
-              <Text
-                component={NextLink}
-                td="underline"
-                href="/pricing"
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Remove ads
-              </Text>
-            ) : (
-              <div />
-            )}
+          {withFeedback && (
+            <>
+              <div className="flex w-full justify-between">
+                {!isMember ? (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href="/pricing"
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Remove ads
+                  </Text>
+                ) : (
+                  <div />
+                )}
 
-            {currentUser && (
-              <Text
-                component={NextLink}
-                td="underline"
-                href={`/ad-feedback?Username=${currentUser.username}`}
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Feedback
-              </Text>
-            )}
-          </div>
+                {currentUser && (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href={`/ad-feedback?Username=${currentUser.username}`}
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Feedback
+                  </Text>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
@@ -107,8 +117,8 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
 };
 
 type ContextState = {
-  ref: MutableRefObject<HTMLDivElement | null>;
   item: AdUnitDetail;
+  withFeedback?: boolean;
 };
 
 const AdUnitContext = createContext<ContextState | null>(null);
@@ -136,29 +146,35 @@ function AdUnitContent() {
   );
 }
 
-export function AdUnit({ children, keys }: { children?: React.ReactElement; keys: AdUnitKey[] }) {
+export function AdUnit({
+  keys,
+  withFeedback,
+  children,
+  className,
+  style,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { keys: AdUnitKey[]; withFeedback?: boolean }) {
   const { adsEnabled } = useAdsContext();
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
   const [width, setWidth] = useState<number>();
   const item = width ? details.find((x) => x.width <= width) : undefined;
+  const debouncer = useDebouncer(300);
+  const prevWidthRef = useRef<number | null>(null);
 
   useIsomorphicLayoutEffect(() => {
-    const node = ref.current;
+    const node = ref.current?.parentElement ?? ref.current;
     if (node) {
-      let clientWidth = node.clientWidth;
-      if (node.style.display === 'none') {
-        node.style.removeProperty('display');
-        clientWidth = node.clientWidth;
-        node.style.setProperty('display', 'none');
-      }
-      setWidth(clientWidth);
-      const observer = new MutationObserver((records) => {
-        const elem = records[0];
-        if (!elem) return;
-        setWidth((elem.target as HTMLDivElement).parentElement?.clientWidth);
+      setWidth(getClientWidth(node));
+      const observer = new ResizeObserver((entries) => {
+        const clientWidth = entries[0].target.clientWidth;
+        const widthChanged = prevWidthRef.current !== clientWidth;
+        if (!widthChanged) return;
+
+        prevWidthRef.current = clientWidth;
+        debouncer(() => setWidth(clientWidth));
       });
-      observer.observe(node, { attributes: true, attributeFilter: ['clientWidth'] });
+      observer.observe(node);
       return () => observer.disconnect();
     }
   }, []);
@@ -166,9 +182,14 @@ export function AdUnit({ children, keys }: { children?: React.ReactElement; keys
   if (!adsEnabled) return null;
 
   return (
-    <div className="flex w-full" ref={ref} style={!item ? { display: 'none' } : undefined}>
+    <div
+      className={clsx('flex w-full', className)}
+      ref={ref}
+      style={!item ? { display: 'none', ...style } : style}
+      {...props}
+    >
       {item && (
-        <AdUnitContext.Provider value={{ ref, item }}>
+        <AdUnitContext.Provider value={{ item, withFeedback }}>
           {children ?? <AdUnitContent />}
         </AdUnitContext.Provider>
       )}
@@ -177,3 +198,13 @@ export function AdUnit({ children, keys }: { children?: React.ReactElement; keys
 }
 
 AdUnit.Content = AdUnitContent;
+
+function getClientWidth(node: HTMLElement) {
+  if (node.style.display !== 'none') return node.clientWidth;
+  else {
+    node.style.removeProperty('display');
+    const clientWidth = node.clientWidth;
+    node.style.setProperty('display', 'none');
+    return clientWidth;
+  }
+}

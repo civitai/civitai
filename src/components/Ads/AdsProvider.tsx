@@ -1,9 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import Script from 'next/script';
-import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { isProd } from '~/env/other';
@@ -28,7 +25,7 @@ export function useAdsContext() {
 }
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState<boolean>(true);
+  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(!isProd ? true : undefined);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -56,6 +53,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (isProd) setAdsBlocked(false);
   }
 
+  function handleCmpError() {
+    if (isProd) setAdsBlocked(true);
+  }
+
   return (
     <AdsContext.Provider
       value={{
@@ -69,9 +70,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && isProd && (
         <>
-          <Script src="https://cmp.uniconsent.com/v2/stub.min.js" onLoad={handleCmpLoaded} />
+          <Script
+            src="https://cmp.uniconsent.com/v2/stub.min.js"
+            onLoad={handleCmpLoaded}
+            onError={handleCmpError}
+          />
           <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
-          {!adsBlocked && (
+          {adsBlocked === false && (
             <>
               <Script
                 id="ads-start"

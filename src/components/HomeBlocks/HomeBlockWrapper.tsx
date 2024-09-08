@@ -1,17 +1,13 @@
 import { ContainerProps } from '@mantine/core';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import React from 'react';
+import { AdUnit } from '~/components/Ads/AdUnit';
 
 export const HomeBlockWrapper = ({ children, showAds, ...props }: Props) => {
   return (
     <MasonryContainer {...props}>
       {children}
-      {/* {showAds && (
-        <Adunit
-          style={{ margin: `${theme.spacing.xs}px auto 0` }}
-          {...adsRegistry.homePageSectionDivider}
-        />
-      )} */}
+      {showAds && <AdUnit keys={['Leaderboard_A']} />}
     </MasonryContainer>
   );
 };

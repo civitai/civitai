@@ -43,7 +43,12 @@ export function MasonryGrid<TData>({
   const browsingLevel = useBrowsingLevelDebounced();
   const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const items = useMemo(
-    () => createAdFeed({ data, columnCount, showAds: adsReallyAreEnabled }),
+    () =>
+      createAdFeed({
+        data,
+        columnCount,
+        keys: adsReallyAreEnabled ? ['300x250:Dynamic_Feeds'] : undefined,
+      }),
     [columnCount, data, adsReallyAreEnabled]
   );
 
@@ -64,7 +69,7 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <TwCard className="border p-2 shadow">
+              <TwCard className="mx-auto border p-2 shadow">
                 <div className="mb-auto flex flex-col items-center gap-2">
                   <Image
                     src={`/images/logo_${theme.colorScheme}_mode.png`}
@@ -86,7 +91,7 @@ export function MasonryGrid<TData>({
                   </Button>
                 </div>
 
-                <AdUnit keys={['300x250:Dynamic_Feeds']} />
+                <AdUnit keys={[item.data.key]} withFeedback />
               </TwCard>
             )}
           </React.Fragment>
