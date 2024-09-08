@@ -38,7 +38,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   // const focused = useIsLevelFocused();
 
-  const { ref, inView } = useInView({ root: node?.current, rootMargin: '300px 0px' });
+  const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
   useEffect(() => {
     if (inView && !visible) {
       setVisible(true);
