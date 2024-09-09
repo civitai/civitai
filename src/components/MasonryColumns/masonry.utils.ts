@@ -75,7 +75,11 @@ const getMasonryColumns = <TData>(
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
-  const feed = createAdFeed({ data, columnCount, showAds });
+  const feed = createAdFeed({
+    data,
+    columnCount,
+    keys: showAds ? ['300x250:Dynamic_Feeds', '300x600:Dynamic_Feeds'] : undefined,
+  });
 
   const columnHeights: number[] = Array(columnCount).fill(0);
   const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
@@ -83,7 +87,7 @@ const getMasonryColumns = <TData>(
   for (const item of feed) {
     let height = 0;
     if (item.type === 'ad') {
-      height = 250 + 20;
+      height = item.data.height + 20;
     } else {
       const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 

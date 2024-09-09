@@ -680,6 +680,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       },
     },
   });
+
   if (!response) return undefined;
 
   // nb: doing this because these fields are technically nullable, but prisma

@@ -1,50 +1,67 @@
-import { AdSizes } from '~/components/Ads/ads.utils';
+import { AdUnitDetail, AdUnitKey, getAdUnitDetails } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React from 'react';
+import React, {
+  MutableRefObject,
+  createContext,
+  forwardRef,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { NextLink } from '@mantine/next';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
+import { useInView } from 'react-intersection-observer';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useDebouncer } from '~/utils/debouncer';
 
-type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> &
-  AdSizes & {
-    children: React.ReactNode | ((args: { isMobile: boolean }) => React.ReactNode);
-    component?: 'div' | 'TwCard';
-  };
+type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
+  width?: number;
+  height?: number;
+  children: React.ReactNode | ((args: { isMobile: boolean }) => React.ReactNode);
+};
 
-function AdWrapper({
-  children,
-  className,
-  width,
-  height,
-  style,
-  component = 'div',
-  ...props
-}: AdWrapperProps) {
+const AdWrapper = ({ children, className, width, height, style, ...props }: AdWrapperProps) => {
+  const node = useScrollAreaRef();
   const currentUser = useCurrentUser();
   const isClient = useIsClient();
+  const [visible, setVisible] = useState(false);
   const { adsBlocked, adsEnabled, isMember } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const { withFeedback } = useAdUnitContext();
+  const { item } = useAdUnitContext();
   // const focused = useIsLevelFocused();
+
+  const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
+  useEffect(() => {
+    if (inView && !visible) {
+      setVisible(true);
+    }
+  }, [inView]);
 
   if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
 
-  const Component = component === 'div' ? 'div' : TwCard;
-
   return (
-    <Component
+    <div
+      ref={ref}
       className={clsx('flex flex-col items-center justify-between', className)}
-      style={{ ...style, minHeight: height + 20, minWidth: width }}
+      style={{
+        ...style,
+        minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
+        minWidth: width,
+      }}
       {...props}
     >
-      {isClient && adsBlocked !== undefined && (
+      {isClient && adsBlocked !== undefined && height && width && (
         <>
           {adsBlocked ? (
             <NextLink href="/pricing" className="flex">
@@ -56,80 +73,139 @@ function AdWrapper({
               />
             </NextLink>
           ) : (
-            <div className="w-full overflow-hidden">
-              {typeof children === 'function' ? children({ isMobile }) : children}
+            <div className="w-full overflow-hidden" key={item.id}>
+              {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
             </div>
           )}
 
-          <div className="flex w-full justify-between">
-            {!isMember ? (
-              <Text
-                component={NextLink}
-                td="underline"
-                href="/pricing"
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Remove ads
-              </Text>
-            ) : (
-              <div />
-            )}
+          {withFeedback && (
+            <>
+              <div className="flex w-full justify-between">
+                {!isMember ? (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href="/pricing"
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Remove ads
+                  </Text>
+                ) : (
+                  <div />
+                )}
 
-            {currentUser && (
-              <Text
-                component={NextLink}
-                td="underline"
-                href={`/ad-feedback?Username=${currentUser.username}`}
-                color="dimmed"
-                size="xs"
-                align="center"
-              >
-                Feedback
-              </Text>
-            )}
-          </div>
+                {currentUser && (
+                  <Text
+                    component={NextLink}
+                    td="underline"
+                    href={`/ad-feedback?Username=${currentUser.username}`}
+                    color="dimmed"
+                    size="xs"
+                    align="center"
+                  >
+                    Feedback
+                  </Text>
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
-    </Component>
+    </div>
   );
+};
+
+type ContextState = {
+  item: AdUnitDetail;
+  withFeedback?: boolean;
+};
+
+const AdUnitContext = createContext<ContextState | null>(null);
+function useAdUnitContext() {
+  const context = useContext(AdUnitContext);
+  if (!context) throw new Error('missing AdUnitContext');
+  return context;
 }
 
-export function DynamicAd() {
+function AdUnitContent() {
+  const { item } = useAdUnitContext();
+
   return (
-    <AdWrapper width={300} height={250}>
-      {({ isMobile }) => {
-        const id = isMobile ? 'civitaicom47764' : 'civitaicom47455';
-        return <div id={id} />;
-      }}
+    <AdWrapper width={item.width} height={item.height}>
+      {item && (
+        <>
+          {item.type === 'dynamic' ? (
+            <pgs-ad data-pg-ad-spot={item.id}></pgs-ad>
+          ) : (
+            <div id={item.id}></div>
+          )}
+        </>
+      )}
     </AdWrapper>
   );
 }
 
-export function ModelAndImagePageAdUnit() {
+export function AdUnit({
+  keys,
+  withFeedback,
+  children,
+  className,
+  style,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & { keys: AdUnitKey[]; withFeedback?: boolean }) {
   const { adsEnabled } = useAdsContext();
+  const ref = useRef<HTMLDivElement | null>(null);
+  const details = getAdUnitDetails(keys);
+  const [width, setWidth] = useState<number>();
+  const item = width ? details.find((x) => x.width <= width) : undefined;
+  const debouncer = useDebouncer(300);
+  const prevWidthRef = useRef<number | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    const node = ref.current?.parentElement ?? ref.current;
+    if (node) {
+      setWidth(getClientWidth(node));
+      const observer = new ResizeObserver((entries) => {
+        const clientWidth = entries[0].target.clientWidth;
+        const widthChanged = prevWidthRef.current !== clientWidth;
+        if (!widthChanged) return;
+
+        prevWidthRef.current = clientWidth;
+        debouncer(() => setWidth(clientWidth));
+      });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+  }, []);
 
   if (!adsEnabled) return null;
 
   return (
-    <div className="flex justify-center">
-      <AdWrapper component="TwCard" className="border p-2 shadow" width={300} height={250}>
-        {({ isMobile }) => {
-          const id = isMobile ? 'civitaicom47765' : 'civitaicom47763';
-          return <div id={id} />;
-        }}
-      </AdWrapper>
+    <div
+      className={clsx('flex w-full', className)}
+      ref={ref}
+      style={!item ? { display: 'none', ...style } : style}
+      {...props}
+    >
+      {item && (
+        <AdUnitContext.Provider value={{ item, withFeedback }}>
+          {children ?? <AdUnitContent />}
+        </AdUnitContext.Provider>
+      )}
     </div>
   );
 }
 
-// export function LeaderboardAd_A() {
-//   return (
-//     <AdWrapper>
-//       {({ isMobile }) =>
-//         isMobile ? <div id="civitaicom47760"></div> : <div id="civitaicom47456"></div>
-//       }
-//     </AdWrapper>
-//   );
-// }
+AdUnit.Content = AdUnitContent;
+
+function getClientWidth(node: HTMLElement) {
+  if (node.style.display !== 'none') return node.clientWidth;
+  else {
+    node.style.removeProperty('display');
+    const clientWidth = node.clientWidth;
+    node.style.setProperty('display', 'none');
+    return clientWidth;
+  }
+}

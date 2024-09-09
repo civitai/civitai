@@ -25,7 +25,6 @@ export function ImpressionTracker() {
         const impressions = impressionsDictionary[elemId] ?? [];
         const lastImpression = impressions[impressions.length - 1];
         if (!lastImpression || now - lastImpression >= 10 * 1000) {
-          console.log('record impression');
           impressionsDictionary[elemId] = [...impressions, now];
 
           worker.send('recordAdImpression', {

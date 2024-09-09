@@ -1,9 +1,10 @@
 {
   "name": "model-share",
-  "version": "5.0.37",
+  "version": "5.0.47",
   "private": true,
   "scripts": {
     "start": "next start",
+    "start-debug": "NODE_OPTIONS='--inspect' next start",
     "dev": "next dev",
     "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",

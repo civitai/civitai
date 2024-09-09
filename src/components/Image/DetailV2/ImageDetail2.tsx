@@ -33,7 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { ModelAndImagePageAdUnit } from '~/components/Ads/AdUnit';
+import { AdUnit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
@@ -63,6 +63,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -112,6 +113,7 @@ export function ImageDetail2() {
   });
 
   const videoRef = useRef<EdgeVideoRef | null>(null);
+  const adContainerRef = useRef<HTMLDivElement | null>(null);
 
   const carouselNavigation = useCarouselNavigation({
     items: images,
@@ -354,7 +356,7 @@ export function ImageDetail2() {
               </ActionIcon>
             </div>
             <ScrollArea className="flex-1 p-3 py-0">
-              <div className="flex flex-col gap-3 py-3 @max-md:pt-0">
+              <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
                 <SmartCreatorCard
                   user={image.user}
                   subText={
@@ -402,7 +404,13 @@ export function ImageDetail2() {
                 />
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
-                {!nsfw && <ModelAndImagePageAdUnit />}
+                {!nsfw && (
+                  <AdUnit keys={['300x250:model_image_pages']}>
+                    <TwCard className="mx-auto border p-2 shadow">
+                      <AdUnit.Content />
+                    </TwCard>
+                  </AdUnit>
+                )}
 
                 <Card className="flex flex-col gap-3 rounded-xl">
                   <Text className="flex items-center gap-2 text-xl font-semibold">

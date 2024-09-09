@@ -416,6 +416,12 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
     WHERE id = ${id}
   `;
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
+
+  await dbWrite.tagsOnImage.updateMany({
+    where: { imageId: images[0].id, disabled: true },
+    data: { disabled: false },
+  });
+
   return await ingestImage({ image: images[0] });
 };
 

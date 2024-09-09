@@ -12,6 +12,8 @@ import {
   Paper,
   useMantineTheme,
   CloseButton,
+  Alert,
+  Anchor,
 } from '@mantine/core';
 import { PaymentProvider } from '@prisma/client';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -30,6 +32,8 @@ import {
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
+import { TimeoutLoader } from '../Search/TimeoutLoader';
+import { RefreshSessionButton } from '../RefreshSessionButton/RefreshSessionButton';
 
 const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
   <Stack>
@@ -174,7 +178,19 @@ export const PaddleTransacionModal = ({
       <Modal {...dialog} {...modalProps}>
         <Stack spacing="md">
           <Center>
-            <Loader />
+            <TimeoutLoader
+              renderTimeout={() => (
+                <Alert color="red" title="Looks like we have an issue!">
+                  <Text>
+                    Seems we&rsquo;re having trouble connecting you with our payment processor, Try
+                    to <RefreshSessionButton />, use a different browser or trying again later. If
+                    you&rsquo;re still unable to checkout, please contact support{' '}
+                    <Anchor href="https://civitai.com/support">here</Anchor>
+                  </Text>
+                </Alert>
+              )}
+              delay={30000}
+            />
           </Center>
 
           <TurnstilePrivacyNotice />
