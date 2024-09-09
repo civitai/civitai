@@ -152,6 +152,7 @@ export const TrainingImagesTags = ({
   const tags = getTextTagsAsList(imgData.label);
 
   const removeTag = (tagToRemove: string) => {
+    // TODO this removes dupes too
     const newTags = tags.filter((c) => c !== tagToRemove);
 
     updateImage(modelId, {

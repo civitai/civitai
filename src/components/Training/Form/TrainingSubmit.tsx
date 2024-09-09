@@ -634,7 +634,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;tagged&quot; images, but Flux works best with &quot;captions&quot;.
+                You have &quot;tagged&quot; images, but <Badge color="red">Flux</Badge> works best
+                with &quot;captions&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>
@@ -653,8 +654,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;captioned&quot; images, but SD models work best with
-                &quot;tags&quot;.
+                You have &quot;captioned&quot; images, but <Badge color="violet">SD</Badge> models
+                work best with &quot;tags&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>
