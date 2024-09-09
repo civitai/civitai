@@ -123,6 +123,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 type="text/javascript"
                 dangerouslySetInnerHTML={{
                   __html: `
+                  window.pgHB = window.pgHB || { que: [] }
                   window.googletag.cmd.push(function () {
                     googletag.pubads().addEventListener("impressionViewable", (event) => {
                       dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: event.slot}));
@@ -131,6 +132,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 `,
                 }}
               />
+              {/* {currentUser?.email && <AdsIdentity />} */}
               <TcfapiSuccess
                 onSuccess={(success) => {
                   if (success !== undefined) setAdsBlocked(!success);
@@ -146,14 +148,30 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AdsIdentity() {
+  const currentUser = useCurrentUser();
+  useEffect(() => {
+    const pgHB = window.pgHB;
+    const email = currentUser?.email;
+    if (pgHB && email) {
+      pgHB.que.push(function () {
+        pgHB.setUserAudienceData({ email });
+      });
+    }
+  }, [currentUser?.email]);
+
+  return null;
+}
+
 function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
   useEffect(() => {
-    const callback = (data: any, success: boolean) => onSuccess(success);
-
+    const callback = (data: any, success: boolean) => {
+      console.log(data);
+      onSuccess(success);
+    };
     if (!window.__tcfapi) onSuccess(false);
 
     window.__tcfapi('addEventListener', 2, callback);
-
     return () => {
       window.__tcfapi('removeEventListener', 2, callback);
     };
@@ -165,6 +183,11 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
 declare global {
   interface Window {
     __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
+    pgHB?: {
+      que: Array<() => void>;
+      requestWebRewardedAd?: (args: unknown) => void;
+      setUserAudienceData: (args: { email: string }) => void;
+    };
   }
 }
 
