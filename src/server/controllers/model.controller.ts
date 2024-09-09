@@ -46,6 +46,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -1640,21 +1641,37 @@ export async function getModelCollectionShowcaseHandler({
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
-    const items = await getCollectionItemsByCollectionId({
-      input: {
-        collectionId: collection.id,
-        browsingLevel: ctx.user?.browsingLevel ?? publicBrowsingLevelsFlag,
-      },
-      user: ctx.user,
-    });
+    return getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}
 
-    return {
-      collection,
-      items: items
-        .map(({ type, data }) => (type === 'model' ? { ...data } : null))
-        .filter(isDefined),
-    };
+export async function setModelCollectionShowcaseHandler({
+  input,
+  ctx,
+}: {
+  input: SetModelCollectionShowcaseInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+    const { id, collectionId } = input;
+
+    const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
+    if (!model) throw throwNotFoundError(`No model with id ${id}`);
+    if (model.userId !== userId && !isModerator)
+      throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+
+    const modelMeta = model.meta as ModelMeta | null;
+    return updateModelById({
+      id,
+      data: {
+        meta: modelMeta
+          ? { ...modelMeta, showcaseCollectionId: collectionId }
+          : { showcaseCollectionId: collectionId },
+      },
+    });
   } catch (error) {
     throw throwDbError(error);
   }

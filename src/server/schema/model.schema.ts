@@ -325,3 +325,9 @@ export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
   versionId: z.number().nullish(),
 });
+
+export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionShowcaseSchema>;
+export const setModelCollectionShowcaseSchema = z.object({
+  id: z.number(),
+  collectionId: z.number(),
+});

@@ -174,18 +174,18 @@ export const useQueryModelCollectionShowcase = ({ modelId }: { modelId: number }
     ...rest
   } = useQueryModels(
     {
-      collectionId: showcase?.collection.id,
+      collectionId: showcase?.id,
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
       limit: 5,
     },
-    { enabled: !loadingCollection && !!showcase?.collection.id, keepPreviousData: true }
+    { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );
 
   return {
     ...rest,
-    collection: showcase?.collection,
+    collection: showcase,
     items: models,
     isLoading: loadingCollection || loadingModels,
   };

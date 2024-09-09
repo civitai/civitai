@@ -54,6 +54,7 @@ import {
   publishModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
+  setModelCollectionShowcaseSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
   toggleModelLockSchema,
@@ -211,4 +212,8 @@ export const modelRouter = router({
   getCollectionShowcase: publicProcedure
     .input(getByIdSchema)
     .query(getModelCollectionShowcaseHandler),
+  setCollectionShowcase: protectedProcedure
+    .input(setModelCollectionShowcaseSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => input),
 });

@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Badge,
-  Divider,
-  Group,
-  Loader,
-  LoadingOverlay,
-  ScrollArea,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Badge, Group, Loader, LoadingOverlay, ScrollArea, Text } from '@mantine/core';
 import {
   IconBookmark,
   IconDownload,
@@ -15,7 +6,9 @@ import {
   IconEyeOff,
   IconMessageCircle2,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -24,9 +17,9 @@ import {
   useQueryModelCollectionShowcase,
   UseQueryModelReturn,
 } from '~/components/Model/model.utils';
-import { BaseModel } from '~/server/common/constants';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { slugit } from '~/utils/string-helpers';
 
 export function CollectionShowcase({ modelId }: Props) {
   const {
@@ -47,19 +40,27 @@ export function CollectionShowcase({ modelId }: Props) {
       ) : (
         <div className="relative">
           <LoadingOverlay visible={isRefetching} zIndex={9} />
-          {items.map((model) => (
-            <ShowcaseItem key={model.id} {...model} />
-          ))}
-          {hasNextPage && (
-            <InViewLoader
-              loadFn={fetchNextPage}
-              loadCondition={!isFetching}
-              style={{ gridColumn: '1/-1' }}
-            >
-              <div className="flex items-center justify-center px-4 py-2">
-                <Loader variant="bars" size="sm" />
-              </div>
-            </InViewLoader>
+          {items.length > 0 ? (
+            <>
+              {items.map((model) => (
+                <ShowcaseItem key={model.id} {...model} />
+              ))}
+              {hasNextPage && (
+                <InViewLoader
+                  loadFn={fetchNextPage}
+                  loadCondition={!isFetching}
+                  style={{ gridColumn: '1/-1' }}
+                >
+                  <div className="flex items-center justify-center px-4 py-2">
+                    <Loader variant="bars" size="sm" />
+                  </div>
+                </InViewLoader>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center justify-center p-2">
+              <Text color="dimmed">There are no items for this collection</Text>
+            </div>
           )}
         </div>
       )}
@@ -70,12 +71,20 @@ export function CollectionShowcase({ modelId }: Props) {
 type Props = { modelId: number };
 
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
+  const router = useRouter();
   const [image] = images;
-  // const baseModelIndicator = BaseModelIndicator[version.baseModel as BaseModel];
+
+  const activeItem = router.query.id === id.toString();
 
   return (
     <Link href={`/models/${id}/${slugit(name)}`} passHref>
-      <a className="flex items-center gap-4 px-3 py-2 no-underline hover:bg-gray-1 dark:hover:bg-dark-5">
+      <a
+        className={clsx(
+          'flex items-center gap-4 px-3 py-2 no-underline',
+          'hover:bg-gray-1 dark:hover:bg-dark-5',
+          activeItem && 'bg-gray-1 dark:bg-dark-5'
+        )}
+      >
         <ImageGuard2 image={image} explain={false}>
           {(safe) => (
             <div className="relative size-16 shrink-0 grow-0 overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-3">
@@ -129,30 +138,17 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
           </Text>
           {rank && (
             <Group align="center" position="apart" spacing={4}>
-              <Badge variant="light" radius="xl">
-                <Text size="xs" transform="capitalize">
-                  {getDisplayName(type)}
-                </Text>
-
-                {/* {baseModelIndicator && (
-                  <>
-                    <Divider orientation="vertical" />
-                    {typeof baseModelIndicator === 'string' ? (
-                      <Text color="white" size="xs">
-                        {baseModelIndicator}
-                      </Text>
-                    ) : (
-                      baseModelIndicator
-                    )}
-                  </>
-                )} */}
-              </Badge>
+              <ModelTypeBadge
+                classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+                type={type}
+                baseModel={version.baseModel}
+              />
               {(!!rank.downloadCount || !!rank.collectedCount || !!rank.tippedAmountCount) && (
                 <Badge
                   variant="light"
                   color="gray"
                   radius="xl"
-                  classNames={{ inner: 'flex gap-2' }}
+                  classNames={{ inner: 'flex gap-2 flex-nowrap' }}
                 >
                   <Group spacing={2}>
                     <IconDownload size={14} strokeWidth={2.5} />

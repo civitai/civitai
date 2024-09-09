@@ -66,6 +66,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
+import { openModelShowcaseCollectionModal } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -653,6 +654,17 @@ export default function ModelDetailsV2({
                         </ActionIcon>
                       </Menu.Target>
                       <Menu.Dropdown>
+                        <Menu.Item
+                          onClick={() =>
+                            openModelShowcaseCollectionModal({
+                              username: model.user.username,
+                              onSelect: (value) => console.log(value),
+                              onClose: () => console.log('closed'),
+                            })
+                          }
+                        >
+                          Set showcase collection
+                        </Menu.Item>
                         {currentUser && isCreator && published && (
                           <Menu.Item
                             icon={<IconBan size={14} stroke={1.5} />}

@@ -14,7 +14,9 @@ import {
 import { Flags } from '~/shared/utils';
 import { useCookies } from '~/providers/CookiesProvider';
 import { deleteCookie } from 'cookies-next';
-const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
+const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
+  ssr: false,
+});
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
