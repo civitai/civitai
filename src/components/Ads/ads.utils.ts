@@ -1,4 +1,3 @@
-import { useMemo, useRef } from 'react';
 import { getRandom } from '~/utils/array-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
@@ -57,21 +56,25 @@ const adDensity: AdDensity[] = [
   [1, [5, 7]],
   [2, [6, 9]],
   [3, [7, 10]],
-  [4, [8, 11]],
-  [5, [9, 12]],
-  [6, [10, 13]],
-  [7, [12, 18]],
+  [4, [7, 11]],
+  [5, [8, 12]],
+  [6, [9, 14]],
+  [7, [10, 16]],
 ];
 
 const adDefinitions = {
   '970x250:Leaderboard_A': 'civitaicom47456',
   '320x50:Leaderboard_A': 'civitaicom47760',
+
   '970x250:Leaderboard_B': 'civitaicom47457',
   '320x50:Leaderboard_B': 'civitaicom47761',
+
   '970x250:Leaderboard_C': 'civitaicom47458',
   '320x50:Leaderboard_C': 'civitaicom47762',
+
   '300x250:Dynamic_Feeds': 'civitaicom47455',
   '300x600:Dynamic_Feeds': 'civitaicom47453',
+
   '300x250:model_image_pages': 'civitaicom47763',
 };
 const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
