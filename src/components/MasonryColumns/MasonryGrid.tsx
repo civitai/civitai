@@ -69,7 +69,7 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <TwCard className="mx-auto justify-between gap-2 border p-2 shadow">
+              <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
                 <div className="flex flex-col items-center  gap-2">
                   <Image
                     src={`/images/logo_${theme.colorScheme}_mode.png`}
