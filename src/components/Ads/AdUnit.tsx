@@ -164,6 +164,7 @@ export function AdUnit({
   const debouncer = useDebouncer(300);
   const prevWidthRef = useRef<number | null>(null);
   const browsingLevel = useBrowsingLevelDebounced();
+  const nsfw = !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel);
 
   useIsomorphicLayoutEffect(() => {
     const node = ref.current?.parentElement ?? ref.current;
@@ -183,9 +184,9 @@ export function AdUnit({
         resizeObserver.disconnect();
       };
     }
-  }, []);
+  }, [nsfw]);
 
-  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel)) return null;
+  if (!adsEnabled || nsfw) return null;
 
   return (
     <div
