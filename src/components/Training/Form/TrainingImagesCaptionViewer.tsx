@@ -61,7 +61,7 @@ export const TrainingImagesCaptions = ({
       <HighlightWithinTextarea
         placeholder="Add caption..."
         readOnly={autoLabeling.isRunning}
-        highlight={searchCaption}
+        highlight={searchCaption.length ? searchCaption : blankTagStr}
         value={captionTxt}
         onChange={(v) => {
           setCaptionTxt(v);
