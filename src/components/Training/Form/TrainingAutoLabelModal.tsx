@@ -59,7 +59,7 @@ const useSubmitImages = ({
   const { setAutoLabeling } = trainingStore;
 
   const filteredImages = imageList.filter((i) =>
-    (type === 'tag' ? autoTagging : autoCaptioning).overwrite === 'ignore'
+    (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
       ? i.label.length === 0
       : i
   );
@@ -407,10 +407,10 @@ export const AutoLabelModal = ({ modelId }: { modelId: number }) => {
         <Text>Label Type</Text>
         <TrainingImagesLabelTypeSelect modelId={modelId} />
         <Divider />
-        {labelType === 'tag' ? (
-          <AutoTagSection modelId={modelId} handleClose={handleClose} />
-        ) : (
+        {labelType === 'caption' ? (
           <AutoCaptionSection modelId={modelId} handleClose={handleClose} />
+        ) : (
+          <AutoTagSection modelId={modelId} handleClose={handleClose} />
         )}
       </Stack>
     </Modal>

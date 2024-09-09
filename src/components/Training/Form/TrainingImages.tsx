@@ -672,20 +672,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (autoLabeling.isRunning || !autoLabeling.url) return;
     setAutoLabeling(model.id, { isRunning: true });
 
-    if (labelType === 'tag') submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
-    else
+    if (labelType === 'caption') {
       submitCaptionMutation.mutate({
         modelId: model.id,
         url: autoLabeling.url,
         temperature: autoCaptioning.temperature,
         maxNewTokens: autoCaptioning.maxNewTokens,
       });
+    } else {
+      submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
   const filteredImages = useMemo(() => {
     return imageList.filter((i) => {
-      if (labelType === 'tag') {
+      if (labelType === 'caption') {
+        if (!searchCaption.length && !selectedTags.length) return true;
+        if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
+        return searchCaption.length > 0
+          ? i.label.toLowerCase().includes(searchCaption.toLowerCase())
+          : false;
+      } else {
         if (!selectedTags.length) return true;
         const capts: string[] = [];
         if (selectedTags.includes(blankTagStr) && getTextTagsAsList(i.label).length === 0)
@@ -694,12 +702,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           getTextTagsAsList(i.label).filter((c) => selectedTags.includes(c))
         );
         return mergedCapts.length > 0;
-      } else {
-        if (!searchCaption.length && !selectedTags.length) return true;
-        if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
-        return searchCaption.length > 0
-          ? i.label.toLowerCase().includes(searchCaption.toLowerCase())
-          : false;
       }
     });
   }, [imageList, labelType, selectedTags, searchCaption]);
@@ -1066,19 +1068,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
 
         {imageList.length > 0 ? (
-          labelType === 'tag' ? (
-            <TrainingImagesTagViewer
-              selectedTags={selectedTags}
-              setSelectedTags={setSelectedTags}
-              modelId={model.id}
-              numImages={filteredImages.length}
-            />
-          ) : (
+          labelType === 'caption' ? (
             <TrainingImagesCaptionViewer
               selectedTags={selectedTags}
               setSelectedTags={setSelectedTags}
               searchCaption={searchCaption}
               setSearchCaption={setSearchCaption}
+              numImages={filteredImages.length}
+            />
+          ) : (
+            <TrainingImagesTagViewer
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+              modelId={model.id}
               numImages={filteredImages.length}
             />
           )
@@ -1167,17 +1169,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         />
                       </div>
                     </Card.Section>
-                    {labelType === 'tag' ? (
-                      <TrainingImagesTags
-                        imgData={imgData}
-                        modelId={model.id}
-                        selectedTags={selectedTags}
-                      />
-                    ) : (
+                    {labelType === 'caption' ? (
                       <TrainingImagesCaptions
                         imgData={imgData}
                         modelId={model.id}
                         searchCaption={searchCaption}
+                      />
+                    ) : (
+                      <TrainingImagesTags
+                        imgData={imgData}
+                        modelId={model.id}
+                        selectedTags={selectedTags}
                       />
                     )}
                   </Card>

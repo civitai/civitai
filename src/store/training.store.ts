@@ -223,10 +223,10 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
             let newLabel = i.label;
             if (label !== undefined) {
               if (appendLabel && i.label.length > 0) {
-                if (state[modelId]!.labelType === 'tag') {
-                  newLabel = `${i.label}, ${label}`;
-                } else {
+                if (state[modelId]!.labelType === 'caption') {
                   newLabel = `${i.label}\n${label}`;
+                } else {
+                  newLabel = `${i.label}, ${label}`;
                 }
               } else {
                 newLabel = label;
