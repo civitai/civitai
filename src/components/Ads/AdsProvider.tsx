@@ -183,7 +183,7 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
 declare global {
   interface Window {
     __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
-    pgHB?: {
+    pgHB: {
       que: Array<() => void>;
       requestWebRewardedAd?: (args: unknown) => void;
       setUserAudienceData: (args: { email: string }) => void;
