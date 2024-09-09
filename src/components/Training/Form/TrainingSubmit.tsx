@@ -640,6 +640,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
+      {selectedRun.base !== 'flux_dev' &&
+        thisMetadata?.labelType !== 'tag' &&
+        (thisMetadata?.numCaptions ?? 0) > 0 && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={16} />}
+            iconColor="yellow"
+            radius={0}
+            size="md"
+            color="yellow"
+            mt="sm"
+          >
+            <Group spacing="sm" position="apart" noWrap>
+              <Text>
+                You have &quot;captioned&quot; images, but SD models work best with
+                &quot;tags&quot;.
+              </Text>
+              <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+            </Group>
+          </AlertWithIcon>
+        )}
 
       {formBaseModel && (
         <>
