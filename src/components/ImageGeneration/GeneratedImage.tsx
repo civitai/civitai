@@ -223,8 +223,10 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
+  const isUpscale = step.params.workflow === 'img2img-upscale';
   const isFlux = getIsFlux(step.params.baseModel);
-  const canRemix = !isFlux && step.params.workflow !== 'img2img-upscale';
+  const canRemix = !isUpscale;
+  const canImg2Img = !isFlux && !isUpscale;
   const { params } = step;
 
   return (
@@ -298,7 +300,7 @@ export function GeneratedImage({
               >
                 Delete
               </Menu.Item>
-              {!!img2imgWorkflows?.length && canRemix && (
+              {!!img2imgWorkflows?.length && canImg2Img && (
                 <>
                   <Menu.Divider />
                   <Menu.Label>Image-to-image workflows</Menu.Label>
