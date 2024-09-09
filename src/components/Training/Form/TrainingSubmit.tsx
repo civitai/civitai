@@ -17,7 +17,13 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
-import { IconCopy, IconExclamationMark, IconPlus, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCopy,
+  IconExclamationMark,
+  IconPlus,
+  IconX,
+} from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
@@ -614,6 +620,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       </Stack>
 
       <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
+
+      {selectedRun.base === 'flux_dev' &&
+        thisMetadata?.labelType !== 'caption' &&
+        (thisMetadata?.numCaptions ?? 0) > 0 && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={16} />}
+            iconColor="yellow"
+            radius={0}
+            size="md"
+            color="yellow"
+            mt="sm"
+          >
+            <Group spacing="sm" position="apart" noWrap>
+              <Text>
+                You have &quot;tagged&quot; images, but Flux works best with &quot;captions&quot;.
+              </Text>
+              <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+            </Group>
+          </AlertWithIcon>
+        )}
 
       {formBaseModel && (
         <>

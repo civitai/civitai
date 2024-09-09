@@ -2,6 +2,7 @@ import { Container, Group, Stack, Stepper, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { TrainingFormBasic } from '~/components/Training/Form/TrainingBasicInfo';
 import { basePath } from '~/components/Training/Form/TrainingCommon';
@@ -9,7 +10,6 @@ import { TrainingFormImages } from '~/components/Training/Form/TrainingImages';
 import { TrainingFormSubmit } from '~/components/Training/Form/TrainingSubmit';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 
 type WizardState = {
   step: number;
@@ -84,7 +84,7 @@ export default function TrainWizard() {
               </Stack>
             </Stepper.Step>
 
-            {/* == Step 2: Upload images/zip, captioning */}
+            {/* == Step 2: Upload images/zip, labeling */}
             {/*
               loading={uploading > 0}
               color={error + aborted > 0 ? 'red' : undefined}
