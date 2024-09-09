@@ -673,7 +673,6 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   const response = await dbWrite.user.findFirst({
     where,
     include: {
-      subscription: { select: { status: true, product: { select: { metadata: true } } } },
       referral: { select: { id: true } },
       profilePicture: {
         select: {
@@ -684,6 +683,13 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
           userId: true,
         },
       },
+    },
+  });
+
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    where: { userId },
+    include: {
+      product: true,
     },
   });
 
@@ -712,8 +718,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     meta: (response.meta ?? {}) as UserMeta,
   };
 
-  const { subscription, profilePicture, profilePictureId, publicSettings, settings, ...rest } =
-    user;
+  const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
   const tier: UserTier | undefined =
     subscription && ['active', 'trialing'].includes(subscription.status)
       ? (subscription.product.metadata as any)[env.TIER_METADATA_KEY]
