@@ -19,8 +19,7 @@ export const useActiveSubscription = ({
     isLoading,
     isFetching,
   } = trpc.subscriptions.getUserSubscription.useQuery(undefined, {
-    enabled:
-      !!currentUser && !!(isMember || (checkWhenInBadState && currentUser?.memberInBadState)),
+    enabled: !!currentUser && !!(isMember || checkWhenInBadState),
   });
 
   const meta = subscription?.product?.metadata as SubscriptionProductMetadata;
