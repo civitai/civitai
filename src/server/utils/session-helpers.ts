@@ -92,7 +92,7 @@ export async function invalidateSession(userId: number) {
     redis.set(`session:${userId}`, new Date().toISOString(), {
       EX: DEFAULT_EXPIRATION, // 30 days
     }),
-    redis.del(`session:data:${userId}`),
+    redis.packed.set(`session:data:${userId}`, { clearedAt: Date.now() }),
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
   ]);
   log(`Scheduling refresh session for user ${userId}`);
