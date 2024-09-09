@@ -635,6 +635,7 @@ export const updateAccountScope = async ({
   }
 };
 
+const SESSION_CACHE_DEBOUNCE_TIME = 5 * 1000; // 5 seconds
 export const getSessionUser = async ({ userId, token }: { userId?: number; token?: string }) => {
   if (!userId && !token) return undefined;
 
@@ -653,8 +654,13 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   // Get from cache
   // ----------------------------------
   const cacheKey = `session:data:${userId}`;
-  const cachedResult = await redis.packed.get<SessionUser>(cacheKey);
-  if (cachedResult) return cachedResult;
+  const cachedResult = await redis.packed.get<SessionUser | { clearedAt: number }>(cacheKey);
+  let shouldCache = true;
+  if (cachedResult) {
+    if (!('clearedAt' in cachedResult)) return cachedResult;
+    // Check if it's passed the debounce period
+    if (Date.now() - cachedResult.clearedAt < SESSION_CACHE_DEBOUNCE_TIME) shouldCache = false;
+  }
 
   // On cache miss get from database
   // ----------------------------------
@@ -743,7 +749,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         : true,
     // feedbackToken,
   };
-  await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
+  if (shouldCache) await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
 
   return sessionUser;
 };
