@@ -66,9 +66,9 @@ const adDensity: AdDensity[] = [
 const adDefinitions = {
   '970x250:Leaderboard_A': 'civitaicom47456',
   '320x50:Leaderboard_A': 'civitaicom47760',
-  '728x90:Leaderboard_B': 'civitaicom47457',
+  '970x250:Leaderboard_B': 'civitaicom47457',
   '320x50:Leaderboard_B': 'civitaicom47761',
-  '728x90:Leaderboard_C': 'civitaicom47458',
+  '970x250:Leaderboard_C': 'civitaicom47458',
   '320x50:Leaderboard_C': 'civitaicom47762',
   '300x250:Dynamic_Feeds': 'civitaicom47455',
   '300x600:Dynamic_Feeds': 'civitaicom47453',
@@ -101,7 +101,7 @@ export function getAdUnitDetails(args: AdUnitKey[]) {
   return keys.map((key) => {
     const [size, name] = key.split(':');
     const [width, height] = size.split('x').map(Number);
-    const type = name === 'Dynamic_Feeds' ? ('dynamic' as const) : ('static' as const);
+    const type = name.includes('Dynamic') ? ('dynamic' as const) : ('static' as const);
     return {
       width,
       height,

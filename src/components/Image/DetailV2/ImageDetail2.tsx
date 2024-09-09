@@ -395,6 +395,7 @@ export function ImageDetail2() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
+                {!nsfw && <AdUnit keys={['300x250:model_image_pages']} justify="center" />}
                 <VotableTags
                   entityType="image"
                   entityId={image.id}
@@ -404,14 +405,6 @@ export function ImageDetail2() {
                 />
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
-                {!nsfw && (
-                  <AdUnit keys={['300x250:model_image_pages']}>
-                    <TwCard className="mx-auto border p-2 shadow">
-                      <AdUnit.Content />
-                    </TwCard>
-                  </AdUnit>
-                )}
-
                 <Card className="flex flex-col gap-3 rounded-xl">
                   <Text className="flex items-center gap-2 text-xl font-semibold">
                     <IconBrandWechat />

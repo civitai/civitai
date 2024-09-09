@@ -153,8 +153,13 @@ export function AdUnit({
   children,
   className,
   style,
+  justify,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { keys: AdUnitKey[]; withFeedback?: boolean }) {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  keys: AdUnitKey[];
+  withFeedback?: boolean;
+  justify?: 'start' | 'end' | 'center';
+}) {
   const { adsEnabled } = useAdsContext();
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
@@ -184,7 +189,15 @@ export function AdUnit({
 
   return (
     <div
-      className={clsx('flex w-full', className)}
+      className={clsx(
+        'flex w-full',
+        {
+          ['justify-start']: justify === 'start',
+          ['justify-center']: justify === 'center',
+          ['justify-end']: justify === 'end',
+        },
+        className
+      )}
       ref={ref}
       style={!item ? { display: 'none', ...style } : style}
       {...props}
