@@ -76,6 +76,7 @@ const adDefinitions = {
   '300x600:Dynamic_Feeds': 'civitaicom47453',
 
   '300x250:model_image_pages': 'civitaicom47763',
+  '728x90:Leaderboard': 'civitaicom47842',
 };
 const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
 

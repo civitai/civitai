@@ -25,8 +25,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const currentUser = useCurrentUser();
   const isClient = useIsClient();
   const [visible, setVisible] = useState(false);
-  const { adsBlocked, adsEnabled, isMember } = useAdsContext();
-  const browsingLevel = useBrowsingLevelDebounced();
+  const { adsBlocked, isMember } = useAdsContext();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const { withFeedback } = useAdUnitContext();
@@ -39,8 +38,6 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
       setVisible(true);
     }
   }, [inView]);
-
-  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
 
   return (
     <div
@@ -146,43 +143,54 @@ export function AdUnit({
   className,
   style,
   justify,
+  browsingLevel: browsingLevelOverride,
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
   keys: AdUnitKey[];
   withFeedback?: boolean;
   justify?: 'start' | 'end' | 'center';
+  browsingLevel?: number;
 }) {
   const { adsEnabled } = useAdsContext();
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
   const [width, setWidth] = useState<number>();
-  const item = width ? details.find((x) => x.width <= width) : undefined;
+  const item = width
+    ? details.find((x) => {
+        // don't change this logic without consulting Briant
+        return x.width < width;
+      })
+    : undefined;
   const debouncer = useDebouncer(300);
   const prevWidthRef = useRef<number | null>(null);
+  const browsingLevel = useBrowsingLevelDebounced();
 
   useIsomorphicLayoutEffect(() => {
     const node = ref.current?.parentElement ?? ref.current;
-    if (node) {
+    if (ref.current && node) {
       setWidth(getClientWidth(node));
-      const observer = new ResizeObserver((entries) => {
-        const clientWidth = entries[0].target.clientWidth;
+      const resizeObserver = new ResizeObserver((entries) => {
+        const clientWidth = entries[0].contentBoxSize[0].inlineSize;
         const widthChanged = prevWidthRef.current !== clientWidth;
         if (!widthChanged) return;
 
         prevWidthRef.current = clientWidth;
         debouncer(() => setWidth(clientWidth));
       });
-      observer.observe(node);
-      return () => observer.disconnect();
+
+      resizeObserver.observe(node);
+      return () => {
+        resizeObserver.disconnect();
+      };
     }
   }, []);
 
-  if (!adsEnabled) return null;
+  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel)) return null;
 
   return (
     <div
       className={clsx(
-        'flex w-full',
+        'flex w-full max-w-full',
         {
           ['justify-start']: justify === 'start',
           ['justify-center']: justify === 'center',
