@@ -5,6 +5,8 @@ import {
 import { useMemo } from 'react';
 import { AdFeedItem, createAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 
 // don't know if I need memoized
 export const useColumnCount = (width = 0, columnWidth = 0, gutter = 8, maxColumnCount?: number) =>
@@ -37,6 +39,8 @@ export function useMasonryColumns<TData>(
   withAds?: boolean
 ) {
   const { adsEnabled } = useAdsContext();
+  const browsingLevel = useBrowsingLevelDebounced();
+  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
 
   return useMemo(
     () =>
@@ -47,9 +51,9 @@ export function useMasonryColumns<TData>(
         imageDimensions,
         adjustDimensions,
         maxItemHeight,
-        adsEnabled && withAds
+        adsReallyAreEnabled
       ),
-      [data, columnWidth, columnCount, maxItemHeight, adsEnabled] // eslint-disable-line
+    [data, columnWidth, columnCount, maxItemHeight, adsReallyAreEnabled] // eslint-disable-line
   );
 }
 
@@ -71,7 +75,11 @@ const getMasonryColumns = <TData>(
   // Layout algorithm below always inserts into the shortest column.
   if (columnCount === 0) return [];
 
-  const feed = createAdFeed({ data, columnCount, showAds });
+  const feed = createAdFeed({
+    data,
+    columnCount,
+    keys: showAds ? ['300x250:Dynamic_Feeds', '300x600:Dynamic_Feeds'] : undefined,
+  });
 
   const columnHeights: number[] = Array(columnCount).fill(0);
   const columnItems: ColumnItem<AdFeedItem<TData>>[][] = Array(columnCount).fill([]);
@@ -79,7 +87,7 @@ const getMasonryColumns = <TData>(
   for (const item of feed) {
     let height = 0;
     if (item.type === 'ad') {
-      height = 250 + 20;
+      height = item.data.height + 20;
     } else {
       const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 

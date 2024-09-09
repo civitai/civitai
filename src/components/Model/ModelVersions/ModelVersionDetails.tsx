@@ -41,7 +41,7 @@ import { startCase } from 'lodash-es';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
-import { ModelAndImagePageAdUnit } from '~/components/Ads/AdUnit';
+import { AdUnit } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -110,6 +110,7 @@ import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { useQueryModelCollectionShowcase } from '~/components/Model/model.utils';
 
@@ -139,6 +140,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     key: 'model-version-details-accordions',
     defaultValue: ['version-details'],
   });
+  const adContainerRef = useRef<HTMLDialogElement | null>(null);
 
   const {
     isLoadingAccess,
@@ -598,7 +600,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   return (
     <ContainerGrid gutter="xl" gutterSm="sm" gutterMd="xl">
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
-      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2}>
+      <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
         <Stack>
           {model.mode !== ModelModifier.TakenDown && (
             <ModelCarousel
@@ -1246,7 +1248,13 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          <ModelAndImagePageAdUnit />
+          {!model.nsfw && (
+            <AdUnit keys={['300x250:model_image_pages']}>
+              <TwCard className="mx-auto border p-2 shadow">
+                <AdUnit.Content />
+              </TwCard>
+            </AdUnit>
+          )}
         </Stack>
       </ContainerGrid.Col>
 

@@ -1,12 +1,10 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import Script from 'next/script';
-import { isProd } from '~/env/other';
-import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { isProd } from '~/env/other';
+import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -27,13 +25,11 @@ export function useAdsContext() {
 }
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [adsBlocked, setAdsBlocked] = useState<boolean>(true);
+  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(!isProd ? true : undefined);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
   // derived value from browsingMode and nsfwOverride
-  const browsingLevel = useBrowsingLevelDebounced();
-  const nsfw = browsingLevel > sfwBrowsingLevelsFlag;
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
@@ -57,11 +53,15 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (isProd) setAdsBlocked(false);
   }
 
+  function handleCmpError() {
+    if (isProd) setAdsBlocked(true);
+  }
+
   return (
     <AdsContext.Provider
       value={{
         adsBlocked: adsBlocked,
-        adsEnabled: adsEnabled && !nsfw,
+        adsEnabled: adsEnabled,
         username: currentUser?.username,
         providers: adProviders,
         isMember,
@@ -70,9 +70,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && isProd && (
         <>
-          <Script src="https://cmp.uniconsent.com/v2/stub.min.js" onLoad={handleCmpLoaded} />
+          <Script
+            src="https://cmp.uniconsent.com/v2/stub.min.js"
+            onLoad={handleCmpLoaded}
+            onError={handleCmpError}
+          />
           <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
-          {!adsBlocked && (
+          {adsBlocked === false && (
             <>
               <Script
                 id="ads-start"
@@ -114,11 +118,25 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             `,
                 }}
               />
+              <Script
+                id="ads-custom"
+                type="text/javascript"
+                dangerouslySetInnerHTML={{
+                  __html: `
+                  window.googletag.cmd.push(function () {
+                    googletag.pubads().addEventListener("impressionViewable", (event) => {
+                      dispatchEvent(new CustomEvent('civitai-ad-impression', {detail: event.slot}));
+                    });
+                  });
+                `,
+                }}
+              />
               <TcfapiSuccess
                 onSuccess={(success) => {
                   if (success !== undefined) setAdsBlocked(!success);
                 }}
               />
+              <ImpressionTracker />
             </>
           )}
           <div id="uniconsent-config" />
@@ -142,6 +160,12 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
   }, []);
 
   return null;
+}
+
+declare global {
+  interface Window {
+    __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
+  }
 }
 
 // const REQUEST_URL = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js';

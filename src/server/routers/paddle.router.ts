@@ -6,6 +6,7 @@ import {
   purchaseBuzzWithSubscriptionHandler,
   getManagementUrlsHandler,
   getOrCreateCustomerHandler,
+  refreshSubscriptionHandler,
 } from '~/server/controllers/paddle.controller';
 import { router, protectedProcedure } from '~/server/trpc';
 import {
@@ -14,6 +15,7 @@ import {
   updateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
+import { refreshSubscription } from '../services/paddle.service';
 
 export const paddleRouter = router({
   createBuzzPurchaseTransaction: protectedProcedure
@@ -31,4 +33,5 @@ export const paddleRouter = router({
     .mutation(purchaseBuzzWithSubscriptionHandler),
   getManagementUrls: protectedProcedure.query(getManagementUrlsHandler),
   getOrCreateCustomer: protectedProcedure.mutation(getOrCreateCustomerHandler),
+  refreshSubscription: protectedProcedure.mutation(refreshSubscriptionHandler),
 });

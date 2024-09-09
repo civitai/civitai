@@ -93,6 +93,8 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -143,6 +145,7 @@ export function GenerationFormContent() {
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
   });
+  const { subscription, meta: subscriptionMeta } = useActiveSubscription();
 
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
@@ -152,6 +155,7 @@ export function GenerationFormContent() {
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
+  const subscriptionMismatch = subscription ? subscriptionMeta?.tier !== status.tier : false;
 
   const { errors } = form.formState;
 
@@ -246,7 +250,10 @@ export function GenerationFormContent() {
       try {
         await mutateAsync({
           resources,
-          params: { ...params, nsfw: hasMinorResources ? false : params.nsfw },
+          params: {
+            ...params,
+            nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+          },
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
             : undefined,
@@ -736,7 +743,7 @@ export function GenerationFormContent() {
                   />
                 </div>
 
-                {!isFlux && (
+                {!isFlux && featureFlags.canViewNsfw && (
                   <div className="my-2 flex flex-wrap justify-between gap-3">
                     <InputSwitch
                       name="nsfw"
@@ -984,6 +991,19 @@ export function GenerationFormContent() {
               </ScrollArea>
               <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
                 <DailyBoostRewardClaim />
+                {subscriptionMismatch && (
+                  <DismissibleAlert
+                    id="subscription-mismatch-generator-alert"
+                    color="red"
+                    title="Subscription Mismatch"
+                  >
+                    <Text size="xs">
+                      Looks like we&rsquo;re having trouble correctly applying your membership
+                      bonuses, try to <RefreshSessionButton />, if that doesn&rsquo;t work please
+                      contact us here <Anchor href="https://civitai.com/support">here</Anchor>
+                    </Text>
+                  </DismissibleAlert>
+                )}
                 {promptWarning ? (
                   <div>
                     <Alert color="red" title="Prohibited Prompt">

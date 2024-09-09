@@ -25,6 +25,7 @@ import {
 } from '~/server/services/paddle.service';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { paddleTransactionContainsSubscriptionItem } from '~/server/services/subscriptions.service';
+import { isDev } from '~/env/other';
 
 // Stripe requires the raw body to construct the event.
 export const config = {

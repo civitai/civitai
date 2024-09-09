@@ -102,6 +102,7 @@ export default MixedAuthEndpoint(async function handler(
   if (req.headers.host?.includes('api.')) {
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
+  const { format } = primaryFile.metadata;
 
   // Check unavailable resources:
   let canGenerate = modelVersion.covered ?? false;
@@ -122,6 +123,7 @@ export default MixedAuthEndpoint(async function handler(
       AutoV2: primaryFile.hash,
     },
     downloadUrls: [downloadUrl],
+    format,
     canGenerate,
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,

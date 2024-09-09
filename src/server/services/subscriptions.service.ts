@@ -17,14 +17,16 @@ const log = createLogger('subscriptions', 'blue');
 export const getPlans = async ({
   paymentProvider = PaymentProvider.Stripe,
   includeFree = false,
+  includeInactive = false,
 }: {
   paymentProvider?: PaymentProvider;
   includeFree?: boolean;
+  includeInactive?: boolean;
 }) => {
   const products = await dbRead.product.findMany({
     where: {
       provider: paymentProvider,
-      active: true,
+      active: includeInactive ? undefined : true,
       prices: { some: { type: 'recurring', active: true } },
     },
     select: {

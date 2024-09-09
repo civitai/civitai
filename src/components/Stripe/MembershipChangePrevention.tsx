@@ -252,16 +252,14 @@ export const PaddleCancelMembershipButton = ({
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
     cancelSubscription({
-      onSuccess: ({ url, canceled }) => {
-        if (url) {
-          onClose();
-          Router.push(url);
-        } else if (canceled) {
+      onSuccess: (canceled) => {
+        if (canceled) {
           onClose();
           showSuccessNotification({
             title: 'You have been successfully downgraded to our Free tier.',
             message: 'You will no longer be billed for your subscription',
           });
+          window?.location.reload();
         }
       },
     });

@@ -67,7 +67,7 @@ export function SubNav() {
       shadow="xs"
       py={4}
       px={8}
-      mb={currentPath !== 'home' ? 'md' : undefined}
+      mb={currentPath !== 'home' ? 'sm' : undefined}
     >
       <Group spacing={8} position="apart" noWrap={currentPath === 'home'}>
         <HomeTabs />

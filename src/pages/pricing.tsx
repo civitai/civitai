@@ -311,7 +311,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
-    if (!features?.isGreen || !features.canBuyBuzz)
+    if (!features?.isGreen || !features?.canBuyBuzz)
       return {
         redirect: {
           destination: `https://${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN}/pricing?sync-account=blue`,
