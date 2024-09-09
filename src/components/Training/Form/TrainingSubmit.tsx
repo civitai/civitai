@@ -27,6 +27,7 @@ import {
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
+import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -504,7 +505,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 },
                 {
                   label: 'Label Type',
-                  value: thisMetadata?.labelType ?? 'tag',
+                  value: capitalize(thisMetadata?.labelType ?? 'tag'),
                 },
               ]}
             />
