@@ -184,7 +184,7 @@ export function PostImages({
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">
                         <ImageMetaPopover2 imageId={image.id}>
-                          <ActionIcon variant="transparent" size="lg">
+                          <ActionIcon variant="transparent" size="lg" component="span">
                             <IconInfoCircle
                               color="white"
                               filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
