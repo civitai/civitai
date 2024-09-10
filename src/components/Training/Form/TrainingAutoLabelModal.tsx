@@ -63,7 +63,7 @@ const useSubmitImages = ({
       ? i.label.length === 0
       : i
   );
-  const disabled = filteredImages.length > maxImagesCaption;
+  const disabled = type === 'caption' && filteredImages.length > maxImagesCaption;
 
   const handleSubmit = async () => {
     if (disabled) return;
@@ -307,7 +307,7 @@ const AutoCaptionSection = ({
           iconColor="red"
         >
           <Text>
-            {`A maximum of ${numImages} images at a time may be sent for captioning (you have ${numImages}).`}
+            {`A maximum of ${maxImagesCaption} images at a time may be sent for captioning (you have ${numImages}).`}
           </Text>
         </AlertWithIcon>
       )}
