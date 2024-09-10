@@ -307,7 +307,7 @@ const AutoCaptionSection = ({
           iconColor="red"
         >
           <Text>
-            {`A maximum of ${numImages} images at a time may be sent for captioning (you have ${numImages}).`}
+            {`A maximum of ${maxImagesCaption} images at a time may be sent for captioning (you have ${numImages}).`}
           </Text>
         </AlertWithIcon>
       )}
