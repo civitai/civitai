@@ -33,7 +33,7 @@ export function createAdFeed<T>({
   while (adMatrix.lastIndex < data.length) {
     const min = adMatrix.lastIndex + lower + 1;
     const max = adMatrix.lastIndex + upper;
-    const index = getRandomInt(min, max);
+    const index = adMatrix.indices.length === 0 ? getRandomInt(3, 5) : getRandomInt(min, max);
     const key = getRandom(keys);
     const [item] = getAdUnitDetails([key]);
     adMatrix.indices.push({ index, ...item });
