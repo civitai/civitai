@@ -76,10 +76,10 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       onReconnected: () => {
         console.debug('signal service reconnected'); // eslint-disable-line no-console
         // TODO.signals reenable when stable
-        if (userId) {
-          queryUtils.buzz.getBuzzAccount.invalidate();
-          queryUtils.orchestrator.queryGeneratedImages.invalidate();
-        }
+        // if (userId) {
+        //   queryUtils.buzz.getBuzzAccount.invalidate();
+        //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        // }
         setStatus('connected');
       },
       onReconnecting: () => {
