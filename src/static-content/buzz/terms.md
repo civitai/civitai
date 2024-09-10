@@ -2,7 +2,7 @@
 title: 'Civitai - Buzz Terms and Conditions'
 ---
 
-Last Updated: 12/27/2023
+Last Updated: 09/10/2024
 
 **PLEASE READ THE FOLLOWING BUZZ TERMS CAREFULLY:**
 
@@ -16,6 +16,13 @@ These Buzz Terms and Conditions (“Buzz Terms”) govern your receipt and use o
 
 **Prohibited Conduct.** You may not use, acquire, or distribute Buzz except
 through the Services and except as expressly allowed by Civitai. Any attempt to do so constitutes a violation of the Terms of Service, will render the transaction void, and may result in the immediate suspension or termination of your Account and your license to use Buzz or the Service. Civitai does not recognize or take responsibility for third-party services that allow Users to sell, transfer, purchase, or otherwise use Buzz, and any such use by a User is a violation of the Terms of Service. Only Users who have reached the age of majority in their jurisdiction or state of residence may purchase Buzz or engage in other real-money transactions on the Services. Except as required by law, all payments for Buzz are final and not refundable. Civitai may implement changes to Buzz and these Buzz Terms at any time at Civitai’s sole discretion; this may include limiting the number of Buzz a User may acquire or lowering the purchase price of Buzz.
+
+**Prohibited Activities** Users are prohibited from engaging in any activities designed to accrue or "farm" Buzz beyond what is deemed reasonable for typical use of the Service. These prohibited activities include, but are not limited to:
+- Multi-accounting: Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
+- Automated Methods: Using bots, scripts, or any form of automation to collect Buzz, participate in activities designed to earn Buzz, or manipulate the system.
+- Fraudulent Actions: Exploiting bugs, loopholes, or errors within the Service to gain Buzz illegitimately or performing any other fraudulent actions to artificially inflate your Buzz balance.
+- Collusion: Coordinating with other users to generate Buzz in a manner that violates these Terms or the intended use of the Service.
+Civitai reserves the right to review account activity, determine whether behavior constitutes "farming" or other prohibited activities, and take corrective action, including but not limited to suspending or terminating accounts, revoking Buzz, or denying requests to Cash Out. Violation of this policy may also result in permanent loss of the license to use Buzz and exclusion from participation in any future Buzz-related activities.
 
 **Buzz Dashboard.** You can access and track your Buzz using the Buzz Dashboard page from either the Buzz dashboard link on the main menu, or by clicking your Buzz balance in the top left of the menu header. The My Buzz Dashboard page shows Recent Transactions, your Lifetime Buzz amount, and will list ways to earn (and use) your Buzz. Buzz may, in Civitai’s sole discretion be exchanged for fiat (“Cash Out”). Such Cash Out may require a minimum Buzz amount for conversion to fiat currency. Civitai reserves the right to determine the currency in which Buzz is exchanged. You are responsible for all transaction fees in connection with Cash Out transactions, if any, and these fees will vary depending on the payment method you choose. Furthermore, Civitai, in its sole discretion, will determine whether you are eligible to Cash Out by reviewing information on your Account, requirements under applicable law, and your compliance with the Terms of Service and these Buzz Terms.
 

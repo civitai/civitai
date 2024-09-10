@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 08/19/24
+Last Updated: 09/10/2024
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -125,9 +125,13 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 11.7 perform any fraudulent activity including impersonating any person or entity, claiming a false affiliation or identity, accessing any other Service account without permission;
 
-- 11.8 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials; or
+- 11.8  Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
 
-- 11.9 attempt to do any of the acts described in this Section 11 (Prohibited Conduct) or assist or permit any person in engaging in any of the acts described in this Section 11 (Prohibited Conduct).
+- 11.9 Using bots, scripts, or any form of automation to manipulate the system or statistics
+
+- 11.10 sell or otherwise transfer the access granted under these Terms or any Materials (as defined in Section 7 (Ownership; Proprietary Rights)) or any right or ability to view, access, or use any Materials; or
+
+- 11.11 attempt to do any of the acts described in this Section 11 (Prohibited Conduct) or assist or permit any person in engaging in any of the acts described in this Section 11 (Prohibited Conduct).
 
 12. **Intellectual Property Rights Protection**
 
