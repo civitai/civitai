@@ -29,7 +29,8 @@ export async function invalidateToken(token: JWT) {
 export async function refreshToken(token: JWT) {
   if (!token.user) return token;
   const user = token.user as User;
-  if (!(token.user as any).clearedAt && !user.id) return token;
+  if (!!(user as any).clearedAt) return null;
+  if (!user.id) return token;
 
   let shouldRefresh = false;
 
