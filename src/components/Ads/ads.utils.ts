@@ -63,14 +63,14 @@ const adDensity: AdDensity[] = [
 ];
 
 const adDefinitions = {
-  '970x250:Dynamic_Leaderboard_A': 'civitaicom47456',
+  '970x250:Leaderboard_A': 'civitaicom47456',
   '320x50:Leaderboard_A': 'civitaicom47760',
 
   '970x250:Leaderboard_B': 'civitaicom47457',
   '320x50:Leaderboard_B': 'civitaicom47761',
 
-  '970x250:Leaderboard_C': 'civitaicom47458',
-  '320x50:Leaderboard_C': 'civitaicom47762',
+  '970x250:Dynamic_Leaderboard_C': 'civitaicom47458',
+  '320x50:Dynamic_Leaderboard_C': 'civitaicom47762',
 
   '300x250:Dynamic_Feeds': 'civitaicom47455',
   '300x600:Dynamic_Feeds': 'civitaicom47453',
