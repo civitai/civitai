@@ -2,7 +2,7 @@ import { Badge, Button, Flex, Grid, Group, Modal, Stack, TextInput } from '@mant
 import { IconArrowNarrowRight } from '@tabler/icons-react';
 import React, { Fragment, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { getCaptionAsList } from '~/components/Training/Form/TrainingImages';
+import { getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
 import type { ImageDataType } from '~/store/training.store';
 
 export const TrainingEditTagsModal = ({
@@ -27,11 +27,11 @@ export const TrainingEditTagsModal = ({
 
   const handleConfirm = () => {
     const newImageList = imageList.map((i) => {
-      const capts = getCaptionAsList(i.caption).map((c) => {
+      const capts = getTextTagsAsList(i.label).map((c) => {
         const foundVal = tagChange[c];
         return foundVal && foundVal.length ? foundVal : c;
       });
-      return { ...i, caption: capts.join(', ') };
+      return { ...i, label: capts.join(', ') };
     });
     setImageList(modelId, newImageList);
     setSelectedTags([]);
@@ -39,7 +39,7 @@ export const TrainingEditTagsModal = ({
   };
 
   return (
-    <Modal {...dialog} centered size="md" radius="md" title="Replace captions">
+    <Modal {...dialog} centered size="md" radius="md" title="Replace tags">
       <Stack>
         <Grid align="center">
           {selectedTags.map((st) => (

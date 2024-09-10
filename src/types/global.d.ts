@@ -3,6 +3,7 @@
 import { FileWithPath } from '@mantine/dropzone';
 import { ImageAnalysisInput } from '~/server/schema/image.schema';
 import { TrainingResults } from '~/server/schema/model-file.schema';
+import { LabelTypes } from '~/store/training.store';
 
 export {};
 
@@ -92,7 +93,9 @@ declare global {
     fp?: ModelFileFp;
   };
 
+  // TODO do we need this type? we already have ModelFileMetadata
   type FileMetadata = BasicFileMetadata & {
+    labelType?: LabelTypes;
     ownRights?: boolean;
     shareDataset?: boolean;
     numImages?: number;

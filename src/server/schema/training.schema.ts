@@ -1,6 +1,7 @@
 import { defaultsDeep } from 'lodash-es';
 import { z } from 'zod';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { autoCaptionSchema } from '~/store/training.store';
 
 export type CreateTrainingRequestInput = z.infer<typeof createTrainingRequestSchema>;
 export const createTrainingRequestSchema = z.object({
@@ -25,6 +26,8 @@ export const autoTagInput = z.object({
   url: z.string().url(),
   modelId: z.number().positive(),
 });
+export type AutoCaptionInput = z.infer<typeof autoCaptionInput>;
+export const autoCaptionInput = autoTagInput.merge(autoCaptionSchema.omit({ overwrite: true }));
 
 const trainingEtaSchema = z.object({
   base: z.number(),

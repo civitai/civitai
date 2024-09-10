@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { engineTypes, trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { autoCaptionSchema } from '~/store/training.store';
 
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
@@ -100,6 +101,14 @@ export namespace Orchestrator {
     });
     export type ImageAutoTagJobPayload = z.infer<typeof imageAutoTagInputSchema>;
     export type ImageAutoTagJobResponse = Orchestrator.JobResponse; // TODO is this right?
+
+    const imageAutoCaptionInputSchema = imageAutoTagInputSchema
+      .merge(autoCaptionSchema.omit({ overwrite: true }))
+      .extend({
+        model: z.string(),
+      });
+    export type ImageAutoCaptionJobPayload = z.infer<typeof imageAutoCaptionInputSchema>;
+    export type ImageAutoCaptionJobResponse = Orchestrator.JobResponse; // TODO is this right?
   }
 
   export namespace Generation {

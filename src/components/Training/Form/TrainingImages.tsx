@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Anchor,
+  Badge,
   Button,
   Card,
   Center,
@@ -9,12 +10,15 @@ import {
   Group,
   Image as MImage,
   Loader,
+  Modal,
   Pagination,
   Paper,
   Progress,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
   useMantineTheme,
@@ -27,7 +31,9 @@ import { ModelFileVisibility } from '@prisma/client';
 import {
   IconAlertTriangle,
   IconCheck,
+  IconCloudOff,
   IconFileDownload,
+  IconInfoCircle,
   IconTags,
   IconTagsOff,
   IconTrash,
@@ -35,9 +41,10 @@ import {
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import JSZip from 'jszip';
-import { isEqual } from 'lodash-es';
+import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -46,6 +53,13 @@ import {
   TrainingImagesCaptions,
   TrainingImagesCaptionViewer,
 } from '~/components/Training/Form/TrainingImagesCaptionViewer';
+import {
+  TrainingImagesSwitchLabel,
+  TrainingImagesTags,
+  TrainingImagesTagViewer,
+} from '~/components/Training/Form/TrainingImagesTagViewer';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -54,10 +68,12 @@ import {
   defaultTrainingState,
   getShortNameFromUrl,
   type ImageDataType,
+  LabelTypes,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
+import { createImageElement } from '~/utils/image-utils';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -66,9 +82,10 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { createImageElement, resizeImage } from '~/utils/image-utils'
 
-const AutoTagModal = dynamic(() => import('./TrainingAutoTagModal').then((m) => m.AutoTagModal));
+const AutoLabelModal = dynamic(() =>
+  import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal)
+);
 
 const MAX_FILES_ALLOWED = 1000;
 
@@ -76,8 +93,9 @@ export const blankTagStr = '@@none@@';
 
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
-    borderBottom: `1px solid ${theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-      }`,
+    borderBottom: `1px solid ${
+      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
+    }`,
     position: 'relative',
     '&:hover .trashIcon': {
       display: 'flex',
@@ -106,11 +124,106 @@ const minHeight = 256;
 const maxWidth = 2048;
 const maxHeight = 2048;
 
-export const getCaptionAsList = (capt: string) => {
-  return capt
+export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
+  tag: (
+    <Stack spacing={0}>
+      <Text>Short, comma-separated descriptions.</Text>
+      <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
+      <Text mt="sm">
+        Preferred for <Badge color="violet">SD</Badge> models.
+      </Text>
+    </Stack>
+  ),
+  caption: (
+    <Stack spacing={0}>
+      <Text>Natural language, long-form sentences.</Text>
+      <Text fs="italic">
+        Ex: &quot;There is a dolphin in the ocean. It is jumping out against a gorgeous backdrop of
+        a setting sun.&quot;
+      </Text>
+      <Text mt="sm">
+        Preferred for <Badge color="red">Flux</Badge> models.
+      </Text>
+    </Stack>
+  ),
+};
+
+export const getTextTagsAsList = (txt: string) => {
+  return txt
     .split(',')
     .map((c) => c.trim().toLowerCase())
     .filter((c) => c.length > 0);
+};
+
+const LabelSelectModal = ({ modelId }: { modelId: number }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+
+  const { labelType, imageList } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+  const { setLabelType } = trainingStore;
+
+  // I mean, this could probably be better
+  const firstLabel = imageList.find((i) => i.label.length > 0)?.label;
+  const estimatedType =
+    (firstLabel?.length ?? 0) > 80 && // long string
+    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.1 // not many commas
+      ? 'caption'
+      : 'tag';
+
+  const [labelValue, setLabelValue] = useState<LabelTypes>(estimatedType);
+
+  const handleSelect = () => {
+    setLabelType(modelId, labelValue);
+    handleClose();
+  };
+
+  return (
+    <Modal
+      {...dialog}
+      centered
+      size="md"
+      radius="md"
+      title={
+        <Group spacing="xs">
+          <IconInfoCircle />
+          <Text size="lg">Found label files</Text>
+        </Group>
+      }
+    >
+      <Stack>
+        <Stack spacing={0}>
+          <Text>You&apos;ve included some labeling (.txt) files.</Text>{' '}
+          <Text>Which type are they?</Text>
+        </Stack>
+        <Group spacing="xs">
+          <Text size="sm">Current type: </Text>
+          <Badge>{labelType}</Badge>
+        </Group>
+        <Group spacing="xs">
+          <Text size="sm">Estimated type: </Text>
+          <Badge color={labelType === estimatedType ? 'blue' : 'red'}>{estimatedType}</Badge>
+        </Group>
+        <SegmentedControl
+          value={labelValue}
+          data={constants.autoLabel.labelTypes.map((l) => ({
+            label: capitalize(l),
+            value: l,
+          }))}
+          onChange={(l) => setLabelValue(l as LabelTypes)}
+          radius="sm"
+          fullWidth
+        />
+        <Paper shadow="xs" radius="xs" p="md" withBorder>
+          <Text>{labelDescriptions[labelValue]}</Text>
+        </Paper>
+        <Group position="right" mt="xl">
+          <Button onClick={handleSelect}>OK</Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
@@ -118,20 +231,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     updateImage,
     setImageList,
     setInitialImageList,
+    setLabelType,
     setOwnRights,
     setShareDataset,
+    setInitialLabelType,
     setInitialOwnRights,
     setInitialShareDataset,
-    setAutoCaptioning,
+    setAutoLabeling,
   } = trainingStore;
 
   const {
     imageList,
     initialImageList,
+    labelType,
     ownRights,
     shareDataset,
+    initialLabelType,
     initialOwnRights,
     initialShareDataset,
+    autoLabeling,
     autoCaptioning,
   } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
 
@@ -140,6 +258,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [loadingZip, setLoadingZip] = useState<boolean>(false);
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [searchCaption, setSearchCaption] = useState<string>('');
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -159,59 +278,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const thisStep = 2;
   const maxImgPerPage = 9;
-
-  useEffect(() => {
-    // is there any way to generate a file download url given the one we already have?
-    // async function parseExisting(ef: (typeof thisModelVersion.files)[number]) {
-    async function parseExisting() {
-      const url = createModelFileDownloadUrl({
-        versionId: thisModelVersion.id,
-        type: 'Training Data',
-      });
-      const result = await fetch(url);
-      if (!result.ok) {
-        return;
-      }
-      const blob = await result.blob();
-      const zipFile = new File([blob], `${thisModelVersion.id}_training_data.zip`, {
-        type: blob.type,
-      });
-      return await handleZip(zipFile, false);
-    }
-
-    if (existingDataFile) {
-      setModelFileId(existingDataFile.id);
-      const fileOwnRights = existingMetadata?.ownRights ?? false;
-      const fileShareDataset = existingMetadata?.shareDataset ?? false;
-      setOwnRights(model.id, fileOwnRights);
-      setInitialOwnRights(model.id, fileOwnRights);
-      setShareDataset(model.id, fileShareDataset);
-      setInitialShareDataset(model.id, fileShareDataset);
-
-      if (imageList.length === 0) {
-        setLoadingZip(true);
-        parseExisting()
-          .then((files) => {
-            if (files) {
-              const flatFiles = files.flat();
-              setImageList(model.id, flatFiles);
-              setInitialImageList(
-                model.id,
-                flatFiles.map((d) => ({ ...d }))
-              );
-            }
-          })
-          .catch((e) => {
-            showErrorNotification({
-              error: e ?? 'An error occurred while parsing the existing file.',
-              autoClose: false,
-            });
-          })
-          .finally(() => setLoadingZip(false));
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
     const imgUrl = URL.createObjectURL(data);
@@ -270,8 +336,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showResizeWarnings = () => {
     if (showImgResizeDown.current) {
       showWarningNotification({
-        title: `${showImgResizeDown.current} image${showImgResizeDown.current === 1 ? '' : 's'
-          } resized down`,
+        title: `${showImgResizeDown.current} image${
+          showImgResizeDown.current === 1 ? '' : 's'
+        } resized down`,
         message: `Max image dimensions are ${maxWidth}w and ${maxHeight}h.`,
         autoClose: false,
       });
@@ -279,8 +346,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
     if (showImgResizeUp.current) {
       showWarningNotification({
-        title: `${showImgResizeUp.current} image${showImgResizeUp.current === 1 ? '' : 's'
-          } resized up`,
+        title: `${showImgResizeUp.current} image${
+          showImgResizeUp.current === 1 ? '' : 's'
+        } resized up`,
         message: `Min image dimensions are ${minWidth}w or ${minHeight}h.`,
         autoClose: false,
       });
@@ -290,13 +358,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleZip = async (f: FileWithPath, showNotif = true) => {
     if (showNotif) setLoadingZip(true);
+
     const parsedFiles: ImageDataType[] = [];
+
     const zipReader = new JSZip();
     const zData = await zipReader.loadAsync(f);
-    await Promise.all(
+
+    const ret = await Promise.all(
       Object.entries(zData.files).map(async ([zname, zf]) => {
+        let hasLabelFiles = false;
+
         if (zf.dir) return;
         if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+
         // - we could read the type here with some crazy blob/hex inspecting
         const fileSplit = zname.split('.');
         const fileExt = (fileSplit.pop() || '').toLowerCase();
@@ -306,13 +380,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           try {
             const scaledUrl = await getResizedImgUrl(imgBlob, imageExts[fileExt]);
             const czFile = zipReader.file(`${baseFileName}.txt`);
-            let captionStr = '';
-            if (czFile) captionStr = await czFile.async('string');
+            let labelStr = '';
+            if (czFile) {
+              labelStr = await czFile.async('string');
+              hasLabelFiles = true;
+            }
             parsedFiles.push({
               name: zname,
               type: imageExts[fileExt],
               url: scaledUrl,
-              caption: captionStr,
+              label: labelStr,
             });
           } catch {
             showErrorNotification({
@@ -320,8 +397,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             });
           }
         }
+        return hasLabelFiles;
       })
     );
+
+    const hasAnyLabelFiles = ret.some((r) => r === true);
 
     showResizeWarnings();
 
@@ -340,7 +420,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setLoadingZip(false);
     }
 
-    return parsedFiles;
+    return { parsedFiles, hasAnyLabelFiles };
   };
 
   const handleDrop = async (fileList: FileWithPath[]) => {
@@ -351,11 +431,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         } else {
           try {
             const scaledUrl = await getResizedImgUrl(f, f.type);
-            return { name: f.name, type: f.type, url: scaledUrl, caption: '' } as ImageDataType;
+            return {
+              parsedFiles: [
+                { name: f.name, type: f.type, url: scaledUrl, label: '' },
+              ] as ImageDataType[],
+              hasAnyLabelFiles: false,
+            };
           } catch {
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${f.name}".`),
             });
+            return { parsedFiles: [] as ImageDataType[], hasAnyLabelFiles: false };
           }
         }
       })
@@ -363,7 +449,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     showResizeWarnings();
 
-    const filteredFiles = newFiles.flat().filter(isDefined);
+    const filteredFiles = newFiles
+      .map((nf) => nf.parsedFiles)
+      .flat()
+      .filter(isDefined);
     if (filteredFiles.length > MAX_FILES_ALLOWED - imageList.length) {
       showErrorNotification({
         title: 'Too many images',
@@ -373,10 +462,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
     }
     setImageList(model.id, imageList.concat(filteredFiles));
+
+    const labelsPresent = newFiles.map((nf) => nf.hasAnyLabelFiles).some((hl) => hl);
+    if (labelsPresent) {
+      dialogStore.trigger({
+        component: LabelSelectModal,
+        props: { modelId: model.id },
+      });
+    }
   };
 
   const updateFileMutation = trpc.modelFile.update.useMutation({
     async onSuccess(_response, request) {
+      setInitialLabelType(model.id, labelType);
       setInitialOwnRights(model.id, ownRights);
       setInitialShareDataset(model.id, shareDataset);
 
@@ -501,37 +599,125 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     onError(error) {
       showErrorNotification({
         error: new Error(error.message),
-        title: 'Failed to auto-tag',
+        title: 'Failed to auto tag',
         autoClose: false,
       });
-      setAutoCaptioning(model.id, { ...defaultTrainingState.autoCaptioning });
+      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
+    },
+  });
+  const submitCaptionMutation = trpc.training.autoCaption.useMutation({
+    // TODO allow people to rerun failed images
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Failed to auto caption',
+        autoClose: false,
+      });
+      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
     },
   });
 
   useEffect(() => {
-    if (autoCaptioning.isRunning || !autoCaptioning.url) return;
-    setAutoCaptioning(model.id, { ...autoCaptioning, isRunning: true });
-    submitTagMutation.mutate({ url: autoCaptioning.url, modelId: model.id });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoCaptioning.url]);
+    // is there any way to generate a file download url given the one we already have?
+    // async function parseExisting(ef: (typeof thisModelVersion.files)[number]) {
+    async function parseExisting() {
+      const url = createModelFileDownloadUrl({
+        versionId: thisModelVersion.id,
+        type: 'Training Data',
+      });
+      const result = await fetch(url);
+      if (!result.ok) {
+        return;
+      }
+      const blob = await result.blob();
+      const zipFile = new File([blob], `${thisModelVersion.id}_training_data.zip`, {
+        type: blob.type,
+      });
+      return await handleZip(zipFile, false);
+    }
 
-  const filteredImages = imageList.filter((i) => {
-    if (!selectedTags.length) return true;
-    const capts: string[] = [];
-    if (selectedTags.includes(blankTagStr) && getCaptionAsList(i.caption).length === 0)
-      capts.push(blankTagStr);
-    const mergedCapts = capts.concat(
-      getCaptionAsList(i.caption).filter((c) => selectedTags.includes(c))
-    );
-    return mergedCapts.length > 0;
-  });
+    if (existingDataFile) {
+      setModelFileId(existingDataFile.id);
+      const fileLabelType = existingMetadata?.labelType ?? 'tag';
+      const fileOwnRights = existingMetadata?.ownRights ?? false;
+      const fileShareDataset = existingMetadata?.shareDataset ?? false;
+
+      setLabelType(model.id, fileLabelType);
+      setInitialLabelType(model.id, fileLabelType);
+      setOwnRights(model.id, fileOwnRights);
+      setInitialOwnRights(model.id, fileOwnRights);
+      setShareDataset(model.id, fileShareDataset);
+      setInitialShareDataset(model.id, fileShareDataset);
+
+      if (imageList.length === 0) {
+        setLoadingZip(true);
+        parseExisting()
+          .then((files) => {
+            if (files) {
+              const flatFiles = files.parsedFiles.flat();
+              setImageList(model.id, flatFiles);
+              setInitialImageList(
+                model.id,
+                flatFiles.map((d) => ({ ...d }))
+              );
+            }
+          })
+          .catch((e) => {
+            showErrorNotification({
+              error: e ?? 'An error occurred while parsing the existing file.',
+              autoClose: false,
+            });
+          })
+          .finally(() => setLoadingZip(false));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (autoLabeling.isRunning || !autoLabeling.url) return;
+    setAutoLabeling(model.id, { isRunning: true });
+
+    if (labelType === 'caption') {
+      submitCaptionMutation.mutate({
+        modelId: model.id,
+        url: autoLabeling.url,
+        temperature: autoCaptioning.temperature,
+        maxNewTokens: autoCaptioning.maxNewTokens,
+      });
+    } else {
+      submitTagMutation.mutate({ modelId: model.id, url: autoLabeling.url });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLabeling.url]);
+
+  const filteredImages = useMemo(() => {
+    return imageList.filter((i) => {
+      if (labelType === 'caption') {
+        if (!searchCaption.length && !selectedTags.length) return true;
+        if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
+        return searchCaption.length > 0
+          ? i.label.toLowerCase().includes(searchCaption.toLowerCase())
+          : false;
+      } else {
+        if (!selectedTags.length) return true;
+        const capts: string[] = [];
+        if (selectedTags.includes(blankTagStr) && getTextTagsAsList(i.label).length === 0)
+          capts.push(blankTagStr);
+        const mergedCapts = capts.concat(
+          getTextTagsAsList(i.label).filter((c) => selectedTags.includes(c))
+        );
+        return mergedCapts.length > 0;
+      }
+    });
+  }, [imageList, labelType, selectedTags, searchCaption]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
       setPage(1);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTags]);
+  }, [selectedTags, searchCaption]);
 
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
@@ -540,7 +726,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     await Promise.all(
       imageList.map(async (imgData, idx) => {
         const filenameBase = String(idx).padStart(3, '0');
-        imgData.caption.length > 0 && zip.file(`${filenameBase}.txt`, imgData.caption);
+        imgData.label.length > 0 && zip.file(`${filenameBase}.txt`, imgData.label);
 
         const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 
@@ -579,10 +765,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             type: UploadType.TrainingImages,
             meta: {
               versionId: thisModelVersion.id,
+              labelType,
               ownRights,
               shareDataset,
               numImages: imageList.length,
-              numCaptions: imageList.filter((i) => i.caption.length > 0).length,
+              numCaptions: imageList.filter((i) => i.label.length > 0).length,
+              asd: 1, // should break
             },
           },
           async ({ meta, size, ...result }) => {
@@ -601,8 +789,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     ownRights && shareDataset
                       ? ModelFileVisibility.Public
                       : ownRights
-                        ? ModelFileVisibility.Sensitive
-                        : ModelFileVisibility.Private,
+                      ? ModelFileVisibility.Sensitive
+                      : ModelFileVisibility.Private,
                   metadata,
                 });
               } catch (e: unknown) {
@@ -645,17 +833,21 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNext = async () => {
     if (isEqual(imageList, initialImageList) && imageList.length !== 0) {
-      if (!isEqual(shareDataset, initialShareDataset) || !isEqual(ownRights, initialOwnRights)) {
+      if (
+        !isEqual(shareDataset, initialShareDataset) ||
+        !isEqual(ownRights, initialOwnRights) ||
+        !isEqual(labelType, initialLabelType)
+      ) {
         setZipping(true);
         await updateFileMutation.mutateAsync({
           id: modelFileId!,
-          metadata: { ...existingMetadata!, ownRights, shareDataset },
+          metadata: { ...existingMetadata!, ownRights, shareDataset, labelType },
           visibility:
             ownRights && shareDataset
               ? ModelFileVisibility.Public
               : ownRights
-                ? ModelFileVisibility.Sensitive
-                : ModelFileVisibility.Private,
+              ? ModelFileVisibility.Sensitive
+              : ModelFileVisibility.Private,
         });
         setZipping(false);
       }
@@ -664,17 +856,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
-      // if no captions, warn
-      if (imageList.filter((i) => i.caption.length > 0).length === 0) {
+      // if no labels, warn
+      if (imageList.filter((i) => i.label.length > 0).length === 0) {
         return openConfirmModal({
           title: (
             <Group spacing="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">Missing captions</Text>
+              <Text size="lg">Missing labels</Text>
             </Group>
           ),
           children:
-            'You have not provided any captions for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
+            'You have not provided any labels for your images. This can produce an inflexible model. We will also attempt to generate sample images, but they may not be what you are looking for. Are you sure you want to continue?',
           labels: { cancel: 'Cancel', confirm: 'Continue' },
           centered: true,
           onConfirm: handleNextAfterCheck,
@@ -693,7 +885,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const totalCaptioned = imageList.filter((i) => i.caption && i.caption.length > 0).length;
+  const totalLabeled = imageList.filter((i) => i.label && i.label.length > 0).length;
+
+  useCatchNavigation({
+    unsavedChanges:
+      !isEqual(imageList, initialImageList) ||
+      !isEqual(shareDataset, initialShareDataset) ||
+      !isEqual(ownRights, initialOwnRights) ||
+      !isEqual(labelType, initialLabelType),
+    // message: ``,
+  });
 
   return (
     <>
@@ -751,14 +952,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               <Text
                 style={{ lineHeight: '22px' }}
                 color={
-                  totalCaptioned === 0
+                  totalLabeled === 0
                     ? theme.colors.red[5]
-                    : totalCaptioned < imageList.length
-                      ? theme.colors.orange[5]
-                      : theme.colors.green[5]
+                    : totalLabeled < imageList.length
+                    ? theme.colors.orange[5]
+                    : theme.colors.green[5]
                 }
               >
-                {`${totalCaptioned} / ${imageList.length} captioned`}
+                {`${totalLabeled} / ${imageList.length} labeled`}
               </Text>
             </Paper>
             <Tooltip
@@ -767,23 +968,23 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             >
               <Button
                 compact
-                disabled={autoCaptioning.isRunning || !connected}
+                color="violet"
+                disabled={autoLabeling.isRunning || !connected}
                 style={!connected ? { pointerEvents: 'initial' } : undefined}
                 onClick={() =>
                   dialogStore.trigger({
-                    component: AutoTagModal,
-                    props: {
-                      imageList,
-                      modelId: model.id,
-                      setAutoCaptioning,
-                    },
+                    component: AutoLabelModal,
+                    props: { modelId: model.id },
                   })
                 }
               >
-                <IconTags size={16} />
-                <Text inline ml={4}>
-                  Auto Tag
-                </Text>
+                <Group spacing={4}>
+                  <IconTags size={16} />
+                  <Text>Auto Label</Text>
+                  <Badge color="green" variant="filled" size="sm" ml={4}>
+                    NEW
+                  </Badge>
+                </Group>
               </Button>
             </Tooltip>
             <Button
@@ -801,7 +1002,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             <Button
               compact
               color="red"
-              disabled={autoCaptioning.isRunning}
+              disabled={autoLabeling.isRunning}
               onClick={() => {
                 openConfirmModal({
                   title: 'Remove all images?',
@@ -830,7 +1031,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           />
         )}
 
-        {autoCaptioning.isRunning && (
+        {autoLabeling.isRunning && (
           <Paper
             my="lg"
             p="md"
@@ -841,16 +1042,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             }}
           >
             <Stack>
-              <Text>Running auto-tagging...</Text>
-              {autoCaptioning.successes + autoCaptioning.fails.length > 0 ? (
+              <Text>Running auto labeling...</Text>
+              {autoLabeling.successes + autoLabeling.fails.length > 0 ? (
                 <Progress
                   value={
-                    ((autoCaptioning.successes + autoCaptioning.fails.length) /
-                      autoCaptioning.total) *
+                    ((autoLabeling.successes + autoLabeling.fails.length) / autoLabeling.total) *
                     100
                   }
-                  label={`${autoCaptioning.successes + autoCaptioning.fails.length} / ${autoCaptioning.total
-                    }`}
+                  label={`${autoLabeling.successes + autoLabeling.fails.length} / ${
+                    autoLabeling.total
+                  }`}
                   size="xl"
                   radius="xl"
                   striped
@@ -870,20 +1071,43 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </Paper>
         )}
 
-        {imageList.length > 0 && (
-          <TrainingImagesCaptionViewer
-            selectedTags={selectedTags}
-            setSelectedTags={setSelectedTags}
-            modelId={model.id}
-            numImages={filteredImages.length}
-          />
+        {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
+
+        {imageList.length > 0 ? (
+          labelType === 'caption' ? (
+            <TrainingImagesCaptionViewer
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+              searchCaption={searchCaption}
+              setSearchCaption={setSearchCaption}
+              numImages={filteredImages.length}
+            />
+          ) : (
+            <TrainingImagesTagViewer
+              selectedTags={selectedTags}
+              setSelectedTags={setSelectedTags}
+              modelId={model.id}
+              numImages={filteredImages.length}
+            />
+          )
+        ) : (
+          <></>
         )}
 
         {loadingZip ? (
-          <Center style={{ flexDirection: 'column' }}>
+          <Center mt="md" style={{ flexDirection: 'column' }}>
             <Loader />
             <Text>Parsing existing images...</Text>
           </Center>
+        ) : imageList.length > 0 && filteredImages.length === 0 ? (
+          <Stack mt="md" align="center">
+            <ThemeIcon size={64} radius={100}>
+              <IconCloudOff size={64 / 1.6} />
+            </ThemeIcon>
+            <Text size={20} align="center">
+              No images found
+            </Text>
+          </Stack>
         ) : (
           // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
           <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
@@ -896,16 +1120,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     <Card.Section mb="xs">
                       <div className={classes.imgOverlay}>
                         <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
-                          <Tooltip label="Remove captions">
+                          <Tooltip label="Remove labels">
                             <ActionIcon
                               color="violet"
                               variant="filled"
                               size="md"
-                              disabled={autoCaptioning.isRunning || !imgData.caption.length}
+                              disabled={autoLabeling.isRunning || !imgData.label.length}
                               onClick={() => {
                                 updateImage(model.id, {
                                   matcher: getShortNameFromUrl(imgData),
-                                  caption: '',
+                                  label: '',
                                 });
                               }}
                             >
@@ -917,7 +1141,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               color="red"
                               variant="filled"
                               size="md"
-                              disabled={autoCaptioning.isRunning}
+                              disabled={autoLabeling.isRunning}
                               onClick={() => {
                                 const newLen = imageList.length - 1;
                                 setImageList(
@@ -951,11 +1175,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         />
                       </div>
                     </Card.Section>
-                    <TrainingImagesCaptions
-                      imgData={imgData}
-                      modelId={model.id}
-                      selectedTags={selectedTags}
-                    />
+                    {labelType === 'caption' ? (
+                      <TrainingImagesCaptions
+                        imgData={imgData}
+                        modelId={model.id}
+                        searchCaption={searchCaption}
+                      />
+                    ) : (
+                      <TrainingImagesTags
+                        imgData={imgData}
+                        modelId={model.id}
+                        selectedTags={selectedTags}
+                      />
+                    )}
                   </Card>
                 );
               })}
@@ -1013,7 +1245,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         </Button>
         <Button
           onClick={handleNext}
-          disabled={autoCaptioning.isRunning}
+          disabled={autoLabeling.isRunning}
           loading={zipping || uploading > 0}
         >
           Next
