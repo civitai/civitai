@@ -63,7 +63,7 @@ const useSubmitImages = ({
       ? i.label.length === 0
       : i
   );
-  const disabled = filteredImages.length > maxImagesCaption;
+  const disabled = type === 'caption' && filteredImages.length > maxImagesCaption;
 
   const handleSubmit = async () => {
     if (disabled) return;
