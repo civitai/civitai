@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { getRandom } from '~/utils/array-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
@@ -11,44 +12,48 @@ type AdMatrix = {
 
 const adMatrices: Record<string, AdMatrix> = {};
 
-export function createAdFeed<T>({
-  data,
-  columnCount,
-  keys,
-}: {
-  data: T[];
-  columnCount: number;
-  /** pass multiple keys to randomize the adunits */
-  keys?: AdUnitKey[];
-}): AdFeed<T> {
-  const interval =
-    adDensity.find(([columns]) => columns === columnCount)?.[1] ??
-    adDensity[adDensity.length - 1][1];
-  if (!keys || !interval) return data.map((data) => ({ type: 'data', data }));
-  const key = interval.join('_');
-  adMatrices[key] = adMatrices[key] ?? { indices: [], lastIndex: 0 };
-  const adMatrix = adMatrices[key];
+export function useCreateAdFeed() {
+  const adMatricesRef = useRef<Record<string, AdMatrix>>({});
 
-  const [lower, upper] = interval;
-  while (adMatrix.lastIndex < data.length) {
-    const min = adMatrix.lastIndex + lower + 1;
-    const max = adMatrix.lastIndex + upper;
-    const index = adMatrix.indices.length === 0 ? getRandomInt(3, 5) : getRandomInt(min, max);
-    const key = getRandom(keys);
-    const [item] = getAdUnitDetails([key]);
-    adMatrix.indices.push({ index, ...item });
-    adMatrix.lastIndex = index;
-  }
-  const indices = adMatrix.indices.map((x) => x.index);
+  return function createAdFeed<T>({
+    data,
+    columnCount,
+    keys,
+  }: {
+    data: T[];
+    columnCount: number;
+    /** pass multiple keys to randomize the adunits */
+    keys?: AdUnitKey[];
+  }) {
+    const interval =
+      adDensity.find(([columns]) => columns === columnCount)?.[1] ??
+      adDensity[adDensity.length - 1][1];
+    if (!keys || !interval) return data.map((data) => ({ type: 'data', data })) as AdFeed<T>;
+    const key = interval.join('_');
+    adMatricesRef.current[key] = adMatricesRef.current[key] ?? { indices: [], lastIndex: 0 };
+    const adMatrix = adMatricesRef.current[key];
 
-  return data.reduce<AdFeed<T>>((acc, item, i) => {
-    const adMatrixIndex = indices.indexOf(i);
-    if (adMatrixIndex > -1) {
-      acc.push({ type: 'ad', data: adMatrix.indices[adMatrixIndex] });
+    const [lower, upper] = interval;
+    while (adMatrix.lastIndex < data.length) {
+      const min = adMatrix.lastIndex + lower + 1;
+      const max = adMatrix.lastIndex + upper;
+      const index = adMatrix.indices.length === 0 ? getRandomInt(3, 5) : getRandomInt(min, max);
+      const key = getRandom(keys);
+      const [item] = getAdUnitDetails([key]);
+      adMatrix.indices.push({ index, ...item });
+      adMatrix.lastIndex = index;
     }
-    acc.push({ type: 'data', data: item });
-    return acc;
-  }, []);
+    const indices = adMatrix.indices.map((x) => x.index);
+
+    return data.reduce<AdFeed<T>>((acc, item, i) => {
+      const adMatrixIndex = indices.indexOf(i);
+      if (adMatrixIndex > -1) {
+        acc.push({ type: 'ad', data: adMatrix.indices[adMatrixIndex] });
+      }
+      acc.push({ type: 'data', data: item });
+      return acc;
+    }, []);
+  };
 }
 
 type AdDensity = [columns: number, interval: [min: number, max: number]];
