@@ -1,6 +1,7 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
+import { capitalize } from 'lodash-es';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
@@ -113,7 +114,6 @@ export const whatIfQueryOverrides = {
   // image: undefined,
   nsfw: false,
   cfgScale: generation.defaultValues.cfgScale,
-  remixSimilarity: 1,
 };
 
 export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {
@@ -342,8 +342,8 @@ export function getWorkflowDefinitionFeatures(workflow?: {
   };
 }
 
-export function sanitizeParamsByWorkflowDefinition(
-  params: TextToImageParams,
+export function sanitizeParamsByWorkflowDefinition<T extends TextToImageParams>(
+  params: T,
   workflow?: {
     features?: WorkflowDefinition['features'];
   }
@@ -352,6 +352,8 @@ export function sanitizeParamsByWorkflowDefinition(
   for (const key in features) {
     if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
   }
+
+  return params as T;
 }
 
 // #endregion
@@ -409,11 +411,16 @@ export function getBaseModelResourceTypes(baseModel: string) {
   throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
-export const fluxModeOptions = [
-  { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
-  { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
-  { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
-];
+export const FluxMode = {
+  draft: 'urn:air:flux1:checkpoint:civitai:618692@699279',
+  standard: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+  pro: 'urn:air:flux1:checkpoint:civitai:618692@699332',
+};
+
+export const fluxModeOptions = Object.entries(FluxMode).map(([key, value]) => ({
+  label: capitalize(key),
+  value,
+}));
 
 // const generationInputConfig: GenerationInputConfig = {
 //   model: { type: 'resourceSelect' },

@@ -213,6 +213,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                 }}
                 showEmptyCta={isSameUser}
                 useIndex={!viewingReactions}
+                ignoreGlobalFilters
               />
             )}
           </Stack>

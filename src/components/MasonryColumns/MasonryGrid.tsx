@@ -14,6 +14,7 @@ import { AdUnit } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type Props<TData> = {
   data: TData[];
@@ -31,6 +32,7 @@ export function MasonryGrid<TData>({
   withAds,
 }: Props<TData>) {
   const theme = useMantineTheme();
+  const currentUser = useCurrentUser();
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { classes } = useStyles({
@@ -77,18 +79,27 @@ export function MasonryGrid<TData>({
                     height={30}
                     width={142}
                   />
-                  <Text>Become a Member to turn off ads today.</Text>
-                  <Button
-                    component={NextLink}
-                    href="/pricing"
-                    compact
-                    color="green"
-                    variant="outline"
-                    className="w-24"
-                  >
-                    <Text weight={500}>Do It</Text>
-                    <IconCaretRightFilled size={16} />
-                  </Button>
+                  {!currentUser?.isMember ? (
+                    <>
+                      <Text>Become a Member to turn off ads today.</Text>
+                      <Button
+                        component={NextLink}
+                        href="/pricing"
+                        compact
+                        color="green"
+                        variant="outline"
+                        className="w-24"
+                      >
+                        <Text weight={500}>Do It</Text>
+                        <IconCaretRightFilled size={16} />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Text>Thanks for turning on ads!</Text>
+                      <Text>Your support means a lot to us!</Text>
+                    </>
+                  )}
                 </div>
 
                 <AdUnit keys={[item.data.key]} withFeedback />

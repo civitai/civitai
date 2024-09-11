@@ -1,7 +1,10 @@
 import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
-import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import {
+  parseGenerationFormData,
+  useGenerationForm,
+} from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generation, generationConfig } from '~/server/common/constants';
 import {
   TextToImageParams,
@@ -18,6 +21,7 @@ import { trpc } from '~/utils/trpc';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -34,34 +38,24 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const form = useGenerationForm();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
-  const defaultModel =
-    generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? watched.model;
+  const features = useFeatureFlags();
 
   const query = useMemo(() => {
-    const { model, resources, vae, creatorTip, civitaiTip, ...params } = watched;
-    if (params.aspectRatio) {
-      const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-      params.width = size.width;
-      params.height = size.height;
-    }
-
-    let modelId = defaultModel.id;
-    const isFlux = getIsFlux(watched.baseModel);
-    if (isFlux && watched.fluxMode) {
-      const { version } = parseAIR(watched.fluxMode);
-      modelId = version;
-    }
+    const { params, defaultModelId } = parseGenerationFormData({ data: watched as any, features });
+    console.log({
+      ...params,
+      ...whatIfQueryOverrides,
+    });
 
     return {
-      resources: [modelId],
+      resources: [defaultModelId],
       // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
       params: {
         ...params,
         ...whatIfQueryOverrides,
       } as TextToImageParams,
     };
-  }, [watched, defaultModel.id]);
+  }, [watched]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set

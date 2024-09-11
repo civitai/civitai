@@ -61,6 +61,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
+  FluxMode,
   fluxModeOptions,
   getBaseModelResourceTypes,
   getIsFlux,
@@ -79,6 +80,7 @@ import {
   GenerationFormProvider,
   useGenerationForm,
   blockedRequest,
+  parseGenerationFormData,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import React, { useEffect, useState, useMemo } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -216,34 +218,11 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
-
-    const {
-      model,
-      resources: additionalResources,
-      vae,
-      remixOfId,
-      remixSimilarity,
-      aspectRatio,
-      civitaiTip = 0,
-      creatorTip: _creatorTip,
-      ...params
-    } = data;
-    let { creatorTip = 0.25 } = data;
-    sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
-    const modelClone = clone(model);
-
-    const isFlux = getIsFlux(params.baseModel);
-    if (isFlux) {
-      if (additionalResources.length === 0) creatorTip = 0;
-      if (params.fluxMode) {
-        const { version } = parseAIR(params.fluxMode);
-        modelClone.id = version;
-      }
-    }
-
-    const resources = [modelClone, ...additionalResources, vae]
-      .filter(isDefined)
-      .filter((x) => x.available !== false);
+    const { resources, params, tips, remixOfId } = parseGenerationFormData({
+      data,
+      workflow: workflowDefinition,
+      features: featureFlags,
+    });
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -252,12 +231,10 @@ export function GenerationFormContent() {
           resources,
           params: {
             ...params,
-            nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+            nsfw: hasMinorResources || params.nsfw,
           },
-          tips: featureFlags.creatorComp
-            ? { creators: creatorTip, civitai: civitaiTip }
-            : undefined,
-          remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+          tips,
+          remixOfId,
         });
       } catch (e) {
         const error = e as Error;
@@ -269,7 +246,8 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
+    const tipTotal = tips ? tips.creators * cost + tips.civitai * cost : 0;
+    const totalCost = cost + tipTotal;
     conditionalPerformTransaction(totalCost, performTransaction);
 
     if (filters.marker) {
@@ -316,9 +294,8 @@ export function GenerationFormContent() {
         {({ baseModel, fluxMode, draft }) => {
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
-          const isDraft = isFlux
-            ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
-            : features.draft && !!draft;
+          const isDraft = isFlux ? fluxMode === FluxMode.draft : features.draft && !!draft;
+          const isFluxStandard = isFlux ? fluxMode === FluxMode.standard : false;
           const cfgDisabled = isDraft;
           const samplerDisabled = isDraft;
           const stepsDisabled = isDraft;
@@ -608,6 +585,25 @@ export function GenerationFormContent() {
                       </div>
                     )}
                   </Watch>
+                )}
+
+                {isFluxStandard && (
+                  <div className="my-2">
+                    <InputSwitch
+                      name="fluxDevFast"
+                      label={
+                        <div className="relative flex items-center gap-1">
+                          <Input.Label>Turbo Mode</Input.Label>
+                          <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                            Generate images 6 - 10 times faster
+                            <Text size="xs" color="dimmed" mt={4}>
+                              Each image generated costs an additional 5 buzz
+                            </Text>
+                          </InfoPopover>
+                        </div>
+                      }
+                    />
+                  </div>
                 )}
 
                 <div className="flex flex-col">

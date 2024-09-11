@@ -10,6 +10,7 @@ import {
   BaseModelSetType,
   constants,
   generation,
+  generationConfig,
   getGenerationConfig,
 } from '~/server/common/constants';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -18,10 +19,13 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   SupportedBaseModel,
+  FluxMode,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  getIsFlux,
   getSizeFromAspectRatio,
+  sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -29,12 +33,14 @@ import { fetchGenerationData, generationStore, useGenerationStore } from '~/stor
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
-import { uniqBy } from 'lodash-es';
+import { WorkflowDefinition, WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import { clone, uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
 import { fluxModeOptions } from '~/shared/constants/generation.constants';
 import { useDebouncer } from '~/utils/debouncer';
+import { parseAIR } from '~/utils/string-helpers';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -99,6 +105,7 @@ const formSchema = textToImageParamsSchema
     aspectRatio: z.string(),
     creatorTip: z.number().min(0).max(1).default(0.25).optional(),
     civitaiTip: z.number().min(0).max(1).optional(),
+    fluxDevFast: z.boolean().optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -190,6 +197,8 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     })
     .slice(0, 9);
 
+  const fluxDevFast = params.engine === 'flux-dev-fast';
+
   return {
     ...params,
     baseModel,
@@ -197,6 +206,7 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     resources,
     vae,
     remixOfId: data.remixOfId,
+    fluxDevFast,
   };
 }
 
@@ -342,7 +352,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       // handle setting flux mode to standard when flux loras are added
       if (name === 'resources') {
         if (watchedValues.baseModel === 'Flux1' && !!watchedValues.resources?.length) {
-          form.setValue('fluxMode', 'urn:air:flux1:checkpoint:civitai:618692@691639');
+          form.setValue('fluxMode', FluxMode.standard);
         }
       }
     });
@@ -448,10 +458,75 @@ function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): 
   return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
 }
 
-// Example usage
-// const prompt1 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography, soft light, head and shoulders portrait, cover';
-// const prompt2 =
-//   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography';
+type ParseGenerationFormDataProps = {
+  data: GenerationFormOutput;
+  workflow?: {
+    features?: WorkflowDefinition['features'];
+  };
+  features: FeatureAccess;
+};
 
-// const similarity = calculateAdjustedCosineSimilarities(prompt1, prompt2);
+export function parseGenerationFormData({
+  data: initialData,
+  workflow,
+  features,
+}: ParseGenerationFormDataProps) {
+  const data = sanitizeParamsByWorkflowDefinition(
+    { civitaiTip: 0, creatorTip: 0.25, ...initialData },
+    workflow
+  );
+  const isFlux = getIsFlux(data.baseModel);
+  const { model, resources, vae, remixOfId, remixSimilarity, aspectRatio, fluxDevFast, ...params } =
+    data;
+
+  const defaultModel =
+    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+      ?.checkpoint ?? model;
+  let defaultModelId = defaultModel.id;
+
+  const modelClone = clone(model);
+
+  if (isFlux) {
+    if (!resources?.length) {
+      params.creatorTip = 0;
+    }
+    if (params.fluxMode) {
+      const { version } = parseAIR(params.fluxMode);
+      modelClone.id = version;
+      defaultModelId = version;
+    }
+    if (fluxDevFast) {
+      params.engine = 'flux-dev-fast';
+    }
+    if (params.fluxMode !== FluxMode.standard) {
+      delete params.engine;
+    }
+  }
+
+  if (!isFlux) {
+    delete params.engine;
+  }
+
+  if (aspectRatio) {
+    const size = getSizeFromAspectRatio(Number(aspectRatio), params.baseModel);
+    params.width = size.width;
+    params.height = size.height;
+  }
+
+  const { creatorTip, civitaiTip, nsfw, ...rest } = params;
+
+  return {
+    defaultModelId,
+    resources: [modelClone, ...(data.resources ?? []), vae]
+      .filter(isDefined)
+      .filter((x) => x.available !== false),
+    params: {
+      ...rest,
+      nsfw: features.canViewNsfw ? false : nsfw,
+    },
+    tips: features.creatorComp
+      ? { creators: creatorTip ?? 0, civitai: civitaiTip ?? 0 }
+      : undefined,
+    remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+  };
+}

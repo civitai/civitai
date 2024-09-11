@@ -44,6 +44,7 @@ export const textToImageParamsSchema = z.object({
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
   experimental: z.boolean().optional(),
+  engine: z.string().optional(),
 });
 // #endregion
 

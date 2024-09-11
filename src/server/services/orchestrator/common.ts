@@ -472,6 +472,7 @@ export function formatTextToImageStep({
       sampler: metadata?.params?.sampler ?? sampler,
 
       fluxMode: metadata?.params?.fluxMode,
+      engine: metadata.params?.engine,
     } as TextToImageParams,
     images,
     status: step.status,
