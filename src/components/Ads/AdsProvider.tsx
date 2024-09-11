@@ -5,6 +5,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { isProd } from '~/env/other';
 import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
+import { Router } from 'next/router';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -138,6 +139,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   if (success !== undefined) setAdsBlocked(!success);
                 }}
               />
+              <GoogletagManager />
               <ImpressionTracker />
             </>
           )}
@@ -180,6 +182,20 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
   return null;
 }
 
+function GoogletagManager() {
+  useEffect(() => {
+    function handleRouteChangeStart() {
+      window.googletag.destroySlots();
+    }
+    Router.events.on('routeChangeStart', handleRouteChangeStart);
+    return () => {
+      Router.events.off('routeChangeStart', handleRouteChangeStart);
+    };
+  }, []);
+
+  return null;
+}
+
 declare global {
   interface Window {
     __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
@@ -188,6 +204,7 @@ declare global {
       requestWebRewardedAd?: (args: unknown) => void;
       setUserAudienceData: (args: { email: string }) => void;
     };
+    googletag: any;
   }
 }
 
