@@ -379,7 +379,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const { rows: modelVersions } = await pgDbRead.query<ModelVersions>(`
         SELECT
           ir."imageId" as id,
-          array_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
+          array_agg(COALESCE(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '')) as "baseModel",
           array_agg(mv."id") as "modelVersionIds"
         FROM "ImageResource" ir
         JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
