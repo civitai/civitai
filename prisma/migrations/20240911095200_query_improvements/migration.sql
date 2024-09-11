@@ -6,7 +6,6 @@ SELECT
   COALESCE(toi.automated, FALSE) AS automated,
   COALESCE(toi.confidence, 0) AS confidence,
   COALESCE(10 * toi.confidence / 100, 0::numeric) + COALESCE(v.score, 0::numeric) AS score,
-  FALSE AS disabled, -- Disabled tags are already filtered out
   COALESCE(v."upVotes", 0) AS "upVotes",
   COALESCE(v."downVotes", 0) AS "downVotes",
   t.name AS "tagName",

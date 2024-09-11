@@ -286,7 +286,7 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   ttl: CacheTTL.day,
 });
 
-export const entityAccessCache = createCachedObject<EntityAccessDataType>({
+export const modelVersionAccessCache = createCachedObject<EntityAccessDataType>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
   idKey: 'entityId',
   ttl: CacheTTL.day,

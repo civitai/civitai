@@ -12,7 +12,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { entityAccessCache, resourceDataCache } from '~/server/redis/caches';
+import { modelVersionAccessCache, resourceDataCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -508,11 +508,9 @@ export const publishModelVersionsWithEarlyAccess = async ({
           },
         });
 
-        await entityAccessCache.bust(updatedVersion.id);
+        await bustMvCache(updatedVersion.id);
 
         // TODO @Luis do we need to do the below here?
-        // await bustOrchestratorModelCache(updatedVersion.id);
-        // await resourceDataCache.bust(updatedVersion.id);
         // await modelsSearchIndex.queueUpdate([
         //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
         // ]);
@@ -645,9 +643,8 @@ export const publishModelVersionById = async ({
 
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
-  await bustOrchestratorModelCache(version.id);
-  await resourceDataCache.bust(version.id);
-  await entityAccessCache.bust(version.id);
+  await bustMvCache(version.id);
+
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
@@ -1204,7 +1201,7 @@ export const earlyAccessPurchase = async ({
     }
 
     // Ensures user gets access to the resource after purchasing.
-    await bustOrchestratorModelCache(modelVersionId, userId);
+    await bustMvCache(modelVersionId, userId);
 
     return true;
   } catch (error) {
@@ -1315,3 +1312,9 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 
   return { items, nextCursor };
 }
+
+export const bustMvCache = async (ids: number | number[], userId?: number) => {
+  await bustOrchestratorModelCache(ids, userId);
+  await resourceDataCache.bust(ids);
+  await modelVersionAccessCache.bust(ids);
+};

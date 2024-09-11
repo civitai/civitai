@@ -1607,10 +1607,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
 
-  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
-  if (lastExistedAt) {
-    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
-  }
+  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  // if (lastExistedAt) {
+  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  // }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1779,13 +1779,23 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
 
     const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-    const filtered = results.hits.filter((hit) => {
+    const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
+
+    console.time('dbCheck');
+    const filteredHitIds = filteredHits.map((fh) => fh.id);
+    const dbIdResp = await dbRead.image.findMany({
+      where: { id: { in: filteredHitIds } },
+      select: { id: true },
+    });
+    const dbIds = dbIdResp.map((dbi) => dbi.id);
+    const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
+    console.timeEnd('dbCheck');
 
     // TODO maybe grab more if the number is now too low?
 
@@ -1869,6 +1879,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
 
+  // we are doing this gte/lte thing to try to optimize the query
   const pgData = await dbRead.entityMetricImage.findMany({
     where: { imageId: { in: ids, gte: Math.min(...ids), lte: Math.max(...ids) } },
     select: {

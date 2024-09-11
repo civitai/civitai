@@ -1,7 +1,7 @@
 import { Availability, Prisma } from '@prisma/client';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { entityAccessCache } from '~/server/redis/caches';
+import { modelVersionAccessCache } from '~/server/redis/caches';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { isDefined } from '~/utils/type-guards';
 import { SupportedAvailabilityResources } from '../schema/base.schema';
@@ -54,7 +54,7 @@ export const hasEntityAccess = async ({
 
   let data: EntityAccessDataType[];
   if (entityType === 'ModelVersion') {
-    const cacheData = await entityAccessCache.fetch(entityIds);
+    const cacheData = await modelVersionAccessCache.fetch(entityIds);
     data = Object.values(cacheData);
   } else {
     const query: Prisma.Sql =

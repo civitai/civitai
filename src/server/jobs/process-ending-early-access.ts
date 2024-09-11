@@ -1,6 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { entityAccessCache } from '~/server/redis/caches';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { bustMvCache } from '~/server/services/model-version.service';
 import { createJob, getJobDate } from './job';
 
 export const processingEngingEarlyAccess = createJob(
@@ -28,9 +27,7 @@ export const processingEngingEarlyAccess = createJob(
 
     if (updated.length > 0) {
       const updatedIds = updated.map((v) => v.id);
-      await bustOrchestratorModelCache(updatedIds);
-      await entityAccessCache.bust(updatedIds);
-      // TODO need resourceDataCache.bust?
+      await bustMvCache(updatedIds);
     }
     // Ensures user gets access to the resource after purchasing.
 
