@@ -15,11 +15,11 @@ const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 const searchableAttributes = [] as const;
 
 const sortableAttributes = [
-   'id', 
+  'id',
   'sortAt',
   'reactionCount',
   'commentCount',
-  'collectedCount', 
+  'collectedCount',
 ] as const;
 
 const filterableAttributes = [
@@ -227,7 +227,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
       ) as "endId";
     `);
 
-    jobContext.on('cancel', newItemsQuery.cancel);
+    jobContext?.on('cancel', newItemsQuery.cancel);
     const newItems = await newItemsQuery.result();
     const { startId, endId } = newItems[0];
 
