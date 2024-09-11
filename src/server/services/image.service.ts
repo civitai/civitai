@@ -1607,10 +1607,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
 
-  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
-  if (lastExistedAt) {
-    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
-  }
+  // nb: commenting this out while we try checking existence in the db
+  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  // if (lastExistedAt) {
+  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  // }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1779,13 +1780,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
 
     const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-    const filtered = results.hits.filter((hit) => {
+    const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
+
+    const filteredHitIds = filteredHits.map((fh) => fh.id);
+    // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
+    const dbIdResp = await dbRead.image.findMany({
+      where: { id: { in: filteredHitIds } },
+      select: { id: true },
+    });
+    const dbIds = dbIdResp.map((dbi) => dbi.id);
+    const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
 
     // TODO maybe grab more if the number is now too low?
 

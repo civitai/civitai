@@ -205,7 +205,7 @@ ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
   return <SearchLayout indexName={MODELS_SEARCH_INDEX}>{page}</SearchLayout>;
 };
 
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap],
-  (RenderComponent, index, model) => <RenderComponent index={index} data={model} />
-);
+// const createRenderElement = trieMemoize(
+//   [OneKeyMap, {}, WeakMap],
+//   (RenderComponent, index, model) => <RenderComponent index={index} data={model} />
+// );

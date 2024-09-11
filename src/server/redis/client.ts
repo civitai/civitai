@@ -191,6 +191,9 @@ export const REDIS_KEYS = {
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
+    ENTITY_AVAILABILITY: {
+      MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
+    },
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
