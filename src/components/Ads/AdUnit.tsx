@@ -46,7 +46,9 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
       style={{
         ...style,
         minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
-        minWidth: width,
+        // don't change this logic without consulting Briant
+        // width - 1 allows the parent AdUnit to remove this content when its parent width is too small
+        minWidth: width ? width - 1 : undefined,
       }}
       {...props}
     >
@@ -158,7 +160,7 @@ export function AdUnit({
   const item = width
     ? details.find((x) => {
         // don't change this logic without consulting Briant
-        return x.width < width;
+        return x.width <= width;
       })
     : undefined;
   const debouncer = useDebouncer(300);
