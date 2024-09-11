@@ -2,6 +2,7 @@ import { User } from '@prisma/client';
 import { Session } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
+import { missingSignedAtCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getSessionUser } from '~/server/services/user.service';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
@@ -55,8 +56,10 @@ export async function refreshToken(token: JWT) {
         ? new Date(Math.max(userDate.getTime(), allInvalidationDate.getTime()))
         : userDate ?? allInvalidationDate;
 
-    if (!token.signedAt) shouldRefresh = true;
-    else if (invalidationDate && token.signedAt) {
+    if (!token.signedAt) {
+      missingSignedAtCounter.inc();
+      shouldRefresh = true;
+    } else if (invalidationDate && token.signedAt) {
       shouldRefresh = invalidationDate.getTime() > (token.signedAt as number);
     }
   }
