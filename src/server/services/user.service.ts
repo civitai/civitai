@@ -75,6 +75,7 @@ import {
 } from './../schema/user.schema';
 import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -680,11 +681,8 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     },
   });
 
-  const subscription = await dbWrite.customerSubscription.findFirst({
-    where: { userId },
-    include: {
-      product: true,
-    },
+  const subscription = await getUserSubscription({
+    userId,
   });
 
   if (!response) return undefined;

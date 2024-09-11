@@ -4,6 +4,7 @@ import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import {
   GetUserSubscriptionInput,
+  SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
@@ -89,6 +90,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
       currentPeriodEnd: true,
       createdAt: true,
       endedAt: true,
+      metadata: true,
       product: {
         select: {
           id: true,
@@ -114,6 +116,12 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
   if (!subscription) return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
+
+  const subscriptionMeta = (subscription.metadata ?? {}) as SubscriptionMetadata;
+  if (subscriptionMeta.renewalEmailSent) {
+    // Makes it so that we don't consider this a "subscribed" user.
+    return null;
+  }
 
   return {
     ...subscription,
