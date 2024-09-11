@@ -1879,9 +1879,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
 
-  // we are doing this gte/lte thing to try to optimize the query
   const pgData = await dbRead.entityMetricImage.findMany({
-    where: { imageId: { in: ids, gte: Math.min(...ids), lte: Math.max(...ids) } },
+    where: { imageId: { in: ids } },
     select: {
       imageId: true,
       reactionLike: true,
