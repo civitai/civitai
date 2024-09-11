@@ -1607,6 +1607,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
 
+  // nb: commenting this out while we try checking existence in the db
   // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
   // if (lastExistedAt) {
   //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
@@ -1787,7 +1788,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
-    console.time('dbCheck');
     const filteredHitIds = filteredHits.map((fh) => fh.id);
     const dbIdResp = await dbRead.image.findMany({
       where: { id: { in: filteredHitIds } },
@@ -1795,7 +1795,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
     const dbIds = dbIdResp.map((dbi) => dbi.id);
     const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
-    console.timeEnd('dbCheck');
 
     // TODO maybe grab more if the number is now too low?
 
