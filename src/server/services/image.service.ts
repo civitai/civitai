@@ -1870,7 +1870,7 @@ const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
 
   const pgData = await dbRead.entityMetricImage.findMany({
-    where: { imageId: { in: ids } },
+    where: { imageId: { in: ids, gte: Math.min(...ids), lte: Math.max(...ids) } },
     select: {
       imageId: true,
       reactionLike: true,

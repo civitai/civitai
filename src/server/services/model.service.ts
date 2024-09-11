@@ -20,7 +20,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
+import { dataForModelsCache, entityAccessCache, resourceDataCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -1460,6 +1460,7 @@ export const publishModelById = async ({
     const versionIds = model.modelVersions.map((x) => x.id);
     await bustOrchestratorModelCache(versionIds);
     await resourceDataCache.bust(versionIds);
+    await entityAccessCache.bust(versionIds);
   }
 
   // Fetch affected posts to update their images in search index

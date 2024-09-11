@@ -17,6 +17,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
+import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
@@ -283,6 +284,27 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
     return Object.fromEntries(userBasicData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+});
+
+export const entityAccessCache = createCachedObject<EntityAccessDataType>({
+  key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
+  idKey: 'entityId',
+  ttl: CacheTTL.day,
+  lookupFn: async (ids) => {
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
+    const entityAccessData = await dbRead.$queryRaw<EntityAccessDataType[]>(Prisma.sql`
+      SELECT
+        mv.id AS "entityId",
+        mmv."userId" AS "userId",
+        mv."availability" AS "availability"
+      FROM "ModelVersion" mv
+           JOIN "Model" mmv ON mv."modelId" = mmv.id
+      WHERE
+        mv.id IN (${Prisma.join(goodIds, ',')})
+    `);
+    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+  },
 });
 
 type TagLookup = {

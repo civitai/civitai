@@ -3,8 +3,7 @@ import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { SearchIndexUpdateQueueAction, TagSort } from '~/server/common/enums';
-
+import { TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -36,7 +35,7 @@ export const getTagWithModelCount = ({ name }: { name: string }) => {
     FROM "public"."Tag"
            LEFT JOIN "public"."TagsOnModels" ON "public"."Tag"."id" = "public"."TagsOnModels"."tagId"
            LEFT JOIN "public"."Model" ON "public"."TagsOnModels"."modelId" = "public"."Model"."id"
-    WHERE "public"."Tag"."name" LIKE ${name}
+    WHERE "public"."Tag"."name" = ${name}
       AND "public"."Model"."status" = 'Published'
       AND "public"."TagsOnModels"."modelId" IS NOT NULL
     GROUP BY "public"."Tag"."id", "public"."Tag"."name"
@@ -55,6 +54,7 @@ export const getTag = ({ id }: { id: number }) => {
   });
 };
 
+// unused
 export const getTagCountForImages = async (imageIds: number[]) => {
   if (!imageIds.length) return {};
   const results = await dbRead.$queryRaw<{ imageId: number; count: number }[]>`
@@ -182,8 +182,8 @@ export const getTags = async ({
   >`
     SELECT t."id",
            t."name"
-             ${isCategory}
-               ${isNsfwLevel}
+           ${isCategory}
+           ${isNsfwLevel}
     FROM "Tag" t
       ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -223,7 +223,7 @@ export const getVotableTags = async ({
   userId,
   type,
   id,
-  take = 20,
+  take = 100,
   isModerator = false,
 }: GetVotableTagsSchema & {
   userId?: number;
@@ -262,8 +262,8 @@ export const getVotableTags = async ({
     const tags = await dbRead.imageTag.findMany({
       where: { imageId: id },
       select: imageTagCompositeSelect,
-      orderBy: { score: 'desc' },
-      // take,
+      orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
+      take: take ?? 100,
     });
     const hasWDTags = tags.some((x) => x.source === TagSource.WD14);
     results.push(
@@ -322,7 +322,8 @@ export async function getVotableImageTags({
       tagNsfwLevel: nsfwLevel ? { in: Flags.instanceToArray(nsfwLevel) } : undefined,
     },
     select: { ...imageTagCompositeSelect, imageId: true },
-    orderBy: { score: 'desc' },
+    orderBy: [{ score: 'desc' }, { tagId: 'asc' }],
+    take: 100,
   });
   const hasWDTags = imageTags.some((x) => x.source === TagSource.WD14);
   const tags = imageTags
@@ -583,6 +584,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   const castedTags = isTagIds ? (tags as number[]) : (tags as string[]);
   const tagIn = (isTagIds ? castedTags : castedTags.map((tag) => `'${tag}'`)).join(', ');
 
+  // TODO.fix "disabled" doesnt exist for TagsOnModels, is this being used?
   if (entityType === 'model') {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnModels"
@@ -670,6 +672,7 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   `);
 };
 
+// unused
 export const getTypeCategories = async ({
   type,
   excludeIds,

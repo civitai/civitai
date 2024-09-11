@@ -12,7 +12,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { resourceDataCache } from '~/server/redis/caches';
+import { entityAccessCache, resourceDataCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -508,6 +508,21 @@ export const publishModelVersionsWithEarlyAccess = async ({
           },
         });
 
+        await entityAccessCache.bust(updatedVersion.id);
+
+        // TODO @Luis do we need to do the below here?
+        // await bustOrchestratorModelCache(updatedVersion.id);
+        // await resourceDataCache.bust(updatedVersion.id);
+        // await modelsSearchIndex.queueUpdate([
+        //   { id: version.model.id, action: SearchIndexUpdateQueueAction.Update },
+        // ]);
+        // await imagesSearchIndex.queueUpdate(
+        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+        // );
+        // await imagesMetricsSearchIndex.queueUpdate(
+        //   images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+        // );
+
         return updatedVersion;
       } catch (e: any) {
         console.log(e.message);
@@ -632,6 +647,7 @@ export const publishModelVersionById = async ({
     await updateModelLastVersionAt({ id: version.modelId });
   await bustOrchestratorModelCache(version.id);
   await resourceDataCache.bust(version.id);
+  await entityAccessCache.bust(version.id);
   await preventReplicationLag('model', version.modelId);
   await preventReplicationLag('modelVersion', id);
 
