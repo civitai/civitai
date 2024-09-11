@@ -10,6 +10,12 @@ export function registerCounter({ name, help }: { name: string; help: string }) 
   }
 }
 
+// Auth counters
+export const missingSignedAtCounter = registerCounter({
+  name: 'missing_signed_at_total',
+  help: 'Missing Signed At',
+});
+
 // Account counters
 export const newUserCounter = registerCounter({
   name: 'new_user_total',
