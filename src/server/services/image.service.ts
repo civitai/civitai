@@ -1789,6 +1789,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     const filteredHitIds = filteredHits.map((fh) => fh.id);
+    // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
     const dbIdResp = await dbRead.image.findMany({
       where: { id: { in: filteredHitIds } },
       select: { id: true },

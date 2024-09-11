@@ -13,7 +13,7 @@ SELECT
   t.nsfw AS "tagNsfw",
   t."nsfwLevel" AS "tagNsfwLevel",
   COALESCE(toi."needsReview", FALSE) AS "needsReview",
-  TRUE AS concrete,  -- Concrete used to be NOT disabled, disabled records are already filtered out so conrete is always TRUE
+  TRUE AS concrete,  -- Concrete used to be NOT disabled, disabled records are already filtered out so concrete is always TRUE
   v."lastUpvote",
   COALESCE(toi.source, 'User'::"TagSource") AS source
 FROM (

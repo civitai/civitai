@@ -192,7 +192,7 @@ export const REDIS_KEYS = {
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
     ENTITY_AVAILABILITY: {
-      MODEL_VERSIONS: 'packed:caches:entity-access-model-version',
+      MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
   },
   INDEX_UPDATES: {
