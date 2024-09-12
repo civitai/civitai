@@ -1,6 +1,6 @@
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
-import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
+import { bustMvCache } from '~/server/services/model-version.service';
+import { createJob, getJobDate } from './job';
 
 export const processingEngingEarlyAccess = createJob(
   'process-ending-early-access',
@@ -26,7 +26,8 @@ export const processingEngingEarlyAccess = createJob(
     `;
 
     if (updated.length > 0) {
-      await bustOrchestratorModelCache(updated.map((v) => v.id));
+      const updatedIds = updated.map((v) => v.id);
+      await bustMvCache(updatedIds);
     }
     // Ensures user gets access to the resource after purchasing.
 

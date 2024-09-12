@@ -3,7 +3,7 @@ import trieMemoize from 'trie-memoize';
 import { Button, createStyles, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { createAdFeed } from '~/components/Ads/ads.utils';
+import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Text } from '@mantine/core';
@@ -42,6 +42,7 @@ export function MasonryGrid<TData>({
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const createAdFeed = useCreateAdFeed();
   const items = useMemo(
     () =>
       createAdFeed({
@@ -69,8 +70,8 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <TwCard className="mx-auto border p-2 shadow">
-                <div className="mb-auto flex flex-col items-center gap-2">
+              <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
+                <div className="flex flex-col items-center  gap-2">
                   <Image
                     src={`/images/logo_${theme.colorScheme}_mode.png`}
                     alt="Civitai logo"

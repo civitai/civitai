@@ -1,0 +1,418 @@
+import {
+  Button,
+  Divider,
+  Group,
+  Input,
+  Modal,
+  SegmentedControl,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
+import JSZip from 'jszip';
+import React, { useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { TrainingImagesLabelTypeSelect } from '~/components/Training/Form/TrainingImagesTagViewer';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
+import { UploadType } from '~/server/common/enums';
+import { useS3UploadStore } from '~/store/s3-upload.store';
+import {
+  AutoCaptionSchemaType,
+  autoLabelLimits,
+  AutoTagSchemaType,
+  defaultTrainingState,
+  getShortNameFromUrl,
+  LabelTypes,
+  overwriteList,
+  trainingStore,
+  useTrainingImageStore,
+} from '~/store/training.store';
+import { showErrorNotification } from '~/utils/notifications';
+import { titleCase } from '~/utils/string-helpers';
+
+const overwrites: { [key in (typeof overwriteList)[number]]: string } = {
+  ignore: 'Skip images with existing labels',
+  append: 'Add to the end of existing labels',
+  overwrite: 'Overwrite existing labels',
+};
+
+const maxImagesCaption = 60;
+
+const useSubmitImages = ({
+  modelId,
+  handleClose,
+  type,
+}: {
+  modelId: number;
+  handleClose: () => void;
+  type: LabelTypes;
+}) => {
+  const { upload } = useS3UploadStore();
+  const [loading, setLoading] = useState(false);
+  const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+  const { setAutoLabeling } = trainingStore;
+
+  const filteredImages = imageList.filter((i) =>
+    (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
+      ? i.label.length === 0
+      : i
+  );
+  const disabled = type === 'caption' && filteredImages.length > maxImagesCaption;
+
+  const handleSubmit = async () => {
+    if (disabled) return;
+
+    setLoading(true);
+
+    if (!filteredImages.length) {
+      showErrorNotification({
+        title: 'No images to process',
+        error: new Error(`If you're using "ignore", make sure there are some blank ${type}s.`),
+      });
+      setLoading(false);
+      return;
+    }
+
+    const zip = new JSZip();
+    await Promise.all(
+      filteredImages.map(async (imgData) => {
+        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+        zip.file(getShortNameFromUrl(imgData), imgBlob);
+      })
+    );
+
+    zip.generateAsync({ type: 'blob' }).then(async (content) => {
+      const blobFile = new File([content], `${modelId}_temp_tagging_data.zip`, {
+        type: 'application/zip',
+      });
+
+      try {
+        await upload(
+          {
+            file: blobFile,
+            type: UploadType.TrainingImagesTemp,
+            meta: {},
+          },
+          async ({ url }) => {
+            setAutoLabeling(modelId, {
+              url,
+              isRunning: false,
+              total: filteredImages.length,
+              successes: 0,
+              fails: [],
+            });
+            handleClose();
+            setLoading(false);
+          }
+        );
+      } catch (e) {
+        showErrorNotification({
+          error: e instanceof Error ? e : new Error('Please try again'),
+          title: 'Failed to send data',
+          autoClose: false,
+        });
+        setLoading(false);
+      }
+    });
+  };
+
+  return { loading, handleSubmit, disabled, numImages: filteredImages.length };
+};
+
+const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose: () => void }) => {
+  const { autoTagging } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+  const { setAutoTagging } = trainingStore;
+  const { loading, handleSubmit, numImages } = useSubmitImages({
+    modelId,
+    handleClose,
+    type: 'tag',
+  });
+
+  return (
+    <Stack spacing="md">
+      <Input.Wrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Existing Tags</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              How to handle tags that have already been provided
+            </InfoPopover>
+          </Group>
+        }
+        labelProps={{ mb: 'xs' }}
+      >
+        <SegmentedControl
+          value={autoTagging.overwrite}
+          data={Object.entries(overwrites).map(([k, v]) => {
+            return {
+              label: (
+                <Tooltip label={v} withinPortal>
+                  <Text>{titleCase(k)}</Text>
+                </Tooltip>
+              ),
+              value: k,
+            };
+          })}
+          onChange={(o) =>
+            setAutoTagging(modelId, { overwrite: o as AutoTagSchemaType['overwrite'] })
+          }
+          fullWidth
+          radius="sm"
+        />
+      </Input.Wrapper>
+
+      <NumberInputWrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Max Tags</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Maximum number of tags to add for each image
+            </InfoPopover>
+          </Group>
+        }
+        value={autoTagging.maxTags}
+        min={autoLabelLimits.tag.tags.min}
+        max={autoLabelLimits.tag.tags.max}
+        onChange={(value) => {
+          setAutoTagging(modelId, { maxTags: value });
+        }}
+      />
+      <NumberInputWrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Min Threshold</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Minimum confidence threshold acceptable for each tag
+            </InfoPopover>
+          </Group>
+        }
+        value={autoTagging.maxTags}
+        min={autoLabelLimits.tag.tags.min}
+        max={autoLabelLimits.tag.tags.max}
+        // precision
+        step={0.1}
+        onChange={(value) => {
+          setAutoTagging(modelId, { maxTags: value });
+        }}
+      />
+
+      <TextInputWrapper
+        value={autoTagging.blacklist}
+        onChange={(event) => {
+          setAutoTagging(modelId, { blacklist: event.currentTarget.value });
+        }}
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Blacklist</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Comma-separated list of tags to exclude from results
+            </InfoPopover>
+          </Group>
+        }
+        placeholder="bad_tag_1, bad_tag_2"
+      />
+      <TextInputWrapper
+        value={autoTagging.prependTags}
+        onChange={(event) => {
+          setAutoTagging(modelId, { prependTags: event.currentTarget.value });
+        }}
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Prepend Tags</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Comma-separated list of tags to prepend to all results
+            </InfoPopover>
+          </Group>
+        }
+        placeholder="important, details"
+      />
+      <TextInputWrapper
+        value={autoTagging.appendTags}
+        onChange={(event) => {
+          setAutoTagging(modelId, { appendTags: event.currentTarget.value });
+        }}
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Append Tags</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Comma-separated list of tags to append to all results
+            </InfoPopover>
+          </Group>
+        }
+        placeholder="minor, details"
+      />
+
+      <Group position="right" mt="xl">
+        <Button variant="light" color="gray" onClick={handleClose}>
+          Cancel
+        </Button>
+        <Button loading={loading} onClick={handleSubmit}>
+          {loading ? 'Sending data...' : `Submit (${numImages})`}
+        </Button>
+      </Group>
+    </Stack>
+  );
+};
+
+const AutoCaptionSection = ({
+  modelId,
+  handleClose,
+}: {
+  modelId: number;
+  handleClose: () => void;
+}) => {
+  const { autoCaptioning } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+  const { setAutoCaptioning } = trainingStore;
+  const { loading, handleSubmit, numImages, disabled } = useSubmitImages({
+    modelId,
+    handleClose,
+    type: 'caption',
+  });
+
+  return (
+    <Stack spacing="md">
+      {!disabled ? (
+        <AlertWithIcon
+          title="Long run times"
+          icon={<IconInfoCircle />}
+          py={5}
+          my="xs"
+          iconSize="lg"
+          radius="md"
+        >
+          <Text>
+            Natural language captioning can take a long time to run. Please remain on this page
+            while it is in progress.
+          </Text>
+        </AlertWithIcon>
+      ) : (
+        <AlertWithIcon
+          title="Too many images"
+          icon={<IconExclamationMark />}
+          py={5}
+          my="xs"
+          iconSize="lg"
+          radius="md"
+          color="red"
+          iconColor="red"
+        >
+          <Text>
+            {`A maximum of ${maxImagesCaption} images at a time may be sent for captioning (you have ${numImages}).`}
+          </Text>
+        </AlertWithIcon>
+      )}
+      <Input.Wrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Existing Captions</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              How to handle captions that have already been provided
+            </InfoPopover>
+          </Group>
+        }
+        labelProps={{ mb: 'xs' }}
+      >
+        <SegmentedControl
+          value={autoCaptioning.overwrite}
+          data={Object.entries(overwrites).map(([k, v]) => {
+            return {
+              label: (
+                <Tooltip label={v} withinPortal>
+                  <Text>{titleCase(k)}</Text>
+                </Tooltip>
+              ),
+              value: k,
+            };
+          })}
+          onChange={(o) =>
+            setAutoCaptioning(modelId, { overwrite: o as AutoCaptionSchemaType['overwrite'] })
+          }
+          fullWidth
+          radius="sm"
+          disabled={disabled}
+        />
+      </Input.Wrapper>
+
+      <NumberInputWrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Temperature</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Higher temperatures encourage diverse and creative responses. Lower temperatures
+              produce more predictable descriptions.
+            </InfoPopover>
+          </Group>
+        }
+        value={autoCaptioning.temperature}
+        min={autoLabelLimits.caption.temperature.min}
+        max={autoLabelLimits.caption.temperature.max}
+        precision={2}
+        step={0.01}
+        onChange={(value) => {
+          setAutoCaptioning(modelId, { temperature: value });
+        }}
+        disabled={disabled}
+      />
+      <NumberInputWrapper
+        label={
+          <Group spacing={4} noWrap>
+            <Input.Label>Max New Tokens</Input.Label>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+              Gives guidance for how long descriptions will be. Tokens are approximately 3/4 a word
+              on average. This may not always be respected, so consider this a guideline.
+            </InfoPopover>
+          </Group>
+        }
+        value={autoCaptioning.maxNewTokens}
+        min={autoLabelLimits.caption.maxNewTokens.min}
+        max={autoLabelLimits.caption.maxNewTokens.max}
+        onChange={(value) => {
+          setAutoCaptioning(modelId, { maxNewTokens: value });
+        }}
+        disabled={disabled}
+      />
+
+      <Group position="right" mt="xl">
+        <Button variant="light" color="gray" onClick={handleClose}>
+          Cancel
+        </Button>
+        <Button loading={loading} onClick={handleSubmit} disabled={disabled}>
+          {loading ? 'Sending data...' : `Submit (${numImages})`}
+        </Button>
+      </Group>
+    </Stack>
+  );
+};
+
+export const AutoLabelModal = ({ modelId }: { modelId: number }) => {
+  const dialog = useDialogContext();
+  const handleClose = dialog.onClose;
+  const { labelType } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
+
+  return (
+    <Modal {...dialog} centered size="md" radius="md" title="Automatically label your images">
+      <Stack>
+        <Text>Label Type</Text>
+        <TrainingImagesLabelTypeSelect modelId={modelId} />
+        <Divider />
+        {labelType === 'caption' ? (
+          <AutoCaptionSection modelId={modelId} handleClose={handleClose} />
+        ) : (
+          <AutoTagSection modelId={modelId} handleClose={handleClose} />
+        )}
+      </Stack>
+    </Modal>
+  );
+};

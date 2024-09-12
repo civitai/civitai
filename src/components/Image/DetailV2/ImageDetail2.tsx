@@ -70,6 +70,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useIsClient } from '~/providers/IsClientProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
@@ -104,6 +105,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const isClient = useIsClient();
   const { images, active, close, toggleInfo, shareUrl, connect, navigate, index } =
     useImageDetailContext();
 
@@ -145,6 +147,10 @@ export function ImageDetail2() {
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
   const canCreate = image.hasMeta;
+
+  const viewportHeight = isClient
+    ? Math.max(document.documentElement.clientHeight, window.innerHeight)
+    : 0;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -336,6 +342,13 @@ export function ImageDetail2() {
                       </ReactionSettingsProvider>
                     </div>
                     <CarouselIndicators {...carouselNavigation} />
+                    {viewportHeight >= 1080 && (
+                      <AdUnit
+                        keys={['728x90:Leaderboard']}
+                        justify="center"
+                        browsingLevel={image.nsfwLevel}
+                      />
+                    )}
                   </div>
                 </>
               )}
@@ -395,6 +408,11 @@ export function ImageDetail2() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
+                <AdUnit
+                  keys={['300x250:model_image_pages']}
+                  justify="center"
+                  browsingLevel={image.nsfwLevel}
+                />
                 <VotableTags
                   entityType="image"
                   entityId={image.id}
@@ -404,14 +422,6 @@ export function ImageDetail2() {
                 />
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
-                {!nsfw && (
-                  <AdUnit keys={['300x250:model_image_pages']}>
-                    <TwCard className="mx-auto border p-2 shadow">
-                      <AdUnit.Content />
-                    </TwCard>
-                  </AdUnit>
-                )}
-
                 <Card className="flex flex-col gap-3 rounded-xl">
                   <Text className="flex items-center gap-2 text-xl font-semibold">
                     <IconBrandWechat />

@@ -128,9 +128,9 @@ export function Queue() {
 }
 
 // supposedly ~5.5x faster than createElement without the memo
-const createRenderElement = trieMemoize(
-  [OneKeyMap, WeakMap, WeakMap],
-  (RenderComponent, request, step) => (
-    <RenderComponent key={request.id} id={request.id.toString()} request={request} step={step} />
-  )
-);
+// const createRenderElement = trieMemoize(
+//   [OneKeyMap, WeakMap, WeakMap],
+//   (RenderComponent, request, step) => (
+//     <RenderComponent key={request.id} id={request.id.toString()} request={request} step={step} />
+//   )
+// );

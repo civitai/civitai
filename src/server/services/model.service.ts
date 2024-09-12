@@ -20,7 +20,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -60,8 +60,10 @@ import {
   ImagesForModelVersions,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { publishModelVersionsWithEarlyAccess } from '~/server/services/model-version.service';
-import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import {
+  bustMvCache,
+  publishModelVersionsWithEarlyAccess,
+} from '~/server/services/model-version.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -1459,8 +1461,7 @@ export const publishModelById = async ({
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);
-    await bustOrchestratorModelCache(versionIds);
-    await resourceDataCache.bust(versionIds);
+    await bustMvCache(versionIds);
   }
 
   // Fetch affected posts to update their images in search index

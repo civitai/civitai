@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import {
   ARTICLES_SEARCH_INDEX,
+  COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
@@ -15,6 +16,7 @@ import {
   modelsSearchIndex,
   usersSearchIndex,
   imagesMetricsSearchIndex,
+  collectionsSearchIndex,
 } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -28,6 +30,7 @@ export const schema = z.object({
     IMAGES_SEARCH_INDEX,
     ARTICLES_SEARCH_INDEX,
     METRICS_IMAGES_SEARCH_INDEX,
+    COLLECTIONS_SEARCH_INDEX,
   ]),
 });
 export default ModEndpoint(async function updateIndexSync(
@@ -62,6 +65,9 @@ export default ModEndpoint(async function updateIndexSync(
           break;
         case METRICS_IMAGES_SEARCH_INDEX:
           await imagesMetricsSearchIndex.updateSync(data, jobContext);
+          break;
+        case COLLECTIONS_SEARCH_INDEX:
+          await collectionsSearchIndex.updateSync(data, jobContext);
           break;
         default:
           break;

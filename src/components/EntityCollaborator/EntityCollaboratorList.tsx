@@ -33,13 +33,8 @@ export const EntityCollaboratorList = ({
 
   const isOwnerOrMod = isEntityOwner || currentUser?.isModerator;
 
-  if (isLoading) {
-    return (
-      <Center>
-        <Loader variant="bars" />
-      </Center>
-    );
-  }
+  if (isLoading || !collaborators?.length) return null;
+
   return (
     <Stack>
       {collaborators.map((collaborator) => {

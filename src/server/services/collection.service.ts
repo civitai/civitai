@@ -807,6 +807,8 @@ export const upsertCollection = async ({
       await ingestImage({ image: updated.image });
     }
 
+    await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
     // nb: doing this will delete a user's own image
     // if (currentCollection.image && !input.image) {
     //   const isOwner = await isImageOwner({

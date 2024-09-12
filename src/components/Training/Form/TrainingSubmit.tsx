@@ -17,10 +17,17 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
-import { IconCopy, IconExclamationMark, IconPlus, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCopy,
+  IconExclamationMark,
+  IconPlus,
+  IconX,
+} from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
+import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -493,8 +500,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   value: thisNumImages || 0,
                 },
                 {
-                  label: 'Captions',
+                  label: 'Labels',
                   value: thisMetadata?.numCaptions || 0,
+                },
+                {
+                  label: 'Label Type',
+                  value: capitalize(thisMetadata?.labelType ?? 'tag'),
                 },
               ]}
             />
@@ -610,6 +621,47 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       </Stack>
 
       <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
+
+      {selectedRun.base === 'flux_dev' &&
+        thisMetadata?.labelType !== 'caption' &&
+        (thisMetadata?.numCaptions ?? 0) > 0 && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={16} />}
+            iconColor="yellow"
+            radius={0}
+            size="md"
+            color="yellow"
+            mt="sm"
+          >
+            <Group spacing="sm" position="apart" noWrap>
+              <Text>
+                You have &quot;tagged&quot; images, but <Badge color="red">Flux</Badge> works best
+                with &quot;captions&quot;.
+              </Text>
+              <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+            </Group>
+          </AlertWithIcon>
+        )}
+      {selectedRun.base !== 'flux_dev' &&
+        thisMetadata?.labelType !== 'tag' &&
+        (thisMetadata?.numCaptions ?? 0) > 0 && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={16} />}
+            iconColor="yellow"
+            radius={0}
+            size="md"
+            color="yellow"
+            mt="sm"
+          >
+            <Group spacing="sm" position="apart" noWrap>
+              <Text>
+                You have &quot;captioned&quot; images, but <Badge color="violet">SD</Badge> models
+                work best with &quot;tags&quot;.
+              </Text>
+              <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+            </Group>
+          </AlertWithIcon>
+        )}
 
       {formBaseModel && (
         <>

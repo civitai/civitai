@@ -13,7 +13,7 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
   callback: ResizeFunc,
   options?: { observeChildren?: boolean }
 ) => {
-  const ref = useRef<T>(null);
+  const ref = useRef<T | null>(null);
   const { observeChildren } = options ?? {};
   const callbackRef = useRef<ResizeFunc | null>(null);
 

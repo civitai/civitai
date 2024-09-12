@@ -29,7 +29,6 @@ export function TurnstileWidget(props: Props) {
       options={{ size: 'invisible' }}
       {...props}
       onExpire={handleExpired}
-      injectScript={false}
     />
   );
 }

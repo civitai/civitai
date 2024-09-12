@@ -1,14 +1,6 @@
 import { AdUnitDetail, AdUnitKey, getAdUnitDetails } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, {
-  MutableRefObject,
-  createContext,
-  forwardRef,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { NextLink } from '@mantine/next';
@@ -33,8 +25,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const currentUser = useCurrentUser();
   const isClient = useIsClient();
   const [visible, setVisible] = useState(false);
-  const { adsBlocked, adsEnabled, isMember } = useAdsContext();
-  const browsingLevel = useBrowsingLevelDebounced();
+  const { adsBlocked, isMember } = useAdsContext();
   const isMobile =
     typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   const { withFeedback } = useAdUnitContext();
@@ -48,8 +39,6 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
     }
   }, [inView]);
 
-  if (!adsEnabled || !getIsSafeBrowsingLevel(browsingLevel)) return null;
-
   return (
     <div
       ref={ref}
@@ -57,7 +46,9 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
       style={{
         ...style,
         minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
-        minWidth: width,
+        // don't change this logic without consulting Briant
+        // width - 1 allows the parent AdUnit to remove this content when its parent width is too small
+        minWidth: width ? width - 1 : undefined,
       }}
       {...props}
     >
@@ -153,38 +144,63 @@ export function AdUnit({
   children,
   className,
   style,
+  justify,
+  browsingLevel: browsingLevelOverride,
   ...props
-}: React.HTMLAttributes<HTMLDivElement> & { keys: AdUnitKey[]; withFeedback?: boolean }) {
+}: React.HTMLAttributes<HTMLDivElement> & {
+  keys: AdUnitKey[];
+  withFeedback?: boolean;
+  justify?: 'start' | 'end' | 'center';
+  browsingLevel?: number;
+}) {
   const { adsEnabled } = useAdsContext();
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
   const [width, setWidth] = useState<number>();
-  const item = width ? details.find((x) => x.width <= width) : undefined;
+  const item = width
+    ? details.find((x) => {
+        // don't change this logic without consulting Briant
+        return x.width <= width;
+      })
+    : undefined;
   const debouncer = useDebouncer(300);
   const prevWidthRef = useRef<number | null>(null);
+  const browsingLevel = useBrowsingLevelDebounced();
+  const nsfw = !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel);
 
   useIsomorphicLayoutEffect(() => {
     const node = ref.current?.parentElement ?? ref.current;
-    if (node) {
+    if (ref.current && node) {
       setWidth(getClientWidth(node));
-      const observer = new ResizeObserver((entries) => {
-        const clientWidth = entries[0].target.clientWidth;
+      const resizeObserver = new ResizeObserver((entries) => {
+        const clientWidth = entries[0].contentBoxSize[0].inlineSize;
         const widthChanged = prevWidthRef.current !== clientWidth;
         if (!widthChanged) return;
 
         prevWidthRef.current = clientWidth;
         debouncer(() => setWidth(clientWidth));
       });
-      observer.observe(node);
-      return () => observer.disconnect();
-    }
-  }, []);
 
-  if (!adsEnabled) return null;
+      resizeObserver.observe(node);
+      return () => {
+        resizeObserver.disconnect();
+      };
+    }
+  }, [nsfw]);
+
+  if (!adsEnabled || nsfw) return null;
 
   return (
     <div
-      className={clsx('flex w-full', className)}
+      className={clsx(
+        'flex w-full max-w-full',
+        {
+          ['justify-start']: justify === 'start',
+          ['justify-center']: justify === 'center',
+          ['justify-end']: justify === 'end',
+        },
+        className
+      )}
       ref={ref}
       style={!item ? { display: 'none', ...style } : style}
       {...props}

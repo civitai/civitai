@@ -127,14 +127,12 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             <div className="flex items-center justify-between">
               <Text className="font-semibold">Other metadata</Text>
             </div>
-            <div className="flex flex-col">
+            <div className="flex flex-wrap gap-2">
               {simpleMeta.map(({ label, content }) => (
-                <div key={label} className="flex justify-between gap-3">
-                  <Text color="dimmed" className="text-nowrap leading-snug">
-                    {label}
-                  </Text>
+                <Badge key={label} classNames={{ inner: 'flex gap-1 items-center' }}>
+                  <span>{label}:</span>
                   {content}
-                </div>
+                </Badge>
               ))}
             </div>
           </div>

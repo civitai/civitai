@@ -1,9 +1,10 @@
-import { dbRead, dbWrite } from '~/server/db/client';
 import { Availability, Prisma } from '@prisma/client';
+import { EntityAccessPermission } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { modelVersionAccessCache } from '~/server/redis/caches';
 import { SupportedClubEntities } from '~/server/schema/club.schema';
 import { isDefined } from '~/utils/type-guards';
 import { SupportedAvailabilityResources } from '../schema/base.schema';
-import { EntityAccessPermission } from '~/server/common/enums';
 
 const entityAccessOwnerTypes = ['User', 'Club', 'ClubTier'] as const;
 type EntityAccessOwnerType = (typeof entityAccessOwnerTypes)[number];
@@ -28,6 +29,12 @@ type UserEntityAccessStatus = EntityAccessRaw & {
 
 const OPEN_ACCESS_AVAILABILITY = [Availability.Public, Availability.Unsearchable] as const;
 
+export type EntityAccessDataType = {
+  entityId: number;
+  userId: number;
+  availability: Availability;
+};
+
 export const hasEntityAccess = async ({
   entityType,
   entityIds,
@@ -45,19 +52,14 @@ export const hasEntityAccess = async ({
     return [];
   }
 
-  const query: Prisma.Sql =
-    entityType === 'ModelVersion'
-      ? Prisma.sql`
-     SELECT
-       mv.id as "entityId",
-       mmv."userId" as "userId",
-       mv."availability" as "availability"
-     FROM "ModelVersion" mv
-     JOIN "Model" mmv ON mv."modelId" = mmv.id
-     WHERE mv.id IN (${Prisma.join(entityIds, ',')})
-  `
-      : entityType === 'Article'
-      ? Prisma.sql`
+  let data: EntityAccessDataType[];
+  if (entityType === 'ModelVersion') {
+    const cacheData = await modelVersionAccessCache.fetch(entityIds);
+    data = Object.values(cacheData);
+  } else {
+    const query: Prisma.Sql =
+      entityType === 'Article'
+        ? Prisma.sql`
     SELECT
       a."id" as "entityId",
       a."userId" as "userId",
@@ -65,8 +67,8 @@ export const hasEntityAccess = async ({
     FROM "Article" a
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `
-      : entityType === 'Post'
-      ? Prisma.sql`
+        : entityType === 'Post'
+        ? Prisma.sql`
     SELECT
       p."id" as "entityId",
       p."userId" as "userId",
@@ -74,8 +76,8 @@ export const hasEntityAccess = async ({
     FROM "Post" p
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `
-      : entityType === 'Model'
-      ? Prisma.sql`
+        : entityType === 'Model'
+        ? Prisma.sql`
     SELECT
       m."id" as "entityId",
       m."userId" as "userId",
@@ -83,8 +85,8 @@ export const hasEntityAccess = async ({
     FROM "Model" m
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `
-      : entityType === 'Collection'
-      ? Prisma.sql`
+        : entityType === 'Collection'
+        ? Prisma.sql`
     SELECT
       c."id" as "entityId",
       c."userId" as "userId",
@@ -92,8 +94,8 @@ export const hasEntityAccess = async ({
     FROM "Collection" c
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `
-      : // Bounty
-        Prisma.sql`
+        : // Bounty
+          Prisma.sql`
     SELECT
       b."id" as "entityId",
       b."userId" as "userId",
@@ -102,9 +104,8 @@ export const hasEntityAccess = async ({
     WHERE id IN (${Prisma.join(entityIds, ',')})
   `;
 
-  const data = await dbRead.$queryRaw<
-    { availability: Availability; userId: number; entityId: number }[]
-  >(query);
+    data = await dbRead.$queryRaw<EntityAccessDataType[]>(query);
+  }
 
   const privateRecords = data.filter((d) =>
     // Private & EarlyAccess both require a permission check.
@@ -312,15 +313,6 @@ export const entityRequiresClub = async ({
         FROM "Article" a
         WHERE id IN (${Prisma.join(entityIds, ', ')})
         `;
-      break;
-    case 'Post':
-      query = Prisma.sql`
-        SELECT
-          p."id" as "entityId",
-          p."availability" as "availability"
-        FROM "Post" p
-        WHERE id IN (${Prisma.join(entityIds, ', ')})
-          `;
       break;
     case 'Post':
       query = Prisma.sql`

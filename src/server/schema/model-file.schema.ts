@@ -44,10 +44,11 @@ export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
+  labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),
-  numCaptions: z.number().nullish(),
+  numCaptions: z.number().nullish(), // this should be named numLabels, but it's too late now
   selectedEpochUrl: z.string().url().nullish(),
   trainingResults: trainingResultsSchema.nullish(),
   bountyId: z.number().nullish(),
