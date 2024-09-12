@@ -3,10 +3,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import Script from 'next/script';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { isProd } from '~/env/other';
+// import { isProd } from '~/env/other';
 import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
 import { Router } from 'next/router';
-// const isProd = true;
+const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
@@ -58,6 +58,17 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     if (isProd) setAdsBlocked(true);
   }
 
+  useEffect(() => {
+    const listener = ((e: CustomEvent) => {
+      const success = e.detail;
+      if (success !== undefined) setAdsBlocked(!success);
+    }) as EventListener;
+    window.addEventListener('tcfapi-success', listener);
+    return () => {
+      window.removeEventListener('tcfapi-success', listener);
+    };
+  }, []);
+
   return (
     <AdsContext.Provider
       value={{
@@ -99,24 +110,25 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 type="text/javascript"
                 dangerouslySetInnerHTML={{
                   __html: `
-              __tcfapi("addEventListener", 2, function(tcData, success) {
-                if (success && tcData.unicLoad  === true) {
-                  if(!window._initAds) {
-                    window._initAds = true;
+                    __tcfapi?.("addEventListener", 2, function(tcData, success) {
+                      dispatchEvent(new CustomEvent('tcfapi-success', {detail: success}));
+                      if (success && tcData.unicLoad  === true) {
+                        if(!window._initAds) {
+                          window._initAds = true;
 
-                    var script = document.createElement('script');
-                    script.async = true;
-                    script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
-                    document.head.appendChild(script);
+                          var script = document.createElement('script');
+                          script.async = true;
+                          script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
+                          document.head.appendChild(script);
 
-                    var script = document.createElement('script');
-                    script.async = true;
-                    script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
-                    document.head.appendChild(script);
-                  }
-                }
-              });
-            `,
+                          var script = document.createElement('script');
+                          script.async = true;
+                          script.src = '//btloader.com/tag?o=5184339635601408&upapi=true';
+                          document.head.appendChild(script);
+                        }
+                      }
+                    });
+                  `,
                 }}
               />
               <Script
@@ -134,11 +146,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 }}
               />
               {/* {currentUser?.email && <AdsIdentity />} */}
-              <TcfapiSuccess
+              {/* <TcfapiSuccess
                 onSuccess={(success) => {
                   if (success !== undefined) setAdsBlocked(!success);
                 }}
-              />
+              /> */}
               <GoogletagManager />
               <ImpressionTracker />
             </>
@@ -165,22 +177,21 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 //   return null;
 // }
 
-function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
-  useEffect(() => {
-    const callback = (data: any, success: boolean) => {
-      console.log(data);
-      onSuccess(success);
-    };
-    if (!window.__tcfapi) onSuccess(false);
+// function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
+//   useEffect(() => {
+//     const callback = (data: any, success: boolean) => {
+//       onSuccess(success);
+//     };
+//     if (!window.__tcfapi) onSuccess(false);
 
-    window.__tcfapi('addEventListener', 2, callback);
-    return () => {
-      window.__tcfapi('removeEventListener', 2, callback);
-    };
-  }, []);
+//     window.__tcfapi('addEventListener', 2, callback);
+//     return () => {
+//       window.__tcfapi('removeEventListener', 2, callback);
+//     };
+//   }, []);
 
-  return null;
-}
+//   return null;
+// }
 
 function GoogletagManager() {
   useEffect(() => {
