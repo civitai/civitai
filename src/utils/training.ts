@@ -59,8 +59,10 @@ export const calcBuzzFromEta = ({
   numImages: number;
 }) => {
   if (isRapid) {
-    const imgCost = Math.max(0, numImages - cost.rapid.numImgBase) * cost.rapid.numImgBuzz;
-    return cost.rapid.baseBuzz + imgCost;
+    const imgCost =
+      Math.max(0, Math.ceil((numImages - cost.rapid.numImgBase) / cost.rapid.numImgStep)) *
+      cost.rapid.numImgBuzz;
+    return isNaN(imgCost) ? cost.rapid.baseBuzz : cost.rapid.baseBuzz + imgCost;
   }
 
   if (!eta) return cost.baseBuzz;

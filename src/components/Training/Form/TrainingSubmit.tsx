@@ -746,7 +746,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Group>
               </Badge>
 
-              {dryRunLoading ? (
+              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                <Text>{dayjs(Date.now()).add(10, 's').fromNow(true)}</Text>
+              ) : dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>
@@ -759,12 +761,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Group spacing={4} noWrap>
                   <Text>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    How long your job is expected to run once started
+                    How long in total before your job is done
                   </InfoPopover>
                 </Group>
               </Badge>
 
-              {dryRunLoading ? (
+              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                <Text>{minsToHours(rapidEta)}</Text>
+              ) : dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>
@@ -772,8 +776,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                     ? 'Unknown'
                     : etaMins > 20000
                     ? 'Forever'
-                    : isValidRapid(selectedRun.baseType, selectedRun.params.engine)
-                    ? minsToHours(rapidEta)
                     : minsToHours(
                         (!!dryRunData
                           ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000

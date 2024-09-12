@@ -53,6 +53,7 @@ const trainingCostSchema = z.object({
   rapid: z.object({
     baseBuzz: z.number().min(0),
     numImgBase: z.number().min(1),
+    numImgStep: z.number().min(1),
     numImgBuzz: z.number().min(0),
   }),
 });
@@ -94,7 +95,8 @@ export const defaultTrainingCost: TrainingCost = {
   rapid: {
     baseBuzz: 4000,
     numImgBase: 200,
-    numImgBuzz: 5,
+    numImgStep: 100,
+    numImgBuzz: 500,
   },
 };
 
