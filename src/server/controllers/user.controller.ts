@@ -306,6 +306,7 @@ export const completeOnboardingHandler = async ({
             description: 'Onboarding bonus',
             type: TransactionType.Reward,
             externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+            toAccountType: 'generation',
           })
         ).catch(handleLogError);
         break;
