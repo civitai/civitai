@@ -31,7 +31,7 @@ type SearchIndexContext = {
   pg: AugmentedPool;
   ch?: CustomClickHouseClient;
   indexName: string;
-  jobContext: JobContext;
+  jobContext?: JobContext;
   logger: ReturnType<typeof createLogger>;
 };
 type SearchIndexPullBatch =
@@ -361,7 +361,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     },
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
-      jobContext: JobContext
+      jobContext?: JobContext
     ) {
       if (!items.length) {
         return;

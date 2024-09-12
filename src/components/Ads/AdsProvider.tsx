@@ -150,20 +150,20 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AdsIdentity() {
-  const currentUser = useCurrentUser();
-  useEffect(() => {
-    const pgHB = window.pgHB;
-    const email = currentUser?.email;
-    if (pgHB && email) {
-      pgHB.que.push(function () {
-        pgHB.setUserAudienceData({ email });
-      });
-    }
-  }, [currentUser?.email]);
+// function AdsIdentity() {
+//   const currentUser = useCurrentUser();
+//   useEffect(() => {
+//     const pgHB = window.pgHB;
+//     const email = currentUser?.email;
+//     if (pgHB && email) {
+//       pgHB.que.push(function () {
+//         pgHB.setUserAudienceData({ email });
+//       });
+//     }
+//   }, [currentUser?.email]);
 
-  return null;
-}
+//   return null;
+// }
 
 function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
   useEffect(() => {
@@ -184,8 +184,9 @@ function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void })
 
 function GoogletagManager() {
   useEffect(() => {
+    if (!window.googletag) return;
     function handleRouteChangeStart() {
-      window.googletag.destroySlots();
+      window.googletag?.destroySlots?.();
     }
     Router.events.on('routeChangeStart', handleRouteChangeStart);
     return () => {

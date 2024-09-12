@@ -212,14 +212,12 @@ export class Tracker {
     fingerprint: 'unknown',
   };
   private session: Promise<number> | undefined;
+  private req: NextApiRequest | undefined;
+  private res: NextApiResponse | undefined;
 
-  constructor(req?: NextApiRequest, res?: NextApiResponse) {
-    if (req && res) {
-      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
-      this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
-      this.actor.fingerprint = (req.headers['x-fingerprint'] as string) ?? this.actor.fingerprint;
-
-      this.session = getServerAuthSession({ req, res }).then((session) => {
+  private async resolveSession() {
+    if (!this.session && this.req && this.res) {
+      this.session = getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
         this.actor.userId = session?.user?.id ?? this.actor.userId;
         return this.actor.userId;
       });
@@ -239,10 +237,20 @@ export class Tracker {
     }
   }
 
+  constructor(req?: NextApiRequest, res?: NextApiResponse) {
+    if (req && res) {
+      this.req = req;
+      this.res = res;
+      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
+      this.actor.fingerprint = (req.headers['x-fingerprint'] as string) ?? this.actor.fingerprint;
+    }
+  }
+
   private async track(table: string, custom: object, skipActorMeta = false): Promise<void> {
     if (!env.CLICKHOUSE_TRACKER_URL) return;
 
-    if (this.session) await this.session;
+    await this.resolveSession();
 
     const actorMeta = skipActorMeta ? { userId: this.actor.userId } : { ...this.actor };
 

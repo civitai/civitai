@@ -1,4 +1,4 @@
-import React, { CSSProperties, forwardRef, useEffect, useRef } from 'react';
+import React, { CSSProperties, forwardRef, useRef } from 'react';
 import clsx from 'clsx';
 
 type Cosmetic = {
