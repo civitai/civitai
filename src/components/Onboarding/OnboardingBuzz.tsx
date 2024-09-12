@@ -25,13 +25,19 @@ import {
   checkUserCreatedAfterBuzzLaunch,
   getUserBuzzBonusAmount,
 } from '~/server/common/user-helpers';
-import { RecaptchaNotice } from '../Recaptcha/RecaptchaWidget';
 import { OnboardingSteps } from '~/server/common/enums';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
 import { z } from 'zod';
+import {
+  CaptchaState,
+  TurnstilePrivacyNotice,
+  TurnstileWidget,
+} from '~/components/TurnstileWidget/TurnstileWidget';
+import { showErrorNotification } from '~/utils/notifications';
+import { env } from '~/env/client.mjs';
 
 const referralSchema = z.object({
   code: z
@@ -58,6 +64,11 @@ export function OnboardingBuzz() {
       ? { code, source, showInput: false }
       : { code: '', source: '', showInput: false }
   );
+  const [captchaState, setCaptchaState] = useState<CaptchaState>({
+    status: null,
+    token: null,
+    error: null,
+  });
   const [debouncedUserReferralCode] = useDebouncedValue(userReferral.code, 300);
   const isProjectOdyssey = source === 'project_odyssey';
 
@@ -80,6 +91,18 @@ export function OnboardingBuzz() {
   const handleStepComplete = () => {
     if (referrerRefetching) return;
 
+    if (captchaState.status !== 'success')
+      return showErrorNotification({
+        title: 'Cannot save',
+        error: new Error(captchaState.error ?? 'Captcha token expired. Please try again.'),
+      });
+
+    if (!captchaState.token)
+      return showErrorNotification({
+        title: 'Cannot save',
+        error: new Error('Captcha token is missing'),
+      });
+
     const result = referralSchema.safeParse(userReferral);
     if (!result.success)
       return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
@@ -89,6 +112,7 @@ export function OnboardingBuzz() {
         step: OnboardingSteps.Buzz,
         userReferralCode: showReferral ? userReferral.code : undefined,
         source: showReferral ? userReferral.source : undefined,
+        recaptchaToken: captchaState.token,
       },
       { onSuccess: () => next() }
     );
@@ -109,7 +133,7 @@ export function OnboardingBuzz() {
             <Text>
               {`At Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
               <IconProgressBolt
-                color={theme.colors.yellow[7]}
+                color={theme.colors.blue[4]}
                 size={20}
                 style={{ verticalAlign: 'middle', display: 'inline' }}
               />
@@ -135,10 +159,33 @@ export function OnboardingBuzz() {
                     />
                   )}
                 </Text>
-                {currentUser?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
+                {currentUser?.isMember
+                  ? ' as a gift for being a supporter for use with on-site services.'
+                  : ' as a gift for use with on-site services.'}
               </Text>
             }
           />
+          <TurnstileWidget
+            options={{ size: 'normal' }}
+            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
+            onError={(error) =>
+              setCaptchaState({
+                status: 'error',
+                token: null,
+                error: `There was an error generating the captcha: ${error}`,
+              })
+            }
+            siteKey={env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY}
+            onExpire={(token) =>
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
+            }
+          />
+          {captchaState.status === 'error' && (
+            <Text size="xs" color="red">
+              {captchaState.error}
+            </Text>
+          )}
+          <TurnstilePrivacyNotice />
           <Group position="apart">
             <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
             <Button

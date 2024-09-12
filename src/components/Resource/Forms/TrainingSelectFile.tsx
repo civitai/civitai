@@ -109,7 +109,10 @@ const EpochRow = ({
             </Button>
           </Group>
         </Group>
-        <Group className={classes.epochRow} style={{ justifyContent: 'space-evenly' }}>
+        <Group
+          className={classes.epochRow}
+          style={{ justifyContent: 'space-evenly', alignItems: 'flex-start' }}
+        >
           {epoch.sample_images && epoch.sample_images.length > 0 ? (
             epoch.sample_images.map((imgData, index) => (
               <Stack key={index} style={{ justifyContent: 'flex-start' }}>
@@ -131,8 +134,8 @@ const EpochRow = ({
               </Stack>
             ))
           ) : (
-            <Center>
-              <Text>No images available.</Text>
+            <Center p="md">
+              <Text>No images available</Text>
             </Center>
           )}
         </Group>

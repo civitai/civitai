@@ -66,8 +66,8 @@ const schema = z.object({
 
 const mapTrainingStatus: { [key: string]: TrainingStatus } = {
   Initialized: TrainingStatus.Submitted,
-  Claimed: TrainingStatus.Submitted,
   ClaimExpired: TrainingStatus.Submitted,
+  Claimed: TrainingStatus.Processing,
   Updated: TrainingStatus.Processing,
   Rejected: TrainingStatus.Processing,
   LateRejected: TrainingStatus.Processing,
@@ -145,6 +145,7 @@ export default WebhookEndpoint(async (req, res) => {
     case 'Deleted':
     case 'Canceled':
     case 'Expired':
+    case 'Claimed':
       let status = mapTrainingStatus[jobStatus];
       if (jobStatus === 'Failed' && needsReview) status = TrainingStatus.Paused;
 
@@ -165,7 +166,6 @@ export default WebhookEndpoint(async (req, res) => {
 
       break;
     case 'Initialized':
-    case 'Claimed':
     case 'ClaimExpired':
       break;
     default:
