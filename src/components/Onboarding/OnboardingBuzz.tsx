@@ -109,7 +109,7 @@ export function OnboardingBuzz() {
             <Text>
               {`At Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
               <IconProgressBolt
-                color={theme.colors.yellow[7]}
+                color={theme.colors.blue[4]}
                 size={20}
                 style={{ verticalAlign: 'middle', display: 'inline' }}
               />
@@ -135,7 +135,9 @@ export function OnboardingBuzz() {
                     />
                   )}
                 </Text>
-                {currentUser?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
+                {currentUser?.isMember
+                  ? ' as a gift for being a supporter for use with on-site services.'
+                  : ' as a gift for use with on-site services.'}
               </Text>
             }
           />
