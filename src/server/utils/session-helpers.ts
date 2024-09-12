@@ -58,7 +58,7 @@ export async function refreshToken(token: JWT) {
         : userDate ?? allInvalidationDate;
 
     if (!token.signedAt) {
-      missingSignedAtCounter.inc();
+      missingSignedAtCounter?.inc();
       shouldRefresh = true;
     } else if (invalidationDate && token.signedAt) {
       shouldRefresh = invalidationDate.getTime() > (token.signedAt as number);

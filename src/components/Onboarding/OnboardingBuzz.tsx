@@ -135,7 +135,9 @@ export function OnboardingBuzz() {
                     />
                   )}
                 </Text>
-                {currentUser?.isMember ? ' as a gift for being a supporter.' : ' as a gift.'}
+                {currentUser?.isMember
+                  ? ' as a gift for being a supporter for use with on-site services.'
+                  : ' as a gift for use with on-site services.'}
               </Text>
             }
           />
