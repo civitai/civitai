@@ -74,7 +74,7 @@ export const lrSchedulerTypes = [
   'constant_with_warmup',
   'linear',
 ] as const;
-export const engineTypes = ['kohya', 'x-flux'] as const;
+export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
