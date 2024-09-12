@@ -268,12 +268,6 @@ export const completeOnboardingHandler = async ({
 
     switch (input.step) {
       case OnboardingSteps.TOS: {
-        // const { recaptchaToken } = input;
-        // if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
-
-        // const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
-        // if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
-
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
       }
