@@ -186,7 +186,7 @@ function GoogletagManager() {
   useEffect(() => {
     if (!window.googletag) return;
     function handleRouteChangeStart() {
-      window.googletag.destroySlots();
+      window.googletag?.destroySlots?.();
     }
     Router.events.on('routeChangeStart', handleRouteChangeStart);
     return () => {
