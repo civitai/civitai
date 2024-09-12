@@ -13,15 +13,12 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import {
-  useQueryModelCollectionShowcase,
-  UseQueryModelReturn,
-} from '~/components/Model/model.utils';
+import { useModelShowcaseCollection, UseQueryModelReturn } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 
-export function CollectionShowcase({ modelId }: Props) {
+export function CollectionShowcase({ modelId, loading }: Props) {
   const {
     items = [],
     isLoading,
@@ -29,46 +26,44 @@ export function CollectionShowcase({ modelId }: Props) {
     fetchNextPage,
     isFetching,
     isRefetching,
-  } = useQueryModelCollectionShowcase({ modelId });
+  } = useModelShowcaseCollection({ modelId });
 
   return (
-    <ScrollArea.Autosize maxHeight={300}>
-      {isLoading ? (
-        <div className="flex items-center justify-center p-2">
-          <Loader variant="bars" size="sm" />
-        </div>
-      ) : (
-        <div className="relative">
-          <LoadingOverlay visible={isRefetching} zIndex={9} />
-          {items.length > 0 ? (
-            <>
-              {items.map((model) => (
-                <ShowcaseItem key={model.id} {...model} />
-              ))}
-              {hasNextPage && (
-                <InViewLoader
-                  loadFn={fetchNextPage}
-                  loadCondition={!isFetching}
-                  style={{ gridColumn: '1/-1' }}
-                >
-                  <div className="flex items-center justify-center px-4 py-2">
-                    <Loader variant="bars" size="sm" />
-                  </div>
-                </InViewLoader>
-              )}
-            </>
-          ) : (
-            <div className="flex items-center justify-center p-2">
-              <Text color="dimmed">There are no items for this collection</Text>
-            </div>
-          )}
-        </div>
-      )}
-    </ScrollArea.Autosize>
+    <div className="relative">
+      <LoadingOverlay visible={isRefetching} zIndex={9} />
+      <ScrollArea.Autosize maxHeight={300}>
+        {isLoading || loading ? (
+          <div className="flex items-center justify-center p-2">
+            <Loader variant="bars" size="sm" />
+          </div>
+        ) : items.length > 0 ? (
+          <>
+            {items.map((model) => (
+              <ShowcaseItem key={model.id} {...model} />
+            ))}
+            {hasNextPage && (
+              <InViewLoader
+                loadFn={fetchNextPage}
+                loadCondition={!isFetching}
+                style={{ gridColumn: '1/-1' }}
+              >
+                <div className="flex items-center justify-center px-4 py-2">
+                  <Loader variant="bars" size="sm" />
+                </div>
+              </InViewLoader>
+            )}
+          </>
+        ) : (
+          <div className="flex items-center justify-center p-2">
+            <Text color="dimmed">There are no items for this collection</Text>
+          </div>
+        )}
+      </ScrollArea.Autosize>
+    </div>
   );
 }
 
-type Props = { modelId: number };
+type Props = { modelId: number; loading?: boolean };
 
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
   const router = useRouter();

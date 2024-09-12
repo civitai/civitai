@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal';
-import type { ModelShowcaseCollectionModalProps } from '~/components/ModelShowcaseCollectionModal/ModelShowcaseCollectionModal';
+import type { CollectionSelectModalProps } from '~/components/CollectionSelectModal/CollectionSelectModal';
 
 const BrowsingLevelGuide = dynamic(() => import('~/components/BrowsingLevel/BrowsingLevelGuide'));
 const SetBrowsingLevelModal = dynamic(
@@ -11,8 +11,8 @@ const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'
 const ResourceSelectModal = dynamic(
   () => import('~/components/ImageGeneration/GenerationForm/ResourceSelectModal2')
 );
-const ModelShowcaseCollectionModal = dynamic(
-  () => import('~/components/ModelShowcaseCollectionModal/ModelShowcaseCollectionModal')
+const CollectionSelectModal = dynamic(
+  () => import('~/components/CollectionSelectModal/CollectionSelectModal')
 );
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
@@ -26,6 +26,6 @@ export function openResourceSelectModal(props: ResourceSelectModalProps) {
   dialogStore.trigger({ component: ResourceSelectModal, props });
 }
 
-export function openModelShowcaseCollectionModal(props: ModelShowcaseCollectionModalProps) {
-  dialogStore.trigger({ component: ModelShowcaseCollectionModal, props });
+export function openCollectionSelectModal(props: CollectionSelectModalProps) {
+  dialogStore.trigger({ component: CollectionSelectModal, props });
 }

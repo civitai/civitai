@@ -24,7 +24,6 @@ import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
   Form,
-  InputCheckboxGroup,
   InputCheckbox,
   InputSelect,
   InputText,
@@ -32,11 +31,7 @@ import {
   useForm,
   InputDatePicker,
 } from '~/libs/form';
-import {
-  AddCollectionItemInput,
-  saveCollectionItemInputSchema,
-  upsertCollectionInput,
-} from '~/server/schema/collection.schema';
+import { AddCollectionItemInput, upsertCollectionInput } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import {
@@ -47,6 +42,7 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -82,17 +78,23 @@ const useCollectionListStyles = createStyles((theme) => ({
   contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
 }));
 
+type SelectedCollection = {
+  collectionId: number;
+  tagId?: number | null;
+  userId: number;
+  read: CollectionReadConfiguration;
+};
+
 function CollectionListForm({
   onNewClick,
   onSubmit,
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
+  const currentUser = useCurrentUser();
   const { classes } = useCollectionListStyles();
-  const queryUtils = trpc.useContext();
-  const [selectedCollections, setSelectedCollections] = useState<
-    { collectionId: number; tagId?: number | null }[]
-  >([]);
+  const queryUtils = trpc.useUtils();
+  const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
@@ -115,6 +117,8 @@ function CollectionListForm({
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
+  const setShowcaseCollectionMutation = trpc.model.setCollectionShowcase.useMutation();
+
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
     // We'll avoid re-adding the item into the collection if it already exists, so we must check for that.
@@ -134,13 +138,38 @@ function CollectionListForm({
     addCollectionItemMutation.mutate(
       { ...props, collections: selectedCollections, removeFromCollectionIds },
       {
-        async onSuccess(_, { type }) {
+        async onSuccess(result, { type, modelId, collections }) {
+          const added = result.status === 'added';
           showNotification({
-            title: 'Item added',
-            message: 'Your item has been added to the selected collections.',
+            title: added ? 'Item added' : 'Item removed',
+            message: added
+              ? 'Your item has been added to the selected collections.'
+              : 'Your item has been removed from the selected collections.',
           });
 
           onSubmit();
+
+          if (added && type === CollectionType.Model && modelId && collections.length === 1) {
+            const [collection] = collections;
+            if (
+              collection.read === CollectionReadConfiguration.Public &&
+              collection.userId === currentUser?.id
+            ) {
+              openConfirmModal({
+                title: 'Set Showcase Collection',
+                centered: true,
+                children: `Would you like to set this collection as this model's showcase collection?`,
+                labels: { confirm: 'Yes', cancel: 'No' },
+                confirmProps: { loading: setShowcaseCollectionMutation.isLoading },
+                closeOnConfirm: false,
+                onConfirm: async () =>
+                  await setShowcaseCollectionMutation.mutateAsync(
+                    { id: modelId, collectionId: collections[0].collectionId },
+                    { onSuccess: () => closeAllModals() }
+                  ),
+              });
+            }
+          }
 
           // TODO.optimization: Invalidate only the collection that was updated
           await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
@@ -162,6 +191,8 @@ function CollectionListForm({
     const existingSelectedCollections = collectionItems.map((collectionItem) => ({
       collectionId: collectionItem.collectionId,
       tagId: collectionItem.tagId,
+      userId: collectionItem.collection.userId,
+      read: collectionItem.collection.read,
     }));
 
     setSelectedCollections(existingSelectedCollections);
@@ -216,7 +247,11 @@ function CollectionListForm({
                               } else {
                                 setSelectedCollections((curr) => [
                                   ...curr,
-                                  { collectionId: collection.id },
+                                  {
+                                    collectionId: collection.id,
+                                    userId: collection.userId,
+                                    read: collection.read,
+                                  },
                                 ]);
                               }
                             }}
@@ -299,6 +334,8 @@ function CollectionListForm({
                                       collectionId: collection.id,
                                       tagId:
                                         collection.tags?.length > 0 ? collection.tags[0].id : null,
+                                      userId: collection.userId,
+                                      read: collection.read,
                                     },
                                   ]);
                                 }

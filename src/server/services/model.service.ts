@@ -32,6 +32,7 @@ import {
   ModelMeta,
   ModelUpsertInput,
   PublishModelSchema,
+  SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -1262,7 +1263,7 @@ const prepareModelVersions = (versions: ModelInput['modelVersions']) => {
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
-    meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
+    // meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
     isModerator?: boolean;
     gallerySettings?: Partial<ModelGallerySettingsSchema>;
   }
@@ -1341,7 +1342,7 @@ export const upsertModel = async (
       where: { id },
       data: {
         ...data,
-        meta,
+        meta: isEmpty(meta) ? Prisma.JsonNull : meta,
         tagsOnModels: tagsOnModels
           ? {
               deleteMany: {
@@ -2215,4 +2216,31 @@ export async function copyGallerySettingsToAllModelsByUser({
   await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
 
   return result;
+}
+
+export async function setModelShowcaseCollection({
+  id,
+  collectionId,
+  userId,
+  isModerator,
+}: SetModelCollectionShowcaseInput & { userId: number; isModerator?: boolean }) {
+  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+  if (model.userId !== userId && !isModerator)
+    throw throwAuthorizationError('You are not allowed to set this model collection showcase');
+
+  const modelMeta = model.meta as ModelMeta | null;
+
+  const updated = await updateModelById({
+    id,
+    data: {
+      meta: modelMeta
+        ? { ...modelMeta, showcaseCollectionId: collectionId }
+        : { showcaseCollectionId: collectionId },
+    },
+  });
+
+  await dataForModelsCache.bust(updated.id);
+
+  return updated;
 }

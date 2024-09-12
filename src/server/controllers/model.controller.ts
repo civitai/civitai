@@ -1,5 +1,6 @@
 import {
   BountyType,
+  CollectionItemStatus,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -80,6 +81,7 @@ import {
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
+  setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
@@ -115,10 +117,7 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
-import {
-  getCollectionById,
-  getCollectionItemsByCollectionId,
-} from '~/server/services/collection.service';
+import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -1117,7 +1116,7 @@ export const declineReviewHandler = async ({
       meta: {
         ...meta,
         declinedReason: input.reason,
-        decliendAt: new Date().toISOString(),
+        declinedAt: new Date().toISOString(),
         needsReview: false,
       },
     });
@@ -1627,13 +1626,7 @@ export async function copyGalleryBrowsingLevelHandler({
   }
 }
 
-export async function getModelCollectionShowcaseHandler({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: Context;
-}) {
+export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
   try {
     const model = await getModel({ id: input.id, select: { id: true, meta: true } });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
@@ -1641,13 +1634,22 @@ export async function getModelCollectionShowcaseHandler({
     const modelMeta = model.meta as ModelMeta | null;
     if (!modelMeta?.showcaseCollectionId) return null;
 
-    return getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const [itemCount] = await getCollectionItemCount({
+      collectionIds: [collection.id],
+      status: CollectionItemStatus.ACCEPTED,
+    });
+
+    return {
+      ...collection,
+      itemCount: itemCount.count,
+    };
   } catch (error) {
     throw throwDbError(error);
   }
 }
 
-export async function setModelCollectionShowcaseHandler({
+export function setModelCollectionShowcaseHandler({
   input,
   ctx,
 }: {
@@ -1656,22 +1658,8 @@ export async function setModelCollectionShowcaseHandler({
 }) {
   try {
     const { id: userId, isModerator } = ctx.user;
-    const { id, collectionId } = input;
 
-    const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
-    if (!model) throw throwNotFoundError(`No model with id ${id}`);
-    if (model.userId !== userId && !isModerator)
-      throw throwAuthorizationError('You are not allowed to set this model collection showcase');
-
-    const modelMeta = model.meta as ModelMeta | null;
-    return updateModelById({
-      id,
-      data: {
-        meta: modelMeta
-          ? { ...modelMeta, showcaseCollectionId: collectionId }
-          : { showcaseCollectionId: collectionId },
-      },
-    });
+    return setModelShowcaseCollection({ ...input, userId, isModerator });
   } catch (error) {
     throw throwDbError(error);
   }

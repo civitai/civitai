@@ -580,6 +580,7 @@ export const saveItemInCollections = async ({
       )
     ).filter(isDefined);
 
+    // if we have items to remove, add a deleteMany mutation to the transaction
     if (removeAllowedCollectionItemIds.length > 0)
       transactions.push(
         dbWrite.collectionItem.deleteMany({
@@ -588,14 +589,25 @@ export const saveItemInCollections = async ({
       );
   }
 
-  // if we have items to remove, add a deleteMany mutation to the transaction
+  await dbWrite.$transaction(transactions);
+
+  // Clear cache for homeBlocks
   await Promise.all(
     upsertCollectionItems.map((item) =>
       homeBlockCacheBust(HomeBlockType.Collection, item.collectionId)
     )
   );
 
-  await dbWrite.$transaction(transactions);
+  // Update collection search index
+  const affectedCollections = [
+    ...upsertCollectionItems.map((item) => item.collectionId),
+    ...removeFromCollectionIds,
+  ];
+  if (affectedCollections.length > 0) {
+    await collectionsSearchIndex.queueUpdate(
+      affectedCollections.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 
   return data.length > 0 ? 'added' : removeFromCollectionIds?.length > 0 ? 'removed' : null;
 };
@@ -1164,6 +1176,7 @@ export const getUserCollectionItemsByItem = async ({
       collection: {
         select: {
           userId: true,
+          read: true,
         },
       },
     },
@@ -1415,7 +1428,7 @@ export function getCollectionItemCount({
   collectionIds: number[];
   status?: CollectionItemStatus;
 }) {
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return [] as { id: number; count: number }[];
 
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
   if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
@@ -1429,7 +1442,7 @@ export function getCollectionItemCount({
 }
 
 export function getContributorCount({ collectionIds: ids }: { collectionIds: number[] }) {
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return [] as { id: number; count: number }[];
 
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
 

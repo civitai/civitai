@@ -32,6 +32,7 @@ import {
   getModelOwnerHandler,
   copyGalleryBrowsingLevelHandler,
   getModelCollectionShowcaseHandler,
+  setModelCollectionShowcaseHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -215,5 +216,5 @@ export const modelRouter = router({
   setCollectionShowcase: protectedProcedure
     .input(setModelCollectionShowcaseSchema)
     .use(isOwnerOrModerator)
-    .mutation(({ input }) => input),
+    .mutation(setModelCollectionShowcaseHandler),
 });

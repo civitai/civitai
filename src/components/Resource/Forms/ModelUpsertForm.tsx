@@ -26,17 +26,17 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCheckbox,
-  InputCheckboxGroup,
   InputMultiSelect,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
   InputTags,
   InputText,
+  InputCollectionSelect,
   useForm,
 } from '~/libs/form';
 import { TagSort } from '~/server/common/enums';
-import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import { ModelMeta, ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -192,6 +192,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCategory, model]);
 
+  const modelUser = model?.user?.username ?? currentUser?.username;
+
   function isLocked(key: string) {
     return !currentUser?.isModerator ? model?.lockedProperties?.includes(key) : false;
   }
@@ -303,6 +305,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
               withAsterisk
             />
+            {modelUser && (
+              <InputCollectionSelect
+                name="meta.showcaseCollectionId"
+                label="Showcase Collection"
+                description="Select the collection this model belongs to"
+                username={modelUser}
+              />
+            )}
           </Stack>
         </ContainerGrid.Col>
         <ContainerGrid.Col span={12}>

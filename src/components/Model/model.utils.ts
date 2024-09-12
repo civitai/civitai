@@ -163,7 +163,9 @@ export const useToggleCheckpointCoverageMutation = () => {
   return { ...toggleMutation, toggle: handleToggle };
 };
 
-export const useQueryModelCollectionShowcase = ({ modelId }: { modelId: number }) => {
+export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
+  const queryUtils = trpc.useUtils();
+
   const { data: showcase, isLoading: loadingCollection } =
     trpc.model.getCollectionShowcase.useQuery({ id: modelId });
 
@@ -183,10 +185,27 @@ export const useQueryModelCollectionShowcase = ({ modelId }: { modelId: number }
     { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );
 
+  const setShowcaseMutation = trpc.model.setCollectionShowcase.useMutation({
+    onSuccess: async () => {
+      await queryUtils.model.getCollectionShowcase.invalidate({ id: modelId });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to set showcase collection',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const handleSetShowcaseCollection = (collectionId: number) => {
+    return setShowcaseMutation.mutateAsync({ id: modelId, collectionId });
+  };
+
   return {
     ...rest,
     collection: showcase,
     items: models,
     isLoading: loadingCollection || loadingModels,
+    setShowcaseCollection: handleSetShowcaseCollection,
+    settingShowcase: setShowcaseMutation.isLoading,
   };
 };

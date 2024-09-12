@@ -37,6 +37,7 @@ import { ClubResourceManagementInput } from '~/components/Club/ClubResourceManag
 import { FlagInput } from '~/libs/form/components/FlagInput';
 import { SectionItemsInput } from '~/components/CosmeticShop/SectionItemsInput';
 import { CosmeticSelect } from '~/libs/form/components/CosmeticSelect';
+import { CollectionSelectInput } from '~/libs/form/components/CollectionSelectInput';
 
 export * from './Form';
 
@@ -97,3 +98,4 @@ export const InputCheckbox = withWatcher(
 export const InputFlag = withWatcher(withController(FlagInput));
 export const InputSectionItems = withWatcher(withController(SectionItemsInput));
 export const InputCosmeticSelect = withWatcher(withController(CosmeticSelect));
+export const InputCollectionSelect = withWatcher(withController(CollectionSelectInput));

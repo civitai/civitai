@@ -118,10 +118,15 @@ export function CollectionCard({ data, sx }: Props) {
   );
 }
 
+type HeaderData = Pick<Props['data'], 'id' | 'userId' | 'type' | 'mode'>;
+
 function CollectionCardHeader({
   data,
   withinImageGuard = true,
-}: Props & { withinImageGuard?: boolean }) {
+}: {
+  data: HeaderData;
+  withinImageGuard?: boolean;
+}) {
   const { classes, cx } = useCardStyles({ aspectRatio: 1 });
 
   return (
@@ -155,7 +160,7 @@ function CollectionCardHeader({
   );
 }
 
-function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }) {
+export function ImageCover({ data, coverImages }: { data: HeaderData; coverImages: ImageProps[] }) {
   const { classes } = useCardStyles({ aspectRatio: 1 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
@@ -171,7 +176,7 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
               {safe ? (
                 <EdgeMedia
                   src={image.url}
-                  type={image.type}
+                  type="image"
                   className={classes.image}
                   name={image.name ?? image.id.toString()}
                   alt={
@@ -212,7 +217,7 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
   );
 }
 
-function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
+export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
   const { classes } = useCardStyles({ aspectRatio: 1 });
 
   return (
@@ -220,6 +225,7 @@ function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
       {coverSrcs.map((src) => (
         <EdgeMedia
           src={src}
+          type="image"
           width={DEFAULT_EDGE_IMAGE_WIDTH}
           placeholder="empty"
           className={classes.image}

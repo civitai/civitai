@@ -54,6 +54,8 @@ import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { setModelShowcaseCollection } from '~/server/services/model.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -230,6 +232,25 @@ export const saveItemHandler = async ({
         amount: status === 'added' ? 1 : -1,
       });
     }
+
+    // Remove collection from model showcase if removed
+    if (input.type === 'Model' && status === 'removed' && input.modelId) {
+      // letting this run in the background to avoid blocking the response
+      setModelShowcaseCollection({
+        id: input.modelId,
+        collectionId: null,
+        userId: user.id,
+        isModerator: user.isModerator,
+      }).catch((error) =>
+        logToAxiom({
+          name: 'remove-model-showcase-collection',
+          type: 'error',
+          message: error.message,
+        })
+      );
+    }
+
+    return { status };
   } catch (error) {
     throw throwDbError(error);
   }
