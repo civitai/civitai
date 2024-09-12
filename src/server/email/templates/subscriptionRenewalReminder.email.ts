@@ -30,7 +30,7 @@ export const subscriptionRenewalReminderEmail = createEmail({
         To ensure a smooth experience moving forward, we kindly ask that you update your payment method to one of our newly supported options, such as PayPal. As a token of our appreciation and apology for any inconvenience, we’re pleased to offer you an additional ⚡5000 Buzz when you switch to a new payment method!
       </p>
       <p>
-        To update your payment method, You can follow the link here
+        To update your payment method and check our memberships, You can follow the link at the bottom of this email.
       </p>
       <p>
         Thank you for being part of the Civitai community! Should you have any questions or need assistance with the transition, please don't hesitate to reach out to our support team.

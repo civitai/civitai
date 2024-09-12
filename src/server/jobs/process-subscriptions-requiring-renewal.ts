@@ -2,6 +2,7 @@ import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { PaymentProvider, Prisma } from '@prisma/client';
 import { subscriptionRenewalReminderEmail } from '~/server/email/templates/subscriptionRenewalReminder.email';
+import { chunk } from 'lodash';
 
 export const processSubscriptionsRequiringRenewal = createJob(
   'process-subscriptions-requiring-renewal',
@@ -37,16 +38,22 @@ export const processSubscriptionsRequiringRenewal = createJob(
       return;
     }
 
-    subscriptions.forEach(async (subscription) => {
-      // Send renewal email
-      await subscriptionRenewalReminderEmail.send({
-        user: {
-          email: subscription.user.email,
-          username: subscription.user.username as string,
-        },
-      });
-      // Mark the subscription as having had a renewal email sent
-    });
+    const batches = chunk(subscriptions, 100);
+    for (const batch of batches) {
+      // Set new entries
+      await Promise.all(
+        batch.map(async (subscription) => {
+          // Send renewal email
+          await subscriptionRenewalReminderEmail.send({
+            user: {
+              email: subscription.user.email,
+              username: subscription.user.username as string,
+            },
+          });
+          // Mark the subscription as having had a renewal email sent
+        })
+      );
+    }
 
     await dbWrite.customerSubscription.updateMany({
       where: {

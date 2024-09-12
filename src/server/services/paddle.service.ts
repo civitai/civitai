@@ -395,14 +395,16 @@ export const upsertSubscription = async (
     const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
     if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
       // This is a migration that we reached out to:
-      await createBuzzTransaction({
-        fromAccountId: 0,
-        toAccountId: user.id,
-        type: TransactionType.Purchase,
-        amount: subscriptionMeta.renewalBonus as number,
-        description: 'Thank you for your continued support! Here is a bonus for you.',
-        externalTransactionId: `renewalBonus:${user.id}`,
-      });
+      await withRetries(async () =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          type: TransactionType.Purchase,
+          amount: subscriptionMeta.renewalBonus as number,
+          description: 'Thank you for your continued support! Here is a bonus for you.',
+          externalTransactionId: `renewalBonus:${user.id}`,
+        })
+      );
     }
   } else if (userHasSubscription && isCreatingSubscription) {
     log('upsertSubscription :: Subscription already up to date');
