@@ -168,7 +168,7 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
   const firstLabel = imageList.find((i) => i.label.length > 0)?.label;
   const estimatedType =
     (firstLabel?.length ?? 0) > 80 && // long string
-    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.1 // not many commas
+    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.05 // not many commas
       ? 'caption'
       : 'tag';
 

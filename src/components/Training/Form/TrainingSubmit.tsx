@@ -741,7 +741,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Group spacing={4} noWrap>
                   <Text>Est. Wait Time</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    How long before your job is expected to be picked up
+                    <Text size="sm">How long before your job is expected to be picked up</Text>
                   </InfoPopover>
                 </Group>
               </Badge>
@@ -761,7 +761,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <Group spacing={4} noWrap>
                   <Text>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    How long in total before your job is done
+                    <Text size="sm">How long in total before your job is done</Text>
                   </InfoPopover>
                 </Group>
               </Badge>

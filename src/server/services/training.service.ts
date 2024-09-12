@@ -335,7 +335,7 @@ export const createTrainingRequest = async ({
     trainingData: trainingUrl,
     cost: Math.round((eta ?? 0) * 100) / 100,
     retries: constants.maxTrainingRetries,
-    engine: trainingParams.engine,
+    engine: trainingParams.engine === 'rapid' ? orchRapidEngine : trainingParams.engine,
     params: {
       ...trainingParams,
       samplePrompts: samplePrompts ?? ['', '', ''],

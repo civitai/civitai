@@ -1,6 +1,7 @@
 import {
   Accordion,
   Badge,
+  Box,
   Card,
   Checkbox,
   Code,
@@ -13,7 +14,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronDown } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -173,283 +174,297 @@ export const AdvancedSettings = ({
         </Group>
       )}
 
-      {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
-        <Card withBorder mt={8} p="sm">
-          <Card.Section inheritPadding withBorder py="sm">
-            <Text>Advanced settings are disabled with &quot;Rapid Training&quot;</Text>
-          </Card.Section>
-        </Card>
-      ) : (
-        <>
-          <Title mt="md" order={5}>
-            Advanced Settings
-          </Title>
-          <Accordion
-            variant="separated"
-            multiple
-            mt="xs"
-            onChange={setOpenedSections}
-            styles={(theme) => ({
-              content: { padding: 0 },
-              item: {
-                overflow: 'hidden',
-                borderColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
-                boxShadow: theme.shadows.sm,
-              },
-              control: {
-                padding: theme.spacing.sm,
-              },
-            })}
-          >
-            {selectedRun.params.engine === 'x-flux' ? (
-              <AlertWithIcon icon={<IconAlertTriangle />} color="yellow" iconColor="yellow" mb="md">
-                <Text>
-                  Heads up: you&apos;re using <Code color="green">x-flux</Code>!
-                  <br />
-                  We currently do not provide sample images for LoRAs trained this way.
-                  <br />
-                  We are also working on expanding the list of supported training parameters.
+      <Title mt="md" order={5}>
+        Advanced Settings
+      </Title>
+
+      <Accordion
+        variant="separated"
+        multiple
+        mt="xs"
+        onChange={setOpenedSections}
+        styles={(theme) => ({
+          content: { padding: 0 },
+          item: {
+            overflow: 'hidden',
+            borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3],
+            boxShadow: theme.shadows.sm,
+          },
+          control: {
+            padding: theme.spacing.sm,
+          },
+        })}
+      >
+        {selectedRun.params.engine === 'x-flux' ? (
+          <AlertWithIcon icon={<IconAlertTriangle />} color="yellow" iconColor="yellow" mb="md">
+            <Text>
+              Heads up: you&apos;re using <Code color="green">x-flux</Code>!
+              <br />
+              We currently do not provide sample images for LoRAs trained this way.
+              <br />
+              We are also working on expanding the list of supported training parameters.
+            </Text>
+          </AlertWithIcon>
+        ) : (
+          <Accordion.Item value="custom-prompts">
+            <Accordion.Control>
+              <Stack spacing={4}>
+                <Text>Sample Image Prompts</Text>
+                {openedSections.includes('custom-prompts') && (
+                  <Text size="xs" color="dimmed">
+                    Set your own prompts for any of the 3 sample images we generate for each epoch.
+                  </Text>
+                )}
+              </Stack>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack p="sm">
+                <TextInputWrapper
+                  label="Image #1"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[0]}
+                  onChange={(event) => {
+                    doUpdate({
+                      samplePrompts: [
+                        event.currentTarget.value,
+                        selectedRun.samplePrompts[1],
+                        selectedRun.samplePrompts[2],
+                      ],
+                    });
+                  }}
+                />
+                <TextInputWrapper
+                  label="Image #2"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[1]}
+                  onChange={(event) => {
+                    doUpdate({
+                      samplePrompts: [
+                        selectedRun.samplePrompts[0],
+                        event.currentTarget.value,
+                        selectedRun.samplePrompts[2],
+                      ],
+                    });
+                  }}
+                />
+                <TextInputWrapper
+                  label="Image #3"
+                  placeholder="Automatically set"
+                  value={selectedRun.samplePrompts[2]}
+                  onChange={(event) => {
+                    doUpdate({
+                      samplePrompts: [
+                        selectedRun.samplePrompts[0],
+                        selectedRun.samplePrompts[1],
+                        event.currentTarget.value,
+                      ],
+                    });
+                  }}
+                />
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+        {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+          <Card withBorder mt="md" p="sm">
+            <Card.Section inheritPadding withBorder py="sm">
+              <Group position="apart">
+                <Text
+                  color={theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]}
+                >
+                  Training Parameters{' '}
+                  <Text component="span" size="xs" fs="italic">
+                    (disabled with &quot;Rapid Training&quot;)
+                  </Text>
                 </Text>
-              </AlertWithIcon>
-            ) : (
-              <Accordion.Item value="custom-prompts">
-                <Accordion.Control>
-                  <Stack spacing={4}>
-                    Sample Image Prompts
-                    {openedSections.includes('custom-prompts') && (
-                      <Text size="xs" color="dimmed">
-                        Set your own prompts for any of the 3 sample images we generate for each
-                        epoch.
-                      </Text>
-                    )}
-                  </Stack>
-                </Accordion.Control>
-                <Accordion.Panel>
-                  <Stack p="sm">
-                    <TextInputWrapper
-                      label="Image #1"
-                      placeholder="Automatically set"
-                      value={selectedRun.samplePrompts[0]}
-                      onChange={(event) => {
-                        doUpdate({
-                          samplePrompts: [
-                            event.currentTarget.value,
-                            selectedRun.samplePrompts[1],
-                            selectedRun.samplePrompts[2],
-                          ],
-                        });
-                      }}
-                    />
-                    <TextInputWrapper
-                      label="Image #2"
-                      placeholder="Automatically set"
-                      value={selectedRun.samplePrompts[1]}
-                      onChange={(event) => {
-                        doUpdate({
-                          samplePrompts: [
-                            selectedRun.samplePrompts[0],
-                            event.currentTarget.value,
-                            selectedRun.samplePrompts[2],
-                          ],
-                        });
-                      }}
-                    />
-                    <TextInputWrapper
-                      label="Image #3"
-                      placeholder="Automatically set"
-                      value={selectedRun.samplePrompts[2]}
-                      onChange={(event) => {
-                        doUpdate({
-                          samplePrompts: [
-                            selectedRun.samplePrompts[0],
-                            selectedRun.samplePrompts[1],
-                            event.currentTarget.value,
-                          ],
-                        });
-                      }}
-                    />
-                  </Stack>
-                </Accordion.Panel>
-              </Accordion.Item>
-            )}
-            <Accordion.Item value="training-settings">
-              <Accordion.Control>
-                <Stack spacing={4}>
-                  <Group spacing="sm">
-                    <Text>Training Parameters</Text>
-                    {isTrainingCustomModel(selectedRun.base) && (
-                      <Tooltip
-                        label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
-                        maw={300}
-                        multiline
-                        withArrow
-                        styles={(theme) => ({
-                          tooltip: {
-                            border: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                          },
-                          arrow: {
-                            borderRight: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                            borderBottom: `1px solid ${
-                              theme.colorScheme === 'dark'
-                                ? theme.colors.dark[4]
-                                : theme.colors.gray[3]
-                            }`,
-                          },
-                        })}
-                      >
-                        <IconAlertTriangle color="orange" size={16} />
-                      </Tooltip>
-                    )}
-                  </Group>
-                  {openedSections.includes('training-settings') && (
-                    <Text size="xs" color="dimmed">
-                      Hover over each setting for more information.
-                      <br />
-                      Default settings are based on your chosen model. Altering these settings may
-                      cause undesirable results.
-                    </Text>
+                <Box mr={4}>
+                  <IconChevronDown
+                    color={
+                      theme.colorScheme === 'dark' ? theme.colors.gray[6] : theme.colors.gray[5]
+                    }
+                    size={16}
+                  />
+                </Box>
+              </Group>
+            </Card.Section>
+          </Card>
+        ) : (
+          <Accordion.Item value="training-settings">
+            <Accordion.Control>
+              <Stack spacing={4}>
+                <Group spacing="sm">
+                  <Text>Training Parameters</Text>
+                  {isTrainingCustomModel(selectedRun.base) && (
+                    <Tooltip
+                      label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
+                      maw={300}
+                      multiline
+                      withArrow
+                      styles={(theme) => ({
+                        tooltip: {
+                          border: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[3]
+                          }`,
+                        },
+                        arrow: {
+                          borderRight: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[3]
+                          }`,
+                          borderBottom: `1px solid ${
+                            theme.colorScheme === 'dark'
+                              ? theme.colors.dark[4]
+                              : theme.colors.gray[3]
+                          }`,
+                        },
+                      })}
+                    >
+                      <IconAlertTriangle color="orange" size={16} />
+                    </Tooltip>
                   )}
-                </Stack>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <DescriptionTable
-                  labelWidth="200px"
-                  items={trainingSettings.map((ts) => {
-                    let inp: React.ReactNode;
+                </Group>
+                {openedSections.includes('training-settings') && (
+                  <Text size="xs" color="dimmed">
+                    Hover over each setting for more information.
+                    <br />
+                    Default settings are based on your chosen model. Altering these settings may
+                    cause undesirable results.
+                  </Text>
+                )}
+              </Stack>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <DescriptionTable
+                labelWidth="200px"
+                items={trainingSettings.map((ts) => {
+                  let inp: React.ReactNode;
 
-                    const baseOverride = ts.overrides?.[selectedRun.base];
-                    const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
+                  const baseOverride = ts.overrides?.[selectedRun.base];
+                  const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
 
-                    const disabledOverride = override?.disabled;
-                    const hint = override?.hint ?? ts.hint;
-                    const disabled =
-                      selectedRun.params.engine === 'rapid'
-                        ? true
-                        : disabledOverride ?? ts.disabled === true;
+                  const disabledOverride = override?.disabled;
+                  const hint = override?.hint ?? ts.hint;
+                  const disabled =
+                    selectedRun.params.engine === 'rapid'
+                      ? true
+                      : disabledOverride ?? ts.disabled === true;
 
-                    if (ts.type === 'int' || ts.type === 'number') {
-                      // repeating for dumb ts
-                      const tOverride =
-                        ts.overrides?.[selectedRun.base]?.all ??
-                        ts.overrides?.[selectedRun.base]?.[selectedRun.params.engine];
+                  if (ts.type === 'int' || ts.type === 'number') {
+                    // repeating for dumb ts
+                    const tOverride =
+                      ts.overrides?.[selectedRun.base]?.all ??
+                      ts.overrides?.[selectedRun.base]?.[selectedRun.params.engine];
 
-                      inp = (
-                        <NumberInputWrapper
-                          min={tOverride?.min ?? ts.min}
-                          max={tOverride?.max ?? ts.max}
-                          precision={
-                            ts.type === 'number'
-                              ? getPrecision(ts.step ?? ts.default) || 4
-                              : undefined
-                          }
-                          step={ts.step}
-                          sx={{ flexGrow: 1 }}
-                          disabled={disabled}
-                          format="default"
-                          value={selectedRun.params[ts.name] as number}
-                          onChange={(value) => {
-                            doUpdate({ params: { [ts.name]: value } });
-                          }}
-                        />
-                      );
-                    } else if (ts.type === 'select') {
-                      let options = ts.options as string[];
-                      // TODO if we fix the bitsandbytes issue, we can disable this
-                      if (ts.name === 'optimizerType' && selectedRun.baseType === 'sdxl') {
-                        options = options.filter((o) => o !== 'AdamW8Bit');
-                      }
-                      if (
-                        ts.name === 'lrScheduler' &&
-                        selectedRun.params.optimizerType === 'Prodigy'
-                      ) {
-                        options = options.filter((o) => o !== 'cosine_with_restarts');
-                      }
-                      // TODO re-enable x-flux
-                      if (ts.name === 'engine') {
-                        options = options.filter((o) => o !== 'x-flux');
-                      }
-
-                      inp = (
-                        <SelectWrapper
-                          data={options}
-                          disabled={disabled}
-                          value={selectedRun.params[ts.name] as string}
-                          onChange={(value) => {
-                            doUpdate({ params: { [ts.name]: value } });
-                          }}
-                        />
-                      );
-                    } else if (ts.type === 'bool') {
-                      inp = (
-                        <Checkbox
-                          py={8}
-                          disabled={disabled}
-                          checked={selectedRun.params[ts.name] as boolean}
-                          onChange={(event) => {
-                            doUpdate({ params: { [ts.name]: event.currentTarget.checked } });
-                          }}
-                        />
-                      );
-                    } else if (ts.type === 'string') {
-                      inp = (
-                        <TextInputWrapper
-                          disabled={disabled}
-                          clearable={!disabled}
-                          value={selectedRun.params[ts.name] as string}
-                          onChange={(event) => {
-                            doUpdate({ params: { [ts.name]: event.currentTarget.value } });
-                          }}
-                        />
-                      );
+                    inp = (
+                      <NumberInputWrapper
+                        min={tOverride?.min ?? ts.min}
+                        max={tOverride?.max ?? ts.max}
+                        precision={
+                          ts.type === 'number'
+                            ? getPrecision(ts.step ?? ts.default) || 4
+                            : undefined
+                        }
+                        step={ts.step}
+                        sx={{ flexGrow: 1 }}
+                        disabled={disabled}
+                        format="default"
+                        value={selectedRun.params[ts.name] as number}
+                        onChange={(value) => {
+                          doUpdate({ params: { [ts.name]: value } });
+                        }}
+                      />
+                    );
+                  } else if (ts.type === 'select') {
+                    let options = ts.options as string[];
+                    // TODO if we fix the bitsandbytes issue, we can disable this
+                    if (ts.name === 'optimizerType' && selectedRun.baseType === 'sdxl') {
+                      options = options.filter((o) => o !== 'AdamW8Bit');
+                    }
+                    if (
+                      ts.name === 'lrScheduler' &&
+                      selectedRun.params.optimizerType === 'Prodigy'
+                    ) {
+                      options = options.filter((o) => o !== 'cosine_with_restarts');
+                    }
+                    // TODO re-enable x-flux
+                    if (ts.name === 'engine') {
+                      options = options.filter((o) => o !== 'x-flux');
                     }
 
-                    return {
-                      label: hint ? (
-                        <CivitaiTooltip
-                          position="top"
-                          variant="roundedOpaque"
-                          withArrow
-                          multiline
-                          label={hint}
-                        >
-                          <Group>
-                            <Group spacing={6}>
-                              <Text inline style={{ cursor: 'help' }}>
-                                {ts.label}
-                              </Text>
-                              {ts.name === 'targetSteps' &&
-                                selectedRun.params.targetSteps > maxSteps && (
-                                  <IconAlertTriangle color="orange" size={16} />
-                                )}
-                            </Group>
-                            {/*TODO re-enable when x-flux is back*/}
-                            {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
-                            {/*  <Badge color="green">NEW</Badge>*/}
-                            {/*)}*/}
+                    inp = (
+                      <SelectWrapper
+                        data={options}
+                        disabled={disabled}
+                        value={selectedRun.params[ts.name] as string}
+                        onChange={(value) => {
+                          doUpdate({ params: { [ts.name]: value } });
+                        }}
+                      />
+                    );
+                  } else if (ts.type === 'bool') {
+                    inp = (
+                      <Checkbox
+                        py={8}
+                        disabled={disabled}
+                        checked={selectedRun.params[ts.name] as boolean}
+                        onChange={(event) => {
+                          doUpdate({ params: { [ts.name]: event.currentTarget.checked } });
+                        }}
+                      />
+                    );
+                  } else if (ts.type === 'string') {
+                    inp = (
+                      <TextInputWrapper
+                        disabled={disabled}
+                        clearable={!disabled}
+                        value={selectedRun.params[ts.name] as string}
+                        onChange={(event) => {
+                          doUpdate({ params: { [ts.name]: event.currentTarget.value } });
+                        }}
+                      />
+                    );
+                  }
+
+                  return {
+                    label: hint ? (
+                      <CivitaiTooltip
+                        position="top"
+                        variant="roundedOpaque"
+                        withArrow
+                        multiline
+                        label={hint}
+                      >
+                        <Group>
+                          <Group spacing={6}>
+                            <Text inline style={{ cursor: 'help' }}>
+                              {ts.label}
+                            </Text>
+                            {ts.name === 'targetSteps' &&
+                              selectedRun.params.targetSteps > maxSteps && (
+                                <IconAlertTriangle color="orange" size={16} />
+                              )}
                           </Group>
-                        </CivitaiTooltip>
-                      ) : (
-                        ts.label
-                      ),
-                      value: inp,
-                      visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux'),
-                    };
-                  })}
-                />
-              </Accordion.Panel>
-            </Accordion.Item>
-          </Accordion>
-        </>
-      )}
+                          {/*TODO re-enable when x-flux is back*/}
+                          {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
+                          {/*  <Badge color="green">NEW</Badge>*/}
+                          {/*)}*/}
+                        </Group>
+                      </CivitaiTooltip>
+                    ) : (
+                      ts.label
+                    ),
+                    value: inp,
+                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux'),
+                  };
+                })}
+              />
+            </Accordion.Panel>
+          </Accordion.Item>
+        )}
+      </Accordion>
     </>
   );
 };

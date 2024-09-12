@@ -694,7 +694,7 @@ export default function UserTrainingModels() {
                     <Accordion.Panel>
                       <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
                         {modalData.params.engine === 'rapid'
-                          ? JSON.stringify({ engine: modalData.params.engine })
+                          ? JSON.stringify({ engine: modalData.params.engine }, null, 2)
                           : JSON.stringify(modalData.params, null, 2)}
                       </pre>
                     </Accordion.Panel>

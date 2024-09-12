@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { engineTypes, trainingDetailsParams } from '~/server/schema/model-version.schema';
+import { trainingDetailsParams } from '~/server/schema/model-version.schema';
 import { autoCaptionSchema } from '~/store/training.store';
 import { orchRapidEngine } from '~/utils/training';
 
@@ -76,7 +76,7 @@ export namespace Orchestrator {
       callbackUrl: z.string().url().optional(),
       retries: z.number(),
       trainingData: z.string().url(),
-      engine: z.enum(engineTypes),
+      engine: z.enum(orchEngineTypes),
       params: z
         .object({
           modelFileId: z.number(),
