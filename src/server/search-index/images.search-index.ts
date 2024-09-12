@@ -143,6 +143,7 @@ const imageWhere = [
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
+  Prisma.sql`p."publishedAt" <= NOW()`,
 ];
 
 type ImageTags = Record<number, { tagNames: string[]; tagIds: number[] }>;
