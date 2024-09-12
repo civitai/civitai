@@ -530,7 +530,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       <Switch
         label={
           <Group spacing={4}>
-            <InfoPopover size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
               Submit up to {maxRuns} training runs at once.
               <br />
               You can use different base models and/or parameters, all trained on the same dataset.
@@ -679,35 +679,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       {formBaseModel && (
         <>
-          {selectedRun.baseType === 'flux' && (
-            <Group>
-              <Switch
-                label={
-                  <Group spacing={4} noWrap>
-                    <InfoPopover size="xs" iconProps={{ size: 16 }}>
-                      {`Your LoRA will be trained in ${rapidEta} minutes or less so you can get right into
-                      generating as fast as possible`}
-                      `
-                    </InfoPopover>
-                    <Text>Rapid Training</Text>
-                  </Group>
-                }
-                labelPosition="left"
-                checked={selectedRun.params.engine === 'rapid'}
-                onChange={(event) =>
-                  updateRun(model.id, selectedRun.id, {
-                    params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
-                  })
-                }
-              />
-              {Date.now() < new Date('2024-09-27').getTime() && (
-                <Badge color="green" variant="filled" size="sm">
-                  NEW
-                </Badge>
-              )}
-            </Group>
-          )}
-
           <AdvancedSettings
             modelId={model.id}
             selectedRun={selectedRun}
@@ -715,40 +686,43 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             numImages={thisNumImages}
           />
 
-          <Group mt="lg">
-            {!isValidRapid(selectedRun.baseType, selectedRun.params.engine) && (
-              <Switch
-                label={
-                  <Group spacing={4} noWrap>
-                    <InfoPopover size="xs" iconProps={{ size: 16 }}>
-                      Jump to the front of the training queue and ensure that your training run is
-                      uninterrupted.
-                    </InfoPopover>
-                    <Text>High Priority</Text>
-                  </Group>
-                }
-                labelPosition="left"
-                checked={selectedRun.highPriority}
-                onChange={(event) =>
-                  updateRun(model.id, selectedRun.id, {
-                    highPriority: event.currentTarget.checked,
-                  })
-                }
-              />
-            )}
-            {currentUser?.isModerator && (
-              <Switch
-                label="Test Mode"
-                labelPosition="left"
-                checked={selectedRun.staging}
-                onChange={(event) =>
-                  updateRun(model.id, selectedRun.id, {
-                    staging: event.currentTarget.checked,
-                  })
-                }
-              />
-            )}
-          </Group>
+          {(!isValidRapid(selectedRun.baseType, selectedRun.params.engine) ||
+            currentUser?.isModerator) && (
+            <Group mt="lg">
+              {!isValidRapid(selectedRun.baseType, selectedRun.params.engine) && (
+                <Switch
+                  label={
+                    <Group spacing={4} noWrap>
+                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                        Jump to the front of the training queue and ensure that your training run is
+                        uninterrupted.
+                      </InfoPopover>
+                      <Text>High Priority</Text>
+                    </Group>
+                  }
+                  labelPosition="left"
+                  checked={selectedRun.highPriority}
+                  onChange={(event) =>
+                    updateRun(model.id, selectedRun.id, {
+                      highPriority: event.currentTarget.checked,
+                    })
+                  }
+                />
+              )}
+              {currentUser?.isModerator && (
+                <Switch
+                  label="Test Mode"
+                  labelPosition="left"
+                  checked={selectedRun.staging}
+                  onChange={(event) =>
+                    updateRun(model.id, selectedRun.id, {
+                      staging: event.currentTarget.checked,
+                    })
+                  }
+                />
+              )}
+            </Group>
+          )}
           <Paper
             shadow="xs"
             radius="sm"
@@ -763,12 +737,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             }}
           >
             <Group spacing="sm">
-              <Group spacing={4} noWrap>
-                <InfoPopover size="xs" iconProps={{ size: 16 }}>
-                  How long before your job is expected to be picked up
-                </InfoPopover>
-                <Badge>Est. Wait Time</Badge>
-              </Group>
+              <Badge>
+                <Group spacing={4} noWrap>
+                  <Text>Est. Wait Time</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                    How long before your job is expected to be picked up
+                  </InfoPopover>
+                </Group>
+              </Badge>
+
               {dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
@@ -777,12 +754,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 </Text>
               )}
               <Divider orientation="vertical" />
-              <Group spacing={4} noWrap>
-                <InfoPopover size="xs" iconProps={{ size: 16 }}>
-                  How long your job is expected to run once started
-                </InfoPopover>
-                <Badge>ETA</Badge>
-              </Group>
+
+              <Badge>
+                <Group spacing={4} noWrap>
+                  <Text>ETA</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                    How long your job is expected to run once started
+                  </InfoPopover>
+                </Group>
+              </Badge>
+
               {dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
@@ -792,7 +773,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                     : etaMins > 20000
                     ? 'Forever'
                     : isValidRapid(selectedRun.baseType, selectedRun.params.engine)
-                    ? rapidEta
+                    ? minsToHours(rapidEta)
                     : minsToHours(
                         (!!dryRunData
                           ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000
