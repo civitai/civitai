@@ -981,9 +981,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 <Group spacing={4}>
                   <IconTags size={16} />
                   <Text>Auto Label</Text>
-                  <Badge color="green" variant="filled" size="sm" ml={4}>
-                    NEW
-                  </Badge>
+                  {Date.now() < new Date('2024-09-27').getTime() && (
+                    <Badge color="green" variant="filled" size="sm" ml={4}>
+                      NEW
+                    </Badge>
+                  )}
                 </Group>
               </Button>
             </Tooltip>

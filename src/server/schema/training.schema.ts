@@ -50,6 +50,11 @@ const trainingCostSchema = z.object({
   priorityBuzz: z.number().min(0),
   priorityBuzzPct: z.number().min(0),
   minEta: z.number().min(1),
+  rapid: z.object({
+    baseBuzz: z.number().min(0),
+    numImgBase: z.number().min(1),
+    numImgBuzz: z.number().min(0),
+  }),
 });
 export type TrainingCost = z.infer<typeof trainingCostSchema>;
 export const defaultTrainingCost: TrainingCost = {
@@ -86,6 +91,11 @@ export const defaultTrainingCost: TrainingCost = {
   priorityBuzz: 100,
   priorityBuzzPct: 0.1,
   minEta: 5,
+  rapid: {
+    baseBuzz: 4000,
+    numImgBase: 200,
+    numImgBuzz: 5,
+  },
 };
 
 export const trainingServiceStatusSchema = z.object({

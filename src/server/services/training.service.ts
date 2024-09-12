@@ -33,7 +33,13 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
-import { calcBuzzFromEta, calcEta } from '~/utils/training';
+import {
+  calcBuzzFromEta,
+  calcEta,
+  isInvalidRapid,
+  isValidRapid,
+  orchRapidEngine,
+} from '~/utils/training';
 import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
@@ -226,6 +232,10 @@ export const createTrainingRequest = async ({
   const samplePrompts = modelVersion.trainingDetails.samplePrompts;
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
+  const fileMetadata = modelVersion.fileMetadata ?? {};
+
+  if (isInvalidRapid(baseModelType, trainingParams.engine))
+    throw throwBadRequestError('Cannot use Rapid Training with a non-flux base model.');
 
   for (const [key, value] of Object.entries(trainingParams)) {
     const setting = trainingSettings.find((ts) => ts.name === key);
@@ -251,12 +261,11 @@ export const createTrainingRequest = async ({
   const eta = calcEta({
     cost: status.cost,
     baseModel: baseModelType,
-    targetSteps: trainingParams.targetSteps,
-    resolution: trainingParams.resolution,
+    params: trainingParams,
   });
 
   // Determine if we still need to charge them for this training
-  let transactionId = modelVersion.fileMetadata?.trainingResults?.transactionId;
+  let transactionId = fileMetadata.trainingResults?.transactionId;
   if (!transactionId && !skipModeration) {
     // And if so, charge them
     if (eta === undefined) {
@@ -272,6 +281,8 @@ export const createTrainingRequest = async ({
       isCustom,
       isFlux: baseModelType === 'flux',
       isPriority,
+      isRapid: isValidRapid(baseModelType, trainingParams.engine),
+      numImages: fileMetadata.numImages ?? 1,
     });
 
     if (!price || price < status.cost.baseBuzz) {
@@ -330,6 +341,7 @@ export const createTrainingRequest = async ({
       samplePrompts: samplePrompts ?? ['', '', ''],
       modelFileId: modelVersion.fileId,
       loraName: modelVersion.modelName,
+      engine: trainingParams.engine === 'rapid' ? orchRapidEngine : trainingParams.engine,
     },
   };
 
@@ -362,7 +374,6 @@ export const createTrainingRequest = async ({
 
   const data = response.data;
   const jobId = data?.jobs?.[0]?.jobId;
-  const fileMetadata = modelVersion.fileMetadata || {};
 
   await withRetries(() =>
     dbWrite.modelVersion.update({

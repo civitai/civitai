@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { engineTypes, trainingDetailsParams } from '~/server/schema/model-version.schema';
 import { autoCaptionSchema } from '~/store/training.store';
+import { orchRapidEngine } from '~/utils/training';
 
 export namespace Orchestrator {
   export type Job<TResult = unknown> = { jobId: string; result: TResult };
@@ -66,6 +67,11 @@ export namespace Orchestrator {
       trainingData: z.string(),
       params: z.object({}),
     });
+
+    // naturally, TS doesn't let you do this:
+    // const orchEngineTypes = engineTypes.map((e) => e === 'rapid' ? 'flux-dev-fast' : e) as const;
+
+    const orchEngineTypes = ['kohya', 'x-flux', orchRapidEngine] as const;
     const imageResourceTrainingJobInputSchema = imageResourceTrainingJobInputDryRunSchema.extend({
       callbackUrl: z.string().url().optional(),
       retries: z.number(),
@@ -77,7 +83,10 @@ export namespace Orchestrator {
           loraName: z.string(),
           samplePrompts: z.array(z.string()),
         })
-        .merge(trainingDetailsParams),
+        .merge(trainingDetailsParams)
+        .extend({
+          engine: z.enum(orchEngineTypes),
+        }),
       properties: z.record(z.unknown()).optional(),
     });
     export type ImageResourceTrainingJobDryRunPayload = z.infer<
