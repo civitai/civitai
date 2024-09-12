@@ -5,7 +5,6 @@ import {
   Loader,
   ScrollArea,
   Stack,
-  Text,
   Title,
   TypographyStylesProvider,
 } from '@mantine/core';
@@ -19,41 +18,13 @@ import rehypeRaw from 'rehype-raw';
 
 import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
-import { useState } from 'react';
-import {
-  CaptchaState,
-  TurnstilePrivacyNotice,
-  TurnstileWidget,
-} from '~/components/TurnstileWidget/TurnstileWidget';
 
 export function OnboardingTos() {
-  const [captchaState, setCaptchaState] = useState<CaptchaState>({
-    status: null,
-    token: null,
-    error: null,
-  });
-
   const { next } = useOnboardingWizardContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {
-    if (captchaState.status !== 'success')
-      return showErrorNotification({
-        title: 'Cannot save',
-        error: new Error(captchaState.error ?? 'Captcha token expired. Please try again.'),
-      });
-
-    if (!captchaState.token)
-      return showErrorNotification({
-        title: 'Cannot save',
-        error: new Error('Captcha token is missing'),
-      });
-
-    mutate(
-      { step: OnboardingSteps.TOS, recaptchaToken: captchaState.token },
-      { onSuccess: () => next() }
-    );
+    mutate({ step: OnboardingSteps.TOS }, { onSuccess: () => next() });
   };
 
   const { data: terms, isLoading: termsLoading } = trpc.content.get.useQuery({ slug: 'tos' });
@@ -97,30 +68,10 @@ export function OnboardingTos() {
             size="lg"
             onClick={handleStepComplete}
             loading={isLoading}
-            disabled={captchaState.status !== 'success'}
           >
             Accept
           </Button>
         </Group>
-      )}
-      <TurnstilePrivacyNotice />
-      <TurnstileWidget
-        onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
-        onError={(error) =>
-          setCaptchaState({
-            status: 'error',
-            token: null,
-            error: `There was an error generating the captcha: ${error}`,
-          })
-        }
-        onExpire={(token) =>
-          setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
-        }
-      />
-      {captchaState.status === 'error' && (
-        <Text size="xs" color="red">
-          {captchaState.error}
-        </Text>
       )}
     </Stack>
   );

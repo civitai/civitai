@@ -115,6 +115,7 @@ import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
+import { env } from '~/env/server.mjs';
 
 export const getAllUsersHandler = async ({
   input,
@@ -266,28 +267,41 @@ export const completeOnboardingHandler = async ({
     const changed = onboarding !== ctx.user.onboarding;
 
     switch (input.step) {
-      case OnboardingSteps.TOS:
-        const { recaptchaToken } = input;
-        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+      case OnboardingSteps.TOS: {
+        // const { recaptchaToken } = input;
+        // if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-        const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
-        if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
+        // const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
+        // if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         break;
-      case OnboardingSteps.Profile:
+      }
+      case OnboardingSteps.Profile: {
         await dbWrite.user.update({
           where: { id },
           data: { onboarding, username: input.username, email: input.email },
         });
         break;
-      case OnboardingSteps.BrowsingLevels:
+      }
+      case OnboardingSteps.BrowsingLevels: {
         await dbWrite.user.update({
           where: { id },
           data: { onboarding },
         });
         break;
-      case OnboardingSteps.Buzz:
+      }
+      case OnboardingSteps.Buzz: {
+        const { recaptchaToken } = input;
+        if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
+
+        const validCaptcha = await verifyCaptchaToken({
+          token: recaptchaToken,
+          secret: env.CF_MANAGED_TURNSTILE_SECRET,
+          ip: ctx.ip,
+        });
+        if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
@@ -309,6 +323,7 @@ export const completeOnboardingHandler = async ({
           })
         ).catch(handleLogError);
         break;
+      }
     }
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
