@@ -19,6 +19,7 @@ import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
 import {
   IconAlertTriangle,
+  IconConfetti,
   IconCopy,
   IconExclamationMark,
   IconPlus,
@@ -37,6 +38,7 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
@@ -68,7 +70,14 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { calcBuzzFromEta, calcEta, isInvalidRapid, isValidRapid, rapidEta } from '~/utils/training';
+import {
+  calcBuzzFromEta,
+  calcEta,
+  isInvalidRapid,
+  isValidDiscount,
+  isValidRapid,
+  rapidEta,
+} from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -485,6 +494,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         >
           {status.message ?? 'Training is currently disabled.'}
         </AlertWithIcon>
+      )}
+      {isValidDiscount(status.cost) && (
+        <DismissibleAlert
+          id="rapid-training-discount-9-13-24"
+          icon={<IconConfetti />}
+          color="pink"
+          content={
+            <Text>
+              Flux-Dev Rapid Training is currently{' '}
+              {<b>{(1 - status.cost.rapid.discountFactor) * 100}%</b>} off! (Ends on{' '}
+              {new Date(status.cost.rapid.discountEnd).toLocaleDateString('en-us', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+              )
+            </Text>
+          }
+        />
       )}
       <Accordion
         variant="separated"

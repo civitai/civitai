@@ -59,10 +59,18 @@ export const calcBuzzFromEta = ({
   numImages: number;
 }) => {
   if (isRapid) {
+    let baseCost = cost.rapid.baseBuzz;
+    if (isValidDiscount(cost)) {
+      try {
+        baseCost *= cost.rapid.discountFactor ?? 1;
+      } catch (e) {}
+    }
+
     const imgCost =
       Math.max(0, Math.ceil((numImages - cost.rapid.numImgBase) / cost.rapid.numImgStep)) *
       cost.rapid.numImgBuzz;
-    return isNaN(imgCost) ? cost.rapid.baseBuzz : cost.rapid.baseBuzz + imgCost;
+
+    return isNaN(imgCost) ? baseCost : baseCost + imgCost;
   }
 
   if (!eta) return cost.baseBuzz;
@@ -104,3 +112,20 @@ export const isInvalidRapid = (baseModel: TrainingBaseModelType, engine: EngineT
 };
 
 export const orchRapidEngine = 'flux-dev-fast';
+
+export const isValidDiscount = (cost: TrainingCost) => {
+  const now = new Date();
+  try {
+    return (
+      isDefined(cost.rapid.discountFactor) &&
+      cost.rapid.discountFactor < 1 &&
+      cost.rapid.discountFactor >= 0 &&
+      isDefined(cost.rapid.discountStart) &&
+      isDefined(cost.rapid.discountEnd) &&
+      new Date(cost.rapid.discountStart) <= now &&
+      new Date(cost.rapid.discountEnd) > now
+    );
+  } catch {
+    return false;
+  }
+};

@@ -9,12 +9,13 @@ import {
   Stack,
   Switch,
   Text,
+  ThemeIcon,
   Title,
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { IconAlertTriangle, IconChevronDown } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -26,12 +27,13 @@ import {
   optimizerArgMapFlux,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import { TrainingRun, TrainingRunUpdate, trainingStore } from '~/store/training.store';
-import { isValidRapid, rapidEta } from '~/utils/training';
+import { isValidDiscount, isValidRapid, rapidEta } from '~/utils/training';
 
 export const AdvancedSettings = ({
   selectedRun,
@@ -47,6 +49,7 @@ export const AdvancedSettings = ({
   const { updateRun } = trainingStore;
   const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
+  const { cost } = useTrainingServiceStatus();
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
   const doUpdate = (data: TrainingRunUpdate) => {
@@ -166,9 +169,25 @@ export const AdvancedSettings = ({
               })
             }
           />
-          {Date.now() < new Date('2024-09-27').getTime() && (
+          {/*TODO can remove this after 9-28*/}
+          {new Date() < new Date('2024-09-28') && (
             <Badge color="green" variant="filled" size="sm">
               NEW
+            </Badge>
+          )}
+          {isValidDiscount(cost) && (
+            <Badge
+              color="pink"
+              size="sm"
+              pl={0}
+              sx={{ overflow: 'visible' }}
+              leftSection={
+                <ThemeIcon variant="filled" size={18} color="pink" radius="xl" ml={-8}>
+                  <IconConfetti size={12} />
+                </ThemeIcon>
+              }
+            >
+              Sale
             </Badge>
           )}
         </Group>

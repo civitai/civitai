@@ -55,6 +55,9 @@ const trainingCostSchema = z.object({
     numImgBase: z.number().min(1),
     numImgStep: z.number().min(1),
     numImgBuzz: z.number().min(0),
+    discountFactor: z.number().min(0).optional(), // a multiplier, so "0.8" is a 20% discount
+    discountStart: z.string().optional(), // as date
+    discountEnd: z.string().optional(), // as date
   }),
 });
 export type TrainingCost = z.infer<typeof trainingCostSchema>;
@@ -97,6 +100,9 @@ export const defaultTrainingCost: TrainingCost = {
     numImgBase: 200,
     numImgStep: 100,
     numImgBuzz: 500,
+    discountFactor: 0.5, // multiplier, not "discount"
+    discountStart: '2024-09-13T00:00:00Z',
+    discountEnd: '2024-09-18T00:00:00Z',
   },
 };
 
