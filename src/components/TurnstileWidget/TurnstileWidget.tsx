@@ -11,7 +11,8 @@ export type CaptchaState = {
 };
 
 export function TurnstileWidget({
-  siteKey = env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
+  siteKey = env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY ||
+    env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
   ...props
 }: Props) {
   const ref = useRef<TurnstileInstance>(null);

@@ -178,6 +178,7 @@ export const serverSchema = z.object({
   STRIPE_DONATE_ID: z.string().optional(),
   PADDLE_SECRET_KEY: z.string().optional(),
   PADDLE_WEBHOOK_SECRET: z.string().optional(),
+  CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
   CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
 });
@@ -222,6 +223,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_PADDLE_TOKEN: z.string().optional(),
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
   NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: z.enum(['Stripe', 'Paddle']).default('Stripe'),
+  NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: z.string().optional(),
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: z.string().optional(),
 });
@@ -268,6 +270,7 @@ export const clientEnv = {
   NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
   // Default to Stripe in case the env var is not set
   NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
+  NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
 };

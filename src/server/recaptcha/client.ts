@@ -100,7 +100,7 @@ const siteVerifyResponseSchema = z.object({
 
 export async function verifyCaptchaToken({
   token,
-  secret = env.CF_INVISIBLE_TURNSTILE_SECRET,
+  secret = env.CF_INVISIBLE_TURNSTILE_SECRET || env.CLOUDFLARE_TURNSTILE_SECRET,
   ip,
 }: {
   token: string;
