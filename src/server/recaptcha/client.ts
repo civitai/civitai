@@ -4,6 +4,7 @@ import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { z } from 'zod';
+import { logToAxiom } from '~/server/logging/client';
 
 // Taken from package as they don't export it :shrug:
 // enum ClassificationReason {
@@ -122,6 +123,7 @@ export async function verifyCaptchaToken({
   if (outcome.success) {
     return true;
   } else {
+    logToAxiom({ name: 'captcha-failure', type: 'error', response: outcome });
     throw throwBadRequestError('Unable to verify captcha token');
   }
 }
