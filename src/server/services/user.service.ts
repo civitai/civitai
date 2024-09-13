@@ -568,7 +568,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
     dbWrite.user.update({
       where: { id: user.id },
-      data: { deletedAt: new Date(), email: null, username: null },
+      data: { deletedAt: new Date(), email: null, username: null, paddleCustomerId: null },
     }),
   ]);
 
