@@ -194,13 +194,13 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
             </InfoPopover>
           </Group>
         }
-        value={autoTagging.maxTags}
-        min={autoLabelLimits.tag.tags.min}
-        max={autoLabelLimits.tag.tags.max}
+        value={autoTagging.threshold}
+        min={autoLabelLimits.tag.threshold.min}
+        max={autoLabelLimits.tag.threshold.max}
         // precision
         step={0.1}
         onChange={(value) => {
-          setAutoTagging(modelId, { maxTags: value });
+          setAutoTagging(modelId, { threshold: value });
         }}
       />
 
