@@ -132,11 +132,7 @@ export function OnboardingBuzz() {
           description={
             <Text>
               {`At Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
-              <IconProgressBolt
-                color={theme.colors.blue[4]}
-                size={20}
-                style={{ verticalAlign: 'middle', display: 'inline' }}
-              />
+              <IconProgressBolt size={20} style={{ verticalAlign: 'middle', display: 'inline' }} />
               {` Buzz Dashboard.`}
             </Text>
           }
@@ -156,12 +152,13 @@ export function OnboardingBuzz() {
                     <CurrencyBadge
                       currency={Currency.BUZZ}
                       unitAmount={getUserBuzzBonusAmount(currentUser)}
+                      textColor={theme.colors.blue[4]}
                     />
                   )}
                 </Text>
                 {currentUser?.isMember
-                  ? ' as a gift for being a supporter for use with on-site services.'
-                  : ' as a gift for use with on-site services.'}
+                  ? ' as a gift for being a supporter for use with on-site generation services.'
+                  : ' as a gift for use with on-site generation services.'}
               </Text>
             }
           />
