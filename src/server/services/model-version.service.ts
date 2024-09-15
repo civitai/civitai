@@ -12,7 +12,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { modelVersionAccessCache, resourceDataCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -228,7 +228,8 @@ export const upsertModelVersion = async ({
       ),
     ]);
     await preventReplicationLag('modelVersion', version.id);
-    await resourceDataCache.bust(version.id);
+    await bustMvCache(version.id);
+    await dataForModelsCache.bust(version.modelId);
 
     return version;
   } else {
@@ -391,7 +392,8 @@ export const upsertModelVersion = async ({
       },
     });
     await preventReplicationLag('modelVersion', version.id);
-    await resourceDataCache.bust(version.id);
+    await bustMvCache(version.id);
+    await dataForModelsCache.bust(version.modelId);
 
     return version;
   }
@@ -420,7 +422,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
-    await resourceDataCache.bust(deleted.id);
+    await bustMvCache(deleted.id);
 
     return deleted;
   });
@@ -435,7 +437,7 @@ export const updateModelVersionById = async ({
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
   await preventReplicationLag('model', result.modelId);
   await preventReplicationLag('modelVersion', id);
-  await resourceDataCache.bust(id);
+  await bustMvCache(id);
 };
 
 export const publishModelVersionsWithEarlyAccess = async ({
@@ -734,7 +736,7 @@ export const unpublishModelVersionById = async ({
   );
 
   await updateModelLastVersionAt({ id: version.model.id });
-  await resourceDataCache.bust(version.id);
+  await bustMvCache(version.id);
 
   return version;
 };
@@ -1315,6 +1317,6 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
   await bustOrchestratorModelCache(ids, userId);
-  await resourceDataCache.bust(ids);
+  await bustMvCache(ids);
   await modelVersionAccessCache.bust(ids);
 };

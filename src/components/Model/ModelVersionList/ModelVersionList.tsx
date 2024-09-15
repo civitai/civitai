@@ -272,7 +272,7 @@ export function ModelVersionList({
 
           if (!showExtraIcons)
             return (
-              <Group spacing={0}>
+              <Group spacing={0} noWrap>
                 {versionButton} {isEarlyAccess && earlyAccessButton}
               </Group>
             );
