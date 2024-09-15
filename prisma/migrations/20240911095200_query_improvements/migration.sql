@@ -55,7 +55,8 @@ AND (toi.disabled IS NULL OR toi.disabled = FALSE)
 ;
 
 -- Add index to chatmember
-CREATE INDEX CONCURRENTLY "ChatMember_userId_status_muted_idx" ON "ChatMember" ("userId", "status", "isMuted");
+CREATE INDEX "ChatMember_userId_status_muted_idx" ON "ChatMember" ("userId", "status", "isMuted");
+-- CREATE INDEX CONCURRENTLY "ChatMember_userId_status_muted_idx" ON "ChatMember" ("userId", "status", "isMuted");
 
 -- WHY?
 -- CREATE INDEX CONCURRENTLY ON EntityMetric (entityId, metricType)
