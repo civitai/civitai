@@ -47,13 +47,13 @@ import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
-  CreateImageSchema,
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
   imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
+  ImageSchema,
   ImageUploadProps,
   ReportCsamImagesInput,
   UpdateImageNsfwLevelOutput,
@@ -121,6 +121,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { upsertImageFlag } from '~/server/services/image-flag.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2828,35 +2829,24 @@ export const getImagesByEntity = async ({
   }));
 };
 
-function parseImageCreateData({
-  entityType,
-  entityId,
+export async function createImage({ toolIds, ...image }: ImageSchema & { userId: number }) {
+  const result = await dbWrite.image.create({
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: image.meta
+        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+        : null,
+      tools: !!toolIds?.length
+        ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
+        : undefined,
+    },
+    select: { id: true },
+  });
 
-  ...image
-}: CreateImageSchema & { userId: number }) {
-  const data = {
-    ...image,
-    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-    generationProcess: image.meta
-      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-      : null,
-  };
-  switch (entityType) {
-    case 'Post':
-      return { postId: entityId, ...data };
-    default:
-      return data;
-  }
-}
+  console.log(image.meta?.prompt);
 
-export async function createImage({
-  entityType,
-  entityId,
-  ...image
-}: CreateImageSchema & { userId: number }) {
-  const data = parseImageCreateData({ entityType, entityId, ...image });
-  const result = await dbWrite.image.create({ data, select: { id: true } });
-
+  await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
   await ingestImage({
     image: {
       id: result.id,
@@ -2864,6 +2854,7 @@ export async function createImage({
       type: image.type,
       height: image.height,
       width: image.width,
+      prompt: image?.meta?.prompt,
     },
   });
 
