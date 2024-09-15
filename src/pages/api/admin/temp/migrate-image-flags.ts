@@ -115,19 +115,3 @@ export default WebhookEndpoint(async (req, res) => {
     },
   });
 });
-
-function prepareWordRegex(word: string, pluralize = false) {
-  let regexStr = word;
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
-  if (!word.includes('[')) {
-    regexStr = regexStr
-      .replace(/i/g, '[i|l|1]')
-      .replace(/o/g, '[o|0]')
-      .replace(/s/g, '[s|z]')
-      .replace(/e/g, '[e|3]');
-  }
-  if (pluralize) regexStr += '[s|z]*';
-  regexStr = `([^a-zA-Z0-9]+|^)` + regexStr + `([^a-zA-Z0-9]+|$)`;
-  const regex = new RegExp(regexStr, 'i');
-  return regex;
-}
