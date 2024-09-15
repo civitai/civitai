@@ -11,7 +11,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 1000; // Do not increase - might break Redis from what we've been able to tell.
@@ -53,6 +53,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'type',
     'toolNames',
     'techniqueNames',
+    'flags.promptNsfw',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
@@ -133,6 +134,7 @@ type BaseImage = {
   userId?: number | null;
   modelVersionId: number | null;
   sortAt?: Date | null;
+  promptNsfw?: boolean;
 };
 
 const imageWhere = [
@@ -172,12 +174,16 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ userId, id, nsfwLevelLocked, ...imageRecord }) => {
+    .map(({ userId, id, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
       const user = userId ? users[userId] ?? null : null;
 
       if (!user || !userId) {
         return null;
       }
+
+      const flags = removeEmpty({
+        promptNsfw,
+      });
 
       const userCosmetic = userId ? userCosmetics[userId] ?? null : null;
       const profilePicture = user ? profilePictures[userId] ?? null : null;
@@ -225,6 +231,7 @@ const transformData = async ({
           collectedCountAllTime: imageMetrics?.collectedCount ?? 0,
           tippedAmountCountAllTime: imageMetrics?.tippedAmountCount ?? 0,
         },
+        flags: Object.keys(flags).length > 0 ? flags : undefined,
       };
     })
     .filter(isDefined);
@@ -305,9 +312,11 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."scannedAt",
         i."mimeType",
         p."modelVersionId",
+        fl."promptNsfw",
         COALESCE(p."publishedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
+        LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
 
