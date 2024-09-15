@@ -10,7 +10,6 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
   addImageTools,
-  createArticleCoverImage,
   createImage,
   get404Images,
   getImageDetail,
@@ -93,9 +92,6 @@ export const imageRouter = router({
   create: protectedProcedure
     .input(createImageSchema)
     .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
-  createArticleCoverImage: moderatorProcedure
-    .input(createImageSchema.extend({ userId: z.number() }))
-    .mutation(({ input }) => createArticleCoverImage({ ...input })),
   ingestArticleImages: protectedProcedure
     .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
     .mutation(({ input }) => ingestArticleCoverImages(input)),
