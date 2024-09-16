@@ -351,7 +351,7 @@ export function GeneratedImage({
               <IconHeart size={16} />
             </ActionIcon>
 
-            {!!img2imgWorkflows?.length && canRemix && (
+            {!!img2imgWorkflows?.length && canImg2Img && (
               <Menu
                 zIndex={400}
                 trigger="hover"
