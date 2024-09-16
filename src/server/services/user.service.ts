@@ -75,6 +75,7 @@ import {
 import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
+import { logToAxiom } from '~/server/logging/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -576,7 +577,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   await deleteBasicDataForUser(id);
 
   // Cancel their subscription
-  await cancelSubscriptionPlan({ userId: user.id });
+  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
   await invalidateSession(id);
 
   return result;
@@ -607,10 +610,13 @@ export async function softDeleteUser({ id }: { id: number }) {
       needsReview: 'blocked',
     },
   });
-  await cancelSubscriptionPlan({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
 }
 
 export const updateAccountScope = async ({
@@ -1004,7 +1010,9 @@ export const toggleBan = async ({ id }: { id: number }) => {
   });
 
   // Cancel their subscription
-  await cancelSubscriptionPlan({ userId: id });
+  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
 
   return updatedUser;
 };
