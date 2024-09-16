@@ -6,6 +6,7 @@ import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const READ_BATCH_SIZE = 100000;
@@ -40,6 +41,7 @@ const filterableAttributes = [
   'postId',
   'publishedAtUnix',
   'existedAtUnix',
+  'flags.promptNsfw',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -124,6 +126,7 @@ export type SearchBaseImage = {
   onSite: boolean;
   postedToId?: number;
   needsReview: string | null;
+  promptNsfw?: boolean;
 };
 
 type Metrics = {
@@ -167,7 +170,7 @@ const transformData = async ({
   modelVersions: ModelVersions[];
 }) => {
   const records = images
-    .map(({ publishedAt, nsfwLevelLocked, ...imageRecord }) => {
+    .map(({ publishedAt, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
@@ -181,6 +184,10 @@ const transformData = async ({
         commentCount: 0,
         collectedCount: 0,
       };
+
+      const flags = removeEmpty({
+        promptNsfw,
+      });
 
       return {
         ...imageRecord,
@@ -197,6 +204,7 @@ const transformData = async ({
         sortAtUnix: imageRecord.sortAt.getTime(),
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
+        flags: Object.keys(flags).length > 0 ? flags : undefined,
       };
     })
     .filter(isDefined);
@@ -299,6 +307,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
+        LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
 
