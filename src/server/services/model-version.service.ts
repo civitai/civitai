@@ -12,7 +12,11 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
+import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  resourceDataCache,
+} from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -1317,6 +1321,6 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
   await bustOrchestratorModelCache(ids, userId);
-  await bustMvCache(ids);
+  await resourceDataCache.bust(ids);
   await modelVersionAccessCache.bust(ids);
 };
