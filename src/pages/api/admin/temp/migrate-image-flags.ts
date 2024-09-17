@@ -4,7 +4,7 @@ import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { hasNsfwWords } from '~/utils/metadata/audit';
+import { hasNsfwPrompt } from '~/utils/metadata/audit';
 
 const schema = z.object({
   concurrency: z.coerce.number().min(1).max(50).optional().default(15),
@@ -82,7 +82,7 @@ export default WebhookEndpoint(async (req, res) => {
         .map(({ id, prompt, resources, nsfwLevel }) => {
           return {
             id,
-            promptNsfw: hasNsfwWords(prompt),
+            promptNsfw: hasNsfwPrompt(prompt),
             nsfwLevel,
             resourcesNsfw: false,
             // resourcesNsfw: resources.some((x) => x.nsfw)
@@ -93,25 +93,25 @@ export default WebhookEndpoint(async (req, res) => {
       totalProcessed += images.length;
       totalInserted += toInsert.length;
 
-      const insertQuery = await pgDbWrite.cancellableQuery(Prisma.sql`
-        INSERT INTO "ImageFlag" ("imageId", "promptNsfw", "resourcesNsfw")
-        VALUES ${Prisma.raw(
-          toInsert
-            .map(({ id, promptNsfw, resourcesNsfw }) => `(${id}, ${promptNsfw}, ${resourcesNsfw})`)
-            .join(', ')
-        )}
-        ON CONFLICT ("imageId") DO UPDATE SET "promptNsfw" = EXCLUDED."promptNsfw", "resourcesNsfw" = EXCLUDED."resourcesNsfw";
-      `);
-      cancelFns.push(insertQuery.cancel);
-      try {
+      if (toInsert.length > 0) {
+        const insertQuery = await pgDbWrite.cancellableQuery(Prisma.sql`
+          INSERT INTO "ImageFlag" ("imageId", "promptNsfw", "resourcesNsfw")
+          VALUES ${Prisma.raw(
+            toInsert
+              .map(
+                ({ id, promptNsfw, resourcesNsfw }) => `(${id}, ${promptNsfw}, ${resourcesNsfw})`
+              )
+              .join(', ')
+          )}
+          ON CONFLICT ("imageId") DO UPDATE SET "promptNsfw" = EXCLUDED."promptNsfw", "resourcesNsfw" = EXCLUDED."resourcesNsfw";
+        `);
+        cancelFns.push(insertQuery.cancel);
         await insertQuery.result();
-        console.log(`Processed images ${start} - ${end}`, {
-          totalProcessed,
-          totalInserted,
-        });
-      } catch (e) {
-        console.log(e);
       }
+      console.log(`Processed images ${start} - ${end}`, {
+        totalProcessed,
+        totalInserted,
+      });
     },
   });
 });

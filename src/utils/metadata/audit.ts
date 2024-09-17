@@ -2,14 +2,14 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
 import { normalizeText } from '~/utils/normalize-text';
 import blockedNSFW from './lists/blocklist-nsfw.json';
-import nsfwWordsStrict from './lists/words-nsfw-strict.json';
+import nsfwPromptWords from './lists/words-nsfw-prompt.json';
 import nsfwWordsSoft from './lists/words-nsfw-soft.json';
 import nsfwWordsPaddle from './lists/words-paddle-nsfw.json';
 import blocked from './lists/blocklist.json';
 import youngWords from './lists/words-young.json';
 import poiWords from './lists/words-poi.json';
 import promptTags from './lists/prompt-tags.json';
-const nsfwWords = [...new Set([...nsfwWordsStrict, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
+const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWordsPaddle])];
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -60,7 +60,21 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   return { blockedFor: [], success: true };
 };
 
-const expressions = [...new Set([...nsfwWordsStrict, ...nsfwWordsPaddle])].map((word) =>
+const nsfwPromptExpressions = nsfwPromptWords.map((word) => prepareWordRegex(word));
+const paddleNsfwExpressions = nsfwWordsPaddle.map((word) => prepareWordRegex(word));
+
+export function hasNsfwPrompt(text?: string | null) {
+  if (!text) return false;
+  const str = normalizeText(text);
+  for (const expression of [...nsfwPromptExpressions, ...paddleNsfwExpressions]) {
+    if (expression.test(str)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const expressions = [...new Set([...nsfwPromptWords, ...nsfwWordsPaddle])].map((word) =>
   prepareWordRegex(word)
 );
 export function hasNsfwWords(text?: string | null) {

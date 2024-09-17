@@ -1,8 +1,8 @@
 import { dbWrite } from '~/server/db/client';
-import { hasNsfwWords } from '~/utils/metadata/audit';
+import { hasNsfwPrompt } from '~/utils/metadata/audit';
 
 export async function upsertImageFlag({ imageId, ...data }: { imageId: number; prompt?: string }) {
-  const promptNsfw = hasNsfwWords(data.prompt);
+  const promptNsfw = hasNsfwPrompt(data.prompt);
   if (!promptNsfw) return;
 
   await dbWrite.$executeRaw`
