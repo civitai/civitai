@@ -781,10 +781,10 @@ export const CurrencyConfig: Record<
 };
 
 export const BUZZ_FEATURE_LIST = [
-  'Support your favorite creators via tips and subscriptions',
+  'Support your favorite creators via tips',
   'Pay for on-site model training',
   'Create bounties for models, images and more!',
-  'Purchase user cosmetics from our upcoming user cosmetic store!',
+  'Purchase profile cosmetics from our Cosmetic Store!',
 ];
 
 export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s

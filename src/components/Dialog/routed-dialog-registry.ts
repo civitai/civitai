@@ -16,7 +16,7 @@ const CommentEditModal = dynamic(
 const CommentThreadModal = dynamic(
   () => import('~/components/Model/Discussion/CommentThreadModal')
 );
-const SupportModal = dynamic(() => import('~/components/Support/SupportModal'));
+const SupportModal = dynamic(() => import('~/components/Support/SupportModal'), { ssr: false });
 
 type Url = UrlObject | string;
 type DialogItem<T> = {

@@ -10,7 +10,11 @@ export type CaptchaState = {
   error: string | null;
 };
 
-export function TurnstileWidget(props: Props) {
+export function TurnstileWidget({
+  siteKey = env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY ||
+    env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
+  ...props
+}: Props) {
   const ref = useRef<TurnstileInstance>(null);
 
   const handleExpired: Props['onExpire'] = (token) => {
@@ -20,12 +24,12 @@ export function TurnstileWidget(props: Props) {
     return props.onExpire?.(token);
   };
 
-  if (!env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY) return null;
+  if (!siteKey) return null;
 
   return (
     <Turnstile
       ref={ref}
-      siteKey={env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY}
+      siteKey={siteKey}
       options={{ size: 'invisible' }}
       {...props}
       onExpire={handleExpired}
@@ -33,7 +37,7 @@ export function TurnstileWidget(props: Props) {
   );
 }
 
-type Props = Omit<TurnstileProps, 'siteKey' | 'injectScript'>;
+type Props = Omit<TurnstileProps, 'siteKey' | 'injectScript'> & { siteKey?: string };
 
 export function TurnstilePrivacyNotice(props: TextProps) {
   return (

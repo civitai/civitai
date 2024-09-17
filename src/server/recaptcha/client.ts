@@ -4,6 +4,7 @@ import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { z } from 'zod';
+import { logToAxiom } from '~/server/logging/client';
 
 // Taken from package as they don't export it :shrug:
 // enum ClassificationReason {
@@ -98,12 +99,20 @@ const siteVerifyResponseSchema = z.object({
   cdata: z.string().optional(),
 });
 
-export async function verifyCaptchaToken({ token, ip }: { token: string; ip?: string }) {
+export async function verifyCaptchaToken({
+  token,
+  secret = env.CF_INVISIBLE_TURNSTILE_SECRET || env.CLOUDFLARE_TURNSTILE_SECRET,
+  ip,
+}: {
+  token: string;
+  secret?: string;
+  ip?: string;
+}) {
   const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      secret: env.CLOUDFLARE_TURNSTILE_SECRET,
+      secret,
       response: token,
       remoteip: ip,
     }),
@@ -114,6 +123,7 @@ export async function verifyCaptchaToken({ token, ip }: { token: string; ip?: st
   if (outcome.success) {
     return true;
   } else {
+    logToAxiom({ name: 'captcha-failure', type: 'error', response: outcome });
     throw throwBadRequestError('Unable to verify captcha token');
   }
 }

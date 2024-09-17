@@ -206,7 +206,10 @@ export const cosmeticEntityCaches = Object.fromEntries(
       idKey: 'equippedToId',
       cacheNotFound: false,
       lookupFn: async (ids) => {
-        const entityCosmetics = await dbRead.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
+        // TODO: This might be a gamble since dbWrite could be heavily hit, however, considering we have
+        // 1 day TTL, it might be worth it to keep the cache fresh. With dbRead, lag can cause cosmetics to linger
+        // for 1 day.
+        const entityCosmetics = await dbWrite.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
           SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"

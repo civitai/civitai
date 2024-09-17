@@ -62,7 +62,9 @@ const expressions = [...nsfwWords, ...paddleNsfwWords].map((word) => new RegExp(
 export function hasNsfwWords(text?: string | null) {
   if (!text) return false;
   for (const expression of expressions) {
-    if (expression.test(text)) return true;
+    if (expression.test(text)) {
+      return true;
+    }
   }
   return false;
 }
@@ -288,7 +290,7 @@ const composedNouns = youngWords.partialNouns.flatMap((word) => {
   return youngWords.adjectives.map((adj) => adj + '([\\s|\\w]*|[^\\w]+)' + word);
 });
 const words = {
-  nsfw: checkable(nsfwWords),
+  nsfw: checkable([...nsfwWords, ...paddleNsfwWords]),
   young: {
     nouns: checkable(youngWords.nouns.concat(composedNouns), {
       pluralize: true,

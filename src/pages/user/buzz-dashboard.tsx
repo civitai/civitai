@@ -70,7 +70,7 @@ export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const { classes } = useBuzzDashboardStyles();
   const isMember = currentUser?.isMember;
-  const { isFreeTier } = useActiveSubscription();
+  const { isFreeTier, meta } = useActiveSubscription();
   const { query } = useRouter();
   const features = useFeatureFlags();
 
@@ -96,7 +96,7 @@ export default function UserBuzzDashboard() {
   const showMismatchAlert =
     isMember &&
     !multipliersLoading &&
-    rewardsMultiplier === 1 &&
+    rewardsMultiplier !== Number(meta?.rewardsMultiplier ?? 1) &&
     features.membershipsV2 &&
     !isFreeTier;
 
