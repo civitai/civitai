@@ -297,9 +297,7 @@ async function updateFlags() {
       console.log(consoleFetchKey);
       console.time(consoleFetchKey);
       const records = await dbRead.$queryRaw<ImageWithImageFlag[]>`
-        SELECT
-          fl."imageId" id,
-          fl."promptNsfw"
+        SELECT fl.*
         FROM "ImageFlag" fl
         JOIN "Image" i ON i."id" = fl."imageId"
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -312,7 +310,7 @@ async function updateFlags() {
         return;
       }
 
-      const documents = records;
+      const documents = records.map(({ imageId, ...flags }) => ({ id: imageId, flags }));
 
       const consolePushKey = `Push: ${start} - ${end}`;
       console.log(consolePushKey);
