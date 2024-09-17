@@ -244,7 +244,7 @@ async function updateFlags() {
         return;
       }
 
-      const documents = records.map(({modelId, ...flags}) => ({id: modelId, flags}));
+      const documents = records.map(({ modelId, ...flags }) => ({ id: modelId, flags }));
 
       const consolePushKey = `Push: ${start} - ${end}`;
       console.log(consolePushKey);
