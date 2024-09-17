@@ -62,9 +62,15 @@ export function createServerSideProps<P>({
     if (result.redirect) return { redirect: result.redirect };
     if (result.notFound) return { notFound: result.notFound };
 
+    // const props =  await result.props;
+    const props =
+      typeof result.props === 'object' && 'then' in result.props
+        ? await result.props
+        : result.props;
+
     return {
       props: {
-        ...((await result.props) ?? {}),
+        ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
         session,
       } as NonNullable<P>,

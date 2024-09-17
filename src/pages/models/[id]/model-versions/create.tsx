@@ -45,5 +45,5 @@ export const getServerSideProps = createServerSideProps({
 export default function NewModelVersion({
   model,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  return <ModelVersionWizard data={model} />;
+  return <ModelVersionWizard data={model as any} />;
 }
