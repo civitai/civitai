@@ -289,7 +289,7 @@ async function updateFlags() {
     },
     processor: async ({ start, end }) => {
       type ImageWithImageFlag = {
-        id: number;
+        imageId: number;
         promptNsfw?: boolean;
       };
 
