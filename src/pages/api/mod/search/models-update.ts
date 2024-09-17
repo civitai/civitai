@@ -20,7 +20,7 @@ const WHERE = (idOffset: number) => ({
 });
 
 const schema = z.object({
-  update: z.enum(['generationCoverage', 'user', 'nsfw']),
+  update: z.enum(['generationCoverage', 'user', 'nsfw', 'flags']),
 });
 
 const updateGenerationCoverage = (idOffset: number) =>
@@ -203,12 +203,74 @@ async function updateNsfw() {
   });
 }
 
+async function updateFlags() {
+  await dataProcessor({
+    params: { batchSize: 50000, concurrency: 10, start: 0 },
+    runContext: {
+      on: (event: 'close', listener: () => void) => {
+        // noop
+      },
+    },
+    rangeFetcher: async (ctx) => {
+      // I guess we ideally want to have dates here but should work a alright.
+      const [{ start, end }] = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        SELECT
+          MIN("modelId") as start,
+          MAX("modelId") as end
+        FROM "ModelFlag"
+      `;
+
+      return { start, end };
+    },
+    processor: async ({ start, end }) => {
+      type ModelWithFlag = {
+        id: number;
+        promptNsfw?: boolean;
+      };
+
+      const consoleFetchKey = `Fetch: ${start} - ${end}`;
+      console.log(consoleFetchKey);
+      console.time(consoleFetchKey);
+      const records = await dbRead.$queryRaw<ModelWithFlag[]>`
+        SELECT
+          fl."modelId" id,
+          fl."promptNsfw"
+        FROM "ModelFlag" fl
+        JOIN "Model" m ON m."id" = fl."modelId"
+        WHERE id BETWEEN ${start} AND ${end}
+      `;
+      console.timeEnd(consoleFetchKey);
+
+      if (records.length === 0) {
+        console.log(`No updates found:  ${start} - ${end}`);
+        return;
+      }
+
+      const documents = records;
+
+      const consolePushKey = `Push: ${start} - ${end}`;
+      console.log(consolePushKey);
+      console.time(consolePushKey);
+      await updateDocs({
+        indexName: INDEX_ID,
+        documents,
+        batchSize: 100000,
+      });
+      console.timeEnd(consolePushKey);
+    },
+  });
+}
+
 export default ModEndpoint(
   async function updateModelSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
     if (update === 'nsfw') {
       await updateNsfw();
+      return res.status(200).json({ ok: true, duration: Date.now() - start });
+    }
+    if (update === 'flags') {
+      await updateFlags();
       return res.status(200).json({ ok: true, duration: Date.now() - start });
     }
 
