@@ -121,7 +121,7 @@ export function UserDraftModels() {
                 return (
                   <tr key={model.id}>
                     <td>
-                      <Link href={getModelWizardUrl(model)} passHref>
+                      <Link legacyBehavior href={getModelWizardUrl(model)} passHref>
                         <Anchor target="_blank" lineClamp={2}>
                           {model.name} <IconExternalLink size={16} stroke={1.5} />
                         </Anchor>

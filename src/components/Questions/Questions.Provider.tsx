@@ -125,7 +125,7 @@ function QuestionsList() {
   ) : !!questions?.items.length ? (
     <Stack spacing="sm">
       {questions.items.map((question) => (
-        <Link
+        <Link legacyBehavior
           key={question.id}
           href={`/questions/${question.id}/${slugit(question.title)}`}
           passHref

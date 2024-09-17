@@ -39,7 +39,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 
@@ -212,7 +212,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <Text mt={-16} size="sm" mb="xs" align="right">
             Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">
+            <Text variant="link" td="underline" component={Link} href="/collections/3870938">
               Buzz Beggars Board
             </Text>
             .

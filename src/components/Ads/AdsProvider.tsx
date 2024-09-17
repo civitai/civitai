@@ -3,10 +3,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import Script from 'next/script';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-// import { isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
 import { Router } from 'next/router';
-const isProd = true;
+// const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];

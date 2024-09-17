@@ -69,7 +69,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
 
     if (href)
       card = (
-        <Link href={href} passHref>
+        <Link legacyBehavior href={href} passHref>
           {card}
         </Link>
       );

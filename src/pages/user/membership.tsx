@@ -23,7 +23,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { trpc } from '~/utils/trpc';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -289,7 +289,7 @@ export default function UserMembership() {
                         </>
                       )}
                       {canUpgrade && (
-                        <Button component={NextLink} href="/pricing" radius="xl">
+                        <Button component={Link} href="/pricing" radius="xl">
                           Upgrade
                         </Button>
                       )}

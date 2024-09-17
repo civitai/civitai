@@ -101,7 +101,7 @@ export function QuestionForm({ question }: { question?: QuestionDetailProps }) {
           <Text size="xl">
             You are not able to create/edit a question because your account has been restricted
           </Text>
-          <Link href="/">
+          <Link legacyBehavior href="/">
             <Button>Go back home</Button>
           </Link>
         </Stack>

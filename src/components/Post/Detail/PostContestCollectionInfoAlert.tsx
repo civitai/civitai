@@ -1,5 +1,5 @@
 import { Alert, Anchor, Button, Group, Stack, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { CollectionItemStatus } from '@prisma/client';
 import { PostContestCollectionItem } from '~/types/router';
 
@@ -64,14 +64,14 @@ export const PostContestCollectionInfoAlert = ({
 
           <Group ml="auto">
             <Button
-              component={NextLink}
+              component={Link}
               href={`/posts/create?collectionId=${collectionItem.collection.id}`}
               compact
             >
               Submit Another Entry
             </Button>
             <Button
-              component={NextLink}
+              component={Link}
               href={`/collections/${collectionItem.collection.id}`}
               compact
               variant="outline"

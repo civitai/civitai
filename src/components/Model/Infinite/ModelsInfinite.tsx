@@ -87,12 +87,12 @@ export function ModelsInfinite({
         <NoContent py="lg">
           {showEmptyCta && (
             <Group>
-              <Link href="/models/create">
+              <Link legacyBehavior href="/models/create">
                 <Button variant="default" radius="xl">
                   Upload a Model
                 </Button>
               </Link>
-              <Link href="/models/train">
+              <Link legacyBehavior href="/models/train">
                 <Button radius="xl">Train a LoRA</Button>
               </Link>
             </Group>

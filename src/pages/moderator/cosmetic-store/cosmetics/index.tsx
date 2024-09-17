@@ -20,7 +20,7 @@ import {
   Paper,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { BuzzWithdrawalRequestStatus, CosmeticType } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -338,7 +338,7 @@ export default function CosmeticStoreProducts() {
                         </Badge>
                       </td>
                       <td>
-                        <ActionIcon component={NextLink} href={`/moderator/rewards/update/test`}>
+                        <ActionIcon component={Link} href={`/moderator/rewards/update/test`}>
                           <IconEdit />
                         </ActionIcon>
                       </td>

@@ -77,14 +77,13 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
-import Link from 'next/link';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
@@ -292,7 +291,11 @@ export default function BountyDetailsPage({
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           size="sm"
@@ -725,7 +728,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
         hasEntries &&
         isOwner &&
         constants.bounties.supportedBountyToModels.some((t) => bounty.type === t) && (
-          <Button component={NextLink} href={`/models/create?bountyId=${bounty.id}`}>
+          <Button component={Link} href={`/models/create?bountyId=${bounty.id}`}>
             Create model from awarded entry
           </Button>
         )}
@@ -890,7 +893,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
           <Group>
             <Title order={2}>Entries</Title>
             {displaySubmitAction && (
-              <Button size="xs" variant="outline" component={NextLink} href={entryCreateUrl}>
+              <Button size="xs" variant="outline" component={Link} href={entryCreateUrl}>
                 Submit Entry
               </Button>
             )}

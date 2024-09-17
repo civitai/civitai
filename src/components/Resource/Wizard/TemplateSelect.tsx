@@ -53,7 +53,7 @@ export function TemplateSelect({ userId, onSelect }: Props) {
         <ScrollArea.Autosize maxHeight={300}>
           <Stack spacing={0} mt={4}>
             {models.map((model) => (
-              <Link key={model.id} href={`?templateId=${model.id}`} shallow>
+              <Link legacyBehavior key={model.id} href={`?templateId=${model.id}`} shallow>
                 <UnstyledButton
                   className={classes.option}
                   py="xs"

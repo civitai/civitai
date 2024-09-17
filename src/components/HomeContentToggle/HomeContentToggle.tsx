@@ -156,7 +156,7 @@ export function HomeContentToggle({ size, sx, ...props }: Props) {
 
   const options: SegmentedControlItem[] = Object.entries(homeOptions).map(([key, value]) => ({
     label: (
-      <Link href={value.url} passHref>
+      <Link legacyBehavior href={value.url} passHref>
         <Anchor variant="text">
           <Group
             align="center"
@@ -366,7 +366,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
     )
     .map(([key, value]) => {
       return (
-        <Link key={key} href={value.url} passHref>
+        <Link legacyBehavior key={key} href={value.url} passHref>
           <Anchor
             variant="text"
             className={cx(value.grouped && classes.groupedOptions)}
@@ -432,7 +432,7 @@ export function HomeTabs({ sx, ...tabProps }: HomeTabProps) {
           {Object.entries(homeOptions)
             .filter(([, value]) => value.grouped)
             .map(([key, value]) => (
-              <Link key={key} href={value.url} passHref>
+              <Link legacyBehavior key={key} href={value.url} passHref>
                 <Menu.Item
                   component="a"
                   icon={value.icon({ size: 16 })}
