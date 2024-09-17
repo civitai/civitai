@@ -225,7 +225,7 @@ async function updateFlags() {
     processor: async ({ start, end }) => {
       type ModelWithFlag = {
         id: number;
-        promptNsfw?: boolean;
+        nameNsfw?: boolean;
       };
 
       const consoleFetchKey = `Fetch: ${start} - ${end}`;
@@ -234,7 +234,7 @@ async function updateFlags() {
       const records = await dbRead.$queryRaw<ModelWithFlag[]>`
         SELECT
           fl."modelId" id,
-          fl."promptNsfw"
+          fl."nameNsfw"
         FROM "ModelFlag" fl
         JOIN "Model" m ON m."id" = fl."modelId"
         WHERE id BETWEEN ${start} AND ${end}
