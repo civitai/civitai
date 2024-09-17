@@ -174,6 +174,8 @@ const transformData = async ({
   techs: { imageId: number; tech: string }[];
   modelVersions: ModelVersions[];
 }) => {
+  console.log(`transformData :: Transforming data for ${images.length} images`);
+
   const records = images
     .map(({ userId, id, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
       const user = userId ? users[userId] ?? null : null;
@@ -237,6 +239,8 @@ const transformData = async ({
     })
     .filter(isDefined);
 
+  console.log(`transformData :: returning ${records.length} images`);
+
   return records;
 };
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
@@ -245,7 +249,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
-  maxQueueSize: 20, // Avoids hogging too much memory.
+  maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 6,
   prepareBatches: async ({ pg, jobContext }, lastUpdatedAt) => {
     const lastUpdateIso = lastUpdatedAt?.toISOString();
@@ -392,7 +396,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
             im."tippedAmountCount" as "tippedAmountCount",
             im."heartCount" as "heartCount"
           FROM "ImageMetric" im
-          WHERE im."imageId" IN (${batch.join(',')})
+          WHERE im."imageId" IN (${Prisma.join(batch)})
             AND im."timeframe" = 'AllTime'::"MetricTimeframe"
       `;
 
@@ -406,7 +410,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         logger(`Pulling modelVersionIds :: ${indexName} ::`, batchLogKey, subBatchLogKey);
 
         // Model versions & baseModel:
-        const { rows: modelVersions } = await pgDbRead.query<ModelVersions>(`
+        const modelVersions = await db.$queryRaw<ModelVersions[]>`
         SELECT
           ir."imageId" as id,
           array_agg(COALESCE(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '')) as "baseModel",
@@ -414,9 +418,9 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         FROM "ImageResource" ir
         JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
         JOIN "Model" m ON mv."modelId" = m."id"
-        WHERE ir."imageId" IN (${batch.join(',')})
+        WHERE ir."imageId" IN (${Prisma.join(batch)})
         GROUP BY ir."imageId"
-      `);
+      `;
 
         result.modelVersions ??= [];
         result.modelVersions.push(...(modelVersions ?? []));
@@ -484,7 +488,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
             t."name" as tool
           FROM "ImageTool" it
           JOIN "Tool" t ON it."toolId" = t."id"
-          WHERE it."imageId" IN  (${batch.join(',')})
+          WHERE it."imageId" IN  (${Prisma.join(batch)})
         `;
 
         result.tools ??= [];
@@ -496,7 +500,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
             t."name" as tech
           FROM "ImageTechnique" it
           JOIN "Technique" t ON it."techniqueId" = t."id"
-          WHERE it."imageId" IN  (${batch.join(',')})
+          WHERE it."imageId" IN  (${Prisma.join(batch)})
         `;
 
         result.techs ??= [];
@@ -512,6 +516,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   },
   transformData,
   pushData: async ({ indexName }, data) => {
+    console.log(`PushData :: ${indexName} :: Pushing data for ${data.length} images`);
     if (data.length > 0) {
       await updateDocs({
         indexName,
