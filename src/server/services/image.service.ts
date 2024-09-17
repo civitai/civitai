@@ -2844,8 +2844,6 @@ export async function createImage({ toolIds, ...image }: ImageSchema & { userId:
     select: { id: true },
   });
 
-  console.log(image.meta?.prompt);
-
   await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
   await ingestImage({
     image: {

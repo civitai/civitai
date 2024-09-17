@@ -58,15 +58,17 @@ export default WebhookEndpoint(async (req, res) => {
       totalProcessed += models.length;
       totalTitleNsfw += toInsert.length;
 
-      const insertQuery = await pgDbWrite.cancellableQuery(Prisma.sql`
-        INSERT INTO "ModelFlag" ("modelId", "titleNsfw")
-        VALUES ${Prisma.raw(
-          toInsert.map(({ id, titleNsfw }) => `(${id}, ${titleNsfw})`).join(', ')
-        )}
-        ON CONFLICT DO NOTHING;
-      `);
-      cancelFns.push(insertQuery.cancel);
-      await insertQuery.result();
+      if (toInsert.length > 0) {
+        const insertQuery = await pgDbWrite.cancellableQuery(Prisma.sql`
+          INSERT INTO "ModelFlag" ("modelId", "titleNsfw")
+          VALUES ${Prisma.raw(
+            toInsert.map(({ id, titleNsfw }) => `(${id}, ${titleNsfw})`).join(', ')
+          )}
+          ON CONFLICT DO NOTHING;
+        `);
+        cancelFns.push(insertQuery.cancel);
+        await insertQuery.result();
+      }
       console.log(`Processed models ${start} - ${end}`, { totalProcessed, totalTitleNsfw });
     },
   });
