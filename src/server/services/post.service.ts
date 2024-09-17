@@ -12,12 +12,11 @@ import {
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';
-import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { externalMetaSchema } from '~/server/schema/image.schema';
+import { ImageSchema, externalMetaSchema } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
   editPostImageSelect,
@@ -32,10 +31,10 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import {
+  createImage,
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
-  ingestImage,
   purgeImageGenerationDataCache,
   purgeResizeCache,
 } from '~/server/services/image.service';
@@ -54,7 +53,6 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
 import {
-  AddPostImageInput,
   AddPostTagInput,
   GetPostTagsInput,
   PostCreateInput,
@@ -785,7 +783,7 @@ export const addPostImage = async ({
   user,
   externalDetailsUrl,
   ...props
-}: AddPostImageInput & { user: SessionUser }) => {
+}: ImageSchema & { user: SessionUser; postId: number }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
     meta = { ...meta, external: externalData };
@@ -802,15 +800,11 @@ export const addPostImage = async ({
     }
   }
 
-  const partialResult = await dbWrite.image.create({
-    data: {
-      ...props,
-      userId: user.id,
-      meta: meta !== null ? (meta as Prisma.JsonObject) : Prisma.JsonNull,
-      generationProcess: meta ? getImageGenerationProcess(meta as Prisma.JsonObject) : null,
-      tools: toolId ? { create: { toolId } } : undefined,
-    },
-    select: { id: true },
+  const partialResult = await createImage({
+    ...props,
+    meta,
+    userId: user.id,
+    toolIds: toolId ? [toolId] : undefined,
   });
 
   try {
@@ -842,16 +836,6 @@ export const addPostImage = async ({
   } catch (e) {
     console.error(e);
   }
-  await ingestImage({
-    image: {
-      id: partialResult.id,
-      url: props.url,
-      type: props.type,
-      height: props.height,
-      width: props.width,
-      prompt: meta?.prompt,
-    },
-  });
 
   const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },

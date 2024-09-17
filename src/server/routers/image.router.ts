@@ -10,8 +10,6 @@ import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
   addImageTools,
-  createArticleCoverImage,
-  createImage,
   get404Images,
   getImageDetail,
   getImageGenerationData,
@@ -51,7 +49,6 @@ import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
-  createImageSchema,
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
@@ -90,12 +87,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 // TODO.cleanup - remove unused router methods
 export const imageRouter = router({
-  create: protectedProcedure
-    .input(createImageSchema)
-    .mutation(({ input, ctx }) => createImage({ ...input, userId: ctx.user.id })),
-  createArticleCoverImage: moderatorProcedure
-    .input(createImageSchema.extend({ userId: z.number() }))
-    .mutation(({ input }) => createArticleCoverImage({ ...input })),
   ingestArticleImages: protectedProcedure
     .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
     .mutation(({ input }) => ingestArticleCoverImages(input)),

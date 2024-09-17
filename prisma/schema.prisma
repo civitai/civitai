@@ -571,9 +571,16 @@ model Model {
   associations       ModelAssociations[]  @relation("FromModelAssociation")
   collectionItems    CollectionItem[]
   generationCoverage GenerationCoverage[]
+  flags              ModelFlag[]
 
   @@index([name])
   @@index([status, nsfw])
+}
+
+model ModelFlag {
+  modelId  Int     @id
+  model    Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  nameNsfw Boolean @default(false)
 }
 
 model License {
@@ -1265,11 +1272,19 @@ model Image {
   tools               ImageTool[]
   techniques          ImageTechnique[]
   CosmeticShopSection CosmeticShopSection[]
+  flags               ImageFlag[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
   @@index([sortAt])
+}
+
+model ImageFlag {
+  imageId       Int     @id
+  image         Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  promptNsfw    Boolean @default(false)
+  resourcesNsfw Boolean @default(false)
 }
 
 enum BlockImageReason {
