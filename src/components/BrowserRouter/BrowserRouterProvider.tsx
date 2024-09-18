@@ -5,7 +5,6 @@ import { resolveHref } from 'next/dist/client/resolve-href';
 import { QS } from '~/utils/qs';
 import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
-import { usePathname } from 'next/navigation';
 
 type Url = UrlObject | string;
 
