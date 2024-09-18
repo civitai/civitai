@@ -97,7 +97,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import models from '~/pages/api/v1/models';
+import { upsertModelFlag } from '~/server/services/model-flag.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1378,6 +1378,7 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
+    await upsertModelFlag({ modelId: result.id, name: input.name });
 
     // Handle POI change
     const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;

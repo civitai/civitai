@@ -19,6 +19,7 @@ import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
 import {
   IconAlertTriangle,
+  IconConfetti,
   IconCopy,
   IconExclamationMark,
   IconPlus,
@@ -37,6 +38,7 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
@@ -68,7 +70,14 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { calcBuzzFromEta, calcEta } from '~/utils/training';
+import {
+  calcBuzzFromEta,
+  calcEta,
+  isInvalidRapid,
+  isValidDiscount,
+  isValidRapid,
+  rapidEta,
+} from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -175,8 +184,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const eta = calcEta({
       cost: status.cost,
       baseModel: formBaseModelType,
-      targetSteps: selectedRun.params.targetSteps,
-      resolution: selectedRun.params.resolution,
+      params: selectedRun.params,
     });
     const isCustom = isTrainingCustomModel(formBaseModel);
     const price = calcBuzzFromEta({
@@ -185,6 +193,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       isCustom,
       isFlux: selectedRun.baseType === 'flux',
       isPriority: selectedRun.highPriority ?? false,
+      isRapid: isValidRapid(selectedRun.baseType, selectedRun.params.engine),
+      numImages: thisNumImages ?? 1,
     });
     setEtaMins(eta);
     if (price !== selectedRun.buzzCost) {
@@ -195,6 +205,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     status.cost,
     selectedRun.params.targetSteps,
     selectedRun.params.resolution,
+    selectedRun.params.engine,
     selectedRun.highPriority,
     formBaseModel,
     formBaseModelType,
@@ -374,6 +385,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
       const { optimizerArgs, ...paramData } = params;
 
+      if (isInvalidRapid(baseType, paramData.engine)) {
+        showErrorNotification({
+          error: new Error('Cannot use Rapid Training with a non-flux base model.'),
+          title: `Parameter error`,
+          autoClose: false,
+        });
+        // TODO ideally, mark this as errored and don't leave the screen
+        finishedRuns++;
+        if (finishedRuns === runs.length) setAwaitInvalidate(false);
+        return;
+      }
+
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
         (base === 'sdxl'
@@ -472,6 +495,26 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           {status.message ?? 'Training is currently disabled.'}
         </AlertWithIcon>
       )}
+      {isValidDiscount(status.cost) && (
+        <DismissibleAlert
+          id="rapid-training-discount-9-13-24"
+          icon={<IconConfetti />}
+          color="pink"
+          content={
+            <Text>
+              Flux-Dev Rapid Training is currently{' '}
+              {<b>{(1 - status.cost.rapid.discountFactor) * 100}%</b>} off! (Ends on{' '}
+              {new Date(status.cost.rapid.discountEnd).toLocaleDateString('en-us', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+              )
+            </Text>
+          }
+        />
+      )}
       <Accordion
         variant="separated"
         defaultValue={'model-details'}
@@ -516,7 +559,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       <Switch
         label={
           <Group spacing={4}>
-            <InfoPopover size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
               Submit up to {maxRuns} training runs at once.
               <br />
               You can use different base models and/or parameters, all trained on the same dataset.
@@ -672,38 +715,43 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             numImages={thisNumImages}
           />
 
-          <Group mt="lg">
-            <Switch
-              label={
-                <Group spacing={4} noWrap>
-                  <InfoPopover size="xs" iconProps={{ size: 16 }}>
-                    Jump to the front of the training queue and ensure that your training run is
-                    uninterrupted.
-                  </InfoPopover>
-                  <Text>High Priority</Text>
-                </Group>
-              }
-              labelPosition="left"
-              checked={selectedRun.highPriority}
-              onChange={(event) =>
-                updateRun(model.id, selectedRun.id, {
-                  highPriority: event.currentTarget.checked,
-                })
-              }
-            />
-            {currentUser?.isModerator && (
-              <Switch
-                label="Test Mode"
-                labelPosition="left"
-                checked={selectedRun.staging}
-                onChange={(event) =>
-                  updateRun(model.id, selectedRun.id, {
-                    staging: event.currentTarget.checked,
-                  })
-                }
-              />
-            )}
-          </Group>
+          {(!isValidRapid(selectedRun.baseType, selectedRun.params.engine) ||
+            currentUser?.isModerator) && (
+            <Group mt="lg">
+              {!isValidRapid(selectedRun.baseType, selectedRun.params.engine) && (
+                <Switch
+                  label={
+                    <Group spacing={4} noWrap>
+                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+                        Jump to the front of the training queue and ensure that your training run is
+                        uninterrupted.
+                      </InfoPopover>
+                      <Text>High Priority</Text>
+                    </Group>
+                  }
+                  labelPosition="left"
+                  checked={selectedRun.highPriority}
+                  onChange={(event) =>
+                    updateRun(model.id, selectedRun.id, {
+                      highPriority: event.currentTarget.checked,
+                    })
+                  }
+                />
+              )}
+              {currentUser?.isModerator && (
+                <Switch
+                  label="Test Mode"
+                  labelPosition="left"
+                  checked={selectedRun.staging}
+                  onChange={(event) =>
+                    updateRun(model.id, selectedRun.id, {
+                      staging: event.currentTarget.checked,
+                    })
+                  }
+                />
+              )}
+            </Group>
+          )}
           <Paper
             shadow="xs"
             radius="sm"
@@ -717,20 +765,39 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               alignSelf: 'flex-end',
             }}
           >
-            {/* TODO: some tooltip -> link explaining */}
             <Group spacing="sm">
-              <Badge>Est. Wait Time</Badge>
-              {dryRunLoading ? (
+              <Badge>
+                <Group spacing={4} noWrap>
+                  <Text>Est. Wait Time</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                    <Text size="sm">How long before your job is expected to be picked up</Text>
+                  </InfoPopover>
+                </Group>
+              </Badge>
+
+              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                <Text>{dayjs(Date.now()).add(10, 's').fromNow(true)}</Text>
+              ) : dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>
-                  {/*{!!dryRunData ? formatDate(dryRunData, 'MMM D, YYYY hh:mm:ss A') : 'Unknown'}*/}
                   {!!dryRunData ? dayjs(dryRunData).add(10, 's').fromNow(true) : 'Unknown'}
                 </Text>
               )}
               <Divider orientation="vertical" />
-              <Badge>ETA</Badge>
-              {dryRunLoading ? (
+
+              <Badge>
+                <Group spacing={4} noWrap>
+                  <Text>ETA</Text>
+                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                    <Text size="sm">How long in total before your job is done</Text>
+                  </InfoPopover>
+                </Group>
+              </Badge>
+
+              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
+                <Text>{minsToHours(rapidEta)}</Text>
+              ) : dryRunLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>

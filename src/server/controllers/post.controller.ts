@@ -25,7 +25,6 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
-  AddPostImageInput,
   AddPostTagInput,
   GetPostTagsInput,
   PostsQueryInput,
@@ -36,7 +35,6 @@ import {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import {
-  addPostImage,
   addPostTag,
   createPost,
   deletePost,
@@ -395,21 +393,6 @@ export const deletePostHandler = async ({
 };
 
 // #region [post images]
-export const addPostImageHandler = async ({
-  input,
-  ctx,
-}: {
-  input: AddPostImageInput;
-  ctx: DeepNonNullable<Context>;
-}) => {
-  try {
-    return await addPostImage({ ...input, user: ctx.user });
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
 export const updatePostImageHandler = async ({
   input,
 }: {

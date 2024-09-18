@@ -302,15 +302,15 @@ export default function UserTrainingModels() {
                 const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
 
                 const hasFiles = !!thisFile;
-                const hasTrainingParams = !!thisTrainingDetails?.params;
+                const trainingParams = thisTrainingDetails?.params;
+                const hasTrainingParams = !!trainingParams;
 
-                const numEpochs = thisTrainingDetails?.params?.maxTrainEpochs;
+                const numEpochs = trainingParams?.maxTrainEpochs;
                 const epochsDone =
                   thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
                 const baseModelType = thisTrainingDetails?.baseModelType ?? 'sd15';
-                const { targetSteps, resolution } = thisTrainingDetails?.params || {};
 
                 const startDate = isSubmitted
                   ? (estData ?? {})[mv.id]
@@ -337,15 +337,13 @@ export default function UserTrainingModels() {
                   <Text>{startStr ?? 'Unknown'}</Text>
                 );
 
-                const etaMins =
-                  !!targetSteps && !!resolution
-                    ? calcEta({
-                        cost: status.cost,
-                        baseModel: baseModelType,
-                        targetSteps,
-                        resolution,
-                      })
-                    : undefined;
+                const etaMins = hasTrainingParams
+                  ? calcEta({
+                      cost: status.cost,
+                      baseModel: baseModelType,
+                      params: trainingParams,
+                    })
+                  : undefined;
                 // mins wait here might need to only be calced if the last history entry is "Submitted"
                 const eta =
                   !!startDate && !!etaMins
@@ -695,7 +693,9 @@ export default function UserTrainingModels() {
                     <Accordion.Control>Expand</Accordion.Control>
                     <Accordion.Panel>
                       <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                        {JSON.stringify(modalData.params, null, 2)}
+                        {modalData.params.engine === 'rapid'
+                          ? JSON.stringify({ engine: modalData.params.engine }, null, 2)
+                          : JSON.stringify(modalData.params, null, 2)}
                       </pre>
                     </Accordion.Panel>
                   </Accordion.Item>

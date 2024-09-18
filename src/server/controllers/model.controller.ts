@@ -97,7 +97,6 @@ import {
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
 import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
-import { isEarlyAccess } from '~/server/utils/early-access-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -213,7 +212,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         const canDownload =
           model.mode !== ModelModifier.Archived &&
           entityAccessForVersion?.hasAccess &&
-          (!isEarlyAccess ||
+          (!earlyAccessDeadline ||
             (entityAccessForVersion?.permissions ?? 0) >=
               EntityAccessPermission.EarlyAccessDownload);
         const canGenerate =

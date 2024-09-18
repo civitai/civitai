@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { CSSProperties, useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
@@ -70,6 +70,7 @@ export function DumbModelFiltersDropdown({
   filterMode = 'local',
   position = 'bottom-end',
   isFeed,
+  maxPopoverHeight,
   ...buttonProps
 }: Props & {
   filters: Partial<ModelFilterSchema>;
@@ -369,7 +370,7 @@ export function DumbModelFiltersDropdown({
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} p={0} w="100%">
           <ScrollArea.Autosize
-            maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+            maxHeight={maxPopoverHeight ?? 'calc(90vh - var(--mantine-header-height) - 56px)'}
             type="hover"
           >
             {dropdown}
@@ -384,6 +385,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   filterMode?: 'local' | 'query';
   position?: PopoverProps['position'];
   isFeed?: boolean;
+  maxPopoverHeight?: CSSProperties['maxHeight'];
 };
 
 const useStyles = createStyles((theme, _params, getRef) => ({

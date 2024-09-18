@@ -205,6 +205,7 @@ export function GenerationFormContent() {
   ]);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
+    type: 'Generation',
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
