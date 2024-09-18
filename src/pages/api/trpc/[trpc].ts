@@ -1,6 +1,6 @@
 // src/pages/api/trpc/[trpc].ts
 import { createNextApiHandler } from '@trpc/server/adapters/next';
-import { withAxiom } from 'next-axiom';
+import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
 import { logToAxiom } from '~/server/logging/client';

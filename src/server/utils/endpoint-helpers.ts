@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session, SessionUser } from 'next-auth';
-import { withAxiom, Logger } from 'next-axiom';
+import { withAxiom, Logger } from '@civitai/next-axiom';
 import { env } from '~/env/server.mjs';
 import { dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';

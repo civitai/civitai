@@ -1,5 +1,5 @@
 // @ts-check
-import { withAxiom } from "next-axiom";
+import { withAxiom } from "@civitai/next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
 
 /**
