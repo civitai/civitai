@@ -1007,8 +1007,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                             openCollectionSelectModal({
                               username: model.user.username,
                               onSelect: (value) => {
-                                if (collection.id !== value.id)
-                                  setShowcaseCollection(value.id).catch(() => null);
+                                if (collection.id !== value)
+                                  setShowcaseCollection(value).catch(() => null);
                               },
                             });
                         }}

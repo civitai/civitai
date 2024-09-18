@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Group, Sx, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
@@ -33,8 +33,8 @@ type ImageProps = {
   meta?: ImageMetaProps | null;
 };
 
-export function CollectionCard({ data, sx }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+export function CollectionCard({ data }: Props) {
+  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
 
   const getCoverImages = () => {
     if (data.image) return [data.image];
@@ -67,9 +67,6 @@ export function CollectionCard({ data, sx }: Props) {
     <FeedCard
       className={coverImages.length === 0 ? classes.noImage : undefined}
       href={`/collections/${data.id}`}
-      aspectRatio="portrait"
-      // Necessary when inside a UniformGrid
-      sx={sx || { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
     >
       <div
         className={cx({
@@ -127,7 +124,7 @@ function CollectionCardHeader({
   data: HeaderData;
   withinImageGuard?: boolean;
 }) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
 
   return (
     <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
@@ -161,7 +158,7 @@ function CollectionCardHeader({
 }
 
 export function ImageCover({ data, coverImages }: { data: HeaderData; coverImages: ImageProps[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 1 });
+  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
 
@@ -218,7 +215,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
 }
 
 export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 1 });
+  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
 
   return (
     <>
@@ -250,5 +247,4 @@ type Props = {
   } & {
     image?: ImageProps | null;
   };
-  sx?: Sx;
 };
