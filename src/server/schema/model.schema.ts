@@ -340,3 +340,9 @@ export const setModelCollectionShowcaseSchema = z.object({
   id: z.number(),
   collectionId: z.number().nullable(),
 });
+
+export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;
+export const migrateResourceToCollectionSchema = z.object({
+  id: z.coerce.number(),
+  collectionName: z.string().optional(),
+});

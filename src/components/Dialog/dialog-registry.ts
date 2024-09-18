@@ -14,6 +14,9 @@ const ResourceSelectModal = dynamic(
 const CollectionSelectModal = dynamic(
   () => import('~/components/CollectionSelectModal/CollectionSelectModal')
 );
+const MigrateModelToCollection = dynamic(
+  () => import('~/components/Model/Actions/MigrateModelToCollection')
+);
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
@@ -28,4 +31,8 @@ export function openResourceSelectModal(props: ResourceSelectModalProps) {
 
 export function openCollectionSelectModal(props: CollectionSelectModalProps) {
   dialogStore.trigger({ component: CollectionSelectModal, props });
+}
+
+export function openMigrateModelToCollectionModal(props: { modelId: number }) {
+  dialogStore.trigger({ component: MigrateModelToCollection, props });
 }

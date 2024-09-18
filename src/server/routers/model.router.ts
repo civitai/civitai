@@ -50,6 +50,7 @@ import {
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
+  migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
   publishModelSchema,
@@ -66,6 +67,7 @@ import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
   getSimpleModelWithVersions,
+  migrateResourceToCollection,
   rescanModel,
   setAssociatedResources,
   setModelsCategory,
@@ -217,4 +219,8 @@ export const modelRouter = router({
     .input(setModelCollectionShowcaseSchema)
     .use(isOwnerOrModerator)
     .mutation(setModelCollectionShowcaseHandler),
+  migrateToCollection: guardedProcedure
+    .input(migrateResourceToCollectionSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input, ctx }) => migrateResourceToCollection(input)),
 });

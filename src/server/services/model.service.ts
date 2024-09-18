@@ -27,6 +27,7 @@ import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -40,6 +41,7 @@ import {
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
+  collectionsSearchIndex,
   imagesMetricsSearchIndex,
   imagesSearchIndex,
   modelsSearchIndex,
@@ -80,7 +82,10 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -92,6 +97,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import models from '~/pages/api/v1/models';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2244,4 +2250,116 @@ export async function setModelShowcaseCollection({
   await dataForModelsCache.bust(updated.id);
 
   return updated;
+}
+
+export async function migrateResourceToCollection({
+  id: modelId,
+  collectionName,
+}: MigrateResourceToCollectionInput) {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    include: { modelVersions: true, tagsOnModels: true, licenses: true, resourceReviews: true },
+  });
+  if (!model) throw throwNotFoundError('Model not found');
+  if (model.status !== ModelStatus.Published) throw throwBadRequestError('Model must be published');
+  if (model.locked || model.mode || model.tosViolation)
+    throw throwBadRequestError(
+      'Model cannot be locked, archived, taken down, or have a ToS violation'
+    );
+
+  const { id, modelVersions, tagsOnModels, licenses, resourceReviews, ...modelData } = model;
+  const filteredVersions = modelVersions.filter((v) => v.status === ModelStatus.Published);
+  if (filteredVersions.length <= 1)
+    throw throwBadRequestError('Only models with more than one published version can be migrated');
+
+  const { collection, modelIds } = await dbWrite.$transaction(
+    async (tx) => {
+      // Create the collection
+      const collection = await tx.collection.create({
+        data: {
+          name: collectionName ?? model.name,
+          userId: model.userId,
+          type: 'Model',
+          nsfw: model.nsfw || model.nsfwLevel >= nsfwBrowsingLevelsFlag,
+          nsfwLevel: model.nsfwLevel,
+          read: 'Public',
+          write: 'Private',
+          contributors: { create: { userId: model.userId, permissions: ['VIEW', 'ADD'] } },
+        },
+      });
+
+      const remainingVersions = filteredVersions.slice(1);
+
+      // create a model for each remaining version
+      const modelIds = [];
+      for (const version of remainingVersions) {
+        const newModel = await tx.model.create({
+          data: {
+            ...modelData,
+            name: `${modelData.name} - ${version.name}`,
+            meta: { ...((modelData.meta as ModelMeta) ?? {}), showcaseCollectionId: collection.id },
+            gallerySettings:
+              modelData.gallerySettings === null ? Prisma.JsonNull : modelData.gallerySettings,
+            userId: modelData.userId,
+            nsfwLevel: version.nsfwLevel,
+            lastVersionAt: version.publishedAt,
+            modelVersions: { connect: { id: version.id } },
+            licenses: { create: licenses },
+          },
+          select: { id: true },
+        });
+
+        modelIds.push(newModel.id);
+
+        const versionReviewIds = resourceReviews
+          .filter((r) => r.modelVersionId === version.id)
+          .map((r) => r.id);
+        if (versionReviewIds.length > 0) {
+          await tx.resourceReview.updateMany({
+            where: { id: { in: versionReviewIds } },
+            data: { modelId: newModel.id },
+          });
+        }
+      }
+
+      for (const modelId of modelIds) {
+        // Add the tags to the models
+        await tx.tagsOnModels.createMany({
+          data: tagsOnModels.map((tag) => ({
+            tagId: tag.tagId,
+            modelId,
+          })),
+        });
+      }
+
+      // Add the models to the collection as collection items
+      modelIds.push(model.id); // Include the original model
+      await tx.collectionItem.createMany({
+        data: modelIds.map((id) => ({
+          collectionId: collection.id,
+          modelId: id,
+        })),
+      });
+
+      return { collection, modelIds };
+    },
+    { timeout: 60000, maxWait: 10000 }
+  );
+
+  // Set the showcase collection for the original model
+  await setModelShowcaseCollection({
+    collectionId: collection.id,
+    id: modelId,
+    userId: model.userId,
+  });
+
+  // Update search indexes
+  await collectionsSearchIndex.queueUpdate([
+    { id: collection.id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+  await modelsSearchIndex.queueUpdate(
+    modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
+  return { ok: true };
 }
