@@ -13,7 +13,7 @@ export default PublicEndpoint(
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
     const match = getMatchingPathname(url.pathname);
-    if (!match) return res.status(200).end();
+    if (!match || !isProd) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
     tracker.pageView({
