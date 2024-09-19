@@ -218,6 +218,11 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text color="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {user?.bannedAt && (
+          <Text color="red" size="sm">
+            Banned
+          </Text>
+        )}
       </Stack>
 
       {profile.location && !muted && (
