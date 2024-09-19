@@ -31,3 +31,12 @@ export const subscriptionProductMetadataSchema = z
     includeWithTransaction: booleanString().optional(),
   })
   .passthrough();
+
+export type SubscriptionMetadata = z.infer<typeof subscriptionMetadata>;
+
+export const subscriptionMetadata = z
+  .object({
+    renewalEmailSent: z.boolean().optional(),
+    renewalBonus: z.number().optional(),
+  })
+  .passthrough();

@@ -8,13 +8,8 @@ import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type ImageGuardConnect = {
   entityType:

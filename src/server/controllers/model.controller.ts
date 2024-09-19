@@ -20,7 +20,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache, resourceDataCache } from '~/server/redis/caches';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -116,6 +116,7 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { bustMvCache } from '~/server/services/model-version.service';
 import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
@@ -1581,7 +1582,7 @@ export async function toggleCheckpointCoverageHandler({
 }) {
   try {
     const affectedVersionIds = await toggleCheckpointCoverage(input);
-    if (affectedVersionIds) await resourceDataCache.bust(affectedVersionIds);
+    if (affectedVersionIds) await bustMvCache(affectedVersionIds);
 
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },

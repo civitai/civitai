@@ -15,9 +15,13 @@ import { trpc } from '~/utils/trpc';
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
 export default function Test() {
+  function makeRequest() {
+    fetch('/api/page-view', { method: 'POST' });
+  }
+
   return (
     <IsClient>
-      <></>
+      <Button onClick={makeRequest}>make request</Button>
     </IsClient>
   );
 }

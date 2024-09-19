@@ -59,6 +59,7 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
+import { TrackPageView } from '~/components/TrackView/TrackPageView';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -163,6 +164,7 @@ function MyApp(props: CustomAppProps) {
                                             <GenerationProvider>
                                               <IntersectionObserverProvider>
                                                 <BaseLayout>
+                                                  <TrackPageView />
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}

@@ -54,7 +54,7 @@ import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
@@ -65,25 +65,12 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import clsx from 'clsx';
 import { isDefined } from '~/utils/type-guards';
 
-type ResourceSelectModalProps = {
+export type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
 };
-
-function getTypesAndBaseModels(resources: { type: string; baseModels?: string[] }[]) {
-  return resources.reduce<[string[], string[]]>(
-    (acc, resource) => {
-      const [types, baseModels] = acc;
-      return [
-        [...new Set([...types, resource.type])],
-        [...new Set([...baseModels, ...(resource?.baseModels ?? [])])],
-      ];
-    },
-    [[], []]
-  );
-}
 
 export default function ResourceSelectModal({
   title,
