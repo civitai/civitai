@@ -362,14 +362,16 @@ export const upsertSubscription = async (
   const userSubscription = await dbRead.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true, status: true, metadata: true },
+    select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
   });
 
   const userHasSubscription = !!userSubscription;
   const isSameSubscriptionItem = userSubscription?.id === subscriptionNotification.id;
 
   const startingNewSubscription =
-    isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
+    (isCreatingSubscription || userSubscription?.product?.provider !== PaymentProvider.Paddle) &&
+    userHasSubscription &&
+    !isSameSubscriptionItem;
 
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
