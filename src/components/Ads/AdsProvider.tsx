@@ -3,10 +3,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import Script from 'next/script';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-// import { isProd } from '~/env/other';
-import { ImpressionTracker } from '~/components/Ads/ImpressionTracker';
+import { isProd } from '~/env/other';
 import { Router } from 'next/router';
-const isProd = true;
+import { create } from 'zustand';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
+// const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
@@ -145,12 +147,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 `,
                 }}
               />
-              {/* {currentUser?.email && <AdsIdentity />} */}
-              {/* <TcfapiSuccess
-                onSuccess={(success) => {
-                  if (success !== undefined) setAdsBlocked(!success);
-                }}
-              /> */}
               <GoogletagManager />
               <ImpressionTracker />
             </>
@@ -161,37 +157,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     </AdsContext.Provider>
   );
 }
-
-// function AdsIdentity() {
-//   const currentUser = useCurrentUser();
-//   useEffect(() => {
-//     const pgHB = window.pgHB;
-//     const email = currentUser?.email;
-//     if (pgHB && email) {
-//       pgHB.que.push(function () {
-//         pgHB.setUserAudienceData({ email });
-//       });
-//     }
-//   }, [currentUser?.email]);
-
-//   return null;
-// }
-
-// function TcfapiSuccess({ onSuccess }: { onSuccess: (success: boolean) => void }) {
-//   useEffect(() => {
-//     const callback = (data: any, success: boolean) => {
-//       onSuccess(success);
-//     };
-//     if (!window.__tcfapi) onSuccess(false);
-
-//     window.__tcfapi('addEventListener', 2, callback);
-//     return () => {
-//       window.__tcfapi('removeEventListener', 2, callback);
-//     };
-//   }, []);
-
-//   return null;
-// }
 
 function GoogletagManager() {
   useEffect(() => {
@@ -237,3 +202,50 @@ declare global {
 //       callback(true);
 //     });
 // };
+
+export const useAdUnitLoadedStore = create<Record<string, boolean>>(() => ({}));
+
+function ImpressionTracker() {
+  const currentUser = useCurrentUser();
+  const { adsEnabled, adsBlocked } = useAdsContext();
+  const { worker } = useSignalContext();
+  const { fingerprint } = useDeviceFingerprint();
+
+  useEffect(() => {
+    const listener = ((e: CustomEvent) => {
+      if (!adsEnabled || adsBlocked) return;
+
+      const slot = e.detail;
+      const elemId = slot.getSlotElementId();
+      const outOfPage = slot.getOutOfPage();
+      const elem = document.getElementById(elemId);
+      const exists = !!elem;
+
+      useAdUnitLoadedStore.setState({ [elemId]: true });
+
+      if (worker && exists && currentUser && !outOfPage) {
+        const now = Date.now();
+        const impressions = impressionsDictionary[elemId] ?? [];
+        const lastImpression = impressions[impressions.length - 1];
+        if (!lastImpression || now - lastImpression >= 10 * 1000) {
+          impressionsDictionary[elemId] = [...impressions, now];
+
+          worker.send('recordAdImpression', {
+            userId: currentUser.id,
+            fingerprint,
+            adId: elemId.split('-')[0],
+          });
+        }
+      }
+    }) as EventListener;
+
+    window.addEventListener('civitai-ad-impression', listener);
+    return () => {
+      window.removeEventListener('civitai-ad-impression', listener);
+    };
+  }, [adsEnabled, fingerprint, worker, adsBlocked, currentUser]);
+
+  return null;
+}
+
+const impressionsDictionary: Record<string, number[]> = {};
