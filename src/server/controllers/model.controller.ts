@@ -105,7 +105,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
@@ -412,7 +412,7 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor ? publicBrowsingLevelsFlag : gallerySettings?.level,
+        level: input.minor ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
