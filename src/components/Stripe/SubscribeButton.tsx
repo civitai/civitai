@@ -77,6 +77,7 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
     updateSubscription: paddleUpdateSubscription,
     updatingSubscription: isLoading,
     getOrCreateCustomer,
+    refreshSubscription,
   } = useMutatePaddle();
 
   const handleClick = async () => {
@@ -107,10 +108,12 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
       }
 
       if (hasPaddleSubscription) {
+        await refreshSubscription();
+
         showErrorNotification({
           title: 'You already have an active subscription',
           error: new Error(
-            'We detected an existing subscription in our payment provider. Please refresh your session or contact support.'
+            'We detected an existing subscription in our payment provider. We have refreshed your subscription status. Please reload the page and try again if you wish to update your subscription. If you continue to see this message, please contact support.'
           ),
         });
 
