@@ -47,13 +47,13 @@ import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
   AddOrRemoveImageToolsOutput,
-  CreateImageSchema,
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
   imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
+  ImageSchema,
   ImageUploadProps,
   ReportCsamImagesInput,
   UpdateImageNsfwLevelOutput,
@@ -121,6 +121,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { upsertImageFlag } from '~/server/services/image-flag.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1607,10 +1608,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
   }
 
-  const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
-  if (lastExistedAt) {
-    filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
-  }
+  // nb: commenting this out while we try checking existence in the db
+  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
+  // if (lastExistedAt) {
+  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
+  // }
 
   // NSFW Level
   if (!browsingLevel) browsingLevel = NsfwLevel.PG;
@@ -1779,13 +1781,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
 
     const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-    const filtered = results.hits.filter((hit) => {
+    const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
+
+    const filteredHitIds = filteredHits.map((fh) => fh.id);
+    // we could pull in nsfwLevel/needsReview here too and overwrite the search index attributes (move above the hits filter)
+    const dbIdResp = await dbRead.image.findMany({
+      where: { id: { in: filteredHitIds } },
+      select: { id: true },
+    });
+    const dbIds = dbIdResp.map((dbi) => dbi.id);
+    const filtered = filteredHits.filter((fh) => dbIds.includes(fh.id));
 
     // TODO maybe grab more if the number is now too low?
 
@@ -2818,35 +2829,22 @@ export const getImagesByEntity = async ({
   }));
 };
 
-function parseImageCreateData({
-  entityType,
-  entityId,
+export async function createImage({ toolIds, ...image }: ImageSchema & { userId: number }) {
+  const result = await dbWrite.image.create({
+    data: {
+      ...image,
+      meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+      generationProcess: image.meta
+        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
+        : null,
+      tools: !!toolIds?.length
+        ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
+        : undefined,
+    },
+    select: { id: true },
+  });
 
-  ...image
-}: CreateImageSchema & { userId: number }) {
-  const data = {
-    ...image,
-    meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-    generationProcess: image.meta
-      ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-      : null,
-  };
-  switch (entityType) {
-    case 'Post':
-      return { postId: entityId, ...data };
-    default:
-      return data;
-  }
-}
-
-export async function createImage({
-  entityType,
-  entityId,
-  ...image
-}: CreateImageSchema & { userId: number }) {
-  const data = parseImageCreateData({ entityType, entityId, ...image });
-  const result = await dbWrite.image.create({ data, select: { id: true } });
-
+  await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
   await ingestImage({
     image: {
       id: result.id,
@@ -2854,26 +2852,11 @@ export async function createImage({
       type: image.type,
       height: image.height,
       width: image.width,
+      prompt: image?.meta?.prompt,
     },
   });
 
   return result;
-}
-
-// TODO - remove this after all article cover images are ingested
-export async function createArticleCoverImage({
-  entityType,
-  entityId,
-  ...image
-}: CreateImageSchema & { userId: number }) {
-  const data = parseImageCreateData({ entityType, entityId, ...image });
-  const result = await dbWrite.image.create({ data, select: { id: true } });
-
-  return await dbWrite.article.update({
-    where: { id: entityId },
-    data: { coverId: result.id },
-    select: { id: true },
-  });
 }
 
 export const createEntityImages = async ({
@@ -3648,6 +3631,7 @@ export async function updateImageNsfwLevel({
   if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
+    await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },

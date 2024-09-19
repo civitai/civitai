@@ -50,7 +50,6 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
-import { cancelSubscription } from '~/server/services/stripe.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
 import {
@@ -76,6 +75,8 @@ import {
 import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
+import { logToAxiom } from '~/server/logging/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -569,7 +570,7 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
     }),
     dbWrite.user.update({
       where: { id: user.id },
-      data: { deletedAt: new Date(), email: null, username: null },
+      data: { deletedAt: new Date(), email: null, username: null, paddleCustomerId: null },
     }),
   ]);
 
@@ -577,7 +578,9 @@ export const deleteUser = async ({ id, username, removeModels }: DeleteUserInput
   await deleteBasicDataForUser(id);
 
   // Cancel their subscription
-  await cancelSubscription({ userId: user.id });
+  await cancelSubscriptionPlan({ userId: user.id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
   await invalidateSession(id);
 
   return result;
@@ -608,10 +611,13 @@ export async function softDeleteUser({ id }: { id: number }) {
       needsReview: 'blocked',
     },
   });
-  await cancelSubscription({ userId: id });
   await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
   await invalidateSession(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
 }
 
 export const updateAccountScope = async ({
@@ -1002,7 +1008,9 @@ export const toggleBan = async ({ id }: { id: number }) => {
   });
 
   // Cancel their subscription
-  await cancelSubscription({ userId: id });
+  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
+    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+  );
 
   return updatedUser;
 };

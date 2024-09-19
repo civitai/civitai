@@ -3,7 +3,7 @@ import trieMemoize from 'trie-memoize';
 import { Button, createStyles, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
-import { createAdFeed } from '~/components/Ads/ads.utils';
+import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Text } from '@mantine/core';
@@ -42,6 +42,7 @@ export function MasonryGrid<TData>({
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const createAdFeed = useCreateAdFeed();
   const items = useMemo(
     () =>
       createAdFeed({

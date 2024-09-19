@@ -20,14 +20,17 @@ export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTyp
   Adafactor: {
     kohya: optimizerArgMap.Adafactor,
     'x-flux': '(empty)',
+    rapid: '(empty)',
   },
   AdamW8Bit: {
     kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
     'x-flux': 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
+    rapid: '(empty)',
   },
   Prodigy: {
     kohya: optimizerArgMap.Prodigy,
     'x-flux': '(empty)',
+    rapid: '(empty)',
   },
 };
 
@@ -122,7 +125,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { min: 1 } },
       pony: { all: { min: 1 } },
-      flux_dev: { kohya: { default: 5 }, 'x-flux': { default: 5, max: 5, min: 2 } },
+      flux_dev: {
+        kohya: { default: 5 },
+        'x-flux': { default: 5, max: 5, min: 2 },
+        rapid: { default: 1, min: 1, max: 1 },
+      },
     },
   },
   {

@@ -6,7 +6,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
-const queryBatch = 2e5;
+const queryBatch = 1e5;
 
 // TODO use dataProcessor
 
@@ -47,7 +47,7 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
         await updateDocs({
           indexName: METRICS_IMAGES_SEARCH_INDEX,
           documents: data,
-          // batchSize: queryBatch,
+          batchSize: queryBatch,
           client,
         });
       }

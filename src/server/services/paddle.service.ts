@@ -326,6 +326,7 @@ export const upsertSubscription = async (
   const subscriptionProducts = await getPlans({
     paymentProvider: PaymentProvider.Paddle,
     includeFree: true, // User might be activating a free membership.
+    includeInactive: true,
   });
 
   const mainSubscriptionItem = subscriptionNotification.items.find((i) => {

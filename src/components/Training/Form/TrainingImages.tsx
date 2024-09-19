@@ -168,7 +168,7 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
   const firstLabel = imageList.find((i) => i.label.length > 0)?.label;
   const estimatedType =
     (firstLabel?.length ?? 0) > 80 && // long string
-    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.1 // not many commas
+    (firstLabel?.split(',')?.length ?? 0) < (firstLabel?.length ?? 0) * 0.05 // not many commas
       ? 'caption'
       : 'tag';
 
@@ -981,9 +981,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 <Group spacing={4}>
                   <IconTags size={16} />
                   <Text>Auto Label</Text>
-                  <Badge color="green" variant="filled" size="sm" ml={4}>
-                    NEW
-                  </Badge>
+                  {Date.now() < new Date('2024-09-27').getTime() && (
+                    <Badge color="green" variant="filled" size="sm" ml={4}>
+                      NEW
+                    </Badge>
+                  )}
                 </Group>
               </Button>
             </Tooltip>

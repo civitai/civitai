@@ -18,6 +18,7 @@ import { ProhibitedSources } from '~/server/schema/user.schema';
 import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '../utils/get-server-auth-session';
+import { Session } from 'next-auth';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -211,17 +212,15 @@ export class Tracker {
     userAgent: 'unknown',
     fingerprint: 'unknown',
   };
-  private session: Promise<number> | undefined;
+  private session: Promise<Session | null> | undefined;
+  private req: NextApiRequest | undefined;
+  private res: NextApiResponse | undefined;
 
-  constructor(req?: NextApiRequest, res?: NextApiResponse) {
-    if (req && res) {
-      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
-      this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
-      this.actor.fingerprint = (req.headers['x-fingerprint'] as string) ?? this.actor.fingerprint;
-
-      this.session = getServerAuthSession({ req, res }).then((session) => {
+  private async resolveSession() {
+    if (!this.session && this.req && this.res) {
+      this.session = getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
         this.actor.userId = session?.user?.id ?? this.actor.userId;
-        return this.actor.userId;
+        return session;
       });
       this.session.catch((e) => {
         const error = e as Error;
@@ -237,26 +236,33 @@ export class Tracker {
         ).catch();
       });
     }
+    return this.session ?? null;
   }
 
-  private async track(table: string, custom: object, skipActorMeta = false): Promise<void> {
+  constructor(req?: NextApiRequest, res?: NextApiResponse) {
+    if (req && res) {
+      this.req = req;
+      this.res = res;
+      this.actor.ip = requestIp.getClientIp(req) ?? this.actor.ip;
+      this.actor.userAgent = req.headers['user-agent'] ?? this.actor.userAgent;
+      this.actor.fingerprint = (req.headers['x-fingerprint'] as string) ?? this.actor.fingerprint;
+    }
+  }
+
+  private async send(
+    table: string,
+    data: object | ((args: { session: Session | null; actor: TrackRequest }) => object)
+  ) {
     if (!env.CLICKHOUSE_TRACKER_URL) return;
+    const sessionData = await this.resolveSession();
 
-    if (this.session) await this.session;
-
-    const actorMeta = skipActorMeta ? { userId: this.actor.userId } : { ...this.actor };
-
-    const data = {
-      ...actorMeta,
-      ...custom,
-    };
-
-    // if (table === 'entityMetricEvents') console.log(data);
+    const body =
+      typeof data === 'function' ? data({ session: sessionData, actor: this.actor }) : data;
 
     // Perform the clickhouse insert in the background
     fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(body),
       headers: {
         'Content-Type': 'application/json',
       },
@@ -276,8 +282,42 @@ export class Tracker {
     });
   }
 
+  private async track(
+    table: string,
+    custom: object | ((session: Session | null) => object),
+    options?: { skipActorMeta: boolean }
+  ): Promise<void> {
+    const { skipActorMeta = false } = options ?? {};
+
+    await this.send(table, ({ session, actor }) => {
+      const actorMeta = skipActorMeta ? { userId: actor.userId } : { ...actor };
+      const customData = typeof custom === 'function' ? custom(session) : custom;
+
+      return {
+        ...actorMeta,
+        ...customData,
+      };
+    });
+  }
+
   public view(values: { type: ViewType; entityType: EntityType; entityId: number }) {
     return this.track('views', values);
+  }
+
+  public pageView(values: {
+    pageId: string;
+    path: string;
+    host: string;
+    ads: boolean;
+    country: string;
+    duration: number;
+  }) {
+    this.send('pageViews', ({ session, actor }) => ({
+      userId: actor.userId,
+      memberType: session?.user?.tier ?? 'undefined',
+      ip: actor.ip,
+      ...values,
+    }));
   }
 
   public action(values: { type: ActionType; details?: any }) {
@@ -466,6 +506,10 @@ export class Tracker {
     metricType: EntityMetric_MetricType_Type;
     metricValue: number;
   }) {
-    return this.track('entityMetricEvents', { ...values, createdAt: new Date() }, true);
+    return this.track(
+      'entityMetricEvents',
+      { ...values, createdAt: new Date() },
+      { skipActorMeta: true }
+    );
   }
 }

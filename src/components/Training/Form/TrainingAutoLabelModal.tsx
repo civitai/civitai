@@ -142,7 +142,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Existing Tags</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle tags that have already been provided
             </InfoPopover>
           </Group>
@@ -173,7 +173,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Max Tags</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Maximum number of tags to add for each image
             </InfoPopover>
           </Group>
@@ -189,18 +189,18 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Min Threshold</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Minimum confidence threshold acceptable for each tag
             </InfoPopover>
           </Group>
         }
-        value={autoTagging.maxTags}
-        min={autoLabelLimits.tag.tags.min}
-        max={autoLabelLimits.tag.tags.max}
-        // precision
+        value={autoTagging.threshold}
+        min={autoLabelLimits.tag.threshold.min}
+        max={autoLabelLimits.tag.threshold.max}
+        precision={1}
         step={0.1}
         onChange={(value) => {
-          setAutoTagging(modelId, { maxTags: value });
+          setAutoTagging(modelId, { threshold: value });
         }}
       />
 
@@ -212,7 +212,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Blacklist</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to exclude from results
             </InfoPopover>
           </Group>
@@ -227,7 +227,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Prepend Tags</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to prepend to all results
             </InfoPopover>
           </Group>
@@ -242,7 +242,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Append Tags</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Comma-separated list of tags to append to all results
             </InfoPopover>
           </Group>
@@ -315,7 +315,7 @@ const AutoCaptionSection = ({
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Existing Captions</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               How to handle captions that have already been provided
             </InfoPopover>
           </Group>
@@ -347,7 +347,7 @@ const AutoCaptionSection = ({
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Temperature</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Higher temperatures encourage diverse and creative responses. Lower temperatures
               produce more predictable descriptions.
             </InfoPopover>
@@ -367,7 +367,7 @@ const AutoCaptionSection = ({
         label={
           <Group spacing={4} noWrap>
             <Input.Label>Max New Tokens</Input.Label>
-            <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }}>
+            <InfoPopover size="xs" iconProps={{ size: 16 }}>
               Gives guidance for how long descriptions will be. Tokens are approximately 3/4 a word
               on average. This may not always be respected, so consider this a guideline.
             </InfoPopover>

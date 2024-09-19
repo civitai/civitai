@@ -111,7 +111,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let articleIds: number[] = [];
   let bountyIds: number[] = [];
   let bountyEntryIds: number[] = [];
-  let collectionIds: number[] = [];
+  const collectionIds: number[] = [];
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
 

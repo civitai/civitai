@@ -68,7 +68,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -147,7 +146,9 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
                 <Group spacing="xs">
-                  <ModelFiltersDropdown />
+                  <ModelFiltersDropdown
+                    maxPopoverHeight={'calc(75vh - var(--mantine-header-height))'}
+                  />
                 </Group>
               </Group>
               <CategoryTags />
@@ -474,7 +475,6 @@ export function Collection({
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
-  const currentUser = useCurrentUser();
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);

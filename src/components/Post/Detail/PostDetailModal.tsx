@@ -14,9 +14,7 @@ export default function PostDetailModal(props: { postId: number }) {
       fullScreen
       padding={0}
     >
-      <Box pt="md" pb="xl">
-        <PostDetail {...props} />
-      </Box>
+      <PostDetail {...props} />
     </PageModal>
   );
 }

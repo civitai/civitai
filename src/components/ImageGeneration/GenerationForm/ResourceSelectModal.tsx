@@ -73,7 +73,6 @@ import {
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions } from './resource-select.types';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
