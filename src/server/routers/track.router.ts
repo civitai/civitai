@@ -1,8 +1,8 @@
 import {
-  addViewSchema,
   trackActionSchema,
   trackSearchSchema,
   trackShareSchema,
+  addViewSchema,
 } from '~/server/schema/track.schema';
 import { publicProcedure, router } from '~/server/trpc';
 

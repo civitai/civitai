@@ -97,7 +97,9 @@ export default function Home() {
                   {homeBlock.type === HomeBlockType.Event && (
                     <EventHomeBlock metadata={homeBlock.metadata} />
                   )}
-                  {showAds && <AdUnit className="justify-center p-3" keys={['Leaderboard_A']} />}
+                  {showAds && (
+                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard_C']} />
+                  )}
                 </React.Fragment>
               );
               // switch (homeBlock.type) {
