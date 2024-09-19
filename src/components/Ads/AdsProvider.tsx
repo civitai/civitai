@@ -8,6 +8,7 @@ import { Router } from 'next/router';
 import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
+import { devtools } from 'zustand/middleware';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -203,7 +204,9 @@ declare global {
 //     });
 // };
 
-export const useAdUnitLoadedStore = create<Record<string, boolean>>(() => ({}));
+export const useAdUnitLoadedStore = create<Record<string, boolean>>()(
+  devtools(() => ({}), { name: 'adunits-loaded' })
+);
 
 function ImpressionTracker() {
   const currentUser = useCurrentUser();
