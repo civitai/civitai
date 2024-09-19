@@ -128,9 +128,14 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
           )}
         </ImageGuard2>
         <div className="flex flex-auto flex-col gap-2">
-          <Text size="sm" weight={500} lineClamp={1}>
-            {name}
-          </Text>
+          <div>
+            <Text size="sm" weight={500} lineClamp={1}>
+              {name}
+            </Text>
+            <Text size="xs" color="dimmed" weight={500} lineClamp={1}>
+              {version.name}
+            </Text>
+          </div>
           {rank && (
             <Group align="center" position="apart" spacing={4}>
               <ModelTypeBadge
@@ -138,27 +143,25 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
                 type={type}
                 baseModel={version.baseModel}
               />
-              {(!!rank.downloadCount || !!rank.collectedCount || !!rank.tippedAmountCount) && (
-                <Badge
-                  variant="light"
-                  color="gray"
-                  radius="xl"
-                  classNames={{ inner: 'flex gap-2 flex-nowrap' }}
-                >
-                  <Group spacing={2}>
-                    <IconDownload size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(rank.downloadCount)}</Text>
-                  </Group>
-                  <Group spacing={2}>
-                    <IconBookmark size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(rank.collectedCount)}</Text>
-                  </Group>
-                  <Group spacing={2}>
-                    <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                    <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
-                  </Group>
-                </Badge>
-              )}
+              <Badge
+                variant="light"
+                color="gray"
+                radius="xl"
+                classNames={{ inner: 'flex gap-2 flex-nowrap' }}
+              >
+                <Group spacing={2}>
+                  <IconDownload size={14} strokeWidth={2.5} />
+                  <Text size="xs">{abbreviateNumber(rank?.downloadCount ?? 0)}</Text>
+                </Group>
+                <Group spacing={2}>
+                  <IconBookmark size={14} strokeWidth={2.5} />
+                  <Text size="xs">{abbreviateNumber(rank?.collectedCount ?? 0)}</Text>
+                </Group>
+                <Group spacing={2}>
+                  <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                  <Text size="xs">{abbreviateNumber(rank?.commentCount ?? 0)}</Text>
+                </Group>
+              </Badge>
             </Group>
           )}
         </div>

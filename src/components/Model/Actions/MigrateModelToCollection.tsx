@@ -68,13 +68,16 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
             Improve the discoverability of your resources by separating each version into its own
             model and store them in a collection.
           </Text>
-          <List size="xs">
+          <List size="xs" pr={8}>
             <List.Item>This will create a new collection with all versions of the model.</List.Item>
+            <List.Item>
+              The newly created models will include the original model name and the version name.
+            </List.Item>
             <List.Item>The collection will be owned by you, the creator of the model.</List.Item>
             <List.Item>
               The collection will be named after the model if no name is provided.
             </List.Item>
-            <List.Item>The collection will have the same NSFW status.</List.Item>
+            <List.Item>The collection will have the same mature content rating.</List.Item>
             <List.Item>The collection will be public.</List.Item>
           </List>
           <AlertWithIcon icon={<IconAlertCircle />} color="yellow" iconColor="yellow">

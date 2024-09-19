@@ -180,7 +180,7 @@ export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => 
       sort: ModelSort.Newest,
       period: MetricTimeframe.AllTime,
       periodMode: 'published',
-      limit: 5,
+      limit: 10,
     },
     { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
   );

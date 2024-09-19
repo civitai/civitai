@@ -98,6 +98,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
+import { modelMetrics } from '~/server/metrics';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2342,6 +2343,12 @@ export async function migrateResourceToCollection({
         })),
       });
 
+      // update the original modal name to include the version
+      await tx.model.update({
+        where: { id: model.id },
+        data: { name: `${model.name} - ${filteredVersions[0].name}` },
+      });
+
       return { collection, modelIds };
     },
     { timeout: 60000, maxWait: 10000 }
@@ -2353,6 +2360,12 @@ export async function migrateResourceToCollection({
     id: modelId,
     userId: model.userId,
   });
+
+  modelMetrics
+    .queueUpdate(modelIds)
+    .catch((error) =>
+      logToAxiom({ name: 'model-metrics', type: 'error', message: error.message, modelIds })
+    );
 
   // Update search indexes
   await collectionsSearchIndex.queueUpdate([
