@@ -12,7 +12,7 @@ export default PublicEndpoint(
     const { ads, duration } = JSON.parse(req.body);
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
-    const match = getMatchingPathname(url.pathname) ?? 'undefined';
+    const match = getMatchingPathname(url.pathname);
     if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
