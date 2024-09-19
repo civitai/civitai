@@ -12,6 +12,7 @@ import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvid
 export function TrackPageView() {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
+  const pathname = browserRouter.asPath.split('?')[0];
 
   useEffect(() => {
     useAdUnitLoadedStore.setState({});
@@ -35,7 +36,7 @@ export function TrackPageView() {
       window.removeEventListener('beforeunload', trackPageView);
     };
     //
-  }, [router.pathname, browserRouter.asPath]);
+  }, [router.pathname, pathname]);
 
   return null;
 }
