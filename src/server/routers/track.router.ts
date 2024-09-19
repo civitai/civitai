@@ -7,9 +7,7 @@ import {
 import { publicProcedure, router } from '~/server/trpc';
 
 export const trackRouter = router({
-  addView: publicProcedure
-    .input(addViewSchema.merge(addViewSchema))
-    .mutation(({ input, ctx }) => ctx.track.view(input)),
+  addView: publicProcedure.input(addViewSchema).mutation(({ input, ctx }) => ctx.track.view(input)),
   trackShare: publicProcedure
     .input(trackShareSchema)
     .mutation(({ input, ctx }) => ctx.track.share(input)),
