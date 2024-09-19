@@ -40,6 +40,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { playfab } from '~/server/playfab/client';
 import {
+  SubscriptionMetadata,
   SubscriptionProductMetadata,
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
@@ -361,7 +362,7 @@ export const upsertSubscription = async (
   const userSubscription = await dbRead.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true, status: true },
+    select: { id: true, status: true, metadata: true },
   });
 
   const userHasSubscription = !!userSubscription;
@@ -392,6 +393,20 @@ export const upsertSubscription = async (
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
+    const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
+    if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
+      // This is a migration that we reached out to:
+      await withRetries(async () =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          type: TransactionType.Purchase,
+          amount: subscriptionMeta.renewalBonus as number,
+          description: 'Thank you for your continued support! Here is a bonus for you.',
+          externalTransactionId: `renewalBonus:${user.id}`,
+        })
+      );
+    }
   } else if (userHasSubscription && isCreatingSubscription) {
     log('upsertSubscription :: Subscription already up to date');
     return;

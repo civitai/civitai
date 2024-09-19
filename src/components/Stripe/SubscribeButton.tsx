@@ -13,7 +13,7 @@ import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { PaymentProvider } from '@prisma/client';
 import { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { useMutatePaddle } from '~/components/Paddle/util';
+import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
@@ -70,11 +70,14 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   const mutateCount = useIsMutating();
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const { paddle, emitter } = usePaddle();
+  const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
+    useHasPaddleSubscription();
 
   const {
     updateSubscription: paddleUpdateSubscription,
     updatingSubscription: isLoading,
     getOrCreateCustomer,
+    refreshSubscription,
   } = useMutatePaddle();
 
   const handleClick = async () => {
@@ -102,6 +105,19 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
       if (!currentUser?.paddleCustomerId) {
         // If this ever happens, first, create the customer id:
         customerId = await getOrCreateCustomer();
+      }
+
+      if (hasPaddleSubscription) {
+        await refreshSubscription();
+
+        showErrorNotification({
+          title: 'You already have an active subscription',
+          error: new Error(
+            'We detected an existing subscription in our payment provider. We have refreshed your subscription status. Please reload the page and try again if you wish to update your subscription. If you continue to see this message, please contact support.'
+          ),
+        });
+
+        return;
       }
 
       paddle?.Checkout.open({
@@ -150,12 +166,20 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
         ? children({
             onClick: handleClick,
             loading: isLoading,
-            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading || disabled,
+            disabled:
+              (!isLoading && mutateCount > 0) ||
+              subscriptionLoading ||
+              disabled ||
+              loadingPaddleSubscriptionStatus,
           })
         : cloneElement(children, {
             onClick: handleClick,
             loading: isLoading,
-            disabled: (!isLoading && mutateCount > 0) || subscriptionLoading || disabled,
+            disabled:
+              (!isLoading && mutateCount > 0) ||
+              subscriptionLoading ||
+              disabled ||
+              loadingPaddleSubscriptionStatus,
           })}
     </LoginPopover>
   );

@@ -38,6 +38,7 @@ import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-
 import { processImportsJob } from '~/server/jobs/process-imports';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
+import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subscriptions-requiring-renewal';
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
@@ -112,6 +113,7 @@ export const jobs: Job[] = [
   fullImageExistence,
   rewardsAdImpressions,
   collectionGameProcessing,
+  processSubscriptionsRequiringRenewal,
 ];
 
 const log = createLogger('jobs', 'green');

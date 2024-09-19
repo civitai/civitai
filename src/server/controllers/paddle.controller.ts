@@ -20,7 +20,11 @@ import {
 } from '~/server/schema/paddle.schema';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { verifyCaptchaToken } from '~/server/recaptcha/client';
-import { getPaddleSubscription, getTransactionById } from '~/server/paddle/client';
+import {
+  getPaddleCustomerSubscriptions,
+  getPaddleSubscription,
+  getTransactionById,
+} from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 import { PaymentProvider } from '@prisma/client';
@@ -184,6 +188,21 @@ export const getOrCreateCustomerHandler = async ({ ctx }: { ctx: DeepNonNullable
 export const refreshSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     return await refreshSubscription({ userId: ctx.user.id });
+  } catch (e) {
+    throw getTRPCErrorFromUnknown(e);
+  }
+};
+
+export const hasPaddleSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
+  try {
+    const user = { id: ctx.user.id, email: ctx.user.email as string };
+    const customerId = await createCustomer(user);
+
+    const subscriptions = await getPaddleCustomerSubscriptions({
+      customerId,
+    });
+
+    return subscriptions.length > 0;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
