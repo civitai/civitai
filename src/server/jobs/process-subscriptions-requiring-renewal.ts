@@ -4,6 +4,8 @@ import { PaymentProvider, Prisma } from '@prisma/client';
 import { subscriptionRenewalReminderEmail } from '~/server/email/templates/subscriptionRenewalReminder.email';
 import { chunk } from 'lodash';
 
+const pastDueCancelledCutOf = '2024-09-10 00:00:00';
+
 export const processSubscriptionsRequiringRenewal = createJob(
   'process-subscriptions-requiring-renewal',
   '0 0 * * *',
@@ -14,9 +16,21 @@ export const processSubscriptionsRequiringRenewal = createJob(
     // At the moment, it will only care for Stripe subscriptions since we're in the migration phase.
     const subscriptions = await dbWrite.customerSubscription.findMany({
       where: {
-        status: {
-          in: ['active', 'trialing'],
-        },
+        OR: [
+          {
+            status: {
+              in: ['active', 'trialing'],
+            },
+          },
+          {
+            status: {
+              in: ['past_due', 'canceled'],
+            },
+            updatedAt: {
+              gte: pastDueCancelledCutOf,
+            },
+          },
+        ],
         // Because we set the metadata here, we don't mind lastRun.
         metadata: {
           path: ['renewalEmailSent'],
