@@ -1,4 +1,3 @@
-import { isProd } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -13,7 +12,7 @@ export default PublicEndpoint(
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
     const match = getMatchingPathname(url.pathname);
-    if (!match || !isProd) return res.status(200).end();
+    if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
     tracker.pageView({
@@ -24,8 +23,6 @@ export default PublicEndpoint(
       ads,
       duration: Math.floor(duration),
     });
-
-    return res.status(200).end();
   },
   ['POST']
 );

@@ -68,11 +68,11 @@ const adDensity: AdDensity[] = [
 ];
 
 const adDefinitions = {
-  '970x250:Leaderboard_A': 'civitaicom47456',
-  '320x50:Leaderboard_A': 'civitaicom47760',
+  '970x250:Leaderboard_A': 'civitaicom47456', // not using
+  '320x50:Leaderboard_A': 'civitaicom47760', // not using
 
-  '970x250:Leaderboard_B': 'civitaicom47457',
-  '320x50:Leaderboard_B': 'civitaicom47761',
+  '970x250:Leaderboard_B': 'civitaicom47457', // not using
+  '320x50:Leaderboard_B': 'civitaicom47761', // not using
 
   '970x250:Dynamic_Leaderboard_C': 'civitaicom47458',
   '320x50:Dynamic_Leaderboard_C': 'civitaicom47762',
@@ -81,13 +81,13 @@ const adDefinitions = {
   '300x600:Dynamic_Feeds': 'civitaicom47453',
 
   '300x250:model_image_pages': 'civitaicom47763',
-  '728x90:Leaderboard': 'civitaicom47842',
+  '728x90:Leaderboard': 'civitaicom47842', // not using
 
   '300x250:Sidebar_A': 'civitaicom47459',
-  '300x250:Sidebar_B': 'civitaicom47460',
+  '300x250:Sidebar_B': 'civitaicom47460', // not using
 
   '300x600:StickySidebar_A': 'civitaicom47453',
-  '300x600:StickySidebar_B': 'civitaicom47454',
+  '300x600:StickySidebar_B': 'civitaicom47454', // not using
 };
 const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
 
