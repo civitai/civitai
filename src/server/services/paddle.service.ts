@@ -754,3 +754,10 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
 
   return true;
 };
+
+export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {
+  const subs = await getPaddleCustomerSubscriptions({ customerId });
+  const subsToCancel = subs.filter((sub) => sub.status === 'active');
+  const cancelPromises = subsToCancel.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'));
+  return Promise.all(cancelPromises);
+};
