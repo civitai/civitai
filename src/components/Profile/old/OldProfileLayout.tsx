@@ -181,7 +181,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       else
         dialogStore.trigger({
           component: UserBanModal,
-          props: { userId: user.id, username: user.username },
+          props: { userId: user.id, username: user.username as string },
         });
     }
   };
