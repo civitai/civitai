@@ -79,7 +79,10 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -1332,19 +1335,25 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true, minor: true },
+      select: { poi: true, userId: true, minor: true, gallerySettings: true },
     });
     if (!beforeUpdate) return null;
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
 
+    const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
+
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true, minor: true },
+      select: { id: true, nsfwLevel: true, poi: true, minor: true, gallerySettings: true },
       where: { id },
       data: {
         ...data,
         meta,
+        gallerySettings: {
+          ...prevGallerySettings,
+          level: input.minor ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+        },
         tagsOnModels: tagsOnModels
           ? {
               deleteMany: {
@@ -1374,17 +1383,19 @@ export const upsertModel = async (
     await preventReplicationLag('model', id);
     await upsertModelFlag({ modelId: result.id, name: input.name });
 
-    // Handle POI change
-    const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
-    // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
-
-    // Handle Minor change
-    const minorChanged = beforeUpdate && result.minor !== beforeUpdate.minor;
+    // Check any changes that would require a search index update
+    const poiChanged = result.poi !== beforeUpdate.poi;
+    const minorChanged = result.minor !== beforeUpdate.minor;
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
+
+    const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
+    const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
+
+    if (galleryBrowsingLevelChanged) await redis.del(`model:gallery-settings:${id}`);
 
     return result;
   }

@@ -46,6 +46,9 @@ import {
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { env } from '~/env/server.mjs';
+import dayjs from 'dayjs';
+import { original } from 'immer';
+import { logToAxiom } from '~/server/logging/client';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -635,6 +638,8 @@ export const updateSubscriptionPlan = async ({
     throw throwNotFoundError('No active subscription found on Paddle');
   }
 
+  console.log('SUBSC', subscription, priceId);
+
   try {
     if (
       subscription.priceId === priceId &&
@@ -646,17 +651,40 @@ export const updateSubscriptionPlan = async ({
         scheduledChange: null,
       });
     } else if (subscription.priceId !== priceId) {
-      await updatePaddleSubscription({
-        subscriptionId: subscription.id,
-        items: [
-          {
-            priceId,
-            quantity: 1,
+      try {
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          items: [
+            {
+              priceId,
+              quantity: 1,
+            },
+          ],
+          prorationBillingMode: 'full_immediately',
+          onPaymentFailure: 'prevent_change',
+        });
+
+        // For whatever random reason in the world, Paddle doesn't update the next billed at date
+        // automatically when you change the subscription. So we do it manually.
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          nextBilledAt: dayjs().add(1, 'month').toISOString(),
+          prorationBillingMode: 'do_not_bill',
+          customData: {
+            ...paddleSubscription.customData,
+            originalNextBilledAt: paddleSubscription?.nextBilledAt,
           },
-        ],
-        prorationBillingMode: 'full_immediately',
-        onPaymentFailure: 'prevent_change',
-      });
+        });
+      } catch (e) {
+        throw new Error('Failed to update subscription');
+        logToAxiom({
+          subscriptionId: paddleSubscription.id,
+          type: 'error',
+          message: 'Failed to update subscription',
+          userId,
+          priceId,
+        });
+      }
     }
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
