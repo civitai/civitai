@@ -4,7 +4,7 @@ import { PaymentProvider, Prisma } from '@prisma/client';
 import { subscriptionRenewalReminderEmail } from '~/server/email/templates/subscriptionRenewalReminder.email';
 import { chunk } from 'lodash';
 
-const pastDueCancelledCutOf = '2024-09-10 00:00:00';
+const pastDueCancelledCutOf = '2024-09-10 00:00:00.000';
 
 export const processSubscriptionsRequiringRenewal = createJob(
   'process-subscriptions-requiring-renewal',
@@ -27,7 +27,7 @@ export const processSubscriptionsRequiringRenewal = createJob(
               in: ['past_due', 'canceled'],
             },
             updatedAt: {
-              gte: pastDueCancelledCutOf,
+              gte: new Date(pastDueCancelledCutOf),
             },
           },
         ],
