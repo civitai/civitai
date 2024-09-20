@@ -22,6 +22,7 @@ import {
   Title,
   Tooltip,
   useMantineTheme,
+  List,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
@@ -259,6 +260,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
+  const [confirmed, setConfirmed] = useState<{ status: boolean; error: string }>({
+    status: false,
+    error: '',
+  });
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -832,6 +837,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleNext = async () => {
+    if (!confirmed.status) {
+      setConfirmed((c) => ({ ...c, error: 'You must agree before proceeding.' }));
+      return;
+    }
+
+    setConfirmed((c) => ({ ...c, error: '' }));
     if (isEqual(imageList, initialImageList) && imageList.length !== 0) {
       if (
         !isEqual(shareDataset, initialShareDataset) ||
@@ -913,7 +924,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             for more info.
           </Text>
         </div>
-        <div>
+        {confirmed.status && (
           <ImageDropzone
             mt="md"
             onDrop={handleDrop}
@@ -935,8 +946,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               })
             }
           />
-        </div>
-
+        )}
         {imageList.length > 0 && (
           <Group my="md">
             <Paper
@@ -1022,7 +1032,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Button>
           </Group>
         )}
-
         {filteredImages.length > maxImgPerPage && (
           <Pagination
             withEdges
@@ -1032,7 +1041,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             total={Math.ceil(filteredImages.length / maxImgPerPage)}
           />
         )}
-
         {autoLabeling.isRunning && (
           <Paper
             my="lg"
@@ -1072,9 +1080,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Stack>
           </Paper>
         )}
-
         {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
-
         {imageList.length > 0 ? (
           labelType === 'caption' ? (
             <TrainingImagesCaptionViewer
@@ -1095,7 +1101,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         ) : (
           <></>
         )}
-
         {loadingZip ? (
           <Center mt="md" style={{ flexDirection: 'column' }}>
             <Loader />
@@ -1195,7 +1200,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               })}
           </SimpleGrid>
         )}
-
         {filteredImages.length > maxImgPerPage && (
           <Pagination
             withEdges
@@ -1205,12 +1209,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             total={Math.ceil(filteredImages.length / maxImgPerPage)}
           />
         )}
-
         {imageList.length > 0 && (
-          <Paper mt="xl" mb="md" radius="md" p="xl" withBorder>
+          <Paper mt="xl" radius="md" p="xl" withBorder>
             <Stack>
               <Title order={4}>Data Ownership and Sharing</Title>
-              <Text fz="sm">
+              <Text size="sm">
                 Your dataset is temporarily stored for the purposes of training. After training is
                 complete, the dataset is removed. By default, it is not public. Read our{' '}
                 <Text
@@ -1240,6 +1243,40 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </Stack>
           </Paper>
         )}
+
+        <Paper mb="md" radius="md" p="xl" withBorder>
+          <div className="flex flex-col gap-4">
+            <Title order={4}>Acknowledgement</Title>
+            <div>
+              <Text size="sm" mb={4}>
+                By uploading this training data, I confirm that:
+              </Text>
+              <List size="sm" type="ordered">
+                <List.Item mb={2}>
+                  Consent: If the content depicts the likeness of a real person, who is not a public
+                  figure, I am either that person or have obtained clear, explicit consent from that
+                  person for their likeness to be used in this model.
+                </List.Item>
+                <List.Item mb={2}>
+                  Responsibility: I understand that I am solely responsible for ensuring that all
+                  necessary permissions have been obtained, and I acknowledge that failure to do so
+                  may result in the removal of content, my account or other actions by Civitai.
+                </List.Item>
+                <List.Item mb={2}>
+                  Accuracy: I attest that the likeness depicted in this model aligns with the
+                  consents granted, and I will immediately remove or modify the content if consent
+                  is revoked.
+                </List.Item>
+              </List>
+            </div>
+            <Checkbox
+              label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
+              checked={confirmed.status}
+              error={confirmed.error}
+              onChange={(event) => setConfirmed({ status: event.currentTarget.checked, error: '' })}
+            />
+          </div>
+        </Paper>
       </Stack>
       <Group position="right">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
