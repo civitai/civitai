@@ -1,4 +1,4 @@
-import { MantineSize, Box, Text } from '@mantine/core';
+import { MantineSize, Text } from '@mantine/core';
 import { CosmeticType } from '@prisma/client';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -35,7 +35,7 @@ export const CosmeticSample = ({
       if (!decorationData.url) return null;
 
       return (
-        <div className={`w-[${values.badgeSize}px]`}>
+        <div style={{ width: values.badgeSize }}>
           <EdgeMedia src={decorationData.url} alt={cosmetic.name} />
         </div>
       );
@@ -44,7 +44,7 @@ export const CosmeticSample = ({
       if (!contentDecorationData.url && !contentDecorationData.cssFrame) return null;
 
       return (
-        <div className={`w-[${values.badgeSize}px]`}>
+        <div style={{ width: values.badgeSize }}>
           <FeedCard
             aspectRatio="square"
             frameDecoration={cosmetic as ContentDecorationCosmetic}

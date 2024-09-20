@@ -1,9 +1,15 @@
-import { Box, createStyles, Grid, Stack, Title, TypographyStylesProvider } from '@mantine/core';
+import {
+  createStyles,
+  Grid,
+  GridProps,
+  Stack,
+  Title,
+  TypographyStylesProvider,
+} from '@mantine/core';
 import React from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { CosmeticShopSectionMeta } from '~/server/schema/cosmetic-shop.schema';
 
 const IMAGE_SECTION_WIDTH = 1288;
 
@@ -77,21 +83,21 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-export function ShopSection({ title, image, items, meta }: Props) {
+export function ShopSection({ title, description, imageUrl, hideTitle, children }: Props) {
   const { classes, cx } = useStyles();
-  const backgroundImageUrl = image
-    ? getEdgeUrl(image.url, { width: IMAGE_SECTION_WIDTH, optimized: true })
+  const backgroundImageUrl = imageUrl
+    ? getEdgeUrl(imageUrl, { width: IMAGE_SECTION_WIDTH, optimized: true })
     : undefined;
 
   return (
     <Stack className={classes.section} m="sm">
-      <Box
+      <div
         className={cx(classes.sectionHeaderContainer, {
-          [classes.sectionHeaderContainerWithBackground]: !!image,
+          [classes.sectionHeaderContainerWithBackground]: !!backgroundImageUrl,
         })}
       >
-        <Box
-          className={cx({ [classes.sectionHeaderContentWrap]: !!image })}
+        <div
+          className={cx({ [classes.sectionHeaderContentWrap]: !!backgroundImageUrl })}
           style={
             backgroundImageUrl
               ? {
@@ -102,15 +108,15 @@ export function ShopSection({ title, image, items, meta }: Props) {
               : undefined
           }
         >
-          {!meta?.hideTitle && (
+          {!hideTitle && (
             <Stack mih="100%" justify="center" align="center" style={{ flexGrow: 1 }}>
               <Title order={2} className={classes.sectionTitle} align="center">
                 {title}
               </Title>
             </Stack>
           )}
-        </Box>
-      </Box>
+        </div>
+      </div>
 
       <Stack>
         {description && (
@@ -122,54 +128,27 @@ export function ShopSection({ title, image, items, meta }: Props) {
         )}
       </Stack>
 
-      <Grid mb={0} mt={0}>
-        {items.map((item) => {
-          const { shopItem } = item;
-          return (
-            <Grid.Col span={12} sm={6} md={3} key={shopItem.id}>
-              <CosmeticShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
-            </Grid.Col>
-          );
-        })}
-      </Grid>
+      {children}
     </Stack>
   );
 }
 
-ShopSection.Header = function Header({ children, ...props }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
+ShopSection.Items = function Items({ children, ...props }: GridProps) {
   return (
-    <Box
-      className={cx(classes.sectionHeaderContainer, {
-        [classes.sectionHeaderContainerWithBackground]: !!image,
-      })}
-    >
-      <Box
-        className={cx({ [classes.sectionHeaderContentWrap]: !!image })}
-        style={
-          backgroundImageUrl
-            ? {
-                backgroundImage: `url(${backgroundImageUrl})`,
-                backgroundPosition: 'left center',
-                backgroundSize: 'cover',
-              }
-            : undefined
-        }
-      >
-        {!meta?.hideTitle && (
-          <Stack mih="100%" justify="center" align="center" style={{ flexGrow: 1 }}>
-            <Title order={2} className={classes.sectionTitle} align="center">
-              {title}
-            </Title>
-          </Stack>
-        )}
-      </Box>
-    </Box>
+    <Grid mb={0} mt={0} {...props}>
+      {React.Children.map(children, (child) => (
+        <Grid.Col span={12} sm={6} md={3}>
+          {child}
+        </Grid.Col>
+      ))}
+    </Grid>
   );
 };
 
-ShopSection.Description = function Description() {};
-
-ShopSection.Item = function Item() {};
-
-type Props = { title: string; image?: any; items: any[]; meta?: CosmeticShopSectionMeta };
+type Props = {
+  children: React.ReactNode;
+  title: string;
+  description?: string | null;
+  imageUrl?: string | null;
+  hideTitle?: boolean;
+};

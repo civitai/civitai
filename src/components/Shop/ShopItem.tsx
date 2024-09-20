@@ -1,6 +1,7 @@
 import {
   Badge,
   Button,
+  createStyles,
   Divider,
   Group,
   Paper,
@@ -19,10 +20,96 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
+
+const useStyles = createStyles((theme) => {
+  return {
+    card: {
+      height: '100%',
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
+      borderRadius: theme.radius.md,
+      padding: theme.spacing.md,
+      position: 'relative',
+      margin: '3px',
+    },
+
+    cardHeader: {
+      background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
+      margin: -theme.spacing.md,
+      padding: theme.spacing.md,
+      marginBottom: theme.spacing.md,
+      borderRadius: theme.radius.md,
+      borderBottomRightRadius: 0,
+      borderBottomLeftRadius: 0,
+      height: 250,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
+      overflow: 'hidden',
+    },
+
+    availability: {
+      position: 'absolute',
+      left: theme.spacing.md,
+      right: theme.spacing.md,
+      top: theme.spacing.md,
+      display: 'flex',
+      alignItems: 'stretch',
+      zIndex: 2,
+      '.mantine-Badge-inner': {
+        display: 'block',
+        width: '100%',
+      },
+      '.mantine-Text-root': {
+        margin: '0 auto',
+      },
+    },
+    countdown: {
+      position: 'absolute',
+      left: theme.spacing.md,
+      right: theme.spacing.md,
+      bottom: theme.spacing.md,
+      display: 'flex',
+      alignItems: 'stretch',
+      textAlign: 'center',
+      zIndex: 2,
+      '.mantine-Badge-inner': {
+        display: 'block',
+        width: '100%',
+      },
+      '.mantine-Text-root': {
+        margin: '0 auto',
+      },
+    },
+
+    new: {
+      '&::before': {
+        content: '""',
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        zIndex: -1,
+        margin: '-3px' /* !importanté */,
+        borderRadius: 'inherit' /* !importanté */,
+        background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+      },
+    },
+
+    newBadge: {
+      position: 'absolute',
+      top: '-10px',
+      right: '-10px',
+      zIndex: 1,
+    },
+  };
+});
 
 export const ShopItem = ({
   item,

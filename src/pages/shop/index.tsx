@@ -1,236 +1,34 @@
 import {
-  Badge,
   Button,
-  Card,
   Center,
-  Chip,
   Container,
-  Divider,
   Group,
-  Image,
   Loader,
-  MantineColor,
-  Paper,
-  Progress,
   Stack,
   Text,
   Title,
-  createStyles,
-  HoverCard,
-  Box,
-  Grid,
-  TypographyStylesProvider,
-  UnstyledButton,
   ActionIcon,
   Tooltip,
 } from '@mantine/core';
-import {
-  IconAlertCircle,
-  IconBell,
-  IconBellOff,
-  IconBrandSpeedtest,
-  IconCircleCheck,
-  IconPencilMinus,
-} from '@tabler/icons-react';
-import { IconCheck } from '@tabler/icons-react';
-import { IconArrowUpRight } from '@tabler/icons-react';
+import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
 import { useState } from 'react';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
-import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client.mjs';
-import dayjs from 'dayjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   useCosmeticShopQueryParams,
   useQueryShop,
   useShopLastViewed,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
-import { constants } from '~/server/common/constants';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { CosmeticShopItemGetById } from '~/types/router';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
-import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { CosmeticShopItemPreviewModal } from '~/components/CosmeticShop/CosmeticShopItemPreviewModal';
-import {
-  CosmeticShopItemMeta,
-  CosmeticShopSectionMeta,
-  GetShopInput,
-} from '~/server/schema/cosmetic-shop.schema';
+import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { formatDate, formatDateMin, isFutureDate } from '~/utils/date-helpers';
-import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useEffect } from 'react';
-import { Countdown } from '~/components/Countdown/Countdown';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { ShopItem } from '~/components/Shop/ShopItem';
-
-const useStyles = createStyles((theme, _params, getRef) => {
-  const sectionRef = getRef('section');
-
-  return {
-    section: {
-      ref: sectionRef,
-      overflow: 'hidden',
-      position: 'relative',
-
-      [`& + .${sectionRef}`]: {
-        marginTop: theme.spacing.xl * 3,
-      },
-    },
-
-    sectionHeaderContainer: {
-      overflow: 'hidden',
-      position: 'relative',
-      height: 250,
-    },
-
-    sectionHeaderContainerWithBackground: {
-      background: 'transparent',
-      borderRadius: theme.radius.md,
-    },
-
-    sectionDescription: {
-      padding: `0 ${theme.spacing.sm}px ${theme.spacing.sm}px`,
-      p: {
-        fontSize: 18,
-        lineHeight: 1.3,
-      },
-    },
-
-    backgroundImage: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      width: '100%',
-      height: '100%',
-      opacity: 0.4,
-      zIndex: -1,
-    },
-
-    sectionHeaderContentWrap: {
-      position: 'absolute',
-      zIndex: 1,
-      width: '100%',
-      height: '100%',
-      top: 0,
-      left: 0,
-    },
-
-    sectionTitle: {
-      color: theme.white,
-      width: '100%',
-      padding: theme.spacing.lg,
-      paddingLeft: 8,
-      paddingRight: 8,
-      textShadow: `3px 0px 7px rgba(0,0,0,0.8), -3px 0px 7px rgba(0,0,0,0.8), 0px 4px 7px rgba(0,0,0,0.8)`,
-      maxWidth: 400,
-      fontSize: 48,
-      lineHeight: 1.1,
-      ['@container (min-width: 500px)']: {
-        fontSize: 64,
-        maxWidth: 500,
-      },
-    },
-
-    card: {
-      height: '100%',
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
-      borderRadius: theme.radius.md,
-      padding: theme.spacing.md,
-      position: 'relative',
-      margin: '3px',
-    },
-
-    cardHeader: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-      margin: -theme.spacing.md,
-      padding: theme.spacing.md,
-      marginBottom: theme.spacing.md,
-      borderRadius: theme.radius.md,
-      borderBottomRightRadius: 0,
-      borderBottomLeftRadius: 0,
-      height: 250,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      position: 'relative',
-      overflow: 'hidden',
-    },
-
-    availability: {
-      position: 'absolute',
-      left: theme.spacing.md,
-      right: theme.spacing.md,
-      top: theme.spacing.md,
-      display: 'flex',
-      alignItems: 'stretch',
-      zIndex: 2,
-      '.mantine-Badge-inner': {
-        display: 'block',
-        width: '100%',
-      },
-      '.mantine-Text-root': {
-        margin: '0 auto',
-      },
-    },
-    countdown: {
-      position: 'absolute',
-      left: theme.spacing.md,
-      right: theme.spacing.md,
-      bottom: theme.spacing.md,
-      display: 'flex',
-      alignItems: 'stretch',
-      textAlign: 'center',
-      zIndex: 2,
-      '.mantine-Badge-inner': {
-        display: 'block',
-        width: '100%',
-      },
-      '.mantine-Text-root': {
-        margin: '0 auto',
-      },
-    },
-
-    new: {
-      '&::before': {
-        content: '""',
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        zIndex: -1,
-        margin: '-3px' /* !importanté */,
-        borderRadius: 'inherit' /* !importanté */,
-        background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
-      },
-    },
-
-    newBadge: {
-      position: 'absolute',
-      top: '-10px',
-      right: '-10px',
-      zIndex: 1,
-    },
-  };
-});
+import { ShopSection } from '~/components/Shop/ShopSection';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -243,16 +41,14 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function CosmeticShopMain() {
-  const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { query } = useCosmeticShopQueryParams();
   const [filters, setFilters] = useState<GetShopInput>({
     ...(query ?? {}),
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { cosmeticShopSections, isLoading } = useQueryShop(debouncedFilters);
 
-  const { lastViewed, updateLastViewed, isFetched } = useShopLastViewed();
+  const { updateLastViewed, isFetched } = useShopLastViewed();
 
   useEffect(() => {
     setFilters(query);
@@ -323,60 +119,28 @@ export default function CosmeticShopMain() {
             cosmeticShopSections.map((section) => {
               const { image, items } = section;
               const meta = section.meta as CosmeticShopSectionMeta;
-              const backgroundImageUrl = image
-                ? getEdgeUrl(image.url, { width: IMAGE_SECTION_WIDTH, optimized: true })
-                : undefined;
 
               return (
-                <Stack key={section.id} className={classes.section} m="sm">
-                  <Box
-                    className={cx(classes.sectionHeaderContainer, {
-                      [classes.sectionHeaderContainerWithBackground]: !!image,
-                    })}
-                  >
-                    <Box
-                      className={cx({ [classes.sectionHeaderContentWrap]: !!image })}
-                      style={
-                        backgroundImageUrl
-                          ? {
-                              backgroundImage: `url(${backgroundImageUrl})`,
-                              backgroundPosition: 'left center',
-                              backgroundSize: 'cover',
-                            }
-                          : undefined
-                      }
-                    >
-                      {!meta?.hideTitle && (
-                        <Stack mih="100%" justify="center" align="center" style={{ flexGrow: 1 }}>
-                          <Title order={2} className={classes.sectionTitle} align="center">
-                            {section.title}
-                          </Title>
-                        </Stack>
-                      )}
-                    </Box>
-                  </Box>
-
-                  <Stack>
-                    {section.description && (
-                      <ContentClamp maxHeight={200} className={classes.sectionDescription}>
-                        <TypographyStylesProvider>
-                          <RenderHtml html={section.description} />
-                        </TypographyStylesProvider>
-                      </ContentClamp>
-                    )}
-                  </Stack>
-
-                  <Grid mb={0} mt={0}>
+                <ShopSection
+                  key={section.id}
+                  title={section.title}
+                  description={section.description}
+                  imageUrl={image?.url}
+                  hideTitle={meta.hideTitle}
+                >
+                  <ShopSection.Items>
                     {items.map((item) => {
                       const { shopItem } = item;
                       return (
-                        <Grid.Col span={12} sm={6} md={3} key={shopItem.id}>
-                          <ShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
-                        </Grid.Col>
+                        <ShopItem
+                          key={shopItem.id}
+                          item={shopItem}
+                          sectionItemCreatedAt={item.createdAt}
+                        />
                       );
                     })}
-                  </Grid>
-                </Stack>
+                  </ShopSection.Items>
+                </ShopSection>
               );
             })
           ) : (
