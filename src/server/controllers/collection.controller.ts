@@ -25,6 +25,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import {
   addContributorToCollection,
   bulkSaveItems,
+  checkUserOwnsCollectionAndItem,
   deleteCollectionById,
   getAllCollections,
   getCollectionById,
@@ -250,6 +251,20 @@ export const saveItemHandler = async ({
       );
     }
 
+    // Check ownership if only one collection is being modified
+    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
+      isDefined
+    );
+    if (input.collections.length === 1) {
+      const [collection] = input.collections;
+      const isOwner = await checkUserOwnsCollectionAndItem({
+        itemId,
+        userId: user.id,
+        collectionId: collection.collectionId,
+      });
+      return { status, isOwner };
+    }
+
     return { status };
   } catch (error) {
     throw throwDbError(error);
@@ -304,7 +319,16 @@ export const upsertCollectionHandler = async ({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
 
-    return collection;
+    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
+      isDefined
+    );
+    const isOwner = await checkUserOwnsCollectionAndItem({
+      itemId,
+      userId: user.id,
+      collectionId: collection.id,
+    });
+
+    return { ...collection, isOwner };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

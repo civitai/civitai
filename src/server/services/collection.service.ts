@@ -828,7 +828,13 @@ export const upsertCollection = async ({
 
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
-    select: { id: true, image: { select: { id: true, url: true } } },
+    select: {
+      id: true,
+      image: { select: { id: true, url: true } },
+      read: true,
+      write: true,
+      userId: true,
+    },
     data: {
       name,
       description,
@@ -2058,3 +2064,39 @@ export const removeCollectionItem = async ({
     type: permissions.collectionType,
   };
 };
+
+export async function checkUserOwnsCollectionAndItem({
+  itemId,
+  collectionId,
+  userId,
+}: {
+  itemId: number;
+  collectionId: number;
+  userId: number;
+}) {
+  const collection = await dbRead.collection.findFirst({
+    where: { id: collectionId, userId },
+    select: { type: true, userId: true },
+  });
+  if (!collection) return false;
+
+  const tableKey =
+    collection.type === CollectionType.Model
+      ? 'Model'
+      : collection.type === CollectionType.Article
+      ? 'Article'
+      : collection.type === CollectionType.Image
+      ? 'Image'
+      : collection.type === CollectionType.Post
+      ? 'Post'
+      : null;
+
+  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
+
+  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
+  `;
+  if (!item) return false;
+
+  return item.userId === collection.userId;
+}

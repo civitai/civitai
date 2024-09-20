@@ -42,7 +42,7 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-import { closeAllModals, openConfirmModal } from '@mantine/modals';
+import { closeAllModals, openModal } from '@mantine/modals';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -117,8 +117,6 @@ function CollectionListForm({
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
 
-  const setShowcaseCollectionMutation = trpc.model.setCollectionShowcase.useMutation();
-
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
     // We'll avoid re-adding the item into the collection if it already exists, so we must check for that.
@@ -149,24 +147,25 @@ function CollectionListForm({
 
           onSubmit();
 
-          if (added && type === CollectionType.Model && modelId && collections.length === 1) {
+          // Ask the user if they want to set this collection as the showcase collection for the model only
+          if (
+            added &&
+            result.isOwner &&
+            type === CollectionType.Model &&
+            modelId &&
+            collections.length === 1
+          ) {
             const [collection] = collections;
-            if (
-              collection.read === CollectionReadConfiguration.Public &&
-              collection.userId === currentUser?.id
-            ) {
-              openConfirmModal({
+            if (collection.read === CollectionReadConfiguration.Public) {
+              openModal({
                 title: 'Set Showcase Collection',
                 centered: true,
-                children: `Would you like to set this collection as this model's showcase collection?`,
-                labels: { confirm: 'Yes', cancel: 'No' },
-                confirmProps: { loading: setShowcaseCollectionMutation.isLoading },
-                closeOnConfirm: false,
-                onConfirm: async () =>
-                  await setShowcaseCollectionMutation.mutateAsync(
-                    { id: modelId, collectionId: collections[0].collectionId },
-                    { onSuccess: () => closeAllModals() }
-                  ),
+                children: (
+                  <ConfirmSetShowcaseCollection
+                    modelId={modelId}
+                    collectionId={collection.collectionId}
+                  />
+                ),
               });
             }
           }
@@ -345,7 +344,7 @@ function CollectionListForm({
                                   <Text lineClamp={1} inherit>
                                     {collection.name}
                                   </Text>
-                                  <Icon size={18} />
+                                  <Icon className="shrink-0 grow-0" size={18} />
                                 </Group>
                               }
                             />
@@ -415,7 +414,7 @@ function NewCollectionForm({
     },
     shouldUnregister: false,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: z.infer<typeof upsertCollectionInput>) => {
@@ -428,10 +427,24 @@ function NewCollectionForm({
     });
 
     upsertCollectionMutation.mutate(data, {
-      async onSuccess() {
+      async onSuccess(result, { type, modelId }) {
         await queryUtils.collection.getAllUser.invalidate();
         await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
         onSubmit();
+
+        if (
+          type === CollectionType.Model &&
+          modelId &&
+          result.read === CollectionReadConfiguration.Public &&
+          result.isOwner
+        ) {
+          openModal({
+            title: 'Set Showcase Collection',
+            centered: true,
+            children: <ConfirmSetShowcaseCollection modelId={modelId} collectionId={result.id} />,
+          });
+        }
+
         showSuccessNotification({
           title: 'Collection created',
           message: 'Your collection has been created.',
@@ -560,3 +573,31 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
   }
 );
 SelectItem.displayName = 'SelectItem';
+
+function ConfirmSetShowcaseCollection({
+  modelId,
+  collectionId,
+}: {
+  modelId: number;
+  collectionId: number;
+}) {
+  const setShowcaseCollectionMutation = trpc.model.setCollectionShowcase.useMutation({
+    onSuccess: () => closeAllModals(),
+  });
+
+  const handleSetShowcase = () => {
+    setShowcaseCollectionMutation.mutate({ id: modelId, collectionId });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Text>Would you like to set this collection as this model&apos;s showcase collection?</Text>
+      <div className="flex justify-end gap-2">
+        <Button variant="default">No</Button>
+        <Button onClick={handleSetShowcase} loading={setShowcaseCollectionMutation.isLoading}>
+          Yes
+        </Button>
+      </div>
+    </div>
+  );
+}
