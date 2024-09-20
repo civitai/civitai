@@ -51,7 +51,7 @@ import { env } from '~/env/client.mjs';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { PaymentProvider } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useMutatePaddle } from '~/components/Paddle/util';
+import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
@@ -109,6 +109,14 @@ export default function UserMembership() {
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
     checkWhenInBadState: true,
   });
+
+  const isPaddle = subscriptionPaymentProvider === PaymentProvider.Paddle;
+  const isStripe = subscriptionPaymentProvider === PaymentProvider.Stripe;
+
+  const { managementUrls } = useSubscriptionManagementUrls({
+    enabled: isPaddle,
+  });
+
   const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
@@ -225,11 +233,21 @@ export default function UserMembership() {
                     <Text lh={1.2}>
                       Uh oh! It looks like there was an issue with your membership. You can update
                       your payment method or renew your membership now by clicking{' '}
-                      <SubscribeButton priceId={subscription.price.id}>
-                        <Anchor component="button" type="button">
+                      {isStripe ? (
+                        <SubscribeButton priceId={subscription.price.id}>
+                          <Anchor component="button" type="button">
+                            here
+                          </Anchor>
+                        </SubscribeButton>
+                      ) : (
+                        <Anchor
+                          href={managementUrls?.updatePaymentMethod as string}
+                          target="_blank"
+                        >
                           here
                         </Anchor>
-                      </SubscribeButton>
+                      )}
+                      .
                     </Text>
                   </Stack>
                 </AlertWithIcon>
@@ -265,67 +283,78 @@ export default function UserMembership() {
                         )}
                       </Stack>
                     </Group>
-                    <Group>
-                      {subscription.canceledAt && (
-                        <>
-                          {price.active && (
-                            <SubscribeButton priceId={price.id}>
-                              <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
-                                Resume
-                              </Button>
-                            </SubscribeButton>
-                          )}
-                          {!price.active && (
-                            <Tooltip
-                              maw={350}
-                              multiline
-                              label="Your old subscription price has been discontinued and cannot be restored. If you'd like to keep supporting us, consider upgrading"
+                    <Stack>
+                      <Group spacing="xs">
+                        {subscription.canceledAt && (
+                          <>
+                            {price.active && (
+                              <SubscribeButton priceId={price.id}>
+                                <Button radius="xl" rightIcon={<IconRotateClockwise size={16} />}>
+                                  Resume
+                                </Button>
+                              </SubscribeButton>
+                            )}
+                            {!price.active && (
+                              <Tooltip
+                                maw={350}
+                                multiline
+                                label="Your old subscription price has been discontinued and cannot be restored. If you'd like to keep supporting us, consider upgrading"
+                              >
+                                <ActionIcon variant="light" color="dark" size="lg">
+                                  <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </>
+                        )}
+                        {canUpgrade && (
+                          <Button component={NextLink} href="/pricing" radius="xl">
+                            Upgrade
+                          </Button>
+                        )}
+                        <Menu position="bottom" withinPortal closeOnItemClick={false}>
+                          <Menu.Target>
+                            <ActionIcon
+                              size={30}
+                              radius="xl"
+                              color="gray"
+                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                              ml="auto"
                             >
-                              <ActionIcon variant="light" color="dark" size="lg">
-                                <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
-                        </>
+                              <IconDotsVertical size={16} />
+                            </ActionIcon>
+                          </Menu.Target>
+                          <Menu.Dropdown>
+                            {isStripe && (
+                              <StripeManageSubscriptionButton>
+                                <Menu.Item>View Details</Menu.Item>
+                              </StripeManageSubscriptionButton>
+                            )}
+                            {!subscription?.canceledAt && !isFree && (
+                              <Menu.Item
+                                onClick={() => {
+                                  dialogStore.trigger({
+                                    component: CancelMembershipFeedbackModal,
+                                  });
+                                }}
+                                closeMenuOnClick={true}
+                              >
+                                Cancel Membership
+                              </Menu.Item>
+                            )}
+                          </Menu.Dropdown>
+                        </Menu>
+                      </Group>
+                      {!subscription.cancelAt && isPaddle && managementUrls && (
+                        <Anchor
+                          href={managementUrls?.updatePaymentMethod as string}
+                          target="_blank"
+                          size="xs"
+                        >
+                          Update payment details
+                        </Anchor>
                       )}
-                      {canUpgrade && (
-                        <Button component={NextLink} href="/pricing" radius="xl">
-                          Upgrade
-                        </Button>
-                      )}
-                      <Menu position="bottom" withinPortal closeOnItemClick={false}>
-                        <Menu.Target>
-                          <ActionIcon
-                            size={30}
-                            radius="xl"
-                            color="gray"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            ml="auto"
-                          >
-                            <IconDotsVertical size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {subscriptionPaymentProvider === PaymentProvider.Stripe && (
-                            <StripeManageSubscriptionButton>
-                              <Menu.Item>View Details</Menu.Item>
-                            </StripeManageSubscriptionButton>
-                          )}
-                          {!subscription?.canceledAt && !isFree && (
-                            <Menu.Item
-                              onClick={() => {
-                                dialogStore.trigger({
-                                  component: CancelMembershipFeedbackModal,
-                                });
-                              }}
-                              closeMenuOnClick={true}
-                            >
-                              Cancel Membership
-                            </Menu.Item>
-                          )}
-                        </Menu.Dropdown>
-                      </Menu>
-                    </Group>
+                    </Stack>
                   </Group>
                   {subscription.cancelAt && (
                     <Text color="red">
