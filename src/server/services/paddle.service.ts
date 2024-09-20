@@ -46,6 +46,7 @@ import {
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { env } from '~/env/server.mjs';
+import dayjs from 'dayjs';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -656,6 +657,7 @@ export const updateSubscriptionPlan = async ({
         ],
         prorationBillingMode: 'full_immediately',
         onPaymentFailure: 'prevent_change',
+        nextBilledAt: dayjs().add(1, 'month').toISOString(),
       });
     }
 
