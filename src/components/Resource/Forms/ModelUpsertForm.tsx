@@ -52,20 +52,19 @@ const schema = modelUpsertSchema
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
-    poi: z
-      .preprocess((val) => (val == null ? '' : val ? 'true' : 'false'), z.string())
-      .refine((data) => !!data.length, 'Required'),
+    poi: z.string().refine((data) => !!data.length, 'Required'),
     attestation: z.boolean().refine((data) => !!data, 'Required'),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
-  .refine((data) => !(data.nsfw && data.poi), {
+  .refine((data) => (data.nsfw && data.poi === 'false') || (!data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => !(data.nsfw && data.minor), {
-    message: 'Mature content depicting minors is not permitted.',
+    message:
+      'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -209,7 +208,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
         category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
         description: model.description ?? '',
-        poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
+        poi: model?.poi == null ? '' : model?.poi === true ? 'true' : 'false',
         attestation: !!model?.id,
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
