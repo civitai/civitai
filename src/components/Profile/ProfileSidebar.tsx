@@ -9,7 +9,11 @@ import {
   Popover,
   Stack,
   Text,
+  ThemeIcon,
+  Tooltip,
   useMantineTheme,
+  Badge,
+  UnstyledButton,
 } from '@mantine/core';
 import { CosmeticType } from '@prisma/client';
 import {
@@ -19,6 +23,8 @@ import {
   IconPencilMinus,
   IconRss,
   IconShare3,
+  IconBan,
+  IconInfoCircle,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
@@ -43,6 +49,7 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const mapSize: Record<
   'mobile' | 'desktop',
@@ -219,9 +226,29 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           Joined {formatDate(user.createdAt)}
         </Text>
         {user?.bannedAt && (
-          <Text color="red" size="sm">
-            Banned
-          </Text>
+          <Group>
+            <Popover withArrow>
+              <Popover.Target>
+                <UnstyledButton>
+                  <Badge color="red">
+                    <Group spacing={0}>
+                      <Text>{user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}</Text>
+                      {user?.bannedReasonDetails && (
+                        <IconInfoCircle size={16} style={{ marginLeft: 4 }} />
+                      )}
+                    </Group>
+                  </Badge>
+                </UnstyledButton>
+              </Popover.Target>
+              <Popover.Dropdown maw={350}>
+                {user?.bannedReasonDetails ? (
+                  <RenderHtml html={user?.bannedReasonDetails} style={{ fontSize: '14px' }} />
+                ) : (
+                  <Text>This user has been banned from the site.</Text>
+                )}
+              </Popover.Dropdown>
+            </Popover>
+          </Group>
         )}
       </Stack>
 

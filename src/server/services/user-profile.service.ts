@@ -14,6 +14,7 @@ import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
 import { UserMeta } from '~/server/schema/user.schema';
 import { banReasonDetails } from '~/server/common/constants';
+import { getUserBanDetails } from '~/utils/user-helpers';
 
 export const getUserContentOverview = async ({
   username,
@@ -123,10 +124,10 @@ export const getUserWithProfile = async ({
     return {
       ...user,
       meta: undefined,
-      banReasonCode: isModerator ? userMeta?.banDetails?.reasonCode : undefined,
-      banReason: userMeta?.banDetails?.reasonCode
-        ? banReasonDetails[userMeta.banDetails.reasonCode].publicBanReasonLabel
-        : undefined,
+      ...getUserBanDetails({
+        meta: userMeta,
+        isModerator: isModerator ?? false,
+      }),
       stats: stats,
       profile: {
         ...profile,

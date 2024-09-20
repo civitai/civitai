@@ -82,6 +82,7 @@ import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
+import { getUserBanDetails } from '~/utils/user-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -728,14 +729,9 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
     meta: {
       ...userMeta,
-      banDetails: userMeta?.banDetails
-        ? {
-            ...userMeta?.banDetails,
-            // Remove internal details from the user view.
-            detailsInternal: undefined,
-          }
-        : undefined,
+      banDetails: undefined,
     },
+    banDetails: getUserBanDetails({ meta: userMeta }),
   };
 
   const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;

@@ -116,6 +116,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
 
       return { prevUser };
     },
+    async onSuccess() {
+      await queryUtils.userProfile.get.invalidate({ username });
+    },
     onError(_error, _vars, context) {
       queryUtils.user.getCreator.setData({ username }, context?.prevUser);
       showErrorNotification({

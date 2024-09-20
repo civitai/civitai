@@ -46,7 +46,8 @@ export default function UserBanModal({ username, userId }: Props) {
 
       return { prevUser };
     },
-    onSuccess() {
+    async onSuccess() {
+      await queryUtils.userProfile.get.invalidate({ username });
       dialog.onClose();
     },
     onError(_error, _vars, context) {
@@ -104,7 +105,7 @@ export default function UserBanModal({ username, userId }: Props) {
         />
         <RichTextEditor
           label="Public Details"
-          description="Provide an explanation for banning this user. This will NOT be visible to the user."
+          description="Provide an explanation for banning this user. This will be visible to the banned user."
           value={detailsExternal}
           includeControls={['formatting']}
           onChange={(value) => setDetailsExternal(value)}

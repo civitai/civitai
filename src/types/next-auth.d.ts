@@ -1,6 +1,7 @@
 import type { User as PrismaUser } from '@prisma/client';
 import { DefaultSession, DefaultUser } from 'next-auth';
 import { UserSettingsSchema, UserTier } from '~/server/schema/user.schema';
+import { getUserBanDetails } from '~/utils/user-helpers';
 
 interface ExtendedUser {
   id: number;
@@ -28,6 +29,7 @@ interface ExtendedUser {
   memberInBadState?: boolean;
   meta?: UserMeta;
   allowAds?: boolean;
+  banDetails?: ReturnType<typeof getUserBanDetails>;
   // TODO.briant - clean up user session data
   /*
     remove `deletedAt` from session user data
