@@ -59,7 +59,7 @@ const schema = modelUpsertSchema
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
-  .refine((data) => (data.nsfw && data.poi === 'false') || (!data.nsfw && data.poi === 'true'), {
+  .refine((data) => !(data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => !(data.nsfw && data.minor), {
@@ -431,9 +431,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
-                    form.setValue('nsfw', value === 'true' ? false : undefined, {
-                      shouldDirty: true,
-                    });
+                    form.setValue('nsfw', value === 'true' ? false : undefined);
+                    form.setValue('minor', value === 'true');
                   }}
                 >
                   <Radio value="true" label="Yes" disabled={isLocked('poi')} />
@@ -445,9 +444,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                   disabled={isLocked('nsfw') || poi === 'true'}
                   description={isLockedDescription('category')}
                   onChange={(event) =>
-                    event.target.checked
-                      ? form.setValue('minor', false, { shouldDirty: true })
-                      : null
+                    event.target.checked ? form.setValue('minor', false) : null
                   }
                 />
                 <InputCheckbox
