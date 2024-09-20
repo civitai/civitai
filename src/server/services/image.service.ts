@@ -638,7 +638,6 @@ type GetAllImagesRaw = {
   hideMeta: boolean;
   hasMeta: boolean;
   onSite: boolean;
-  generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   sortAt: Date;
   mimeType: string | null;
@@ -1124,7 +1123,6 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) as "onSite",
-      i."generationProcess",
       i."createdAt",
       COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
@@ -1471,7 +1469,6 @@ export const getAllImagesIndex = async (
       availability: Availability.Public,
       tags: [], // needed?
       name: null, // leave
-      generationProcess: null, // deprecated
       scannedAt: null, // remove
       mimeType: null, // need?
       ingestion:
@@ -2078,7 +2075,6 @@ export const getImage = async ({
       i.hash,
       -- i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i."scannedAt",
@@ -2504,7 +2500,6 @@ export const getImagesForPosts = async ({
       height: number;
       hash: string;
       createdAt: Date;
-      generationProcess: ImageGenerationProcess | null;
       postId: number;
       cryCount: number;
       laughCount: number;
@@ -2531,7 +2526,6 @@ export const getImagesForPosts = async ({
       i.type,
       i.metadata,
       i."createdAt",
-      i."generationProcess",
       i."postId",
       (
         CASE
@@ -2693,7 +2687,6 @@ type GetImageConnectionRaw = {
   hash: string;
   meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -2775,7 +2768,6 @@ export const getImagesByEntity = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i.type,
@@ -2924,7 +2916,6 @@ type GetEntityImageRaw = {
   hash: string;
   meta: ImageMetaProps;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -3056,7 +3047,6 @@ export const getEntityCoverImage = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i.type,
@@ -3194,7 +3184,6 @@ type GetImageModerationReviewQueueRaw = {
   hash: string;
   meta: ImageMetaProps;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   sortAt: Date;
   mimeType: string;
@@ -3304,7 +3293,6 @@ export const getImageModerationReviewQueue = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",

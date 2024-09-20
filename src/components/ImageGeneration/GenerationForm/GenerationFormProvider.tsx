@@ -312,9 +312,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (name === 'baseModel') {
+        if (watchedValues.baseModel === 'Flux1') {
+          form.setValue('workflow', 'txt2img');
+        }
         if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {
           form.setValue('cfgScale', 3.5);
-          form.setValue('workflow', 'txt2img');
         }
 
         if (prevBaseModelRef.current === 'Flux1' && watchedValues.baseModel !== 'Flux1') {
