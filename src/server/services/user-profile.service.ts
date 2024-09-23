@@ -37,8 +37,8 @@ export const getUserContentOverview = async ({
     userId = user.id;
   }
 
-  const data = userContentOverviewCache.fetch([userId]);
-  return data;
+  const data = await userContentOverviewCache.fetch([userId]);
+  return data[userId];
 };
 
 export const getUserWithProfile = async ({
