@@ -467,8 +467,10 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
   lookupFn: async (ids) => {
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
+
     const userOverviewData = await dbRead.$queryRaw<UserContentOverview[]>`
     SELECT
+        u.id, 
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
         (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
         (SELECT COUNT(*)::INT FROM "Image" i
