@@ -1138,7 +1138,7 @@ export const earlyAccessPurchase = async ({
     buzzTransactionId = buzzTransaction.transactionId;
 
     await dbWrite.$transaction(async (tx) => {
-      if (access.hasAccess) {
+      if (access.permissions !== -1) {
         // Should only happen if the user purchased Generation but NOT download.
         // Update entity access:
         await tx.entityAccess.update({
