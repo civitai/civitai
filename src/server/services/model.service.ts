@@ -1195,7 +1195,9 @@ export const deleteModelById = async ({
     return model;
   });
 
-  await userContentOverviewCache.bust(model.userId);
+  if (deletedModel) {
+    await userContentOverviewCache.bust(deletedModel.userId);
+  }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
