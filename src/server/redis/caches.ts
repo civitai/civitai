@@ -294,6 +294,10 @@ export const modelVersionAccessCache = createCachedObject<EntityAccessDataType>(
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
   idKey: 'entityId',
   ttl: CacheTTL.day,
+  dontCacheFn: (data) => {
+    // We only wanna cache public models. Otherwise, we better confirm every time. It's a safer bet.
+    return data.availability !== 'Public';
+  },
   lookupFn: async (ids) => {
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};

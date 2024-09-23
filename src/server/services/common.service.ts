@@ -58,6 +58,16 @@ export const hasEntityAccess = async ({
     data = Object.values(cacheData);
   } else {
     const query: Prisma.Sql =
+      //     entityType === 'ModelVersion'
+      //       ? Prisma.sql`
+      //    SELECT
+      //      mv.id as "entityId",
+      //      mmv."userId" as "userId",
+      //      mv."availability" as "availability"
+      //    FROM "ModelVersion" mv
+      //    JOIN "Model" mmv ON mv."modelId" = mmv.id
+      //    WHERE mv.id IN (${Prisma.join(entityIds, ',')})
+      // ` :
       entityType === 'Article'
         ? Prisma.sql`
     SELECT
