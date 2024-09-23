@@ -1192,10 +1192,10 @@ export const deleteModelById = async ({
         )})
       `;
 
-    await userContentOverviewCache.bust(model.userId);
     return model;
   });
 
+  await userContentOverviewCache.bust(model.userId);
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
@@ -1481,12 +1481,13 @@ export const publishModelById = async ({
         `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
-      await userContentOverviewCache.bust(model.userId);
 
       return model;
     },
     { timeout: 10000 }
   );
+
+  await userContentOverviewCache.bust(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);

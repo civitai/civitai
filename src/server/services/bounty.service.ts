@@ -240,14 +240,14 @@ export const createBounty = async ({
           break;
       }
 
-      if (bounty.userId) {
-        await userContentOverviewCache.bust(bounty.userId);
-      }
-
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  if (bounty.userId) {
+    await userContentOverviewCache.bust(bounty.userId);
+  }
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
@@ -351,14 +351,14 @@ export const updateBountyById = async ({
         });
       }
 
-      if (bounty.userId) {
-        await userContentOverviewCache.bust(bounty.userId);
-      }
-
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  if (bounty?.userId) {
+    await userContentOverviewCache.bust(bounty?.userId);
+  }
 
   return bounty;
 };
