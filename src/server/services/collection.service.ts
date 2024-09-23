@@ -27,6 +27,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userContentOverviewCache } from '~/server/redis/caches';
 import {
   GetByIdInput,
   UserPreferencesInput,
@@ -734,6 +735,9 @@ export const upsertCollection = async ({
             WHERE ci."collectionId" = ${updated.id}
         `;
       }
+
+      await userContentOverviewCache.bust(updated.userId);
+
       return updated;
     });
 
@@ -853,6 +857,8 @@ export const upsertCollection = async ({
         : undefined,
     },
   });
+
+  await userContentOverviewCache.bust(userId);
 
   return collection;
 };
