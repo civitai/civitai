@@ -9,6 +9,7 @@ import {
   TagSource,
   TagType,
 } from '@prisma/client';
+import dayjs from 'dayjs';
 import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -290,22 +291,29 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   ttl: CacheTTL.day,
 });
 
-export const modelVersionAccessCache = createCachedObject<EntityAccessDataType>({
+type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date };
+
+export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
   idKey: 'entityId',
-  ttl: CacheTTL.day,
+  ttl: CacheTTL.hour,
   dontCacheFn: (data) => {
     // We only wanna cache public models. Otherwise, we better confirm every time. It's a safer bet.
-    return data.availability !== 'Public';
+    // Also, only cache it if it's been published for more than an hour.
+    const oneHourAgo = dayjs().subtract(1, 'hour').toDate();
+    const isOlderThanOneHour = data.publishedAt < oneHourAgo;
+
+    return data.availability !== 'Public' || !isOlderThanOneHour;
   },
   lookupFn: async (ids) => {
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
-    const entityAccessData = await dbRead.$queryRaw<EntityAccessDataType[]>(Prisma.sql`
+    const entityAccessData = await dbRead.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
       SELECT
         mv.id AS "entityId",
         mmv."userId" AS "userId",
-        mv."availability" AS "availability"
+        mv."availability" AS "availability",
+        mv."publishedAt" AS "publishedAt"
       FROM "ModelVersion" mv
            JOIN "Model" mmv ON mv."modelId" = mmv.id
       WHERE
