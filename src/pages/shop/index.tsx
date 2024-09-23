@@ -30,6 +30,8 @@ import { NotificationToggle } from '~/components/Notifications/NotificationToggl
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
+import { isEmpty } from 'lodash-es';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -112,41 +114,7 @@ export default function CosmeticShopMain() {
           <div className="ml-auto">
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
-          <ShopSection
-            title="Anne Horel"
-            description="As part of her upcoming exhibition at Julie Caredda Gallery in Paris, Civitai AiR Artist Anne Horel is presenting a set of limited edition t-shirts featuring her AI generated masks. Each shirt is limited to an edition of 50."
-            imageUrl="/images/shop/civitai-air/hero-banner.jpg"
-          >
-            <ShopSection.Items>
-              <div className="flex flex-col items-center justify-center gap-6 rounded-lg bg-[#2F2F2F] p-6">
-                <Image
-                  src="/images/shop/civitai-air/tshirt01.png"
-                  alt="t-shirt with an AI generated face of a cat"
-                  width={598}
-                  height={560}
-                />
-                <div className="flex flex-col gap-2">
-                  <Text size="lg" weight="bold">
-                    The Mad Cat I
-                  </Text>
-                  <Text size="md" weight="bold">
-                    An AI generated cat that will make you go mad
-                  </Text>
-                </div>
-                <Button
-                  component="a"
-                  href="https://shop.civitai.com"
-                  rel="nofollow noreferrer"
-                  target="_blank"
-                  color="gray-4"
-                  radius="xl"
-                  fullWidth
-                >
-                  $29.99 - Buy Now
-                </Button>
-              </div>
-            </ShopSection.Items>
-          </ShopSection>
+          {isEmpty(filters) && <ArtistShowcaseSection />}
           {isLoading ? (
             <Center p="xl">
               <Loader />
@@ -185,5 +153,91 @@ export default function CosmeticShopMain() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+const showcaseProducts = [
+  {
+    name: 'The Mad Cat I',
+    description: 'An AI generated cat that will make you go mad',
+    price: 2999,
+    imageUrl: '/images/shop/civitai-air/tshirt01.png',
+    url: 'https://shop.civitai.com',
+  },
+  {
+    name: 'The Mad Cat II',
+    description: 'An AI generated cat that will make you go mad',
+    price: 2999,
+    imageUrl: '/images/shop/civitai-air/tshirt02.png',
+    url: 'https://shop.civitai.com',
+  },
+  {
+    name: 'The Mad Cat III',
+    description: 'An AI generated cat that will make you go mad',
+    price: 2999,
+    imageUrl: '/images/shop/civitai-air/tshirt03.png',
+    url: 'https://shop.civitai.com',
+  },
+];
+
+function ArtistShowcaseSection() {
+  return (
+    <section className="flex flex-col gap-8">
+      <div className="relative h-[400px] rounded-[20px] bg-[#E8F0FD] bg-[url(/images/shop/civitai-air/anne-horel.png)] bg-cover bg-center bg-no-repeat lg:bg-contain lg:bg-right">
+        <div className="absolute left-0 top-0 flex flex-col px-10 py-6">
+          <Text size={48} weight={600} tt="uppercase" color="#3A4375" inline>
+            Anne Horel
+          </Text>
+          <Text size="xl" weight={500} tt="uppercase" color="#3A4375" inline>
+            Limited Edition AI Artist T-Shirts
+          </Text>
+        </div>
+      </div>
+      <div className="flex flex-col px-11">
+        <Text size={32} weight={600}>
+          The backstory
+        </Text>
+        <Text size={24} lh="40px" color="dimmed">
+          As part of her upcoming exhibition at Julie Caredda Gallery in Paris, Civitai AiR Artist
+          Anne Horel is presenting a set of limited edition t-shirts featuring her AI generated
+          masks. Each shirt is limited to an edition of 50.
+        </Text>
+      </div>
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 px-11">
+        {showcaseProducts.map((product) => (
+          <div
+            key={product.imageUrl}
+            className="flex flex-col items-center justify-center gap-6 rounded-[20px] bg-[#2F2F2F] p-6"
+          >
+            <Image
+              src={product.imageUrl}
+              alt="t-shirt with an AI generated face of a cat"
+              width={598}
+              height={560}
+            />
+            <div className="flex flex-col gap-2">
+              <Text size={28} weight="bold">
+                {product.name}
+              </Text>
+              <Text size={24} color="dimmed">
+                {product.description}
+              </Text>
+            </div>
+            <Button
+              component="a"
+              href={product.url}
+              rel="nofollow noreferrer"
+              size="xl"
+              target="_blank"
+              color="dark.4"
+              radius="xl"
+              fullWidth
+            >
+              ${formatPriceForDisplay(product.price)} - Buy Now
+            </Button>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }

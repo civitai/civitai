@@ -90,7 +90,7 @@ export function ShopSection({ title, description, imageUrl, hideTitle, children 
     : undefined;
 
   return (
-    <Stack className={classes.section} m="sm">
+    <section className={cx(classes.section, 'flex flex-col gap-4 m-3')}>
       <div
         className={cx(classes.sectionHeaderContainer, {
           [classes.sectionHeaderContainerWithBackground]: !!backgroundImageUrl,
@@ -129,7 +129,7 @@ export function ShopSection({ title, description, imageUrl, hideTitle, children 
       </Stack>
 
       {children}
-    </Stack>
+    </section>
   );
 }
 
