@@ -145,7 +145,7 @@ export const useNotificationSignal = () => {
 
   const onUpdate = useCallback(
     async (updated: NotificationGetAllItem) => {
-      const queryKey = getQueryKey(trpc.notification.getAllByUser);
+      const queryKey = getQueryKey(trpc.notification.getAllByUser)[0];
 
       // nb: this shouldn't run if "old" doesn't exist, but can't test that yet, and produce doesn't allow async
       let newUpdated = updated;
@@ -163,8 +163,17 @@ export const useNotificationSignal = () => {
         }
       } catch {}
 
+      // update All + "Category" cache
       queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
-        { queryKey, exact: false },
+        { queryKey: [queryKey, { input: { category: null } }], exact: false },
+        produce((old) => {
+          if (!old || !old.pages || !old.pages.length) return;
+          const firstPage = old.pages[0];
+          firstPage.items.unshift(newUpdated);
+        })
+      );
+      queryClient.setQueriesData<InfiniteData<NotificationGetAll>>(
+        { queryKey: [queryKey, { input: { category: updated.category } }], exact: false },
         produce((old) => {
           if (!old || !old.pages || !old.pages.length) return;
           const firstPage = old.pages[0];
