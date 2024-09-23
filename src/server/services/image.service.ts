@@ -40,7 +40,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
-import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import {
+  imagesForModelVersionsCache,
+  tagCache,
+  tagIdsForImagesCache,
+  userContentOverviewCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -2847,6 +2852,8 @@ export async function createImage({ toolIds, ...image }: ImageSchema & { userId:
       prompt: image?.meta?.prompt,
     },
   });
+
+  await userContentOverviewCache.bust(image.userId);
 
   return result;
 }

@@ -230,7 +230,7 @@ export function cachedCounter<T extends string | number>(
 
 export async function clearCacheByPattern(pattern: string) {
   let cursor: number | undefined;
-  let cleared: string[] = [];
+  const cleared: string[] = [];
   while (cursor !== 0) {
     console.log('Scanning:', cursor);
     const reply = await redis.scan(cursor ?? 0, {
