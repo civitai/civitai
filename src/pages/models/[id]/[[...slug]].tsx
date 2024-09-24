@@ -85,6 +85,7 @@ import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelN
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
+import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -227,6 +228,11 @@ export default function ModelDetailsV2({
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+
+  const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
+    useModelVersionPermission({
+      modelVersionId: selectedVersion?.id ?? -1,
+    });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -490,7 +496,11 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
-    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
+    !isMuted &&
+    (!onlyEarlyAccess ||
+      hasDownloadPermissions ||
+      hasGeneratePermissions ||
+      currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const versionIsEarlyAccess =
