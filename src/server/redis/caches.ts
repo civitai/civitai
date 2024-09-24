@@ -303,7 +303,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
     const oneHourAgo = dayjs().subtract(1, 'hour').toDate();
     const isOlderThanOneHour = data.publishedAt < oneHourAgo;
 
-    return data.availability !== 'Public' || !isOlderThanOneHour;
+    return data.availability !== 'Public' || !isOlderThanOneHour || !data.publishedAt;
   },
   lookupFn: async (ids) => {
     const goodIds = ids.filter(isDefined);
