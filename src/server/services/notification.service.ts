@@ -31,6 +31,7 @@ export const createNotificationPendingRow = notificationSingleRowFull
   .extend({
     userId: z.number().optional(),
     userIds: z.array(z.number()).optional(),
+    debounceSeconds: z.number().optional(),
   });
 export type CreateNotificationPendingRow = z.infer<typeof createNotificationPendingRow>;
 
@@ -51,13 +52,16 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
     if (targets.length === 0) return;
 
     await notifDbWrite.cancellableQuery(Prisma.sql`
-      INSERT INTO "PendingNotification" (key, type, category, users, details)
+      INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
       VALUES
-        (${data.key},
-         ${data.type},
-         ${data.category}::"NotificationCategory",
-         ${'{' + targets.join(',') + '}'},
-         ${JSON.stringify(data.details)}::jsonb)
+        (
+          ${data.key},
+          ${data.type},
+          ${data.category}::"NotificationCategory",
+          ${'{' + targets.join(',') + '}'},
+          ${JSON.stringify(data.details)}::jsonb,
+          COALESCE(${data.debounceSeconds ?? null}, NULL)    
+         )
       ON CONFLICT DO NOTHING
     `);
   } catch (e) {
