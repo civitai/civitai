@@ -141,6 +141,7 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
       earlyAccessEndsAt: { gt: new Date() },
       model: {
         userId,
+        deletedAt: null,
       },
     },
     select: { id: true },
