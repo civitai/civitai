@@ -114,7 +114,6 @@ export function createCachedArray<T extends object>({
           continue;
         }
         results.add(result as T);
-        console.log('dontCacheFn', dontCacheFn?.(result));
         if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
       }
 
