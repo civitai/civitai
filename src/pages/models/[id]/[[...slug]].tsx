@@ -490,7 +490,11 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
-    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
+    !isMuted &&
+    (!onlyEarlyAccess ||
+      selectedVersion?.canDownload ||
+      selectedVersion?.canGenerate ||
+      currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const versionIsEarlyAccess =
