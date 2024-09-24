@@ -1593,7 +1593,7 @@ export const unpublishModelById = async ({
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
-      await userContentOverviewCache.bust(model.userId);
+      await userContentOverviewCache.bust(updatedModel.userId);
 
       return updatedModel;
     },

@@ -1136,9 +1136,17 @@ export const earlyAccessPurchase = async ({
     });
 
     buzzTransactionId = buzzTransaction.transactionId;
+    const accessRecord = await dbWrite.entityAccess.findFirst({
+      where: {
+        accessorId: userId,
+        accessorType: 'User',
+        accessToId: modelVersionId,
+        accessToType: 'ModelVersion',
+      },
+    });
 
     await dbWrite.$transaction(async (tx) => {
-      if (access.permissions > 0) {
+      if (accessRecord) {
         // Should only happen if the user purchased Generation but NOT download.
         // Update entity access:
         await tx.entityAccess.update({
