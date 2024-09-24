@@ -100,9 +100,9 @@ export const defaultTrainingCost: TrainingCost = {
     numImgBase: 200,
     numImgStep: 100,
     numImgBuzz: 500,
-    discountFactor: 0.5, // multiplier, not "discount"
+    discountFactor: 0.6, // multiplier, not "discount"
     discountStart: '2024-09-13T00:00:00Z',
-    discountEnd: '2024-09-18T00:00:00Z',
+    discountEnd: '2024-09-25T00:00:00Z',
   },
 };
 

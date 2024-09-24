@@ -40,11 +40,15 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import { getPlans } from '~/server/services/subscriptions.service';
 import { playfab } from '~/server/playfab/client';
 import {
+  SubscriptionMetadata,
   SubscriptionProductMetadata,
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { env } from '~/env/server.mjs';
+import dayjs from 'dayjs';
+import { original } from 'immer';
+import { logToAxiom } from '~/server/logging/client';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -361,14 +365,16 @@ export const upsertSubscription = async (
   const userSubscription = await dbRead.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
-    select: { id: true, status: true },
+    select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
   });
 
   const userHasSubscription = !!userSubscription;
   const isSameSubscriptionItem = userSubscription?.id === subscriptionNotification.id;
 
   const startingNewSubscription =
-    isCreatingSubscription && userHasSubscription && !isSameSubscriptionItem;
+    (isCreatingSubscription || userSubscription?.product?.provider !== PaymentProvider.Paddle) &&
+    userHasSubscription &&
+    !isSameSubscriptionItem;
 
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
@@ -392,6 +398,20 @@ export const upsertSubscription = async (
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
     await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
+    const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
+    if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
+      // This is a migration that we reached out to:
+      await withRetries(async () =>
+        createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: user.id,
+          type: TransactionType.Purchase,
+          amount: subscriptionMeta.renewalBonus as number,
+          description: 'Thank you for your continued support! Here is a bonus for you.',
+          externalTransactionId: `renewalBonus:${user.id}`,
+        })
+      );
+    }
   } else if (userHasSubscription && isCreatingSubscription) {
     log('upsertSubscription :: Subscription already up to date');
     return;
@@ -618,6 +638,8 @@ export const updateSubscriptionPlan = async ({
     throw throwNotFoundError('No active subscription found on Paddle');
   }
 
+  console.log('SUBSC', subscription, priceId);
+
   try {
     if (
       subscription.priceId === priceId &&
@@ -629,17 +651,40 @@ export const updateSubscriptionPlan = async ({
         scheduledChange: null,
       });
     } else if (subscription.priceId !== priceId) {
-      await updatePaddleSubscription({
-        subscriptionId: subscription.id,
-        items: [
-          {
-            priceId,
-            quantity: 1,
+      try {
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          items: [
+            {
+              priceId,
+              quantity: 1,
+            },
+          ],
+          prorationBillingMode: 'full_immediately',
+          onPaymentFailure: 'prevent_change',
+        });
+
+        // For whatever random reason in the world, Paddle doesn't update the next billed at date
+        // automatically when you change the subscription. So we do it manually.
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          nextBilledAt: dayjs().add(1, 'month').toISOString(),
+          prorationBillingMode: 'do_not_bill',
+          customData: {
+            ...paddleSubscription.customData,
+            originalNextBilledAt: paddleSubscription?.nextBilledAt,
           },
-        ],
-        prorationBillingMode: 'full_immediately',
-        onPaymentFailure: 'prevent_change',
-      });
+        });
+      } catch (e) {
+        throw new Error('Failed to update subscription');
+        logToAxiom({
+          subscriptionId: paddleSubscription.id,
+          type: 'error',
+          message: 'Failed to update subscription',
+          userId,
+          priceId,
+        });
+      }
     }
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
@@ -708,4 +753,11 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   await getMultipliersForUser(userId, true);
 
   return true;
+};
+
+export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {
+  const subs = await getPaddleCustomerSubscriptions({ customerId });
+  const subsToCancel = subs.filter((sub) => sub.status === 'active');
+  const cancelPromises = subsToCancel.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'));
+  return Promise.all(cancelPromises);
 };

@@ -78,3 +78,19 @@ export const useSubscriptionManagementUrls = (data: { enabled?: boolean } = { en
     ...rest,
   };
 };
+
+export const useHasPaddleSubscription = () => {
+  const currentUser = useCurrentUser();
+
+  const { data: hasPaddleSubscription, isLoading } = trpc.paddle.hasSubscription.useQuery(
+    undefined,
+    {
+      enabled: !!currentUser,
+    }
+  );
+
+  return {
+    hasPaddleSubscription,
+    isLoading,
+  };
+};

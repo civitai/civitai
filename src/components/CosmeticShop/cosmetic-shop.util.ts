@@ -310,7 +310,9 @@ export const useShopLastViewed = () => {
 
 const cosmeticShopQueryParams = z
   .object({
-    cosmeticTypes: stringArray(),
+    cosmeticTypes: z
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(CosmeticType).array())
+      .optional(),
   })
   .partial();
 export const useCosmeticShopQueryParams = () => useZodRouteParams(cosmeticShopQueryParams);

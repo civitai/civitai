@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { DonateToGoalInput } from '~/server/schema/donation-goal.schema';
@@ -150,6 +151,7 @@ export const checkDonationGoalComplete = async ({ donationGoalId }: { donationGo
 
       // Ensures user gets access to the resource after purchasing.
       await bustMvCache(goal.modelVersionId);
+      await dataForModelsCache.bust(modelVersion.modelId);
     }
   }
 

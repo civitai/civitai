@@ -80,7 +80,11 @@ import {
 } from './../schema/user.schema';
 import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
-import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
+import {
+  cancelAllPaddleSubscriptions,
+  cancelSubscriptionPlan,
+} from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
@@ -605,7 +609,10 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {
-  const user = await dbWrite.user.findFirst({ where: { id }, select: { isModerator: true } });
+  const user = await dbWrite.user.findFirst({
+    where: { id },
+    select: { isModerator: true, paddleCustomerId: true },
+  });
   if (user?.isModerator) return;
   await dbWrite.model.updateMany({
     where: { userId: id },
@@ -624,9 +631,11 @@ export async function softDeleteUser({ id }: { id: number }) {
   await invalidateSession(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
+  if (user?.paddleCustomerId) {
+    await cancelAllPaddleSubscriptions({ customerId: user.paddleCustomerId }).catch((error) =>
+      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+    );
+  }
 }
 
 export const updateAccountScope = async ({
@@ -696,11 +705,8 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     },
   });
 
-  const subscription = await dbWrite.customerSubscription.findFirst({
-    where: { userId },
-    include: {
-      product: true,
-    },
+  const subscription = await getUserSubscription({
+    userId,
   });
 
   if (!response) return undefined;

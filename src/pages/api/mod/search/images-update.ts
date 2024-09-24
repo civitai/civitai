@@ -21,14 +21,13 @@ const IMAGE_WHERE: (start: number, end?: number) => Prisma.Sql[] = (
   Prisma.sql`i."postId" IS NOT NULL`,
   Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
   Prisma.sql`i."tosViolation" = false`,
-  Prisma.sql`i."type" = 'image'`,
   Prisma.sql`i."needsReview" IS NULL`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
 ];
 
 const schema = z.object({
-  update: z.enum(['user', 'dateFields', 'nsfw']),
+  update: z.enum(['user', 'dateFields', 'nsfw', 'flags']),
 });
 
 const updateUserDetails = (idOffset: number) =>
@@ -270,12 +269,73 @@ async function updateNsfw() {
   });
 }
 
+async function updateFlags() {
+  await dataProcessor({
+    params: { batchSize: 100000, concurrency: 10, start: 0 },
+    runContext: {
+      on: (event: 'close', listener: () => void) => {
+        // noop
+      },
+    },
+    rangeFetcher: async (ctx) => {
+      const [{ start, end }] = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+        SELECT
+          MIN("imageId") as start,
+          MAX("imageId") as end
+        FROM "ImageFlag"
+      `;
+
+      return { start, end };
+    },
+    processor: async ({ start, end }) => {
+      type ImageWithImageFlag = {
+        imageId: number;
+        promptNsfw?: boolean;
+      };
+
+      const consoleFetchKey = `Fetch: ${start} - ${end}`;
+      console.log(consoleFetchKey);
+      console.time(consoleFetchKey);
+      const records = await dbRead.$queryRaw<ImageWithImageFlag[]>`
+        SELECT fl.*
+        FROM "ImageFlag" fl
+        JOIN "Image" i ON i."id" = fl."imageId"
+        JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
+        WHERE ${Prisma.join(IMAGE_WHERE(start, end), ' AND ')}
+      `;
+      console.timeEnd(consoleFetchKey);
+
+      if (records.length === 0) {
+        console.log(`No updates found:  ${start} - ${end}`);
+        return;
+      }
+
+      const documents = records.map(({ imageId, ...flags }) => ({ id: imageId, flags }));
+
+      const consolePushKey = `Push: ${start} - ${end}`;
+      console.log(consolePushKey);
+      console.time(consolePushKey);
+      await updateDocs({
+        indexName: INDEX_ID,
+        documents,
+        batchSize: 100000,
+      });
+      console.timeEnd(consolePushKey);
+    },
+  });
+}
+
 export default ModEndpoint(
   async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
     if (update === 'nsfw') {
       await updateNsfw();
+      return res.status(200).json({ ok: true, duration: Date.now() - start });
+    }
+
+    if (update === 'flags') {
+      await updateFlags();
       return res.status(200).json({ ok: true, duration: Date.now() - start });
     }
 

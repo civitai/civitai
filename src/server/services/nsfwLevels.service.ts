@@ -111,7 +111,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let articleIds: number[] = [];
   let bountyIds: number[] = [];
   let bountyEntryIds: number[] = [];
-  let collectionIds: number[] = [];
+  const collectionIds: number[] = [];
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
 
@@ -217,13 +217,13 @@ export async function updateNsfwLevels({
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
   const updateModelVersions = batcher(modelVersionIds, updateModelVersionNsfwLevels);
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
-  const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
+  // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
     [updatePosts, updateArticles, updateBounties, updateBountyEntries],
     [updateModelVersions],
     [updateModels],
-    [updateCollections],
+    // [updateCollections],
   ];
 
   for (const batch of nsfwLevelChangeBatches) {

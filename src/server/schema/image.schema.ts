@@ -147,29 +147,7 @@ export const isNotImageResource = (
 ): entity is Omit<ImageResourceUpsertInput, 'id'> & { id: undefined } => !entity.id;
 // #endregion
 
-export type CreateImageSchema = z.infer<typeof createImageSchema>;
-export const createImageSchema = z.object({
-  entityId: z.number().optional(),
-  entityType: imageEntitiesSchema.optional(),
-  id: z.number().optional(),
-  name: z.string().nullish(),
-  url: z.string().url().or(z.string().uuid()),
-  hash: z.string().nullish(),
-  height: z.number().nullish(),
-  width: z.number().nullish(),
-  postId: z.number().nullish(),
-  modelVersionId: z.number().optional(),
-  index: z.number().optional(),
-  mimeType: z.string().optional(),
-  meta: z.preprocess((value) => {
-    if (typeof value !== 'object') return null;
-    if (value && !Object.keys(value).length) return null;
-    return value;
-  }, imageMetaSchema.nullish()),
-  type: z.nativeEnum(MediaType).default(MediaType.image),
-  metadata: z.object({}).passthrough().optional(),
-});
-
+export type ImageSchema = z.infer<typeof imageSchema>;
 export const imageSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
@@ -182,15 +160,15 @@ export const imageSchema = z.object({
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
-  // analysis: imageAnalysisSchema.optional(),
-  // tags: z.array(tagSchema).optional(),
-  // needsReview: z.string().nullish(),
   mimeType: z.string().optional(),
   sizeKB: z.number().optional(),
   postId: z.number().nullish(),
-  // resources: z.array(imageResourceUpsertSchema).optional(),
+  modelVersionId: z.number().nullish(),
   type: z.nativeEnum(MediaType).default(MediaType.image),
   metadata: z.object({}).passthrough().optional(),
+  externalDetailsUrl: z.string().url().optional(),
+  toolIds: z.number().array().optional(),
+  index: z.number().optional(),
 });
 
 export const comfylessImageSchema = imageSchema.extend({

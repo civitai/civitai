@@ -3,18 +3,13 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { ImageGenerationProcess, MediaType } from '@prisma/client';
+import { MediaType } from '@prisma/client';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  BadgeCosmetic,
-  ContentDecorationCosmetic,
-  WithClaimKey,
-} from '~/server/selectors/cosmetic.selector';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { removeEmpty } from '~/utils/object-helpers';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type ImageGuardConnect = {
   entityType:
@@ -32,13 +27,13 @@ type ImageGuardConnect = {
   entityId: string | number;
 };
 
+// TODO - if we're going to have a common image interface, let's define it elsewhere
 export interface ImageProps {
   id: number;
   url: string;
   name: string | null;
   meta?: ImageMetaProps | null;
   hash: string | null;
-  generationProcess: ImageGenerationProcess | null;
   width: number | null;
   height: number | null;
   createdAt: Date | null;
