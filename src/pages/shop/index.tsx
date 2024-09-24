@@ -183,17 +183,23 @@ const showcaseProducts = [
 function ArtistShowcaseSection() {
   return (
     <section className="flex flex-col gap-8">
-      <div className="relative h-[400px] rounded-[20px] bg-[#E8F0FD] bg-[url(/images/shop/civitai-air/anne-horel.png)] bg-cover bg-center bg-no-repeat lg:bg-contain lg:bg-right">
-        <div className="absolute left-0 top-0 flex flex-col px-10 py-6">
-          <Text size={48} weight={600} tt="uppercase" color="#3A4375" inline>
-            Anne Horel
-          </Text>
-          <Text size="xl" weight={500} tt="uppercase" color="#3A4375" inline>
-            Limited Edition AI Artist T-Shirts
-          </Text>
-        </div>
+      <div className="hidden w-full overflow-hidden rounded-[20px] md:block">
+        <Image
+          src="/images/shop/civitai-air/anne-horel-banner.png"
+          width={2400}
+          height={800}
+          alt="banner depicting several AI generated picture from artist Anne Horel"
+        />
       </div>
-      <div className="flex flex-col px-11">
+      <div className="block w-full overflow-hidden rounded-[20px] md:hidden">
+        <Image
+          src="/images/shop/civitai-air/anne-horel-mobile.png"
+          width={1087}
+          height={960}
+          alt="banner depicting several AI generated picture from artist Anne Horel"
+        />
+      </div>
+      <div className="flex flex-col lg:px-11">
         <Text size={32} weight={600}>
           The backstory
         </Text>
@@ -203,7 +209,7 @@ function ArtistShowcaseSection() {
           masks. Each shirt is limited to an edition of 50.
         </Text>
       </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 px-11">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 lg:px-11">
         {showcaseProducts.map((product) => (
           <div
             key={product.imageUrl}
