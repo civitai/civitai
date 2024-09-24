@@ -93,7 +93,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
   const baseUrl = getBaseUrl();
-  const air = stringifyAIR(modelVersion)?.replace('pony', 'sdxl');
+  const air = stringifyAIR(modelVersion);
   let downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
     versionId: modelVersion.id,
     primary: true,

@@ -1328,7 +1328,7 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 }
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
-  await bustOrchestratorModelCache(ids, userId);
   await resourceDataCache.bust(ids);
+  await bustOrchestratorModelCache(ids, userId);
   await modelVersionAccessCache.bust(ids);
 };
