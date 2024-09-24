@@ -385,6 +385,9 @@ export const constants = {
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
+  dialog: {
+    zIndex: 200,
+  }
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
