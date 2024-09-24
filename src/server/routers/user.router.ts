@@ -65,6 +65,7 @@ import {
   setLeaderboardEligbilitySchema,
   computeDeviceFingerprintSchema,
   updateContentSettingsSchema,
+  toggleBanUserSchema,
 } from '~/server/schema/user.schema';
 import {
   equipCosmetic,
@@ -128,7 +129,7 @@ export const userRouter = router({
     .mutation(completeOnboardingHandler),
   toggleFollow: protectedProcedure.input(toggleFollowUserSchema).mutation(toggleFollowUserHandler),
   toggleMute: moderatorProcedure.input(getByIdSchema).mutation(toggleMuteHandler),
-  toggleBan: moderatorProcedure.input(getByIdSchema).mutation(toggleBanHandler),
+  toggleBan: moderatorProcedure.input(toggleBanUserSchema).mutation(toggleBanHandler),
   getToken: protectedProcedure.query(({ ctx }) => ({ token: createToken(ctx.user.id) })),
   removeAllContent: moderatorProcedure.input(getByIdSchema).mutation(async ({ input, ctx }) => {
     await removeAllContent(input);

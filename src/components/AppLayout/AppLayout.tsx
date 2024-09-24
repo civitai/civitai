@@ -5,9 +5,12 @@ import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 type AppLayoutProps = {
   innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
@@ -43,6 +46,30 @@ export function AppLayout({
           <Text size="lg" align="center">
             This account has been banned and cannot access the site
           </Text>
+
+          {user?.banDetails?.banReason && (
+            <Stack>
+              <DescriptionTable
+                items={[
+                  { label: 'Reason', value: user?.banDetails?.banReason },
+                  user?.banDetails?.bannedReasonDetails
+                    ? {
+                        label: 'Details',
+                        value: (
+                          <RenderHtml
+                            html={user?.banDetails?.bannedReasonDetails}
+                            style={{
+                              fontSize: '14px',
+                            }}
+                          />
+                        ),
+                      }
+                    : undefined,
+                ].filter(isDefined)}
+                withBorder
+              />
+            </Stack>
+          )}
           <Button onClick={() => logout()}>Sign out</Button>
         </Stack>
       </Center>

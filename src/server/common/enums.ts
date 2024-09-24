@@ -282,3 +282,16 @@ export enum NotificationCategory {
   System = 'System',
   Other = 'Other',
 }
+
+export enum BanReasonCode {
+  SexualMinor = 'SexualMinor',
+  SexualMinorGenerator = 'SexualMinorGenerator',
+  SexualMinorTraining = 'SexualMinorTraining',
+  SexualPOI = 'SexualPOI',
+  Bestiality = 'Bestiality',
+  Scat = 'Scat',
+  Harassment = 'Harassment',
+  LeaderboardCheating = 'LeaderboardCheating',
+  BuzzCheating = 'BuzzCheating',
+  Other = 'Other',
+}

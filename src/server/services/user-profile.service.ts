@@ -11,6 +11,10 @@ import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus, Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
+import { UserMeta } from '~/server/schema/user.schema';
+import { banReasonDetails } from '~/server/common/constants';
+import { getUserBanDetails } from '~/utils/user-helpers';
 import { userContentOverviewCache } from '~/server/redis/caches';
 
 export const getUserContentOverview = async ({
@@ -45,7 +49,8 @@ export const getUserWithProfile = async ({
   username,
   id,
   tx,
-}: GetUserProfileSchema & { tx?: Prisma.TransactionClient }) => {
+  isModerator,
+}: GetUserProfileSchema & { tx?: Prisma.TransactionClient; isModerator?: boolean }) => {
   const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
@@ -59,7 +64,7 @@ export const getUserWithProfile = async ({
         username,
         deletedAt: null,
       },
-      select: { ...userWithProfileSelect, publicSettings: true },
+      select: { ...userWithProfileSelect, bannedAt: true, meta: true, publicSettings: true },
     });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
@@ -82,9 +87,15 @@ export const getUserWithProfile = async ({
     });
 
     const { profile } = user;
+    const userMeta = (user.meta ?? {}) as UserMeta;
 
     return {
       ...user,
+      meta: undefined,
+      ...getUserBanDetails({
+        meta: userMeta,
+        isModerator: isModerator ?? false,
+      }),
       stats: stats,
       profile: {
         ...profile,
