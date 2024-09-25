@@ -273,7 +273,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
         <ImageGuard2 image={image}>
           {(safe) => (
             <Box sx={{ position: 'relative', height: '100%', overflow: 'hidden' }}>
-              <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
               {!safe ? (
                 <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
                   <MediaHash {...image} />
@@ -311,10 +311,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                     </Link>
                   )}
                   {image.meta && (
-                    <ImageMetaPopover
-                      meta={image.meta as ImageMetaProps}
-                      generationProcess={image.generationProcess ?? 'txt2img'}
-                    >
+                    <ImageMetaPopover meta={image.meta as ImageMetaProps}>
                       <ActionIcon
                         variant="transparent"
                         style={{ position: 'absolute', bottom: '5px', right: '5px' }}

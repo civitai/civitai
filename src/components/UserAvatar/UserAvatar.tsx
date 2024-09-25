@@ -129,7 +129,7 @@ export function UserAvatar({
 
   const image = avatarUser.profilePicture;
   const decoration =
-    withDecorations && avatarUser
+    withDecorations && avatarUser && !avatarUser.deletedAt
       ? (avatarUser.cosmetics?.find((c) => c.cosmetic?.type === 'ProfileDecoration')
           ?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt' | 'name'>)
       : undefined;

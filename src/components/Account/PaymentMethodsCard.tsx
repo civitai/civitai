@@ -273,10 +273,10 @@ const PaddlePaymentMethods = () => {
         )}
         {managementUrls?.updatePaymentMethod && (
           <Button component="a" href={managementUrls?.updatePaymentMethod}>
-            Update your default paymet method
+            Update your default payment method
           </Button>
         )}
-        {managementUrls?.freeSubscriptionPriceId && !subscription && (
+        {!managementUrls?.updatePaymentMethod && managementUrls?.freeSubscriptionPriceId && (
           <Stack>
             <Text align="center" size="sm" color="dimmed">
               We found no default payment method.

@@ -107,7 +107,7 @@ export default function Pricing() {
             As the leading generative AI community, we&rsquo;re adding new features every week. Help
             us keep the community thriving by becoming a Supporter and get exclusive perks.
           </Text>
-          <Text className={classes.introText} sx={{ lineHeight: 1.25 }}>
+          <Text align="center" className={classes.introText} sx={{ lineHeight: 1.25 }}>
             Your Membership provides full access across all Civitai domains, ensuring the same great
             benefits and features wherever you explore
           </Text>

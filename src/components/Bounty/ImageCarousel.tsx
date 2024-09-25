@@ -227,11 +227,7 @@ export function ImageCarouselContent({
                           nsfw={!safe}
                         />
                         {image.meta && (
-                          <ImageMetaPopover
-                            meta={image.meta}
-                            generationProcess={image.generationProcess ?? undefined}
-                            imageId={image.id}
-                          >
+                          <ImageMetaPopover meta={image.meta} imageId={image.id}>
                             <ActionIcon variant="light" className={classes.meta}>
                               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                             </ActionIcon>

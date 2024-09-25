@@ -141,6 +141,7 @@ export const getUserEarlyAccessModelVersions = async ({ userId }: { userId: numb
       earlyAccessEndsAt: { gt: new Date() },
       model: {
         userId,
+        deletedAt: null,
       },
     },
     select: { id: true },
@@ -1136,9 +1137,17 @@ export const earlyAccessPurchase = async ({
     });
 
     buzzTransactionId = buzzTransaction.transactionId;
+    const accessRecord = await dbWrite.entityAccess.findFirst({
+      where: {
+        accessorId: userId,
+        accessorType: 'User',
+        accessToId: modelVersionId,
+        accessToType: 'ModelVersion',
+      },
+    });
 
     await dbWrite.$transaction(async (tx) => {
-      if (access.hasAccess) {
+      if (accessRecord) {
         // Should only happen if the user purchased Generation but NOT download.
         // Update entity access:
         await tx.entityAccess.update({
@@ -1320,7 +1329,7 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 }
 
 export const bustMvCache = async (ids: number | number[], userId?: number) => {
-  await bustOrchestratorModelCache(ids, userId);
   await resourceDataCache.bust(ids);
+  await bustOrchestratorModelCache(ids, userId);
   await modelVersionAccessCache.bust(ids);
 };

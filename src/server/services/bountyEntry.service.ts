@@ -7,6 +7,7 @@ import { createEntityImages, updateEntityImages } from '~/server/services/image.
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
+import { userContentOverviewCache } from '~/server/redis/caches';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -145,6 +146,10 @@ export const upsertBountyEntry = ({
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
+      }
+
+      if (entry.userId) {
+        await userContentOverviewCache.bust(entry.userId);
       }
 
       return entry;

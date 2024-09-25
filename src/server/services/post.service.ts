@@ -64,6 +64,7 @@ import {
   UpdatePostImageInput,
 } from './../schema/post.schema';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import { userContentOverviewCache } from '~/server/redis/caches';
 
 type GetAllPostsRaw = {
   id: number;
@@ -582,6 +583,7 @@ export const createPost = async ({
   });
 
   await preventReplicationLag('post', post.id);
+  await userContentOverviewCache.bust(userId);
 
   let collectionTagId: null | number = null;
   if (post.collectionId) {
@@ -615,6 +617,7 @@ export const updatePost = async ({
     },
   });
   await preventReplicationLag('post', post.id);
+  await userContentOverviewCache.bust(post.userId);
 
   return post;
 };
@@ -894,7 +897,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
     },
-    select: { id: true, url: true },
+    select: { id: true, url: true, userId: true },
   });
 
   // If changing hide meta, purge the resize cache so that we strip metadata
@@ -903,6 +906,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   purgeImageGenerationDataCache(image.id);
+  await userContentOverviewCache.bust(result.userId);
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {

@@ -77,7 +77,6 @@ export async function getResourceDataWithAirs(versionIds: number[]) {
     air: stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
-      source: 'civitai',
       modelId: resource.model.id,
       id: resource.id,
     }),

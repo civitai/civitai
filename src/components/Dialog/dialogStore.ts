@@ -12,6 +12,7 @@ interface DialogSettings<TProps extends Record<string, unknown> = any> {
   options?: {
     transitionDuration?: number;
     onClose?: () => void;
+    zIndex?: number;
   };
 }
 

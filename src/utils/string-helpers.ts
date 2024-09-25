@@ -232,7 +232,7 @@ export function stringifyAIR({
     source,
     id: String(modelId),
     version: String(id),
-  });
+  })?.replace('pony', 'sdxl');
 }
 
 export function toBase64(str: string) {

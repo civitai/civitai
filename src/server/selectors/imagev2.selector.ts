@@ -37,7 +37,6 @@ export const getImageV2Select = ({ userId }: GetSelectArgs) =>
     hash: true,
     // meta: true,
     hideMeta: true,
-    generationProcess: true,
     createdAt: true,
     sortAt: true,
     mimeType: true,

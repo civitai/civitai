@@ -20,7 +20,7 @@ type ImagePreviewProps = {
   // lightboxImages?: ImageModel[];
   image: Pick<
     ImageGetInfinite[number],
-    'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'generationProcess' | 'type'
+    'id' | 'url' | 'name' | 'width' | 'height' | 'hash' | 'type'
   >;
   edgeImageProps?: Omit<EdgeMediaProps, 'src'>;
   withMeta?: boolean;
@@ -30,7 +30,7 @@ type ImagePreviewProps = {
 } & Omit<BoxProps, 'component'>;
 
 export function ImagePreview({
-  image: { id, url, name, type, width, height, hash, generationProcess },
+  image: { id, url, name, type, width, height, hash },
   edgeImageProps = {},
   nsfw,
   aspectRatio,

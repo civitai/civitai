@@ -3,7 +3,6 @@ import {
   Button,
   ButtonProps,
   Group,
-  ThemeIcon,
   Tooltip,
   createPolymorphicComponent,
   useMantineTheme,
@@ -15,7 +14,7 @@ import { JoinPopover } from '~/components/JoinPopover/JoinPopover';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
-  ({ iconOnly, canDownload, downloadPrice, children, tooltip, ...buttonProps }, ref) => {
+  ({ iconOnly, canDownload, downloadPrice, children, tooltip, joinAlert, ...buttonProps }, ref) => {
     const theme = useMantineTheme();
     const purchaseIcon = (
       <Badge
@@ -56,7 +55,13 @@ const _DownloadButton = forwardRef<HTMLButtonElement, Props>(
       </Button>
     );
 
-    return canDownload || (downloadPrice ?? 0) > 0 ? button : <JoinPopover>{button}</JoinPopover>;
+    return canDownload || (downloadPrice ?? 0) > 0 ? (
+      button
+    ) : (
+      <JoinPopover message={joinAlert ?? 'You need to be a member to start the download'}>
+        {button}
+      </JoinPopover>
+    );
   }
 );
 _DownloadButton.displayName = 'DownloadButton';
@@ -67,6 +72,7 @@ type Props = ButtonProps & {
   downloadPrice?: number;
   modelVersionId?: number;
   tooltip?: string;
+  joinAlert?: string;
 };
 
 export const DownloadButton = createPolymorphicComponent<'button', Props>(_DownloadButton);

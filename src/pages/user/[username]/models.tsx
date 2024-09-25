@@ -4,11 +4,10 @@ import {
   SegmentedControl,
   SegmentedControlProps,
   Stack,
-  Tabs,
   createStyles,
 } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -50,6 +49,14 @@ export default function UserModelsPage() {
   const sort = queryFilters.sort ?? ModelSort.Newest;
   const hidden = queryFilters.hidden ?? false;
   const followed = queryFilters.followed ?? false;
+  const earlyAccess = queryFilters.earlyAccess ?? false;
+  const types = queryFilters.types ?? undefined;
+  const checkpointType = queryFilters.checkpointType ?? undefined;
+  const status = queryFilters.status ?? undefined;
+  const fileFormats = queryFilters.fileFormats ?? undefined;
+  const fromPlatform = queryFilters.fromPlatform ?? false;
+  const baseModels = queryFilters.baseModels ?? undefined;
+  const supportsGeneration = queryFilters.supportsGeneration ?? false;
   const username = queryFilters.username ?? '';
   const selfView =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -109,6 +116,14 @@ export default function UserModelsPage() {
                     pending: true,
                     hidden,
                     followed,
+                    earlyAccess,
+                    types,
+                    checkpointType,
+                    status,
+                    fileFormats,
+                    fromPlatform,
+                    baseModels,
+                    supportsGeneration,
                   }}
                   showEmptyCta={selfView}
                 />

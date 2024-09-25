@@ -36,6 +36,8 @@ import {
 } from '../utils/errorHandling';
 import { updateEntityFiles } from './file.service';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { userContentOverviewCache } from '~/server/redis/caches';
+import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -243,6 +245,10 @@ export const createBounty = async ({
     { maxWait: 10000, timeout: 30000 }
   );
 
+  if (bounty.userId) {
+    await userContentOverviewCache.bust(bounty.userId);
+  }
+
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
 };
 
@@ -349,6 +355,10 @@ export const updateBountyById = async ({
     },
     { maxWait: 10000, timeout: 30000 }
   );
+
+  if (bounty?.userId) {
+    await userContentOverviewCache.bust(bounty?.userId);
+  }
 
   return bounty;
 };
@@ -675,8 +685,14 @@ export const refundBounty = async ({
     });
   }
 
-  return await dbWrite.bounty.update({
+  const updated = await dbWrite.bounty.update({
     where: { id },
     data: { complete: true, refunded: true },
   });
+
+  if (updated.userId) {
+    await userContentOverviewCache.bust(updated.userId);
+  }
+
+  return updated;
 };

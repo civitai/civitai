@@ -20,7 +20,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -79,7 +79,10 @@ import {
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -1109,11 +1112,21 @@ export const getModelVersionsMicro = async ({
   }));
 };
 
-export const updateModelById = ({ id, data }: { id: number; data: Prisma.ModelUpdateInput }) => {
-  return dbWrite.model.update({
+export const updateModelById = async ({
+  id,
+  data,
+}: {
+  id: number;
+  data: Prisma.ModelUpdateInput;
+}) => {
+  const model = await dbWrite.model.update({
     where: { id },
     data,
   });
+
+  await userContentOverviewCache.bust(model.userId);
+
+  return model;
 };
 
 export const deleteModelById = async ({
@@ -1182,13 +1195,16 @@ export const deleteModelById = async ({
     return model;
   });
 
+  if (deletedModel) {
+    await userContentOverviewCache.bust(deletedModel.userId);
+  }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   return deletedModel;
 };
 
-export const restoreModelById = ({ id }: GetByIdInput) => {
-  return dbWrite.model.update({
+export const restoreModelById = async ({ id }: GetByIdInput) => {
+  const model = await dbWrite.model.update({
     where: { id },
     data: {
       deletedAt: null,
@@ -1199,6 +1215,10 @@ export const restoreModelById = ({ id }: GetByIdInput) => {
       },
     },
   });
+
+  await userContentOverviewCache.bust(model.userId);
+
+  return model;
 };
 
 export const permaDeleteModelById = async ({
@@ -1332,19 +1352,25 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true, minor: true },
+      select: { poi: true, userId: true, minor: true, gallerySettings: true },
     });
     if (!beforeUpdate) return null;
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
 
+    const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
+
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true, minor: true },
+      select: { id: true, nsfwLevel: true, poi: true, minor: true, gallerySettings: true },
       where: { id },
       data: {
         ...data,
         meta,
+        gallerySettings: {
+          ...prevGallerySettings,
+          level: input.minor ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+        },
         tagsOnModels: tagsOnModels
           ? {
               deleteMany: {
@@ -1374,18 +1400,21 @@ export const upsertModel = async (
     await preventReplicationLag('model', id);
     await upsertModelFlag({ modelId: result.id, name: input.name });
 
-    // Handle POI change
-    const poiChanged = beforeUpdate && result.poi !== beforeUpdate.poi;
-    // A trigger now handles updating images to reflect the poi setting. We don't need to do it here.
-
-    // Handle Minor change
-    const minorChanged = beforeUpdate && result.minor !== beforeUpdate.minor;
+    // Check any changes that would require a search index update
+    const poiChanged = result.poi !== beforeUpdate.poi;
+    const minorChanged = result.minor !== beforeUpdate.minor;
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
+    const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
+    const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
+
+    if (galleryBrowsingLevelChanged) await redis.del(`model:gallery-settings:${id}`);
+
+    await userContentOverviewCache.bust(userId);
     return result;
   }
 };
@@ -1459,6 +1488,8 @@ export const publishModelById = async ({
     },
     { timeout: 10000 }
   );
+
+  await userContentOverviewCache.bust(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);
@@ -1561,6 +1592,8 @@ export const unpublishModelById = async ({
         AND "userId" = ${updatedModel.userId}
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
+
+      await userContentOverviewCache.bust(updatedModel.userId);
 
       return updatedModel;
     },
@@ -1667,7 +1700,8 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
 };
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
-  await dbWrite.model.update({ where: { id }, data: { locked } });
+  const model = await dbWrite.model.update({ where: { id }, data: { locked } });
+  await userContentOverviewCache.bust(model.userId);
 };
 
 export const getSimpleModelWithVersions = async ({
@@ -1740,10 +1774,12 @@ export async function updateModelLastVersionAt({
   if (!modelVersion) return;
 
   try {
-    await dbClient.model.update({
+    const model = await dbClient.model.update({
       where: { id },
       data: { lastVersionAt: modelVersion.publishedAt },
     });
+
+    await userContentOverviewCache.bust(model.userId);
   } catch (error) {
     logToAxiom({ type: 'lastVersionAt-failure', modelId: id, message: (error as Error).message });
     throw error;
@@ -2210,12 +2246,13 @@ export async function copyGallerySettingsToAllModelsByUser({
       )
       WHERE "userId" = ${userId}
     `;
+
+    await userContentOverviewCache.bust(userId);
   });
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
   await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
-
   return result;
 }
