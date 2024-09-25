@@ -95,6 +95,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
+import { isProd } from '~/env/other';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2255,4 +2256,73 @@ export async function copyGallerySettingsToAllModelsByUser({
 
   await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
   return result;
+}
+
+export async function ingestModel(data: { id: number }) {
+  const scanRequestedAt = new Date();
+  if (!isProd || !env.CONTENT_SCAN_ENDPOINT) {
+    console.log('Skipping model ingestion');
+    // update the ingestion flags accordingly
+    await dbWrite.model.update({
+      where: { id: data.id },
+      data: { scanRequestedAt, scannedAt: scanRequestedAt },
+    });
+    return;
+  }
+
+  const db = await getDbWithoutLag('model');
+  const model = await db.model.findUnique({
+    where: { id: data.id },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      modelVersions: { select: { description: true, trainedWords: true } },
+    },
+  });
+  if (!model) throw throwNotFoundError();
+
+  const versionDescriptions = model.modelVersions
+    .map((x) => x.description || null)
+    .filter(isDefined);
+  const triggerWords = model.modelVersions.flatMap((x) => x.trainedWords);
+
+  const payload = {
+    callbackUrl:
+      env.CONTENT_SCAN_CALLBACK_URL ??
+      `${env.NEXTAUTH_URL}/api/webhooks/model-scan-result?token=${env.WEBHOOK_TOKEN}`,
+    request: {
+      llm_model: env.CONTENT_SCAN_MODEL ?? 'gpt-4o-mini',
+      content: {
+        id: model.id,
+        name: model.name,
+        content: [model.description, ...versionDescriptions].join('\n'),
+        POI: model.poi,
+        NSFW: model.nsfw,
+        minor: model.minor,
+        triggerwords: triggerWords,
+      },
+    },
+  };
+
+  const response = await fetch(`${env.CONTENT_SCAN_ENDPOINT}/scan-model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error('Failed to scan model. Service is unavailable.');
+
+  if (response.status === 202) {
+    await dbWrite.model.update({
+      where: { id: data.id },
+      data: { scanRequestedAt },
+    });
+
+    return true;
+  } else {
+    return false;
+  }
 }

@@ -544,6 +544,9 @@ model Model {
   availability        Availability    @default(Public)
   nsfwLevel           Int             @default(0)
   lockedProperties    String[]        @default([])
+  rawScanResult       Json?
+  scanRequestedAt     DateTime?
+  scannedAt           DateTime?
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
