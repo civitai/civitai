@@ -60,9 +60,9 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
           ${data.category}::"NotificationCategory",
           ${'{' + targets.join(',') + '}'},
           ${JSON.stringify(data.details)}::jsonb,
-          COALESCE(${data.debounceSeconds ?? null}, NULL)    
+          ${data.debounceSeconds ?? 'NULL'}   
          )
-      ON CONFLICT DO NOTHING
+      ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
     `);
   } catch (e) {
     const error = e as Error;
