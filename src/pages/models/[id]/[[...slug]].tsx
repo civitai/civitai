@@ -230,9 +230,7 @@ export default function ModelDetailsV2({
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
-    useModelVersionPermission({
-      modelVersionId: selectedVersion?.id ?? -1,
-    });
+    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
