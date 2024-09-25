@@ -38,7 +38,7 @@ export const sendCollectionNotifications = createJob(
             collectionName: name,
           },
           key: `collection-update:${id}`,
-          debounceSeconds: 60, // 1 hour
+          debounceSeconds: 60 * 60, // 1 hour
         }).catch(() => {
           // Do nothing, not too big a deal technically.
         });
