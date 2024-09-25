@@ -391,8 +391,6 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
             FROM (
               SELECT
               ir."imageId" id,
-              ir."modelVersionId",
-              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num,
               i."nsfwLevel"
               FROM "ImageResource" ir
               JOIN "Image" i ON i.id = ir."imageId"
@@ -400,8 +398,9 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
               JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
               WHERE ir."modelVersionId" = mv.id
               AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              ORDER BY im."reactionCount" DESC
+              LIMIT 20
             ) AS ranked
-            WHERE ranked.row_num <= 20
           )
           WHEN m."userId" != -1 THEN (
             SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
