@@ -84,6 +84,8 @@ export function TrackPageView() {
     const path = ref.current.prev;
     if (path) trackPageView({ path, duration: durationRef.current });
   }, [pathname]);
+
+  return null;
 }
 
 function trackPageView({ path, duration }: { path: string; duration: number }) {
