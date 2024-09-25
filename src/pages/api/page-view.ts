@@ -23,6 +23,8 @@ export default PublicEndpoint(
       ads,
       duration: Math.floor(duration),
     });
+
+    return res.status(200).end();
   },
   ['POST']
 );
