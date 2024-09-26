@@ -11,6 +11,7 @@ import {
 import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
@@ -380,6 +381,10 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
+  const updateSystemNsfwLevel =
+    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'update-system-model-version-nsfw-level')) !==
+    'false';
+
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
       SELECT
@@ -420,6 +425,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
       WHERE mv.id IN (${Prisma.join(modelVersionIds)})
+      ${updateSystemNsfwLevel ? '' : Prisma.raw('AND m."userId" > 0')}
     )
     UPDATE "ModelVersion" mv
     SET "nsfwLevel" = level."nsfwLevel"
