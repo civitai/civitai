@@ -36,4 +36,13 @@ export const collectionNotifications = createNotificationProcessor({
       url: `/collections/3870938`,
     }),
   },
+  'collection-update': {
+    displayName: 'New items added to a collection you follow',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `New items have been added to the "${details.collectionName}" collection.`,
+      url: `/collections/${details.collectionId}`,
+    }),
+  },
 });
