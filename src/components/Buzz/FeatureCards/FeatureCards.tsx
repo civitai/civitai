@@ -21,11 +21,9 @@ import {
   IconMoneybag,
   IconShoppingBag,
   IconShoppingCart,
-  IconUsers,
 } from '@tabler/icons-react';
 import React from 'react';
 import { MouseEvent } from 'react';
-import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
@@ -131,13 +129,7 @@ export const EarningBuzz = ({ asList, withCTA }: Props) => {
   );
 };
 
-const getSpendings = ({
-  username,
-  balance,
-}: {
-  username: string;
-  balance: number;
-}): (FeatureCardProps & { key: string })[] => [
+const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { key: string })[] => [
   {
     key: 'train',
     icon: <IconBarbell size={32} />,
@@ -190,14 +182,12 @@ const getSpendings = ({
     key: 'showcase',
     icon: <IconHighlight size={32} />,
     title: 'Get showcased',
-    description: 'Boost your model to our homepage',
+    description: 'Get your content featured on our homepage',
     btnProps: {
       target: '_blank',
       rel: 'noreferrer nofollow',
-      href: `https://forms.clickup.com/8459928/f/825mr-8431/V3OV7JWR6SQFUYT7ON?Civitai%20Username=${encodeURIComponent(
-        username ?? ''
-      )}&Buzz%20Available=${balance ?? 0}`,
-      children: 'Contact us',
+      href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${userId}`,
+      children: 'Apply Now',
       rightIcon: <IconArrowRight size={14} />,
     },
   },
@@ -226,12 +216,8 @@ const getSpendings = ({
 
 export const SpendingBuzz = ({ asList, withCTA }: Props) => {
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz();
   // const open = useGenerationStore((state) => state.open);
-  const spendings = getSpendings({
-    username: currentUser?.username ?? '',
-    balance: balance ?? 0,
-  });
+  const spendings = getSpendings({ userId: currentUser?.id });
 
   return (
     <Stack spacing={20}>

@@ -1,4 +1,5 @@
 import { useWindowEvent } from '@mantine/hooks';
+import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
@@ -46,9 +47,9 @@ export function GenerationSidebar() {
       minWidth={350}
       maxWidth={800}
       defaultWidth={400}
-      className={`z-10 ${fullScreen ? 'max-w-0' : ''}`}
+      className={clsx('z-10', fullScreen && 'z-[210] max-w-0')}
     >
-      <div className={`size-full ${fullScreen ? `fixed inset-0 w-screen` : ''}`}>
+      <div className={clsx('size-full', fullScreen && 'fixed inset-0 w-screen')}>
         <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-7">
           <GenerationTabs fullScreen={fullScreen} />
         </ContainerProvider>

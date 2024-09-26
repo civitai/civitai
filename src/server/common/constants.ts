@@ -387,7 +387,7 @@ export const constants = {
   },
   dialog: {
     zIndex: 200,
-  }
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -893,8 +893,8 @@ export const banReasonDetails: Record<
   },
   [BanReasonCode.BuzzCheating]: {
     code: BanReasonCode.BuzzCheating,
-    publicBanReasonLabel: 'Farming buzz with multiple accounts',
-    privateBanReasonLabel: 'Farming buzz with multiple accounts',
+    publicBanReasonLabel: 'Abusing Buzz System',
+    privateBanReasonLabel: 'Abusing Buzz System',
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,
