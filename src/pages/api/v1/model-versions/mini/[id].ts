@@ -66,7 +66,12 @@ export default MixedAuthEndpoint(async function handler(
       m.type,
       mv."earlyAccessEndsAt",
       mv."requireAuth",
-      (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess') AS "checkPermission",
+      (
+        (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
+        OR 
+        (mv."availability" = 'Private')
+      
+      ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
         CASE

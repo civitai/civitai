@@ -167,7 +167,6 @@ export const upsertModelVersion = async ({
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
-
   if (
     updatedEarlyAccessConfig?.timeframe &&
     !updatedEarlyAccessConfig?.chargeForDownload &&
@@ -199,7 +198,11 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
-          availability: data?.status !== ModelStatus.Published ? 'Private' : 'Public',
+          availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
+            (s) => s === data?.status
+          )
+            ? Availability.Public
+            : Availability.Private,
           earlyAccessConfig:
             updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
           settings: settings !== null ? settings : Prisma.JsonNull,
@@ -325,8 +328,9 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
-        // Ideally, be more careful in
-        availability: data?.status === ModelStatus.Published ? 'Public' : undefined,
+        availability: [ModelStatus.Published, ModelStatus.Scheduled].some((s) => s === data?.status)
+          ? Availability.Public
+          : Availability.Private,
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -405,6 +409,7 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
+
     await preventReplicationLag('modelVersion', version.id);
     await bustMvCache(version.id);
     await dataForModelsCache.bust(version.modelId);
