@@ -27,7 +27,9 @@ export const resetToDraftWithoutRequirements = createJob(
       const modelVersionIds = modelVersionsWithoutPosts.map((r) => r.modelVersionId);
       await dbWrite.$executeRaw`
         UPDATE "ModelVersion" mv
-        SET status = 'Draft', meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-posts"'), '{unpublishedAt}', to_jsonb(now()))
+        SET status = 'Draft',
+          meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-posts"'), '{unpublishedAt}', to_jsonb(now())),
+          availability = 'Private'
         WHERE mv.id IN (${Prisma.join(modelVersionIds)})
       `;
     }
@@ -50,7 +52,10 @@ export const resetToDraftWithoutRequirements = createJob(
         console.log(`Processing batch ${i + 1}`);
         await dbWrite.$executeRaw`
           UPDATE "ModelVersion" mv
-          SET status = 'Draft', meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-files"'), '{unpublishedAt}', to_jsonb(now()))
+          SET
+            status = 'Draft',
+            meta = jsonb_set(jsonb_set(meta, '{unpublishedReason}', '"no-files"'), '{unpublishedAt}', to_jsonb(now())),
+            availability = 'Private'
           WHERE mv.id IN (${Prisma.join(batch)})
         `;
       });

@@ -8,19 +8,19 @@ export default PublicEndpoint(
 
     if (!url || url.host !== host) return res.status(400).send('invalid request');
 
-    const { ads, duration } = JSON.parse(req.body);
+    const { ads, duration, path } = JSON.parse(req.body);
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
-    const match = getMatchingPathname(url.pathname);
+    const match = getMatchingPathname(path);
     if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
     tracker.pageView({
       pageId: match,
-      path: url.pathname,
+      path,
       host,
       country,
-      ads,
+      ads: ads ?? false,
       duration: Math.floor(duration),
     });
 

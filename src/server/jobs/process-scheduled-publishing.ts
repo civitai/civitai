@@ -110,7 +110,7 @@ export const processScheduledPublishing = createJob(
 
           await tx.$executeRaw`
             -- Update scheduled versions published
-            UPDATE "ModelVersion" SET status = 'Published'
+            UPDATE "ModelVersion" SET status = 'Published', availability = 'Public'
             WHERE id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
               AND status = 'Scheduled' AND "publishedAt" <= ${now};
           `;
