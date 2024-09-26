@@ -1,4 +1,10 @@
-import { CommercialUse, ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelVersionEngagementType,
+  Prisma,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
@@ -193,6 +199,7 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          availability: data?.status !== ModelStatus.Published ? 'Private' : 'Public',
           earlyAccessConfig:
             updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
           settings: settings !== null ? settings : Prisma.JsonNull,
@@ -318,6 +325,8 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
+        // Ideally, be more careful in
+        availability: data?.status === ModelStatus.Published ? 'Public' : undefined,
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -506,6 +515,8 @@ export const publishModelVersionsWithEarlyAccess = async ({
             publishedAt: publishedAt,
             earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
+            // Will be overwritten anyway by EA.
+            availability: Availability.Public,
           },
           select: {
             id: true,
@@ -608,6 +619,7 @@ export const publishModelVersionById = async ({
             status,
             publishedAt: !republishing ? publishedAt : undefined,
             meta,
+            availability: Availability.Public,
           },
           select: {
             id: true,
@@ -683,6 +695,7 @@ export const unpublishModelVersionById = async ({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+
           meta: {
             ...meta,
             ...(reason

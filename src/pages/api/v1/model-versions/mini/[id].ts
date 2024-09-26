@@ -51,7 +51,8 @@ export default MixedAuthEndpoint(async function handler(
   const { id } = results.data;
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const where = [Prisma.sql`mv.id = ${id}`];
-  if (!user?.isModerator) where.push(Prisma.sql`mv.status = 'Published'`);
+  if (!user?.isModerator)
+    where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
   const [modelVersion] = await dbRead.$queryRaw<VersionRow[]>`
     SELECT
