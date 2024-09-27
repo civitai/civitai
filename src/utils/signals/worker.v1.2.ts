@@ -100,10 +100,9 @@ const registerEvents = async (targets: string[]) => {
   if (!connection) emitter.emit('connectionError', { message: 'unable to establish a connection' });
   else {
     for (const target of targets) {
-      if (!events[target]) {
-        events[target] = (payload) => emitter.emit('eventReceived', { target, payload });
-        connection.on(target, events[target]);
-      }
+      if (events[target]) connection.off(target, events[target]);
+      events[target] = (payload) => emitter.emit('eventReceived', { target, payload });
+      connection.on(target, events[target]);
     }
   }
 };

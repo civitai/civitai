@@ -212,17 +212,20 @@ export class Tracker {
     userAgent: 'unknown',
     fingerprint: 'unknown',
   };
-  private session: Promise<Session | null> | undefined;
+  private session: Session | null = null;
   private req: NextApiRequest | undefined;
   private res: NextApiResponse | undefined;
 
   private async resolveSession() {
     if (!this.session && this.req && this.res) {
-      this.session = getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
-        this.actor.userId = session?.user?.id ?? this.actor.userId;
-        return session;
-      });
-      this.session.catch((e) => {
+      try {
+        this.session = await getServerAuthSession({ req: this.req, res: this.res }).then(
+          (session) => {
+            this.actor.userId = session?.user?.id ?? this.actor.userId;
+            return session;
+          }
+        );
+      } catch (e) {
         const error = e as Error;
         logToAxiom(
           {
@@ -233,10 +236,10 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch();
-      });
+        );
+      }
     }
-    return this.session ?? null;
+    return this.session;
   }
 
   constructor(req?: NextApiRequest, res?: NextApiResponse) {
@@ -312,12 +315,20 @@ export class Tracker {
     country: string;
     duration: number;
   }) {
-    this.send('pageViews', ({ session, actor }) => ({
-      userId: actor.userId,
-      memberType: session?.user?.tier ?? 'undefined',
-      ip: actor.ip,
-      ...values,
-    }));
+    this.send('pageViews', ({ session, actor }) => {
+      // console.log({
+      //   userId: actor.userId,
+      //   memberType: session?.user?.tier ?? 'undefined',
+      //   ip: actor.ip,
+      //   ...values,
+      // });
+      return {
+        userId: actor.userId,
+        memberType: session?.user?.tier ?? 'undefined',
+        ip: actor.ip,
+        ...values,
+      };
+    });
   }
 
   public action(values: { type: ActionType; details?: any }) {

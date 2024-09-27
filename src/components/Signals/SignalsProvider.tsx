@@ -1,25 +1,22 @@
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
-import { useInterval } from '@mantine/hooks';
 import { useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 import { SignalMessages } from '~/server/common/enums';
-import { createSignalWorker, SignalWorker } from '~/utils/signals';
+// import { createSignalWorker, SignalWorker } from '~/utils/signals';
+import { useSignalsWorker, SignalWorker, SignalStatus } from '~/utils/signals/useSignalsWorker';
 import { trpc } from '~/utils/trpc';
 
 type SignalState = {
   connected: boolean;
-  connectionError: boolean;
-  reconnecting: boolean;
-  closed: boolean;
   status?: SignalStatus;
   worker: SignalWorker | null;
 };
 
-type SignalStatus = 'connected' | 'reconnecting' | 'error' | 'closed';
 const signalStatusDictionary: Record<SignalStatus, MantineColor> = {
   connected: 'green',
+  reconnected: 'green',
   reconnecting: 'yellow',
   error: 'red',
   closed: 'red',
@@ -36,7 +33,7 @@ export const useSignalContext = () => {
 type SignalCallback = (data: any) => void;
 
 export const useSignalConnection = (message: SignalMessages, cb: SignalCallback) => {
-  const { connected, worker } = useSignalContext();
+  const { worker } = useSignalContext();
   const cbRef = useRef(cb);
   // any updates to cb will be assigned to cbRef.current
   cbRef.current = cb;
@@ -44,59 +41,17 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   useEffect(() => {
     const callback = (args: any) => cbRef.current(args);
 
-    if (connected && worker) {
-      worker.on(message, callback);
-    }
-
+    worker?.on(message, callback);
     return () => {
       worker?.off(message, callback);
     };
-  }, [connected, worker, message]);
+  }, [worker, message]);
 };
 
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
   const queryUtils = trpc.useUtils();
-  const [status, setStatus] = useState<'connected' | 'reconnecting' | 'error' | 'closed'>();
-  const workerRef = useRef<SignalWorker | null>(null);
-
-  // TODO bug: websocket errors need to be checked, connected is seen as true even though communication is down
-
-  if (!workerRef.current && typeof window !== 'undefined')
-    workerRef.current = createSignalWorker({
-      onConnected: () => {
-        console.debug('SignalsProvider :: signal service connected'); // eslint-disable-line no-console
-        setStatus((prevStatus) => {
-          // TODO.signals reenable when stable
-          if (prevStatus === 'closed' || prevStatus === 'error')
-            queryUtils.orchestrator.queryGeneratedImages.invalidate();
-          return 'connected';
-        });
-      },
-      onReconnected: () => {
-        console.debug('signal service reconnected'); // eslint-disable-line no-console
-        // TODO.signals reenable when stable
-        // if (userId) {
-        //   queryUtils.buzz.getBuzzAccount.invalidate();
-        //   queryUtils.orchestrator.queryGeneratedImages.invalidate();
-        // }
-        setStatus('connected');
-      },
-      onReconnecting: () => {
-        console.debug('signal service reconnecting');
-        setStatus('reconnecting');
-      },
-      onClosed: (message) => {
-        // A closed connection will not recover on its own.
-        console.debug({ type: 'SignalsProvider :: signal service closed', message }); // eslint-disable-line no-console
-        queryUtils.signals.getToken.invalidate();
-        setStatus('closed');
-      },
-      onError: (message) => {
-        setStatus('error');
-        console.error({ type: 'SignalsProvider :: signal service error', message });
-      },
-    });
+  const [status, setStatus] = useState<SignalStatus>();
 
   const { data } = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!session.data?.user,
@@ -105,44 +60,30 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   const accessToken = data?.accessToken;
   const userId = session.data?.user?.id;
 
-  useEffect(() => {
-    if (!accessToken) return;
-    workerRef.current?.init(accessToken);
-  }, [accessToken]); //eslint-disable-line
+  const worker = useSignalsWorker(
+    { accessToken },
+    {
+      onReconnected: () => {
+        if (userId) {
+          queryUtils.buzz.getBuzzAccount.invalidate();
+          queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        }
+      },
+      onClosed: () => {
+        queryUtils.signals.getToken.invalidate();
+      },
+      onStatusChange: ({ status }) => setStatus(status),
+    }
+  );
 
-  const interval = useInterval(() => {
-    if (!accessToken) return;
-    console.log('attempting to reconnect signal services');
-    workerRef.current?.init(accessToken);
-  }, 30 * 1000);
-
-  useEffect(() => {
-    if (!status || status === 'connected') interval.stop();
-    else interval.start();
-  }, [status]);
-
-  // useEffect(() => {
-  //   const status = 'closed';
-  //   if (status && status !== 'connected') {
-  //     showNotification({
-  //       id: 'signals-status',
-  //       title: 'Connection error',
-  //       message: 'test',
-  //       color: signalStatusDictionary[status],
-  //       autoClose: false,
-  //     });
-  //   } else hideNotification('signals-status');
-  // }, [status]);
+  const connected = status === 'connected' || status === 'reconnected';
 
   return (
     <SignalContext.Provider
       value={{
-        connected: status === 'connected',
-        connectionError: status === 'error',
-        reconnecting: status === 'reconnecting',
-        closed: status === 'closed',
+        connected,
         status,
-        worker: workerRef.current,
+        worker,
       }}
     >
       <SignalNotifications />
@@ -160,8 +101,8 @@ export function SignalStatusNotification({
   children: (status: SignalStatus) => React.ReactNode;
   title?: (status: SignalStatus) => React.ReactNode;
 }) {
-  const { status } = useSignalContext();
-  if (!status || status === 'connected') return null;
+  const { connected, status } = useSignalContext();
+  if (!status || connected) return null;
 
   return (
     <Notification
