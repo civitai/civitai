@@ -86,6 +86,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
       key = `${input.type}_${input.ids.join('_')}`;
       break;
   }
+
   if (dictionary[key]) return dictionary[key];
   else {
     const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);

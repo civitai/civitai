@@ -364,7 +364,11 @@ export const resourceDataCache = createCachedArray({
         settings: settings as RecommendedSettingsSchema,
         covered,
         available:
-          covered && (result.availability === 'Public' || result.availability === 'EarlyAccess'),
+          covered &&
+          (result.availability === 'Public' ||
+            result.availability === 'EarlyAccess' ||
+            // If it's private, we need to check access ofcs.
+            result.availability === 'Private'),
       });
     });
 

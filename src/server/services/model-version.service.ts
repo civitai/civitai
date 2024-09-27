@@ -1,4 +1,10 @@
-import { CommercialUse, ModelStatus, ModelVersionEngagementType, Prisma } from '@prisma/client';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelVersionEngagementType,
+  Prisma,
+} from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
@@ -161,7 +167,6 @@ export const upsertModelVersion = async ({
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
-
   if (
     updatedEarlyAccessConfig?.timeframe &&
     !updatedEarlyAccessConfig?.chargeForDownload &&
@@ -193,6 +198,11 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
+            (s) => s === data?.status
+          )
+            ? Availability.Public
+            : Availability.Private,
           earlyAccessConfig:
             updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
           settings: settings !== null ? settings : Prisma.JsonNull,
@@ -318,6 +328,9 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
+        availability: [ModelStatus.Published, ModelStatus.Scheduled].some((s) => s === data?.status)
+          ? Availability.Public
+          : Availability.Private,
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -396,6 +409,7 @@ export const upsertModelVersion = async ({
           : undefined,
       },
     });
+
     await preventReplicationLag('modelVersion', version.id);
     await bustMvCache(version.id);
     await dataForModelsCache.bust(version.modelId);
@@ -506,6 +520,8 @@ export const publishModelVersionsWithEarlyAccess = async ({
             publishedAt: publishedAt,
             earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
+            // Will be overwritten anyway by EA.
+            availability: Availability.Public,
           },
           select: {
             id: true,
@@ -608,6 +624,7 @@ export const publishModelVersionById = async ({
             status,
             publishedAt: !republishing ? publishedAt : undefined,
             meta,
+            availability: Availability.Public,
           },
           select: {
             id: true,
@@ -683,6 +700,7 @@ export const unpublishModelVersionById = async ({
         where: { id },
         data: {
           status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+
           meta: {
             ...meta,
             ...(reason

@@ -49,6 +49,7 @@ import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
@@ -115,6 +116,7 @@ export const jobs: Job[] = [
   rewardsAdImpressions,
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
+  sendCollectionNotifications,
 ];
 
 const log = createLogger('jobs', 'green');

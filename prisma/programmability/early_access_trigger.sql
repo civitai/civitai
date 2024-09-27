@@ -11,11 +11,14 @@ BEGIN
         SET "earlyAccessEndsAt" = COALESCE(NEW."publishedAt", now()) + CONCAT(NEW."earlyAccessConfig"->>'timeframe', ' days')::interval,
             "availability" = 'EarlyAccess'
         WHERE id = NEW.id;
-    ELSE
-    	UPDATE "ModelVersion"
-		SET "earlyAccessEndsAt" = NULL,
-    		"availability" = 'Public'
-    	WHERE id = NEW.id;
+    ELSE 
+        IF NEW."publishedAt" IS NOT NULL
+            THEN
+                UPDATE "ModelVersion"
+                SET "earlyAccessEndsAt" = NULL,
+                    "availability" = 'Public'
+                WHERE id = NEW.id;
+        END IF;         
     END IF;
 
     RETURN NEW;
