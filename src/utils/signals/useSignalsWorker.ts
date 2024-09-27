@@ -4,7 +4,7 @@ import type { WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
 
 export type SignalStatus = 'connected' | 'closed' | 'error' | 'reconnected' | 'reconnecting';
-export type SignalWorker = ReturnType<typeof useSignalsWorker>;
+export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
 type SignalState = {
   status: SignalStatus;
   message?: string;
@@ -88,29 +88,6 @@ export function useSignalsWorker(
     }
   }, [state]);
 
-  // ping
-  useEffect(() => {
-    function handleVisibilityChange() {
-      deferredRef.current = new Deferred();
-      worker?.port.postMessage({ type: 'ping' });
-      const timeout = setTimeout(() => deferredRef.current.reject(), 1000);
-      deferredRef.current.promise
-        .then(() => {
-          clearTimeout(timeout);
-          setReady(true);
-        })
-        .catch(() => {
-          setReady(false);
-          setState({ status: 'closed', message: 'connection to shared worker lost' });
-        });
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [worker]);
-
   // handle tab close
   useEffect(() => {
     function unload() {
@@ -132,14 +109,16 @@ export function useSignalsWorker(
 
   // poll to reconnect
   const timerRef = useRef<NodeJS.Timer | null>(null);
-  const disconnected = !state?.status || state.status === 'closed' || state.status === 'error';
+  const disconnected = state ? state.status === 'closed' || state.status === 'error' : undefined;
   useEffect(() => {
-    if (!disconnected && timerRef.current) clearInterval(timerRef.current);
+    if (disconnected === false && timerRef.current) clearInterval(timerRef.current);
     else if (disconnected && accessToken && worker && ready) {
       timerRef.current = setInterval(() => {
-        console.log('attempting to reconnect to signal services');
-        worker.port.postMessage({ type: 'connection:init', token: accessToken });
-      }, 30 * 1000);
+        if (document.visibilityState === 'visible') {
+          console.log('attempting to reconnect to signal services');
+          worker.port.postMessage({ type: 'connection:init', token: accessToken });
+        }
+      }, 15 * 1000);
     }
 
     return () => {
@@ -147,8 +126,41 @@ export function useSignalsWorker(
     };
   }, [disconnected, accessToken, worker, ready]);
 
-  const hasRunRef = useRef(false);
-  return useMemo(() => {
+  // ping
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState !== 'visible') return;
+      deferredRef.current = new Deferred();
+      worker?.port.postMessage({ type: 'ping' });
+      const timeout = setTimeout(() => deferredRef.current.reject(), 1000);
+      deferredRef.current.promise
+        .then(() => {
+          clearTimeout(timeout);
+          setReady(true);
+        })
+        .catch(() => {
+          setReady(false);
+          setState({ status: 'closed', message: 'connection to shared worker lost' });
+        });
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [worker]);
+
+  // useEffect(() => {
+  //   function handleVisibilityChange() {
+  //     setDocumentVisible(document.visibilityState !== 'visible');
+  //   }
+  //   document.addEventListener('visibilitychange', handleVisibilityChange);
+  //   return () => {
+  //     document.removeEventListener('visibilitychange', handleVisibilityChange);
+  //   };
+  // }, [worker]);
+
+  const workerMethods = useMemo(() => {
     function send(target: string, args: Record<string, unknown>) {
       worker?.port.postMessage({ type: 'send', target, args });
     }
@@ -162,35 +174,37 @@ export function useSignalsWorker(
       emitterRef.current.off(target, cb);
     }
 
-    if (!hasRunRef.current) {
-      hasRunRef.current = true;
-      if (typeof window !== 'undefined') {
-        window.logSignal = (target, selector) => {
-          function logFn(args: unknown) {
-            if (selector) {
-              const result = [args].find(selector);
-              if (result) console.log(result);
-            } else console.log(args);
-          }
-
-          if (!logs[target]) {
-            logs[target] = true;
-            on(target, logFn);
-            console.log(`begin logging: ${target}`);
-          }
-        };
-
-        window.ping = () => {
-          window.logSignal('pong');
-          worker?.port.postMessage({ type: 'ping' });
-        };
-      }
-    }
-
     return {
       on,
       off,
       send,
     };
   }, [worker]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.logSignal = (target, selector) => {
+        function logFn(args: unknown) {
+          if (selector) {
+            const result = [args].find(selector);
+            if (result) console.log(result);
+          } else console.log(args);
+        }
+
+        if (!logs[target]) {
+          logs[target] = true;
+          workerMethods.on(target, logFn);
+          console.log(`begin logging: ${target}`);
+        }
+      };
+
+      window.ping = () => {
+        window.logSignal('pong');
+        worker?.port.postMessage({ type: 'ping' });
+      };
+    }
+  }, [workerMethods]);
+
+  const connected = state?.status === 'connected' || state?.status === 'reconnected';
+  return connected ? workerMethods : null;
 }

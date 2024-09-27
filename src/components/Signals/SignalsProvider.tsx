@@ -81,9 +81,9 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   return (
     <SignalContext.Provider
       value={{
-        connected: status === 'connected' || status === 'reconnected',
+        connected,
         status,
-        worker: connected ? worker : null,
+        worker,
       }}
     >
       <SignalNotifications />
@@ -101,8 +101,8 @@ export function SignalStatusNotification({
   children: (status: SignalStatus) => React.ReactNode;
   title?: (status: SignalStatus) => React.ReactNode;
 }) {
-  const { status } = useSignalContext();
-  if (!status || status === 'connected') return null;
+  const { connected, status } = useSignalContext();
+  if (!status || connected) return null;
 
   return (
     <Notification

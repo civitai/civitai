@@ -168,7 +168,7 @@ function MyApp(props: CustomAppProps) {
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
+                                                      {/* <StripeSetupSuccessProvider /> */}
                                                       <DialogProvider />
                                                       <RoutedDialogProvider />
                                                     </CustomModalsProvider>
