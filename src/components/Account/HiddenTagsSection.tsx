@@ -5,6 +5,7 @@ import { uniqBy } from 'lodash-es';
 import { useMemo, useRef, useState } from 'react';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
+import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 
 import { trpc } from '~/utils/trpc';
@@ -110,7 +111,7 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
         </ActionIcon>
       }
     >
-      {data.name ?? '[deleted]'}
+      {getTagDisplayName(data.name ?? '[deleted]')}
     </Badge>
   );
 }

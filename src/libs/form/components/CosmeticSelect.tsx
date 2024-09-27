@@ -14,7 +14,7 @@ import {
 import { IconBuildingStore } from '@tabler/icons-react';
 import { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import Link from 'next/link';
-import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 const useStyles = createStyles((theme) => ({
   decoration: {

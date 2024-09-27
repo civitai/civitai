@@ -37,11 +37,9 @@ export const cosmeticShopRouter = router({
   getShopItemById: protectedProcedure.input(getByIdSchema).query(({ input }) => {
     return getShopItemById(input);
   }),
-  upsertCosmetic: moderatorProcedure
-    .input(upsertCosmeticInput)
-    .mutation(({ input }) => {
-      return upsertCosmetic(input);
-    }),
+  upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input }) => {
+    return upsertCosmetic(input);
+  }),
   upsertShopItem: moderatorProcedure
     .input(upsertCosmeticShopItemInput)
     .mutation(({ input, ctx }) => {
