@@ -158,7 +158,7 @@ export default function CosmeticShopMain() {
 
 const showcaseProducts = [
   {
-    name: 'The Digital Feline I',
+    name: 'Digital Feline I',
     description: '',
     price: 3000,
     imageUrl: '/images/shop/civitai-air/digital-feline-i.png',
@@ -166,7 +166,7 @@ const showcaseProducts = [
     url: 'https://shop.civitai.com/products/digital-feline-i',
   },
   {
-    name: 'The Digital Feline II',
+    name: 'Digital Feline II',
     description: '',
     price: 3000,
     imageUrl: '/images/shop/civitai-air/digital-feline-ii.png',
@@ -174,7 +174,7 @@ const showcaseProducts = [
     url: 'https://shop.civitai.com/products/digital-felines-ii',
   },
   {
-    name: 'The Digital Feline III',
+    name: 'Digital Feline III',
     description: '',
     price: 3000,
     imageUrl: '/images/shop/civitai-air/digital-feline-iii.png',
@@ -182,7 +182,7 @@ const showcaseProducts = [
     url: 'https://shop.civitai.com/products/digital-feline-iii',
   },
   {
-    name: 'The Digital Feline IV',
+    name: 'Digital Feline IV',
     description: '',
     price: 3000,
     imageUrl: '/images/shop/civitai-air/digital-feline-iv.png',
