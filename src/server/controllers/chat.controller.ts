@@ -21,7 +21,11 @@ import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
-import { throwBadRequestError, throwDbError, throwNotFoundError, } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { ChatCreateChat } from '~/types/router';
 
 /**
@@ -157,17 +161,17 @@ export const createChatHandler = async ({
       throw throwBadRequestError('Creator must be in the chat');
     }
 
-    const modInfo = await dbRead.user.findFirst({
-      where: { id: userId },
-      select: {
-        isModerator: true,
-        subscriptionId: true,
-      },
-    });
+    // const modInfo = await dbRead.user.findFirst({
+    //   where: { id: userId },
+    //   select: {
+    //     isModerator: true,
+    //     subscriptionId: true,
+    //   },
+    // });
 
     // TODO add check for CustomerSubscription = active/trialing
-    const isModerator = modInfo?.isModerator === true;
-    const isSupporter = !!modInfo?.subscriptionId;
+    const isModerator = ctx.user.isModerator;
+    const isSupporter = !!ctx.user.tier;
 
     const chat = await upsertChat({
       userId,
