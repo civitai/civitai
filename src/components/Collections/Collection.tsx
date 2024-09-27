@@ -113,7 +113,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         sort,
         followed: undefined,
         hidden: undefined,
-        period: MetricTimeframe.AllTime,
         collectionId: collection.id,
       };
 
@@ -178,7 +177,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
               clearable
             />
           )}
-          <ModelsInfinite filters={filters} />
+          <ModelsInfinite filters={filters} disableStoreFilters />
         </IsClient>
       </Stack>
     </ModelContextMenuProvider>
