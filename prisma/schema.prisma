@@ -544,8 +544,6 @@ model Model {
   availability        Availability    @default(Public)
   nsfwLevel           Int             @default(0)
   lockedProperties    String[]        @default([])
-  rawScanResult       Json?
-  scanRequestedAt     DateTime?
   scannedAt           DateTime?
 
   // Licensing
@@ -580,10 +578,20 @@ model Model {
   @@index([status, nsfw])
 }
 
+enum ModelFlagStatus {
+  Pending
+  Resolved
+}
+
 model ModelFlag {
-  modelId  Int     @id
-  model    Model   @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  nameNsfw Boolean @default(false)
+  modelId      Int             @id
+  model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  nameNsfw     Boolean         @default(false)
+  poi          Boolean         @default(false)
+  minor        Boolean         @default(false)
+  nsfw         Boolean         @default(false)
+  triggerWords Boolean         @default(false)
+  status       ModelFlagStatus @default(Pending)
 }
 
 model License {

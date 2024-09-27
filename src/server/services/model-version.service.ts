@@ -51,7 +51,7 @@ import {
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { updateModelLastVersionAt } from './model.service';
+import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -243,6 +243,8 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        description: true,
+        trainedWords: true,
         earlyAccessEndsAt: true,
         earlyAccessConfig: true,
         publishedAt: true,
@@ -665,6 +667,8 @@ export const publishModelVersionById = async ({
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
+
+  await ingestModelById({ id: version.modelId });
 
   return version;
 };
