@@ -102,8 +102,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                       }, ${JSON.stringify(d.details)}::jsonb)`
                   )
                 )}
-                ON CONFLICT
-                DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+                ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
               `;
 
                 await notifDbWrite.cancellableQuery(insertQuery);
