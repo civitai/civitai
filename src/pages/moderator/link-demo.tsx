@@ -100,7 +100,7 @@ function Home() {
             Link your account
           </Title>
           <Text mb="md" color="dimmed">
-            Time to connect your Stable Diffusion instance to your Civitai Account.
+            Time to connect your Stable Diffusion & Flux model library to your Civitai Account.
           </Text>
           <List type="ordered">
             <List.Item>

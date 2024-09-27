@@ -651,10 +651,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             )}
           </Group>
           {baseModel === 'SD 3' && (
-            <Alert color="yellow" title="SD3 Unbanned">
+            <Alert color="yellow" title="SD3 Unsupported">
               <Text>
-                Licensing concerns associated Stable Diffusion 3 have been resolved and it&apos;s
-                been unbanned. On-site generation with SD3 is unsupported.{' '}
+                On-site generation with SD3 is unsupported.{' '}
                 <Text
                   variant="link"
                   td="underline"

@@ -85,6 +85,7 @@ import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelN
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscussionV2';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
+import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -99,7 +100,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CAROUSEL_LIMIT } from '~/server/common/constants';
+import { BaseModel, CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort, ModelType } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
@@ -112,7 +113,7 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import { getBaseModelEcosystemName, getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
@@ -226,7 +227,11 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
+  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel)
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+
+  const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
+    useModelVersionPermission({ modelVersionId: selectedVersion?.id });
 
   const latestGenerationVersion = publishedVersions.find((version) => version.canGenerate);
 
@@ -472,7 +477,7 @@ export default function ModelDetailsV2({
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     applicationCategory: 'Multimedia',
-    applicationSubCategory: 'Stable Diffusion Model',
+    applicationSubCategory: `${selectedEcosystemName} Model`,
     description: model.description,
     name: model.name,
     image: imageUrl,
@@ -490,7 +495,11 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
-    !isMuted && (!onlyEarlyAccess || currentUser?.isMember || currentUser?.isModerator);
+    !isMuted &&
+    (!onlyEarlyAccess ||
+      hasDownloadPermissions ||
+      hasGeneratePermissions ||
+      currentUser?.isModerator);
   const versionCount = model.modelVersions.length;
   const inEarlyAccess = model.earlyAccessDeadline && isFutureDate(model.earlyAccessDeadline);
   const versionIsEarlyAccess =
@@ -511,7 +520,7 @@ export default function ModelDetailsV2({
       <Meta
         title={`${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''
-        } | Stable Diffusion ${getDisplayName(model.type)} | Civitai`}
+        } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
         links={[

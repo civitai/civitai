@@ -8,10 +8,14 @@ import {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { CollectionReadConfiguration, ImageIngestionStatus, Prisma, User } from '@prisma/client';
+import { ImageIngestionStatus, Prisma } from '@prisma/client';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
+import { UserMeta } from '~/server/schema/user.schema';
+import { banReasonDetails } from '~/server/common/constants';
+import { getUserBanDetails } from '~/utils/user-helpers';
+import { userContentOverviewCache } from '~/server/redis/caches';
 
 export const getUserContentOverview = async ({
   username,
@@ -37,48 +41,16 @@ export const getUserContentOverview = async ({
     userId = user.id;
   }
 
-  const [data] = await dbRead.$queryRaw<
-    {
-      id: number;
-      modelCount: number;
-      imageCount: number;
-      videoCount: number;
-      postCount: number;
-      articleCount: number;
-      bountyCount: number;
-      bountyEntryCount: number;
-      hasReceivedReviews: boolean;
-      collectionCount: number;
-    }[]
-  >`
-    SELECT
-        (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
-        (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
-        (SELECT COUNT(*)::INT FROM "Image" i
-          INNER JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" IS NOT NULL AND p.availability != 'Private'
-          WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL AND i."type" = 'image'::"MediaType"
-        ) as "imageCount",
-        (SELECT COUNT(*)::INT FROM "Image" i
-          INNER JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" IS NOT NULL AND p.availability != 'Private'
-          WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL AND i."type" = 'video'::"MediaType"
-        ) as "videoCount",
-        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private') as "articleCount",
-        (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() AND b.availability != 'Private') as "bountyCount",
-        (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
-        (SELECT EXISTS (SELECT 1 FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id)) as "hasReceivedReviews",
-        (SELECT COUNT(*)::INT FROM "Collection" c WHERE c."userId" = u.id AND c."read" = ${CollectionReadConfiguration.Public}::"CollectionReadConfiguration" AND c.availability != 'Private') as "collectionCount"
-    FROM "User" u
-    WHERE u.id = ${userId}
-  `;
-
-  return data;
+  const data = await userContentOverviewCache.fetch([userId]);
+  return data[userId];
 };
 
 export const getUserWithProfile = async ({
   username,
   id,
   tx,
-}: GetUserProfileSchema & { tx?: Prisma.TransactionClient }) => {
+  isModerator,
+}: GetUserProfileSchema & { tx?: Prisma.TransactionClient; isModerator?: boolean }) => {
   const dbClient = tx ?? dbWrite;
   // Use write to get the latest most accurate user here since we'll need to create the profile
   // if it doesn't exist.
@@ -92,7 +64,7 @@ export const getUserWithProfile = async ({
         username,
         deletedAt: null,
       },
-      select: { ...userWithProfileSelect, publicSettings: true },
+      select: { ...userWithProfileSelect, bannedAt: true, meta: true, publicSettings: true },
     });
 
     // Becuase this is a view, it might be slow and we prefer to get the stats in a separate query
@@ -115,9 +87,15 @@ export const getUserWithProfile = async ({
     });
 
     const { profile } = user;
+    const userMeta = (user.meta ?? {}) as UserMeta;
 
     return {
       ...user,
+      meta: undefined,
+      ...getUserBanDetails({
+        meta: userMeta,
+        isModerator: isModerator ?? false,
+      }),
       stats: stats,
       profile: {
         ...profile,

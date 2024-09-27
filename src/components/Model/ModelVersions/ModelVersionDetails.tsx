@@ -148,6 +148,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     modelVersionId: version.id,
   });
 
+  const canDownload = version.canDownload || hasDownloadPermissions;
+
   const isOwner = model.user?.id === user?.id;
   const isOwnerOrMod = isOwner || user?.isModerator;
 
@@ -619,6 +621,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </Button>
           ) : showPublishButton ? (
             <Stack spacing={4}>
+              {version.canGenerate && isOwnerOrMod && (
+                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+              )}
               <Button.Group>
                 <Button
                   color="green"
@@ -671,7 +676,6 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       onPurchase={() => onPurchase('generation')}
                     />
                   )}
-
                   {displayCivitaiLink && (
                     <CivitaiLinkManageButton
                       modelId={model.id}
@@ -712,11 +716,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       }
                     </CivitaiLinkManageButton>
                   )}
-
                   {displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
-                        canDownload={version.canDownload}
+                        canDownload={canDownload}
                         downloadPrice={
                           !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
                             ? earlyAccessConfig?.downloadPrice
@@ -733,7 +736,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Menu position="bottom-end">
                         <Menu.Target>
                           <DownloadButton
-                            canDownload={version.canDownload}
+                            canDownload={canDownload}
                             downloadPrice={
                               !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
                                 ? earlyAccessConfig?.downloadPrice
@@ -751,7 +754,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     <DownloadButton
                       component="a"
                       {...getDownloadProps(primaryFile)}
-                      canDownload={version.canDownload}
+                      canDownload={canDownload}
                       downloadPrice={
                         !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
                           ? earlyAccessConfig?.downloadPrice

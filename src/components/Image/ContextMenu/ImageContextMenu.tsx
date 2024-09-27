@@ -87,7 +87,7 @@ export function ImageContextMenu({
   const isModerator = !!currentUser?.isModerator;
 
   const ContextMenu = (
-    <Menu withinPortal withArrow>
+    <Menu withinPortal withArrow zIndex={1000}>
       <Menu.Target>
         {children ?? (
           <ActionIcon

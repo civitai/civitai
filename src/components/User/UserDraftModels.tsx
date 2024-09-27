@@ -4,6 +4,7 @@ import {
   Badge,
   Center,
   createStyles,
+  Divider,
   Group,
   LoadingOverlay,
   Pagination,
@@ -121,11 +122,26 @@ export function UserDraftModels() {
                 return (
                   <tr key={model.id}>
                     <td>
-                      <Link href={getModelWizardUrl(model)} passHref>
-                        <Anchor target="_blank" lineClamp={2}>
-                          {model.name} <IconExternalLink size={16} stroke={1.5} />
-                        </Anchor>
-                      </Link>
+                      <Stack spacing={0}>
+                        <Text lineClamp={2}> {model.name}</Text>
+                        <Divider my={4} />
+                        <Link href={getModelWizardUrl(model)} passHref>
+                          <Anchor target="_blank" lineClamp={2}>
+                            <Group spacing="xs" noWrap>
+                              <Text size="xs">Continue Wizard</Text>{' '}
+                              <IconExternalLink size={16} stroke={1.5} />
+                            </Group>
+                          </Anchor>
+                        </Link>
+                        <Link href={`/models/${model.id}`} passHref>
+                          <Anchor target="_blank" lineClamp={2}>
+                            <Group spacing="xs" noWrap>
+                              <Text size="xs">Go to model page</Text>
+                              <IconExternalLink size={16} stroke={1.5} />
+                            </Group>
+                          </Anchor>
+                        </Link>
+                      </Stack>
                     </td>
                     <td>
                       <Badge>{splitUppercase(model.type)}</Badge>

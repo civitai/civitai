@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Dialog, dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
 import { Freeze } from '~/components/Freeze/Freeze';
+import { constants } from '~/server/common/constants';
 
 type DialogState = {
   opened: boolean;
@@ -14,7 +15,7 @@ type DialogState = {
 const DialogContext = createContext<DialogState>({
   opened: false,
   onClose: () => undefined,
-  zIndex: 200,
+  zIndex: constants.dialog.zIndex,
 });
 export const useDialogContext = () => useContext(DialogContext);
 
@@ -35,7 +36,7 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
   }, []);
 
   return (
-    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index, target: dialog.target }}>
+    <DialogContext.Provider value={{ opened, onClose, zIndex: (dialog.options?.zIndex ?? constants.dialog.zIndex) + index, target: dialog.target }}>
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
   );

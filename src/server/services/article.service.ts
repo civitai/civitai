@@ -45,6 +45,7 @@ import { decreaseDate } from '~/utils/date-helpers';
 import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
+import { userContentOverviewCache } from '~/server/redis/caches';
 
 type ArticleRaw = {
   id: number;
@@ -695,6 +696,8 @@ export const upsertArticle = async ({
           });
         }
 
+        await userContentOverviewCache.bust(article.userId);
+
         return article;
       });
 
@@ -766,6 +769,8 @@ export const upsertArticle = async ({
             })),
         });
       }
+
+      await userContentOverviewCache.bust(updated.userId);
 
       return updated;
     });

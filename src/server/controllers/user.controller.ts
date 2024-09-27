@@ -156,7 +156,12 @@ export const getUserCreatorHandler = async ({
   if (id === constants.system.user.id || username === constants.system.user.username) return null;
 
   try {
-    const user = await getUserCreator({ username, id, leaderboardId });
+    const user = await getUserCreator({
+      username,
+      id,
+      leaderboardId,
+      isModerator: ctx.user?.isModerator,
+    });
     if (!user) throw throwNotFoundError('Could not find user');
     if (!ctx.user?.isModerator) user.excludeFromLeaderboards = false; // Mask from non-moderators
 

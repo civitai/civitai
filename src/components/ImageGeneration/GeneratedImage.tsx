@@ -92,6 +92,7 @@ export function GeneratedImage({
     dialogStore.trigger({
       component: GeneratedImageLightbox,
       props: { image, request },
+      options: { zIndex: 300 },
     });
   };
 

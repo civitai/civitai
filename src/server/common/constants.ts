@@ -11,7 +11,7 @@ import {
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client.mjs';
-import { ModelSort } from '~/server/common/enums';
+import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import type { GenerationResource } from '~/shared/constants/generation.constants';
 import { increaseDate } from '~/utils/date-helpers';
@@ -385,6 +385,9 @@ export const constants = {
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
+  dialog: {
+    zIndex: 200,
+  },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
@@ -438,6 +441,24 @@ export const baseModelSets = defineBaseModelSets({
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
+});
+
+const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
+export const baseModelSetNames = defineBaseModelSetNames({
+  SD1: 'Stable Diffusion',
+  SD2: 'Stable Diffusion',
+  SD3: 'Stable Diffusion',
+  Flux1: 'Flux',
+  SDXL: 'Stable Diffusion XL',
+  SDXLDistilled: 'Stable Diffusion XL',
+  PixArtA: 'PixArt alpha',
+  PixArtE: 'PixArt sigma',
+  Lumina: 'Lumina',
+  Kolors: 'Kolors',
+  HyDit1: 'Hunyuan DiT',
+  SCascade: 'Stable Cascade',
+  Pony: 'Stable Diffusion',
+  ODOR: 'ODOR',
 });
 
 type LicenseDetails = {
@@ -839,3 +860,63 @@ export function getRequestDomainColor(req: { headers: { host?: string } }) {
     if (host === domain) return color as ColorDomain;
   }
 }
+
+export const banReasonDetails: Record<
+  BanReasonCode,
+  {
+    code: BanReasonCode;
+    publicBanReasonLabel?: string;
+    privateBanReasonLabel: string;
+  }
+> = {
+  [BanReasonCode.SexualMinor]: {
+    code: BanReasonCode.SexualMinor,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Images of minors displayed sexually',
+  },
+  [BanReasonCode.SexualMinorGenerator]: {
+    code: BanReasonCode.SexualMinorGenerator,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Prompting for minors displayed sexually in the generator',
+  },
+  [BanReasonCode.SexualMinorTraining]: {
+    code: BanReasonCode.SexualMinorTraining,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Training resources on minors displayed sexually',
+  },
+  [BanReasonCode.SexualPOI]: {
+    code: BanReasonCode.SexualPOI,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Images of real people displayed sexually',
+  },
+  [BanReasonCode.Bestiality]: {
+    code: BanReasonCode.Bestiality,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Images depicting bestiality',
+  },
+  [BanReasonCode.Scat]: {
+    code: BanReasonCode.Scat,
+    publicBanReasonLabel: 'Content violated ToS',
+    privateBanReasonLabel: 'Images depicting scat',
+  },
+  [BanReasonCode.Harassment]: {
+    code: BanReasonCode.Harassment,
+    publicBanReasonLabel: 'Community Abuse',
+    privateBanReasonLabel: 'Harassing or spamming users',
+  },
+  [BanReasonCode.LeaderboardCheating]: {
+    code: BanReasonCode.LeaderboardCheating,
+    publicBanReasonLabel: 'Leaderboard manipulation',
+    privateBanReasonLabel: 'Leaderboard manipulation',
+  },
+  [BanReasonCode.BuzzCheating]: {
+    code: BanReasonCode.BuzzCheating,
+    publicBanReasonLabel: 'Abusing Buzz System',
+    privateBanReasonLabel: 'Abusing Buzz System',
+  },
+  [BanReasonCode.Other]: {
+    code: BanReasonCode.Other,
+    publicBanReasonLabel: '',
+    privateBanReasonLabel: 'Other',
+  },
+};
