@@ -158,25 +158,36 @@ export default function CosmeticShopMain() {
 
 const showcaseProducts = [
   {
-    name: 'The Mad Cat I',
-    description: 'An AI generated cat that will make you go mad',
-    price: 2999,
-    imageUrl: '/images/shop/civitai-air/tshirt01.png',
-    url: 'https://shop.civitai.com',
+    name: 'The Digital Feline I',
+    description: '',
+    price: 3000,
+    imageUrl: '/images/shop/civitai-air/digital-feline-i.png',
+    hoverImageUrl: '/images/shop/civitai-air/digital-feline-i-alt.png',
+    url: 'https://shop.civitai.com/products/digital-feline-i',
   },
   {
-    name: 'The Mad Cat II',
-    description: 'An AI generated cat that will make you go mad',
-    price: 2999,
-    imageUrl: '/images/shop/civitai-air/tshirt02.png',
-    url: 'https://shop.civitai.com',
+    name: 'The Digital Feline II',
+    description: '',
+    price: 3000,
+    imageUrl: '/images/shop/civitai-air/digital-feline-ii.png',
+    hoverImageUrl: '/images/shop/civitai-air/digital-feline-ii-alt.png',
+    url: 'https://shop.civitai.com/products/digital-felines-ii',
   },
   {
-    name: 'The Mad Cat III',
-    description: 'An AI generated cat that will make you go mad',
-    price: 2999,
-    imageUrl: '/images/shop/civitai-air/tshirt03.png',
-    url: 'https://shop.civitai.com',
+    name: 'The Digital Feline III',
+    description: '',
+    price: 3000,
+    imageUrl: '/images/shop/civitai-air/digital-feline-iii.png',
+    hoverImageUrl: '/images/shop/civitai-air/digital-feline-iii-alt.png',
+    url: 'https://shop.civitai.com/products/digital-feline-iii',
+  },
+  {
+    name: 'The Digital Feline IV',
+    description: '',
+    price: 3000,
+    imageUrl: '/images/shop/civitai-air/digital-feline-iv.png',
+    hoverImageUrl: '/images/shop/civitai-air/digital-feline-iv-alt.png',
+    url: 'https://shop.civitai.com/products/digital-feline-iv',
   },
 ];
 
@@ -204,9 +215,9 @@ function ArtistShowcaseSection() {
           The backstory
         </Text>
         <Text size={24} lh="40px" color="dimmed">
-          As part of her upcoming exhibition at Julie Caredda Gallery in Paris, Civitai AiR Artist
-          Anne Horel is presenting a set of limited edition t-shirts featuring her AI generated
-          masks. Each shirt is limited to an edition of 50.
+          Civitai AiR is proud to present this limited edition t-shirt set by Artist Anne Horel,
+          featuring her AI generated masks. Part of her upcoming exhibition at Julie Caredda Gallery
+          in Paris, each unique design is limited to an edition of 25.
         </Text>
       </div>
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 lg:px-11">
@@ -215,19 +226,31 @@ function ArtistShowcaseSection() {
             key={product.imageUrl}
             className="flex flex-col items-center justify-center gap-6 rounded-[20px] bg-[#2F2F2F] p-6"
           >
-            <Image
-              src={product.imageUrl}
-              alt="t-shirt with an AI generated face of a cat"
-              width={598}
-              height={560}
-            />
+            <div className="relative">
+              <Image
+                src={product.imageUrl}
+                alt="t-shirt with an AI generated face of a cat"
+                width={598}
+                height={560}
+              />
+              <div className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 hover:opacity-100">
+                <Image
+                  src={product.hoverImageUrl}
+                  alt="t-shirt with an AI generated face of a cat"
+                  width={598}
+                  height={560}
+                />
+              </div>
+            </div>
             <div className="flex flex-col gap-2">
               <Text size={28} weight="bold">
                 {product.name}
               </Text>
-              <Text size={24} color="dimmed">
-                {product.description}
-              </Text>
+              {product.description && (
+                <Text size={24} color="dimmed">
+                  {product.description}
+                </Text>
+              )}
             </div>
             <Button
               component="a"
