@@ -397,7 +397,6 @@ export const upsertSubscription = async (
     if (userSubscription) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
-    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
     const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
     if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
       // This is a migration that we reached out to:
@@ -453,10 +452,6 @@ export const upsertSubscription = async (
         ),
         currentPeriodEnd: new Date(subscriptionNotification.currentBillingPeriod?.endsAt as string),
       },
-    }),
-    dbWrite.user.update({
-      where: { id: user.id },
-      data: { subscriptionId: subscriptionNotification.id },
     }),
   ]);
 
@@ -702,7 +697,7 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   let customerId = '';
   const user = await dbRead.user.findUnique({
     where: { id: userId },
-    select: { paddleCustomerId: true, email: true, id: true, subscriptionId: true },
+    select: { paddleCustomerId: true, email: true, id: true },
   });
 
   const customerSubscription = await dbRead.customerSubscription.findFirst({
@@ -735,7 +730,6 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   if (customerSubscription && customerSubscription.id !== subscription.id) {
     // This is a different subscription, we should update the user.
     await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
-    await dbWrite.user.update({ where: { id: userId }, data: { subscriptionId: null } });
   }
 
   // This should trigger an update...

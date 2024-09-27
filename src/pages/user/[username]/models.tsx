@@ -126,6 +126,7 @@ export default function UserModelsPage() {
                     supportsGeneration,
                   }}
                   showEmptyCta={selfView}
+                  disableStoreFilters
                 />
               </>
             ) : viewingDraft ? (
