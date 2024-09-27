@@ -11,9 +11,11 @@ import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { constants } from '~/server/common/constants';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
 import { setGlobalValue } from '~/utils/metadata/base.metadata';
+import { stableSwarmMetadataProcessor } from '~/utils/metadata/stableswarm.metadata';
 
 const parsers = {
   automatic: automaticMetadataProcessor,
+  stableswarm: stableSwarmMetadataProcessor,
   comfy: comfyMetadataProcessor,
   rfooocus: rfooocusMetadataProcessor,
 };
