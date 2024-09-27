@@ -10,8 +10,6 @@ import {
   Group,
   Button,
   Loader,
-  ActionIcon,
-  Anchor,
   UnstyledButton,
 } from '@mantine/core';
 import { CosmeticType } from '@prisma/client';
@@ -19,20 +17,20 @@ import { useRouter } from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
-  useEquipContentDecoration,
   useEquipProfileDecoration,
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CosmeticPreview, CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
+import { CosmeticPreview } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CosmeticShopItemGetById } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 type Props = { shopItem: CosmeticShopItemGetById };
 

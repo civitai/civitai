@@ -3,15 +3,8 @@ import {
   Group,
   Stack,
   Text,
-  Tooltip,
-  TooltipProps,
   ActionIcon,
-  Grid,
-  Avatar,
-  Modal,
   Divider,
-  Center,
-  Loader,
   Box,
   Input,
   Select,
@@ -31,8 +24,6 @@ import {
 } from '~/libs/form';
 import { z } from 'zod';
 import { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
-import { showSuccessNotification } from '~/utils/notifications';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
@@ -41,15 +32,13 @@ import {
   CosmeticShopItemMeta,
   upsertCosmeticShopItemInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
-import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { IconCalendar, IconQuestionMark, IconX } from '@tabler/icons-react';
+import { IconCalendar, IconX } from '@tabler/icons-react';
 import { IconCalendarDue } from '@tabler/icons-react';
 import { isDefined } from '~/utils/type-guards';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 const formSchema = upsertCosmeticShopItemInput;
 
@@ -86,8 +75,8 @@ const CosmeticSearch = ({
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticsInput, 'limit'>>({
     page: 1,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
-  const { cosmetics, isLoading: isLoadingCosmetics } = useQueryCosmeticsPaged(debouncedFilters);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
+  const { cosmetics } = useQueryCosmeticsPaged(debouncedFilters);
   const data = useMemo(
     () =>
       [cosmetic, ...cosmetics].filter(isDefined).map((c) => ({
@@ -119,7 +108,6 @@ const CosmeticSearch = ({
 
 export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Props) => {
   const shopItemMeta = (shopItem?.meta ?? {}) as CosmeticShopItemMeta;
-  const currentUser = useCurrentUser();
   const form = useForm({
     schema: formSchema,
     defaultValues: {
@@ -142,12 +130,11 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
     'meta.paidToUserIds',
     'availableQuantity',
   ]);
-  const { cosmetic, isLoading: isLoadingCosmetic } = useQueryCosmetic({ id: cosmeticId });
+  const { cosmetic } = useQueryCosmetic({ id: cosmeticId });
   const { upsertShopItem, upsertingShopItem } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
     try {
-
       await upsertShopItem({
         ...data,
         availableQuantity: data.availableQuantity ?? null, // Ensures we clear it out
@@ -238,7 +225,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             name="videoUrl"
             label="Video Tutorial"
             description="The link to the YouTube video that walks through how this cosmetic was made :D"
-            placeholder='e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+            placeholder="e.g., https://www.youtube.com/watch?v=dQw4w9WgXcQ"
           />
           <Group spacing="md" grow>
             <InputNumber
