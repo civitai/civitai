@@ -443,6 +443,24 @@ export const baseModelSets = defineBaseModelSets({
   ODOR: ['ODOR'],
 });
 
+const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
+export const baseModelSetNames = defineBaseModelSetNames({
+  SD1: 'Stable Diffusion',
+  SD2: 'Stable Diffusion',
+  SD3: 'Stable Diffusion',
+  Flux1: 'Flux',
+  SDXL: 'Stable Diffusion XL',
+  SDXLDistilled: 'Stable Diffusion XL',
+  PixArtA: 'PixArt alpha',
+  PixArtE: 'PixArt sigma',
+  Lumina: 'Lumina',
+  Kolors: 'Kolors',
+  HyDit1: 'Hunyuan DiT',
+  SCascade: 'Stable Cascade',
+  Pony: 'Stable Diffusion',
+  ODOR: 'ODOR',
+});
+
 type LicenseDetails = {
   url: string;
   name: string;
