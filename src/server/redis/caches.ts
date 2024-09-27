@@ -348,9 +348,19 @@ export const tagCache = createCachedObject<TagLookup>({
 });
 
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
-export const resourceDataCache = createCachedArray({
+type Resource = Prisma.ModelVersionGetPayload<{
+  select: typeof generationResourceSelect;
+}>;
+export const resourceDataCache = createCachedArray<
+  Omit<Resource, 'generationCoverage'> & {
+    settings?: RecommendedSettingsSchema;
+    covered: boolean;
+    available: boolean;
+  }
+>({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   idKey: 'id',
+  dontCacheFn: (data) => data.availability === Availability.Private,
   lookupFn: async (ids) => {
     const dbResults = (
       await dbWrite.modelVersion.findMany({
