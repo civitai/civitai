@@ -177,8 +177,7 @@ export const processScheduledPublishing = createJob(
         ...scheduledModelVersions.map((entity) => entity.extras?.modelId),
       ]),
     ].filter(isDefined);
-    if (processedModelIds.length)
-      await dataForModelsCache.bust(processedModelIds, { debounceTime: 60 });
+    if (processedModelIds.length) await dataForModelsCache.refresh(processedModelIds);
 
     await setLastRun();
   }
