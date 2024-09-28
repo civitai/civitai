@@ -142,7 +142,7 @@ export function createCachedArray<T extends object>({
     return [...results];
   }
 
-  async function bust(id: number | number[]) {
+  async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
 
@@ -152,7 +152,7 @@ export function createCachedArray<T extends object>({
           `${key}:${id}`,
           { [idKey]: id, debounce: true },
           {
-            EX: debounceTime,
+            EX: options.debounceTime ?? debounceTime,
           }
         )
       )
