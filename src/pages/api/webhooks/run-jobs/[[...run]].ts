@@ -165,6 +165,10 @@ export default WebhookEndpoint(async (req, res) => {
   } catch (error) {
     log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, error);
     axiom.error(`failed`, { duration: Date.now() - jobStart, error });
+    if (name === 'update-nsfw-levels') {
+      // TODO: Temporary, looking to get logs from the error.
+      logToAxiom({ type: 'job-error', job: name, error }, 'webhooks');
+    }
     res.status(500).json({ ok: false, pod, error });
   } finally {
     await unlock(name, noCheck);
