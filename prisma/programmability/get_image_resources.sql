@@ -56,7 +56,7 @@ BEGIN
       (civitai_resource->>'modelVersionId')::int as model_version_id,
       civitai_resource->>'type' as name,
       null as hash,
-      iif(civitai_resource->>'strength' IS NOT NULL, round((civitai_resource->>'strength')::double precision * 100)::int, 100) as strength,
+      iif(civitai_resource->>'weight' IS NOT NULL, round((civitai_resource->>'weight')::double precision * 100)::int, 100) as strength,
       true as detected
     FROM
       "Image" i,
