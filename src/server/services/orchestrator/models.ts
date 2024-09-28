@@ -26,7 +26,7 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
       invalidateResource({
         client: internalOrchestratorClient,
         path: { air: resource.air },
-        query: userId ? { userId } : undefined,
+        query: userId ? { userId: [userId] } : undefined,
       })
     )
   );
