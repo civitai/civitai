@@ -105,7 +105,8 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                 ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
               `;
 
-                await notifDbWrite.cancellableQuery(insertQuery);
+                const resp = await notifDbWrite.cancellableQuery(insertQuery);
+                await resp.result();
               }
             }
 
