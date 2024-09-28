@@ -51,19 +51,20 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
     // If the user has this notification type disabled, don't create a notification.
     if (targets.length === 0) return;
 
-    await notifDbWrite.cancellableQuery(Prisma.sql`
+    const insResp = await notifDbWrite.cancellableQuery(Prisma.sql`
       INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
-      VALUES
-        (
-          ${data.key},
-          ${data.type},
-          ${data.category}::"NotificationCategory",
-          ${'{' + targets.join(',') + '}'},
-          ${JSON.stringify(data.details)}::jsonb,
-          ${data.debounceSeconds ?? 'NULL'}   
-         )
-      ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
+      VALUES (
+        ${data.key},
+        ${data.type},
+        ${data.category}::"NotificationCategory",
+        ${'{' + targets.join(',') + '}'},
+        ${JSON.stringify(data.details)}::jsonb,
+        ${data.debounceSeconds}
+      )
+      ON CONFLICT (key)
+      DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
     `);
+    await insResp.result();
   } catch (e) {
     const error = e as Error;
     logToAxiom(
