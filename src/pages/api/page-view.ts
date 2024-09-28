@@ -15,7 +15,7 @@ export default PublicEndpoint(
     if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
-    tracker.pageView({
+    await tracker.pageView({
       pageId: match,
       path,
       host,
