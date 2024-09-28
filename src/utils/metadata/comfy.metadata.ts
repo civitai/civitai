@@ -177,7 +177,13 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.sampler = sampler;
       metadata.denoise = denoise;
       metadata.workflow = workflowId;
-      metadata.civitaiResources = resources;
+      metadata.civitaiResources = resources.map((x: any) => {
+        if (x.strength) {
+          x.weight = x.strength;
+          delete x.strength;
+        }
+        return x;
+      });
       if (extra) metadata.extra = extra;
     } else if (customAdvancedSampler) {
       // Its fancy Flux...
@@ -273,6 +279,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
 
     if (isCivitComfy) {
       metadata.civitaiResources ??= [];
+      console.log('Adding civitai resources', workflow.extra.airs);
       for (const air of workflow.extra.airs) {
         const { version, type } = parseAIR(air);
         const resource: CivitaiResource = {
@@ -281,6 +288,7 @@ export const comfyMetadataProcessor = createMetadataProcessor({
         };
         const weight = additionalResources.find((x) => x.name === air)?.strength;
         if (weight) resource.weight = weight;
+        console.log('Adding resource', resource);
         (metadata.civitaiResources as CivitaiResource[]).push(resource);
       }
     }
