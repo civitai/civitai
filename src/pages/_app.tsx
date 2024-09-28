@@ -168,7 +168,7 @@ function MyApp(props: CustomAppProps) {
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
+                                                      {/* <StripeSetupSuccessProvider /> */}
                                                       <DialogProvider />
                                                       <RoutedDialogProvider />
                                                     </CustomModalsProvider>
@@ -215,7 +215,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
   const flags = getFeatureFlags({ user: session?.user, req: appContext.ctx?.req });
-  // console.log(flags);
 
   // Pass this via the request so we can use it in SSR
   if (session) {

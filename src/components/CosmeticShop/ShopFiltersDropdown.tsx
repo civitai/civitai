@@ -30,13 +30,7 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
   const [opened, setOpened] = useState(false);
   const filterLength = !!filters.cosmeticTypes ? filters.cosmeticTypes.length : 0;
 
-  const clearFilters = useCallback(
-    () =>
-      setFilters({
-        cosmeticTypes: [],
-      }),
-    [setFilters]
-  );
+  const clearFilters = useCallback(() => setFilters({}), [setFilters]);
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -82,9 +76,7 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
           spacing={8}
           value={filters.cosmeticTypes ?? []}
           onChange={(cosmeticTypes: CosmeticType[]) => {
-            setFilters({
-              cosmeticTypes,
-            });
+            setFilters(cosmeticTypes.length ? { cosmeticTypes } : {});
           }}
           multiple
         >

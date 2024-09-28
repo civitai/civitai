@@ -425,7 +425,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
       WHERE mv.id IN (${Prisma.join(modelVersionIds)})
-      ${updateSystemNsfwLevel ? '' : Prisma.raw('AND m."userId" > 0')}
+      ${updateSystemNsfwLevel ? Prisma.sql`` : Prisma.raw('AND m."userId" > 0')}
     )
     UPDATE "ModelVersion" mv
     SET "nsfwLevel" = level."nsfwLevel"

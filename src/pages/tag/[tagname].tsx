@@ -72,7 +72,7 @@ export default function TagPage({
                 <ModelFiltersDropdown />
               </Group>
             </Group>
-            <ModelsInfinite filters={{ ...queryFilters, sort, period }} />
+            <ModelsInfinite filters={{ ...queryFilters, sort, period }} disableStoreFilters />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
