@@ -148,9 +148,7 @@ export function ImageDetail2() {
 
   const canCreate = image.hasMeta;
 
-  const viewportHeight = isClient
-    ? Math.max(document.documentElement.clientHeight, window.innerHeight)
-    : 0;
+  const viewportHeight = isClient ? window.outerHeight : 0;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -342,7 +340,7 @@ export function ImageDetail2() {
                       </ReactionSettingsProvider>
                     </div>
                     <CarouselIndicators {...carouselNavigation} />
-                    {viewportHeight >= 1080 && (
+                    {viewportHeight >= 1050 && (
                       <AdUnit
                         keys={['728x90:Leaderboard']}
                         justify="center"
