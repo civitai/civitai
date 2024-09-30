@@ -2,11 +2,11 @@ import {
   HttpTransportType,
   HubConnection,
   HubConnectionBuilder,
-  HubConnectionState,
+  // HubConnectionState,
 } from '@microsoft/signalr';
 import { env } from '~/env/client.mjs';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
-import { Deferred, EventEmitter } from './utils';
+import { EventEmitter } from './utils';
 
 // --------------------------------
 // Types
@@ -18,9 +18,8 @@ interface SharedWorkerGlobalScope {
 const _self: SharedWorkerGlobalScope = self as any;
 
 let connection: HubConnection | null = null;
-let pingInterval: NodeJS.Timer | null = null;
+// let pingInterval: NodeJS.Timer | null = null;
 const events: Record<string, (data: unknown) => void> = {};
-const deferred = new Deferred<void>();
 
 const emitter = new EventEmitter<{
   connectionReady: undefined;
@@ -32,10 +31,18 @@ const emitter = new EventEmitter<{
   pong: undefined;
 }>();
 
-let pingTimeout: NodeJS.Timeout | null = null;
-const PING_TIMEOUT = 5000;
-// const PING_INTERVAL = 15 * 1000;
-const PING_INTERVAL = null; // Disabled for now
+async function connect() {
+  try {
+    if (!connection) return;
+    await connection.start();
+    emitter.emit('connectionReady', undefined);
+    console.log('SignalR Connected.');
+  } catch (err) {
+    console.log(err);
+    setTimeout(connect, 5000);
+  }
+}
+
 const getConnection = async ({ token }: { token: string }) => {
   if (connection) return connection;
 
@@ -49,9 +56,7 @@ const getConnection = async ({ token }: { token: string }) => {
     .build();
 
   try {
-    await connection.start();
     connection.onreconnected(() => {
-      emitter.emit('connectionReady', undefined);
       emitter.emit('connectionReconnected', undefined);
     });
     connection.onreconnecting((error) => {
@@ -59,36 +64,23 @@ const getConnection = async ({ token }: { token: string }) => {
     });
     connection.onclose((error) => {
       emitter.emit('connectionClosed', { message: JSON.stringify(error) });
-      connection = null;
-      if (pingInterval) clearInterval(pingInterval);
+      connect();
     });
-
-    const includePing = (PING_INTERVAL && PING_TIMEOUT) ?? false;
-    console.log('ping', includePing);
-    // Handle cases where signalr is in an odd state
-    pingInterval = PING_INTERVAL
-      ? setInterval(async () => {
-          if (!connection || connection.state !== HubConnectionState.Connected) {
-            if (pingInterval) clearInterval(pingInterval);
-            return;
-          }
-          pingTimeout = setTimeout(async () => {
-            console.log('timed out');
-            if (!connection) return;
-            await connection.stop();
-            connection = null;
-            emitter.emit('connectionError', { message: 'ping timeout' });
-          }, PING_TIMEOUT);
-          await connection.send('ping');
-        }, PING_INTERVAL)
-      : null;
-    // Backend response with `Pong` to the `ping`
     connection.on('Pong', () => {
       console.log('pong');
-      if (pingTimeout) clearTimeout(pingTimeout);
     });
-  } catch (e) {
-    emitter.emit('connectionError', { message: (e as Error).message ?? '' });
+
+    for (const [target, event] of Object.entries(events)) {
+      connection.on(target, event);
+    }
+
+    await connect();
+  } catch (error) {
+    console.log(error);
+    emitter.emit('connectionError', { message: (error as Error).message ?? '' });
+    try {
+      await connection.stop();
+    } catch (e) {}
     connection = null;
   }
 
@@ -96,13 +88,12 @@ const getConnection = async ({ token }: { token: string }) => {
 };
 
 const registerEvents = async (targets: string[]) => {
-  await deferred.promise;
-  if (!connection) emitter.emit('connectionError', { message: 'unable to establish a connection' });
-  else {
-    for (const target of targets) {
-      if (events[target]) connection.off(target, events[target]);
+  for (const target of targets) {
+    if (!events[target]) {
       events[target] = (payload) => emitter.emit('eventReceived', { target, payload });
-      connection.on(target, events[target]);
+      if (connection) {
+        connection.on(target, events[target]);
+      }
     }
   }
 };
@@ -137,12 +128,7 @@ const start = async (port: MessagePort) => {
 
   // incoming messages
   port.onmessage = async ({ data }: { data: WorkerIncomingMessage }) => {
-    if (data.type === 'connection:init')
-      getConnection({ token: data.token }).then((connection) => {
-        if (!connection) return;
-        emitter.emit('connectionReady', undefined);
-        deferred.resolve();
-      });
+    if (data.type === 'connection:init') getConnection({ token: data.token });
     else if (data.type === 'event:register') registerEvents([data.target]);
     else if (data.type === 'beforeunload') {
       emitterOffHandlers.forEach((fn) => fn());
