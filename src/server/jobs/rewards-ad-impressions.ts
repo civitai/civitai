@@ -10,7 +10,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 const type = 'ad-impression';
 const cap = 400;
 const hourlyCap = 100;
-const buzzPerAd = 0.5;
+const buzzPerAd = 0.25;
 
 export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * * *', async () => {
   try {
