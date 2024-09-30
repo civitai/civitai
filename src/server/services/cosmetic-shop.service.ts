@@ -353,6 +353,7 @@ export const reorderCosmeticShopSections = async ({
 export const getShopSectionsWithItems = async ({
   isModerator,
   cosmeticTypes,
+  sectionId,
 }: { isModerator?: boolean } & GetShopInput = {}) => {
   const sections = await dbRead.cosmeticShopSection.findMany({
     select: {
@@ -398,11 +399,15 @@ export const getShopSectionsWithItems = async ({
         some: {},
       },
       published: true,
+      ...(sectionId ? { id: sectionId } : undefined),
+      // id: sectionId ? { equals: sectionId } : undefined,
     },
     orderBy: {
       placement: 'asc',
     },
   });
+
+  console.log(sections);
 
   return (
     sections
