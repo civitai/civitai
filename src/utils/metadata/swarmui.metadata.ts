@@ -10,7 +10,7 @@ function cleanBadJson(str: string) {
     .replace(/\[Infinity\]/g, '[]');
 }
 
-export const stableSwarmMetadataProcessor = createMetadataProcessor({
+export const swarmUIMetadataProcessor = createMetadataProcessor({
   canParse: (exif) => {
     if (!exif.generationDetails) return false;
     if (!exif.generationDetails.includes('sui_image_params')) return false;
@@ -24,7 +24,7 @@ export const stableSwarmMetadataProcessor = createMetadataProcessor({
 
     const metadata: Record<string, any> = {
       prompt: generationDetails.prompt,
-      negativePrompt: generationDetails.negativePrompt,
+      negativePrompt: generationDetails.negativeprompt,
       cfgScale: generationDetails.cfgscale,
       steps: generationDetails.steps,
       seed: generationDetails.seed,
