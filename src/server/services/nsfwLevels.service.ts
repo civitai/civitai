@@ -11,11 +11,10 @@ import {
 import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles, collectionItems] = await Promise.all([
+  const [images, connections, articles /* , collectionItems */] = await Promise.all([
     dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { postId: true },
@@ -28,10 +27,10 @@ async function getImageConnectedEntities(imageIds: number[]) {
       where: { coverId: { in: imageIds } },
       select: { id: true },
     }),
-    dbRead.collectionItem.findMany({
-      where: { imageId: { in: imageIds } },
-      select: { collectionId: true },
-    }),
+    // dbRead.collectionItem.findMany({
+    //   where: { imageId: { in: imageIds } },
+    //   select: { collectionId: true },
+    // }),
   ]);
 
   return {
@@ -43,25 +42,25 @@ async function getImageConnectedEntities(imageIds: number[]) {
     bountyEntryIds: connections
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getPostConnectedEntities(postIds: number[]) {
-  const [posts, collectionItems] = await Promise.all([
+  const [posts /* collectionItems */] = await Promise.all([
     dbRead.post.findMany({
       where: { id: { in: postIds } },
       select: { modelVersionId: true },
     }),
-    dbRead.collectionItem.findMany({
-      where: { postId: { in: postIds } },
-      select: { collectionId: true },
-    }),
+    // dbRead.collectionItem.findMany({
+    //   where: { postId: { in: postIds } },
+    //   select: { collectionId: true },
+    // }),
   ]);
 
   return {
     modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -77,24 +76,24 @@ async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
 }
 
 async function getModelConnectedEntities(modelIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { modelId: { in: modelIds } },
-    select: { collectionId: true },
-  });
+  // const collectionItems = await dbRead.collectionItem.findMany({
+  //   where: { modelId: { in: modelIds } },
+  //   select: { collectionId: true },
+  // });
 
   return {
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getArticleConnectedEntities(articleIds: number[]) {
-  const collectionItems = await dbRead.collectionItem.findMany({
-    where: { articleId: { in: articleIds } },
-    select: { collectionId: true },
-  });
+  // const collectionItems = await dbRead.collectionItem.findMany({
+  //   where: { articleId: { in: articleIds } },
+  //   select: { collectionId: true },
+  // });
 
   return {
-    collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: [], // collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -381,10 +380,6 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
-  const updateSystemNsfwLevel =
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'update-system-model-version-nsfw-level')) !==
-    'false';
-
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (
       SELECT
@@ -396,6 +391,8 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
             FROM (
               SELECT
               ir."imageId" id,
+              ir."modelVersionId",
+              row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num,
               i."nsfwLevel"
               FROM "ImageResource" ir
               JOIN "Image" i ON i.id = ir."imageId"
@@ -403,9 +400,8 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
               JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
               WHERE ir."modelVersionId" = mv.id
               AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-              ORDER BY im."reactionCount" DESC
-              LIMIT 20
             ) AS ranked
+            WHERE ranked.row_num <= 20
           )
           WHEN m."userId" != -1 THEN (
             SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
@@ -425,7 +421,6 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
       WHERE mv.id IN (${Prisma.join(modelVersionIds)})
-      ${updateSystemNsfwLevel ? Prisma.sql`` : Prisma.raw('AND m."userId" > 0')}
     )
     UPDATE "ModelVersion" mv
     SET "nsfwLevel" = level."nsfwLevel"
