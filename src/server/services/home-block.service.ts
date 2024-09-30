@@ -24,6 +24,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { getSectionById, getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -127,6 +128,7 @@ type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
 };
+type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>[number];
 
 export type HomeBlockWithData = {
   id: number;
@@ -138,6 +140,7 @@ export type HomeBlockWithData = {
   collection?: GetCollectionWithItems;
   leaderboards?: GetLeaderboardsWithResults;
   announcements?: GetAnnouncements;
+  cosmeticShopSection?: GetShopSectionsWithItems;
 };
 
 export const getHomeBlockData = async ({
@@ -248,6 +251,27 @@ export const getHomeBlockData = async ({
 
           return aIndex - bIndex;
         }),
+      };
+    }
+    case HomeBlockType.CosmeticShop: {
+      if (!metadata.cosmeticShopSection) {
+        return null;
+      }
+
+      const data = await getShopSectionsWithItems({
+        sectionId: metadata.cosmeticShopSection.id,
+      });
+
+      const [cosmeticShopSection] = data;
+
+      if (!cosmeticShopSection || cosmeticShopSection._count.items === 0) {
+        return null;
+      }
+
+      return {
+        ...homeBlock,
+        metadata,
+        cosmeticShopSection,
       };
     }
     default:
