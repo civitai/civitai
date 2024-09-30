@@ -3,6 +3,7 @@ import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBloc
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -17,6 +18,7 @@ export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
 }
 
 function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
+  const features = useFeatureFlags();
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -34,10 +36,8 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     return cosmeticShopSection.items;
   }, [cosmeticShopSection, metadata]);
 
-  console.log(homeBlock);
-
-  if (!cosmeticShopSection) {
-    return <div>asdds</div>;
+  if (!cosmeticShopSection || !features.cosmeticShopHomeBlock) {
+    return null;
   }
 
   // How we can go to town:
