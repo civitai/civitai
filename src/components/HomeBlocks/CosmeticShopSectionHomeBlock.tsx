@@ -8,7 +8,13 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
+  const features = useFeatureFlags();
+
   if (!props.metadata.cosmeticShopSection) return null;
+
+  if (!features.cosmeticShopHomeBlock) {
+    return null;
+  }
 
   return (
     <HomeBlockWrapper py={32} showAds={showAds}>
@@ -18,7 +24,6 @@ export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
 }
 
 function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
-  const features = useFeatureFlags();
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -36,7 +41,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     return cosmeticShopSection.items;
   }, [cosmeticShopSection, metadata]);
 
-  if (!cosmeticShopSection || !features.cosmeticShopHomeBlock) {
+  if (!cosmeticShopSection) {
     return null;
   }
 
