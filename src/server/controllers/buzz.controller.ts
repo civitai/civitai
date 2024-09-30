@@ -137,7 +137,7 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('You cannot send buzz to the system account');
     }
 
-    let accountCreatedAt = ctx.user.createdAt;
+    let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
     if (!accountCreatedAt) {
       const user = await dbRead.user.findUnique({
         where: { id: fromAccountId },
@@ -145,7 +145,6 @@ export async function createBuzzTipTransactionHandler({
       });
       accountCreatedAt = user?.createdAt;
     }
-
     if (!accountCreatedAt || accountCreatedAt > dayjs().subtract(1, 'day').toDate()) {
       throw throwBadRequestError('You cannot send buzz until you have been a member for 24 hours');
     }
