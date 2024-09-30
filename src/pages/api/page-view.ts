@@ -40,9 +40,10 @@ function getMatchingPathname(url: string) {
       break;
     }
 
+    const softTokenLength = tokens.filter((part) => !part.includes('[[')).length;
     const softMatch = urlTokens.every(
       (token, index) =>
-        tokens.length === urlTokens.length &&
+        (tokens.length === urlTokens.length || softTokenLength === urlTokens.length) &&
         (token === tokens[index] || tokens[index]?.startsWith('['))
     );
     if (softMatch) {
