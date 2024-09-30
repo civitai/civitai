@@ -407,8 +407,6 @@ export const getShopSectionsWithItems = async ({
     },
   });
 
-  console.log(sections);
-
   return (
     sections
       // Ensures we don't return empty sections

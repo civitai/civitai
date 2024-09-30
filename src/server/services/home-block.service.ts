@@ -254,10 +254,7 @@ export const getHomeBlockData = async ({
       };
     }
     case HomeBlockType.CosmeticShop: {
-      console.log('here', metadata);
-
       if (!metadata.cosmeticShopSection) {
-        console.log('wawa', metadata);
         return null;
       }
 
@@ -267,7 +264,6 @@ export const getHomeBlockData = async ({
 
       const [cosmeticShopSection] = data;
 
-      console.log('here2', data, cosmeticShopSection);
       if (!cosmeticShopSection || cosmeticShopSection._count.items === 0) {
         return null;
       }

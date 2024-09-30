@@ -43,8 +43,6 @@ export default function Home() {
     }
   }, [inView, displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed]);
 
-  // console.log(homeBlocks);
-
   return (
     <>
       <Meta
