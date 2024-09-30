@@ -8,7 +8,7 @@ export default PublicEndpoint(
 
     if (!url || url.host !== host) return res.status(400).send('invalid request');
 
-    const { ads, duration, path } = JSON.parse(req.body);
+    const { ads, duration, path, windowWidth, windowHeight } = JSON.parse(req.body);
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
     const match = getMatchingPathname(path);
@@ -22,6 +22,8 @@ export default PublicEndpoint(
       country,
       ads: ads ?? false,
       duration: Math.floor(duration),
+      windowWidth,
+      windowHeight,
     });
 
     return res.status(200).end();

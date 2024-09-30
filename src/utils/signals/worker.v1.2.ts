@@ -31,7 +31,8 @@ const emitter = new EventEmitter<{
   pong: undefined;
 }>();
 
-async function connect() {
+async function connect(args?: { retryAttempts?: number; timeout?: number }) {
+  const { retryAttempts = 10, timeout = 5000 } = args ?? {};
   try {
     if (!connection) return;
     await connection.start();
@@ -39,7 +40,13 @@ async function connect() {
     console.log('SignalR Connected.');
   } catch (err) {
     console.log(err);
-    setTimeout(connect, 5000);
+    setTimeout(() => {
+      if (retryAttempts > 0) connect({ retryAttempts: retryAttempts - 1, timeout: timeout * 1.2 });
+      else {
+        emitter.emit('connectionError', { message: 'failed to connect to signal service' });
+        connection = null;
+      }
+    }, timeout);
   }
 }
 
