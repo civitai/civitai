@@ -27,6 +27,7 @@ import {
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
 import { AdUnit } from '~/components/Ads/AdUnit';
+import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
@@ -96,6 +97,12 @@ export default function Home() {
                   )}
                   {homeBlock.type === HomeBlockType.Event && (
                     <EventHomeBlock metadata={homeBlock.metadata} />
+                  )}
+                  {homeBlock.type === HomeBlockType.CosmeticShop && (
+                    <CosmeticShopSectionHomeBlock
+                      metadata={homeBlock.metadata}
+                      homeBlockId={homeBlock.id}
+                    />
                   )}
                   {showAds && (
                     <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard_C']} />
