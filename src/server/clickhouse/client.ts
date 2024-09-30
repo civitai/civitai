@@ -212,17 +212,19 @@ export class Tracker {
     userAgent: 'unknown',
     fingerprint: 'unknown',
   };
-  private session: Promise<Session | null> | undefined;
+  private session: Session | null = null;
   private req: NextApiRequest | undefined;
   private res: NextApiResponse | undefined;
 
   private async resolveSession() {
     if (!this.session && this.req && this.res) {
-      this.session = getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
-        this.actor.userId = session?.user?.id ?? this.actor.userId;
-        return session;
-      });
-      this.session.catch((e) => {
+      try {
+        await getServerAuthSession({ req: this.req, res: this.res }).then((session) => {
+          this.session = session;
+          this.actor.userId = session?.user?.id ?? this.actor.userId;
+          return session;
+        });
+      } catch (e) {
         const error = e as Error;
         logToAxiom(
           {
@@ -233,10 +235,9 @@ export class Tracker {
             cause: error.cause,
           },
           'clickhouse'
-        ).catch();
-      });
+        );
+      }
     }
-    return this.session ?? null;
   }
 
   constructor(req?: NextApiRequest, res?: NextApiResponse) {
@@ -254,10 +255,10 @@ export class Tracker {
     data: object | ((args: { session: Session | null; actor: TrackRequest }) => object)
   ) {
     if (!env.CLICKHOUSE_TRACKER_URL) return;
-    const sessionData = await this.resolveSession();
+    await this.resolveSession();
 
     const body =
-      typeof data === 'function' ? data({ session: sessionData, actor: this.actor }) : data;
+      typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
 
     // Perform the clickhouse insert in the background
     fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
@@ -312,12 +313,20 @@ export class Tracker {
     country: string;
     duration: number;
   }) {
-    this.send('pageViews', ({ session, actor }) => ({
-      userId: actor.userId,
-      memberType: session?.user?.tier ?? 'undefined',
-      ip: actor.ip,
-      ...values,
-    }));
+    return this.send('pageViews', ({ session, actor }) => {
+      // console.log({
+      //   userId: actor.userId,
+      //   memberType: session?.user?.tier ?? 'undefined',
+      //   ip: actor.ip,
+      //   ...values,
+      // });
+      return {
+        userId: actor.userId,
+        memberType: session?.user?.tier ?? 'undefined',
+        ip: actor.ip,
+        ...values,
+      };
+    });
   }
 
   public action(values: { type: ActionType; details?: any }) {

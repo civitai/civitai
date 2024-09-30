@@ -21,7 +21,7 @@ export default function PostsPage() {
         title={`Civitai${
           !currentUser ? ` Posts | Explore Community-Created Content with Custom AI Resources` : ''
         }`}
-        description="Discover engaging posts from our growing community on Civitai, featuring unique and creative content generated with custom Stable Diffusion AI resources crafted by talented community members."
+        description="Discover engaging posts from our growing community on Civitai, featuring unique and creative content generated with custom Stable Diffusion & Flux AI resources crafted by talented community members."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>

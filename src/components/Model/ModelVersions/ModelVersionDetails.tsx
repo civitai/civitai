@@ -621,6 +621,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </Button>
           ) : showPublishButton ? (
             <Stack spacing={4}>
+              {version.canGenerate && isOwnerOrMod && (
+                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+              )}
               <Button.Group>
                 <Button
                   color="green"

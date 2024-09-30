@@ -26,7 +26,6 @@ export const createSignalWorker = ({
 }) => {
   const deferred = new Deferred();
   const emitter = new EventEmitter();
-  const events: Record<string, boolean> = {};
   let pingDeferred: Deferred | undefined;
 
   const { getState, subscribe } = createStore<Store>((set) => ({
@@ -36,7 +35,7 @@ export const createSignalWorker = ({
   }));
 
   const worker = new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-    name: 'civitai-signals:1.2.2',
+    name: 'civitai-signals:1.2.3',
     type: 'module',
   });
 
@@ -54,10 +53,7 @@ export const createSignalWorker = ({
   const postMessage = (message: WorkerIncomingMessage) => worker.port.postMessage(message);
 
   const on = (target: string, cb: (data: unknown) => void) => {
-    if (!events[target]) {
-      events.target = true;
-      postMessage({ type: 'event:register', target });
-    }
+    postMessage({ type: 'event:register', target });
     emitter.on(target, cb);
   };
 
@@ -102,11 +98,6 @@ export const createSignalWorker = ({
         on(target, logFn);
         console.log(`begin logging: ${target}`);
       }
-      // else {
-      //   delete logs[target];
-      //   off(target, logFn);
-      //   console.log(`end logging: ${target}`);
-      // }
     };
 
     window.ping = () => {

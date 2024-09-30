@@ -100,7 +100,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { CAROUSEL_LIMIT } from '~/server/common/constants';
+import { BaseModel, CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort, ModelType } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
@@ -113,7 +113,7 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import { getBaseModelEcosystemName, getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
@@ -227,6 +227,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
+  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel)
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
@@ -476,7 +477,7 @@ export default function ModelDetailsV2({
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
     applicationCategory: 'Multimedia',
-    applicationSubCategory: 'Stable Diffusion Model',
+    applicationSubCategory: `${selectedEcosystemName} Model`,
     description: model.description,
     name: model.name,
     image: imageUrl,
@@ -519,7 +520,7 @@ export default function ModelDetailsV2({
       <Meta
         title={`${model.name}${
           selectedVersion ? ' - ' + selectedVersion.name : ''
-        } | Stable Diffusion ${getDisplayName(model.type)} | Civitai`}
+        } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
         links={[

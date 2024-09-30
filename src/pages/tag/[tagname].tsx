@@ -41,8 +41,8 @@ export default function TagPage({
   return (
     <>
       <Meta
-        title={`${tag?.name} Stable Diffusion AI Models | Civitai`}
-        description={`Browse ${tag?.name} Stable Diffusion models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
+        title={`${tag?.name} Stable Diffusion & Flux AI Models | Civitai`}
+        description={`Browse ${tag?.name} Stable Diffusion & Flux models, checkpoints, hypernetworks, textual inversions, embeddings, Aesthetic Gradients, and LORAs`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tag/${tagname}`, rel: 'canonical' }]}
       />
       {tag && (
@@ -72,7 +72,7 @@ export default function TagPage({
                 <ModelFiltersDropdown />
               </Group>
             </Group>
-            <ModelsInfinite filters={{ ...queryFilters, sort, period }} />
+            <ModelsInfinite filters={{ ...queryFilters, sort, period }} disableStoreFilters />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>

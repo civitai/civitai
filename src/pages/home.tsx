@@ -46,7 +46,7 @@ export default function Home() {
     <>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
-        description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"
+        description="Explore thousands of high-quality Stable Diffusion & Flux models, share your AI-generated art, and engage with a vibrant community of creators"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
       />
       <MasonryProvider

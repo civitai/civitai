@@ -2110,6 +2110,7 @@ export const getImage = async ({
       COALESCE(im."commentCount", 0) as "commentCount",
       COALESCE(im."tippedAmountCount", 0) as "tippedAmountCount",
       COALESCE(im."viewCount", 0) as "viewCount",
+      COALESCE(im."collectedCount", 0) as "collectedCount",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2160,6 +2161,7 @@ export const getImage = async ({
       commentCount,
       tippedAmountCount,
       viewCount,
+      collectedCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -2186,6 +2188,7 @@ export const getImage = async ({
       commentCountAllTime: commentCount,
       tippedAmountCountAllTime: tippedAmountCount,
       viewCountAllTime: viewCount,
+      collectedCountAllTime: collectedCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };

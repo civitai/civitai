@@ -1,7 +1,12 @@
 import { ModelType } from '@prisma/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import {
+  BaseModel,
+  baseModelSetNames,
+  baseModelSets,
+  BaseModelSetType,
+} from '~/server/common/constants';
 import { Air } from '@civitai/client';
 import he from 'he';
 
@@ -233,6 +238,17 @@ export function stringifyAIR({
     id: String(modelId),
     version: String(id),
   })?.replace('pony', 'sdxl');
+}
+
+export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {
+  if (!baseModel) return 'Stable Diffusion';
+
+  const ecosystem = Object.entries(baseModelSets).find(([, value]) =>
+    (value as string[]).includes(baseModel)
+  )?.[0] as BaseModelSetType | undefined;
+  if (!ecosystem) return 'Stable Diffusion';
+
+  return baseModelSetNames[ecosystem];
 }
 
 export function toBase64(str: string) {
