@@ -3,14 +3,14 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import Script from 'next/script';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-// import { isProd } from '~/env/other';
+import { isProd } from '~/env/other';
 import { Router } from 'next/router';
 import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
 import { getAvailableAdunits } from '~/components/Ads/ads.utils';
-const isProd = true;
+// const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
 const adProviders: AdProvider[] = ['pubgalaxy'];
