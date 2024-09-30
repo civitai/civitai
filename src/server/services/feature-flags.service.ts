@@ -9,8 +9,13 @@ import { IncomingHttpHeaders } from 'http';
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
-const serverAvailability = ['green', 'blue', 'red'] as const;
-type ServerAvailability = (typeof serverAvailability)[number];
+type ServerAvailability = keyof typeof serverDomainMap;
+const serverDomainMap = {
+  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+} as const;
+const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
 const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted'] as const;
 type RoleAvailability = (typeof roleAvailablity)[number];
 const featureAvailability = [
@@ -33,13 +38,14 @@ const featureFlags = createFeatureFlags({
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
-  imageGeneration: {
-    toggleable: true,
-    default: true,
-    displayName: 'Image Generation',
-    description: `Generate images with any supported AI resource.`,
-    availability: ['public'],
-  },
+  imageGeneration: ['public'],
+  // imageGeneration: {
+  //   toggleable: true,
+  //   default: true,
+  //   displayName: 'Image Generation',
+  //   description: `Generate images with any supported AI resource.`,
+  //   availability: ['public'],
+  // },
   largerGenerationImages: {
     toggleable: true,
     default: false,
@@ -109,12 +115,6 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 // Logic
 // --------------------------
-const serverDomainMap: Record<ServerAvailability, string | undefined> = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-};
-
 type FeatureAccessContext = {
   user?: SessionUser;
   req?: {
@@ -122,14 +122,14 @@ type FeatureAccessContext = {
     // url?: string;
   };
 };
-export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessContext) => {
+const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessContext) => {
   const { availability } = featureFlags[key];
   const host = req?.headers.host;
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
 
-  // // Check server availability
+  // Check server availability
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
@@ -139,6 +139,7 @@ export const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessCont
     const domains = Object.entries(serverDomainMap).filter(
       ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
     );
+
     serverMatch = domains.some(([key, domain]) => {
       if (key === 'blue' && host === 'stage.civitai.com') return true;
       return host === domain;
