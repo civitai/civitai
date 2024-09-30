@@ -120,8 +120,6 @@ function MyApp(props: CustomAppProps) {
       );
     });
 
-  console.log({ flags });
-
   return (
     <>
       <Head>
