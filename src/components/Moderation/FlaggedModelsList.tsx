@@ -51,7 +51,7 @@ export function FlaggedModelsList() {
         size: 300,
         enableColumnActions: false,
         Cell: ({ row: { original } }) => (
-          <Link href={`/models/${original.modelId}`} passHref>
+          <Link href={`/models/${original.modelId}`} passHref legacyBehavior>
             <Anchor target="_blank">
               <div className="flex flex-nowrap gap-1">
                 <IconExternalLink className="shrink-0 grow-0" size={16} />
