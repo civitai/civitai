@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import SharedWorker from '@okikio/sharedworker';
 import type { WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type SignalStatus = 'connected' | 'closed' | 'error' | 'reconnected' | 'reconnecting';
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
@@ -24,6 +25,7 @@ export function useSignalsWorker(
     onStatusChange?: (args: SignalState) => void;
   }
 ) {
+  const currentUser = useCurrentUser();
   const { accessToken } = args;
   const { onConnected, onClosed, onError, onReconnected, onReconnecting, onStatusChange } =
     options ?? {};
@@ -41,16 +43,11 @@ export function useSignalsWorker(
     setReady(false);
     setWorker(
       new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-        name: 'civitai-signals:1.2.4',
+        name: 'civitai-signals:1.2.5',
         type: 'module',
       })
     );
   }, [worker]);
-
-  // function handleStatusChange(state: SignalState) {
-  //   onStatusChange?.(state)
-  //   setState(state)
-  // }
 
   // handle register worker events
   useEffect(() => {
@@ -112,27 +109,13 @@ export function useSignalsWorker(
 
   // init
   useEffect(() => {
-    if (worker && ready && accessToken)
-      worker.port.postMessage({ type: 'connection:init', token: accessToken });
-  }, [worker, accessToken, ready]);
-
-  // // poll to reconnect
-  // const timerRef = useRef<NodeJS.Timer | null>(null);
-  // const disconnected = state ? state.status === 'closed' || state.status === 'error' : undefined;
-  // useEffect(() => {
-  //   if (disconnected && accessToken && worker && ready) {
-  //     timerRef.current = setInterval(() => {
-  //       if (document.visibilityState === 'visible') {
-  //         console.log('attempting to reconnect to signal services');
-  //         worker.port.postMessage({ type: 'connection:init', token: accessToken });
-  //       }
-  //     }, 15 * 1000);
-  //   } else if (timerRef.current) clearInterval(timerRef.current);
-
-  //   return () => {
-  //     if (timerRef.current) clearInterval(timerRef.current);
-  //   };
-  // }, [disconnected, accessToken, worker, ready]);
+    if (worker && ready && accessToken && currentUser?.id)
+      worker.port.postMessage({
+        type: 'connection:init',
+        token: accessToken,
+        userId: currentUser.id,
+      });
+  }, [worker, accessToken, ready, currentUser?.id]);
 
   // ping
   useEffect(() => {

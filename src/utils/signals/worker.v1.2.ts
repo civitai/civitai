@@ -2,6 +2,7 @@ import {
   HttpTransportType,
   HubConnection,
   HubConnectionBuilder,
+  HubConnectionState,
   // HubConnectionState,
 } from '@microsoft/signalr';
 import { env } from '~/env/client.mjs';
@@ -17,6 +18,7 @@ interface SharedWorkerGlobalScope {
 
 const _self: SharedWorkerGlobalScope = self as any;
 
+let connectedUserId: number | null = null;
 let connection: HubConnection | null = null;
 // let pingInterval: NodeJS.Timer | null = null;
 const events: Record<string, (data: unknown) => void> = {};
@@ -34,24 +36,35 @@ const emitter = new EventEmitter<{
 async function connect(args?: { retryAttempts?: number; timeout?: number }) {
   const { retryAttempts = 10, timeout = 5000 } = args ?? {};
   try {
-    if (!connection) return;
+    if (!connection) throw new Error('no connection to start');
+    if (connection.state !== HubConnectionState.Disconnected) {
+      throw new Error(
+        `cannot start new connection :: current connection status: ${connection.state}`
+      );
+    }
+
     await connection.start();
     emitter.emit('connectionReady', undefined);
     console.log('SignalR Connected.');
   } catch (err) {
     console.log(err);
     setTimeout(() => {
-      if (retryAttempts > 0) connect({ retryAttempts: retryAttempts - 1, timeout: timeout * 1.2 });
-      else {
-        emitter.emit('connectionError', { message: 'failed to connect to signal service' });
-        connection = null;
-      }
+      if (retryAttempts > 0) connect({ retryAttempts: retryAttempts - 1, timeout: timeout * 1.4 });
+      else throw new Error('failed to connect to signal service');
     }, timeout);
   }
 }
 
-const getConnection = async ({ token }: { token: string }) => {
-  if (connection) return connection;
+const getConnection = async ({ token, userId }: { token: string; userId: number }) => {
+  if (connection && userId === connectedUserId) return connection;
+  if (userId !== connectedUserId) {
+    connectedUserId = userId;
+    if (connection) {
+      (connection as any)._closedCallbacks = [];
+      await connection.stop();
+      connection = null;
+    }
+  }
 
   connection = new HubConnectionBuilder()
     .withUrl(`${env.NEXT_PUBLIC_SIGNALS_ENDPOINT}/hub`, {
@@ -71,7 +84,7 @@ const getConnection = async ({ token }: { token: string }) => {
     });
     connection.onclose((error) => {
       emitter.emit('connectionClosed', { message: JSON.stringify(error) });
-      connect();
+      setTimeout(() => connect(), 5000);
     });
     connection.on('Pong', () => {
       console.log('pong');
@@ -85,9 +98,6 @@ const getConnection = async ({ token }: { token: string }) => {
   } catch (error) {
     console.log(error);
     emitter.emit('connectionError', { message: (error as Error).message ?? '' });
-    try {
-      await connection.stop();
-    } catch (e) {}
     connection = null;
   }
 
@@ -135,7 +145,7 @@ const start = async (port: MessagePort) => {
 
   // incoming messages
   port.onmessage = async ({ data }: { data: WorkerIncomingMessage }) => {
-    if (data.type === 'connection:init') getConnection({ token: data.token });
+    if (data.type === 'connection:init') getConnection({ token: data.token, userId: data.userId });
     else if (data.type === 'event:register') registerEvents([data.target]);
     else if (data.type === 'beforeunload') {
       emitterOffHandlers.forEach((fn) => fn());
