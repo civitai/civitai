@@ -143,7 +143,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const isTextualInversion = model?.type === 'TextualInversion';
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
-  const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
+  const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
     (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
