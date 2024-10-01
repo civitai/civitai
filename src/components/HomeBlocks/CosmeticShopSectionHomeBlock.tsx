@@ -8,13 +8,8 @@ import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
-  const features = useFeatureFlags();
 
   if (!props.metadata.cosmeticShopSection) return null;
-
-  if (!features.cosmeticShopHomeBlock) {
-    return null;
-  }
 
   return (
     <HomeBlockWrapper py={32} showAds={showAds}>
