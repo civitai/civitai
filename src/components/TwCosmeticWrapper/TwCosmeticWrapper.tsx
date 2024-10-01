@@ -12,9 +12,8 @@ type Cosmetic = {
 
 export const TwCosmeticWrapper = forwardRef<
   HTMLDivElement,
-  Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
+  React.HTMLProps<HTMLDivElement> & {
     cosmetic?: Cosmetic;
-    children: React.ReactElement;
   }
 >(({ children, className, cosmetic, ...props }, ref) => {
   const styleRef = useRef<CSSProperties | undefined>();
@@ -31,17 +30,15 @@ export const TwCosmeticWrapper = forwardRef<
       } as CSSProperties;
   }
 
-  return !cosmetic ? (
-    children
-  ) : (
+  return (
     <div
       ref={ref}
       style={styleRef.current}
       className={clsx(
-        'rounded-md bg-[image:var(--bgImage,var(--bgGradient)),var(--bgGradient)] bg-[length:var(--bgSize)] p-[6px]',
-        cosmetic?.glow
-          ? 'relative before:absolute before:left-0 before:top-0 before:size-full before:bg-[image:var(--bgGradient)] before:blur-[6px]'
-          : '',
+        cosmetic &&
+          'rounded-md bg-[image:var(--bgImage,var(--bgGradient)),var(--bgGradient)] bg-[length:var(--bgSize)] p-[6px]',
+        cosmetic?.glow &&
+          'relative before:absolute before:left-0 before:top-0 before:size-full before:bg-[image:var(--bgGradient)] before:blur-[6px]',
         className
       )}
       {...props}
