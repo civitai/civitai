@@ -42,6 +42,15 @@ export const updateSubscriptionInputSchema = z.object({
   priceId: z.string(),
 });
 
+export const AdjustmentAction = [
+  'credit',
+  'credit_reverse',
+  'refund',
+  'chargeback',
+  'chargeback_reverse',
+  'chargeback_warning',
+] as const;
+
 export type GetPaddleAdjustmentsSchema = z.infer<typeof getPaddleAdjustmentsSchema>;
 export const getPaddleAdjustmentsSchema = z.object({
   limit: z.number().optional().default(50),
@@ -49,5 +58,5 @@ export const getPaddleAdjustmentsSchema = z.object({
   customerId: z.array(z.string()).optional(),
   subscriptionId: z.array(z.string()).optional(),
   transactionId: z.array(z.string()).optional(),
-  action: z.array(z.string()).optional(),
+  action: z.enum(AdjustmentAction).optional(),
 });

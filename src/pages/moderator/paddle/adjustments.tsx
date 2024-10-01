@@ -5,43 +5,37 @@ import {
   Center,
   Container,
   Group,
-  List,
   Loader,
-  Modal,
-  Pagination,
   Paper,
+  Select,
   Stack,
   Table,
   Text,
-  Textarea,
+  TextInput,
   Title,
 } from '@mantine/core';
-import { ModelStatus } from '@prisma/client';
-import { IconExternalLink } from '@tabler/icons-react';
-import { TRPCClientErrorBase } from '@trpc/client';
-import { DefaultErrorShape } from '@trpc/server';
-import Link from 'next/link';
+import { useDebouncedValue } from '@mantine/hooks';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { usePaddleAdjustmentsInfinite } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { usePaddle } from '~/providers/PaddleProvider';
 
-import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ModelGetAllPagedSimple } from '~/types/router';
+import { AdjustmentAction, GetPaddleAdjustmentsSchema } from '~/server/schema/paddle.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
-
-type State = {
-  declineReason: string;
-  page: number;
-  opened: boolean;
-  selectedModel: ModelGetAllPagedSimple['items'][number] | null;
-};
+import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
 
 export default function ModeratorPaddleAdjustments() {
+  const [filters, setFilters] = useState<GetPaddleAdjustmentsSchema>({
+    limit: 50,
+    customerId: [],
+    subscriptionId: [],
+  });
+  const { paddle } = usePaddle();
+  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { adjustments, isLoading, isFetching, fetchNextPage, hasNextPage } =
-    usePaddleAdjustmentsInfinite({ limit: 50 });
+    usePaddleAdjustmentsInfinite(debouncedFilters);
   const featureFlags = useFeatureFlags();
 
   if (!featureFlags.paddleAdjustments) {
@@ -49,7 +43,7 @@ export default function ModeratorPaddleAdjustments() {
   }
 
   return (
-    <Container size="sm">
+    <Container size="lg">
       <Stack spacing={0} mb="xl">
         <Title order={1}>Paddle Adjustments</Title>
         <Text size="sm" color="dimmed">
@@ -57,6 +51,69 @@ export default function ModeratorPaddleAdjustments() {
           no way to check this on their platform.
         </Text>
       </Stack>
+      <Group position="apart" my="md">
+        <Group>
+          <TextInput
+            label="Filter by Customer Id"
+            description="Comma separated list of customer IDs"
+            value={filters.customerId?.join(',') ?? ''}
+            onChange={(e) =>
+              setFilters({
+                ...filters,
+                customerId: e.target.value ? e.target.value.split(',') : undefined,
+              })
+            }
+            size="sm"
+            disabled={isLoading}
+          />
+          <TextInput
+            label="Filter by Subscription Id"
+            description="Comma separated list of subscription IDs"
+            value={filters.subscriptionId?.join(',') ?? ''}
+            onChange={(e) =>
+              setFilters({
+                ...filters,
+                subscriptionId: e.target.value ? e.target.value.split(',') : undefined,
+              })
+            }
+            size="sm"
+            disabled={isLoading}
+          />
+          <TextInput
+            label="Filter by Transaction Id"
+            description="Comma separated list of transaction IDs"
+            value={filters.transactionId?.join(',') ?? ''}
+            onChange={(e) =>
+              setFilters({
+                ...filters,
+                transactionId: e.target.value ? e.target.value.split(',') : undefined,
+              })
+            }
+            size="sm"
+            disabled={isLoading}
+          />
+        </Group>
+        <Select
+          label="Type"
+          name="size"
+          data={[
+            { value: 'all', label: 'All' },
+            ...AdjustmentAction.map((action) => ({
+              value: action as string,
+              label: toPascalCase(action.replace('_', ' ')),
+            })),
+          ]}
+          value={filters.action ?? 'all'}
+          onChange={(value: string) =>
+            setFilters({
+              ...filters,
+              action: value === 'all' ? undefined : (value as (typeof AdjustmentAction)[number]),
+            })
+          }
+          disabled={isLoading}
+        />
+      </Group>
+
       {isLoading ? (
         <Center p="xl">
           <Loader size="lg" />
@@ -79,7 +136,7 @@ export default function ModeratorPaddleAdjustments() {
               {adjustments.map((adjustment) => {
                 return (
                   <tr key={adjustment.id}>
-                    <td>{getDisplayName(adjustment.action.replace('_', ' '))}</td>
+                    <td>{toPascalCase(adjustment.action.replace('_', ' '))}</td>
                     <td>{formatDate(adjustment.createdAt)}</td>
                     <td>{adjustment.currencyCode ?? 'N/A'}</td>
                     <td>
@@ -94,13 +151,16 @@ export default function ModeratorPaddleAdjustments() {
                       <Stack spacing={0}>
                         <Anchor
                           size="xs"
-                          href={`/moderator/paddle/customer/${adjustment.customerId}`}
+                          // Not keen on this approach, but will have to do in the meantime.
+                          href={`https://vendors.paddle.com/customers-v2/${adjustment.customerId}`}
+                          target="_blank"
                         >
                           Paddle
                         </Anchor>
                         <Anchor
                           size="xs"
                           href={`/moderator/paddle/customer/${adjustment.customerId}`}
+                          target="_blank"
                         >
                           Civitai
                         </Anchor>
@@ -128,7 +188,7 @@ export default function ModeratorPaddleAdjustments() {
               <Button
                 loading={isFetching || isLoading}
                 variant="light"
-                onClick={fetchNextPage}
+                onClick={() => fetchNextPage()}
                 disabled={!hasNextPage}
               >
                 Load more

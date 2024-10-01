@@ -37,6 +37,7 @@ import {
   SubscriptionNotification,
   TransactionNotification,
   Adjustment,
+  AdjustmentAction,
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -763,12 +764,19 @@ export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId:
 export const getAdjustmentsInfinite = async ({
   limit = 50,
   cursor,
-  ...input
+  customerId,
+  subscriptionId,
+  transactionId,
+  action,
 }: GetPaddleAdjustmentsSchema) => {
   const data = await getPaddleAdjustments({
     after: cursor,
     perPage: limit + 1,
-    ...input,
+    // Paddle is picky about empty arrays.....
+    customerId: customerId?.length ? customerId : undefined,
+    subscriptionId: subscriptionId?.length ? subscriptionId : undefined,
+    transactionId: transactionId?.length ? transactionId : undefined,
+    action: action ? (action as AdjustmentAction) : undefined,
   });
 
   const hasMore = data.length > limit;

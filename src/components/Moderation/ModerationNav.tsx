@@ -2,9 +2,11 @@ import { ActionIcon, Menu } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 
 export function ModerationNav() {
+  const features = useFeatureFlags();
   const menuItems = useMemo(
     () =>
       [
@@ -22,13 +24,19 @@ export function ModerationNav() {
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
-        { label: 'Paddle Adjustments', href: '/moderator/paddle/adjustments' },
-      ].map((link) => (
-        <Menu.Item key={link.href} component={NextLink} href={link.href}>
-          {link.label}
-        </Menu.Item>
-      )),
-    []
+        {
+          label: 'Paddle Adjustments',
+          href: '/moderator/paddle/adjustments',
+          hidden: !features.paddleAdjustments,
+        },
+      ]
+        .filter((i) => !i.hidden)
+        .map((link) => (
+          <Menu.Item key={link.href} component={NextLink} href={link.href}>
+            {link.label}
+          </Menu.Item>
+        )),
+    [features]
   );
 
   return (
