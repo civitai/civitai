@@ -45,7 +45,7 @@ export function useSignalsWorker(
       (worker) =>
         worker ??
         new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-          name: 'civitai-signals:1.2.5',
+          name: 'civitai-signals:1.2.6',
           type: 'module',
         })
     );
