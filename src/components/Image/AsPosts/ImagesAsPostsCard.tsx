@@ -260,7 +260,7 @@ export function ImagesAsPostsCard({
                 <Group spacing={8} position="right" noWrap>
                   {!data.publishedAt && (
                     <Tooltip label="Post not Published" withArrow>
-                      <Link href={`/posts/${data.postId}/edit`}>
+                      <Link legacyBehavior href={`/posts/${data.postId}/edit`}>
                         <ActionIcon color="red" variant="outline">
                           <IconExclamationMark />
                         </ActionIcon>

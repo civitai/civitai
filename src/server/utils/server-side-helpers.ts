@@ -37,10 +37,13 @@ export function createServerSideProps<P>({
   useSession = false,
   prefetch = 'once',
 }: CreateServerSidePropsProps<P>) {
-  return async (context: GetServerSidePropsContext) => {
+  return async function (
+    context: GetServerSidePropsContext
+  ): Promise<GetServerSidePropsResult<NonNullable<P>>> {
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
-      (context.req as any)['session'] ?? (useSession ? await getServerAuthSession(context) : null);
+      ((context.req as any)['session'] as Session | null) ??
+      (useSession ? await getServerAuthSession(context) : null);
     const features = getFeatureFlagsLazy({ user: session?.user, req: context.req });
 
     const ssg =
@@ -48,29 +51,29 @@ export function createServerSideProps<P>({
         ? await getServerProxySSGHelpers(context, session, features)
         : undefined;
 
-    const result = (await resolver({
+    const result = ((await resolver({
       ctx: context,
       isClient,
       ssg,
       session,
       features,
-    })) as GetPropsFnResult<P> | undefined;
+    })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
-    let props: GetPropsFnResult<P>['props'] | undefined;
-    if (result) {
-      if (result.redirect) return { redirect: result.redirect };
-      if (result.notFound) return { notFound: result.notFound };
+    if (result.redirect) return { redirect: result.redirect };
+    if (result.notFound) return { notFound: result.notFound };
 
-      props = result.props;
-    }
+    // const props =  await result.props;
+    const props =
+      typeof result.props === 'object' && 'then' in result.props
+        ? await result.props
+        : result.props;
 
     return {
       props: {
-        session,
-        // flags: features,
         ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
-      },
+        session,
+      } as NonNullable<P>,
     };
   };
 }

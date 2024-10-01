@@ -379,14 +379,11 @@ export const constants = {
       [90000, 4],
       [125000, 6],
       [200000, 8],
-      [250000, 10],
+      [250000, 20],
     ],
   },
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
-  },
-  dialog: {
-    zIndex: 200,
   },
 } as const;
 export const activeBaseModels = constants.baseModels.filter(

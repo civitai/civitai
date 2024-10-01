@@ -10,7 +10,7 @@ import {
   Overlay,
   useMantineTheme,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { ModelType } from '@prisma/client';
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -69,7 +69,7 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }:
         ) : null}
         <Stack spacing={2}>
           <Text
-            component={NextLink}
+            component={Link}
             sx={(theme) => ({
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
@@ -128,7 +128,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
               </ThemeIcon>
             )}
             <Text
-              component={NextLink}
+              component={Link}
               sx={{ cursor: 'pointer' }}
               href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}

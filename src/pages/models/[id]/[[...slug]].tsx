@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link';
 import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconArchive,
@@ -52,7 +52,6 @@ import {
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -732,7 +731,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             <Menu.Item
                               icon={<IconEdit size={14} stroke={1.5} />}
-                              component={NextLink}
+                              component={Link}
                               href={`/models/${model.id}/edit`}
                             >
                               Edit Model
@@ -858,6 +857,7 @@ export default function ModelDetailsV2({
                     <>
                       <Divider orientation="vertical" />
                       <Link
+                        legacyBehavior
                         href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`}
                         passHref
                       >
@@ -872,7 +872,11 @@ export default function ModelDetailsV2({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           size="sm"
@@ -958,7 +962,7 @@ export default function ModelDetailsV2({
               {isOwner ? (
                 <>
                   <ButtonTooltip label="Add Version">
-                    <Link href={`/models/${model.id}/model-versions/create`}>
+                    <Link legacyBehavior href={`/models/${model.id}/model-versions/create`}>
                       <ActionIcon variant="light" color="blue">
                         <IconPlus size={14} />
                       </ActionIcon>

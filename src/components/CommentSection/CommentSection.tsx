@@ -13,9 +13,8 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
-import { IconLock } from '@tabler/icons-react';
 import Link from 'next/link';
+import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
@@ -115,7 +114,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
-                      <Link href={`/login?returnUrl=${router.asPath}`}>
+                      <Link legacyBehavior href={`/login?returnUrl=${router.asPath}`}>
                         <Button size="xs" onClick={() => closeAllModals()} compact>
                           Log In
                         </Button>

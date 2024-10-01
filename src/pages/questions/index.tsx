@@ -58,7 +58,7 @@ export default function QuestionsList() {
               </Badge>
             </Title>
             {!isMuted && (
-              <Link href="/questions/create">
+              <Link legacyBehavior href="/questions/create">
                 <Button>Ask question</Button>
               </Link>
             )}

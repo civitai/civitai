@@ -3,6 +3,7 @@ import {
   HubConnection,
   HubConnectionBuilder,
   HubConnectionState,
+  LogLevel,
   // HubConnectionState,
 } from '@microsoft/signalr';
 import { env } from '~/env/client.mjs';
@@ -56,7 +57,10 @@ async function connect(args?: { retryAttempts?: number; timeout?: number }) {
 }
 
 const getConnection = async ({ token, userId }: { token: string; userId: number }) => {
-  if (connection && userId === connectedUserId) return connection;
+  if (connection && userId === connectedUserId) {
+    emitter.emit('connectionReady', undefined);
+    return connection;
+  }
   if (userId !== connectedUserId) {
     connectedUserId = userId;
     if (connection) {
@@ -72,6 +76,7 @@ const getConnection = async ({ token, userId }: { token: string; userId: number 
       skipNegotiation: true,
       transport: HttpTransportType.WebSockets,
     })
+    .configureLogging(LogLevel.Information)
     .withAutomaticReconnect()
     .build();
 

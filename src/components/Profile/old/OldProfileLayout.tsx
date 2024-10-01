@@ -16,7 +16,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,
@@ -349,7 +349,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           )}
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
-            <Menu.Item component={NextLink} href={`/user/${user.username}/manage-categories`}>
+            <Menu.Item component={Link} href={`/user/${user.username}/manage-categories`}>
               Manage model categories
             </Menu.Item>
           )}

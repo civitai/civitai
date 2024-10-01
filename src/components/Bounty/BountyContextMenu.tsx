@@ -64,7 +64,7 @@ export function BountyContextMenu({
       key="toggle-searchable-menu-item"
     />,
     isModerator || (!expired && isOwner) ? (
-      <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
+      <Link legacyBehavior key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
         <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
           Edit
         </Menu.Item>
