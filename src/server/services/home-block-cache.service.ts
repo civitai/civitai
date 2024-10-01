@@ -54,7 +54,7 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
   };
 
   if (homeBlockWithData) {
-    await redis.packed.set(cacheKey, JSON.stringify(parsedHomeBlock), {
+    await redis.packed.set<HomeBlockWithData>(cacheKey, parsedHomeBlock, {
       EX: CACHE_EXPIRY[homeBlock.type],
     });
 
