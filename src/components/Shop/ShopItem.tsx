@@ -131,7 +131,7 @@ export const ShopItem = ({
       ? Math.max(0, (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0))
       : null;
   const available = item.availableQuantity !== null ? item.availableQuantity : null;
-  const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
+  const availableTo = item.availableTo ? formatDate(item.availableTo, 'MMM D,') : null;
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
 
   const isNew =
@@ -161,7 +161,7 @@ export const ShopItem = ({
                   </Text>
                 )}
                 {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
-                {availableTo && <Text>Available until {availableTo}</Text>}
+                {availableTo && <Text>Buy by {availableTo}</Text>}
               </>
             )}
           </Group>
