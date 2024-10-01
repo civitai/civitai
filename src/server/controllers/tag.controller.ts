@@ -13,7 +13,6 @@ import {
   ModerateTagsSchema,
   RemoveTagVotesSchema,
 } from '~/server/schema/tag.schema';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHomeExcludedTags } from '~/server/services/system-cache';
 import {
@@ -42,7 +41,7 @@ export const getAllTagsHandler = async ({ input, ctx }: { input?: GetTagsInput; 
   try {
     const { limit = DEFAULT_PAGE_SIZE, page } = input || {};
     const { take, skip } = getPagination(limit, page);
-    const { adminTags } = getFeatureFlags(ctx);
+    const { adminTags } = ctx.features;
 
     const results = await getTags({
       ...input,

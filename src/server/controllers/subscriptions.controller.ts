@@ -2,11 +2,10 @@ import { PaymentProvider } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { GetPlansSchema } from '~/server/schema/subscriptions.schema';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getPlansHandler = async ({ input, ctx }: { input: GetPlansSchema; ctx: Context }) => {
-  const features = getFeatureFlags({ user: ctx.user });
+  const features = ctx.features;
 
   const paddleSupported =
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&

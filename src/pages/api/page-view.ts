@@ -8,7 +8,7 @@ export default PublicEndpoint(
 
     if (!url || url.host !== host) return res.status(400).send('invalid request');
 
-    const { ads, duration, path } = JSON.parse(req.body);
+    const { ads, duration, path, windowWidth, windowHeight } = JSON.parse(req.body);
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
     const match = getMatchingPathname(path);
@@ -22,6 +22,8 @@ export default PublicEndpoint(
       country,
       ads: ads ?? false,
       duration: Math.floor(duration),
+      windowWidth,
+      windowHeight,
     });
 
     return res.status(200).end();
@@ -40,9 +42,10 @@ function getMatchingPathname(url: string) {
       break;
     }
 
+    const softTokenLength = tokens.filter((part) => !part.includes('[[')).length;
     const softMatch = urlTokens.every(
       (token, index) =>
-        tokens.length === urlTokens.length &&
+        (tokens.length === urlTokens.length || softTokenLength === urlTokens.length) &&
         (token === tokens[index] || tokens[index]?.startsWith('['))
     );
     if (softMatch) {

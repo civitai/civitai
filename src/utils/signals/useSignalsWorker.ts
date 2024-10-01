@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import SharedWorker from '@okikio/sharedworker';
 import type { WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export type SignalStatus = 'connected' | 'closed' | 'error' | 'reconnected' | 'reconnecting';
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
@@ -24,6 +25,7 @@ export function useSignalsWorker(
     onStatusChange?: (args: SignalState) => void;
   }
 ) {
+  const currentUser = useCurrentUser();
   const { accessToken } = args;
   const { onConnected, onClosed, onError, onReconnected, onReconnecting, onStatusChange } =
     options ?? {};
@@ -41,7 +43,7 @@ export function useSignalsWorker(
     setReady(false);
     setWorker(
       new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-        name: 'civitai-signals:1.2.3',
+        name: 'civitai-signals:1.2.5',
         type: 'module',
       })
     );
@@ -55,7 +57,11 @@ export function useSignalsWorker(
       if (data.type === 'worker:ready') setReady(true);
       else if (data.type === 'connection:ready')
         setState((prev) => {
-          if (prev?.status === 'closed' || prev?.status === 'error')
+          if (
+            prev?.status === 'closed' ||
+            prev?.status === 'error' ||
+            prev?.status === 'reconnecting'
+          )
             return { status: 'reconnected' };
           else return { status: 'connected' };
         });
@@ -103,28 +109,13 @@ export function useSignalsWorker(
 
   // init
   useEffect(() => {
-    if (worker && ready && accessToken)
-      worker.port.postMessage({ type: 'connection:init', token: accessToken });
-  }, [worker, accessToken, ready]);
-
-  // poll to reconnect
-  const timerRef = useRef<NodeJS.Timer | null>(null);
-  const disconnected = state ? state.status === 'closed' || state.status === 'error' : undefined;
-  useEffect(() => {
-    if (disconnected === false && timerRef.current) clearInterval(timerRef.current);
-    else if (disconnected && accessToken && worker && ready) {
-      timerRef.current = setInterval(() => {
-        if (document.visibilityState === 'visible') {
-          console.log('attempting to reconnect to signal services');
-          worker.port.postMessage({ type: 'connection:init', token: accessToken });
-        }
-      }, 15 * 1000);
-    }
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [disconnected, accessToken, worker, ready]);
+    if (worker && ready && accessToken && currentUser?.id)
+      worker.port.postMessage({
+        type: 'connection:init',
+        token: accessToken,
+        userId: currentUser.id,
+      });
+  }, [worker, accessToken, ready, currentUser?.id]);
 
   // ping
   useEffect(() => {
@@ -149,16 +140,6 @@ export function useSignalsWorker(
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [worker]);
-
-  // useEffect(() => {
-  //   function handleVisibilityChange() {
-  //     setDocumentVisible(document.visibilityState !== 'visible');
-  //   }
-  //   document.addEventListener('visibilitychange', handleVisibilityChange);
-  //   return () => {
-  //     document.removeEventListener('visibilitychange', handleVisibilityChange);
-  //   };
-  // }, [worker]);
 
   const workerMethods = useMemo(() => {
     function send(target: string, args: Record<string, unknown>) {

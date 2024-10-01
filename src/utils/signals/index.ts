@@ -117,9 +117,9 @@ export const createSignalWorker = ({
   // ping-pong with worker to check for worker availability
   document.addEventListener('visibilitychange', ping);
 
-  async function init(token: string) {
+  async function init(token: string, userId: number) {
     await deferred.promise;
-    postMessage({ type: 'connection:init', token });
+    postMessage({ type: 'connection:init', token, userId });
   }
 
   function send(target: string, args: Record<string, unknown>) {

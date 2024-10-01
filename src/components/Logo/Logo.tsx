@@ -2,6 +2,7 @@
 import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LiveNowIndicator } from '~/components/Social/LiveNow';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -40,6 +41,7 @@ export function Logo() {
   const { isGreen, isRed } = useFeatureFlags();
   const { classes, cx } = useStyles({ color: isGreen ? 'green' : isRed ? 'red' : 'blue' });
   const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
+  const isMobile = useContainerSmallerThan('sm');
   const holiday = useMemo(() => {
     if (!showHoliday) return null;
 
@@ -81,7 +83,11 @@ export function Logo() {
           </div>
         </>
       )}
-      <svg className={classes.svg} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7">
+      <svg
+        className={classes.svg}
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox={`0 0 ${isMobile ? 22.7 : 107} 22.7`}
+      >
         <defs>
           <linearGradient id="prideGradient" gradientTransform="rotate(45)">
             {generatePrideGradient(gradients.pride.outer)}
@@ -162,9 +168,9 @@ export function Logo() {
   );
 }
 
-type LogoProps = {
-  size?: 'sm' | 'md' | 'lg' | 'xl';
-} & BoxProps;
+// type LogoProps = {
+//   size?: 'sm' | 'md' | 'lg' | 'xl';
+// } & BoxProps;
 
 const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'red' }, getRef) => ({
   root: {

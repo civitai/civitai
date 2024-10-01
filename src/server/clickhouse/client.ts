@@ -312,14 +312,10 @@ export class Tracker {
     ads: boolean;
     country: string;
     duration: number;
+    windowWidth: number;
+    windowHeight: number;
   }) {
     return this.send('pageViews', ({ session, actor }) => {
-      // console.log({
-      //   userId: actor.userId,
-      //   memberType: session?.user?.tier ?? 'undefined',
-      //   ip: actor.ip,
-      //   ...values,
-      // });
       return {
         userId: actor.userId,
         memberType: session?.user?.tier ?? 'undefined',

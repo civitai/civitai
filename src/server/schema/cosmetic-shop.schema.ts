@@ -89,4 +89,5 @@ export const getPreviewImagesInput = z.object({
 export type GetShopInput = z.infer<typeof getShopInput>;
 export const getShopInput = z.object({
   cosmeticTypes: z.array(z.nativeEnum(CosmeticType)).optional(),
+  sectionId: z.number().optional(),
 });

@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
+import { getAvailableAdunits } from '~/components/Ads/ads.utils';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -215,11 +216,15 @@ function ImpressionTracker() {
   const { fingerprint } = useDeviceFingerprint();
 
   useEffect(() => {
+    const availableAdunitIds = Object.values(getAvailableAdunits());
     const listener = ((e: CustomEvent) => {
       if (!adsEnabled || adsBlocked) return;
 
       const slot = e.detail;
       const elemId = slot.getSlotElementId();
+      const adunitId = elemId.split('-')[0];
+      if (!adunitId || !availableAdunitIds.includes(adunitId)) return;
+
       const outOfPage = slot.getOutOfPage();
       const elem = document.getElementById(elemId);
       const exists = !!elem;

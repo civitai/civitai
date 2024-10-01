@@ -114,7 +114,7 @@ export default function CosmeticShopMain() {
           <div className="ml-auto">
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
-          {isEmpty(filters) && <ArtistShowcaseSection />}
+          {/* {isEmpty(filters) && <ArtistShowcaseSection />} */}
           {isLoading ? (
             <Center p="xl">
               <Loader />

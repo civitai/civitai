@@ -44,7 +44,7 @@ export type WorkerOutgoingMessage =
   | SignalWorkerPong;
 
 export type WorkerIncomingMessage =
-  | { type: 'connection:init'; token: string }
+  | { type: 'connection:init'; token: string; userId: number }
   | { type: 'event:register'; target: string }
   | { type: 'beforeunload' }
   | { type: 'ping' }

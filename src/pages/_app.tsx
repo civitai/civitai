@@ -30,7 +30,7 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
+// import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
@@ -45,7 +45,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
-import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
+// import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
