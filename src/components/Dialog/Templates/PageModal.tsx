@@ -12,7 +12,7 @@ export function PageModal({ children, ...props }: ModalProps) {
         body: { height: '100%', width: '100%', display: 'flex', flexDirection: 'column' },
       }}
     >
-      <ScrollArea>{children}</ScrollArea>
+      <ScrollArea pb={0}>{children}</ScrollArea>
     </Modal>
   );
 }

@@ -42,10 +42,12 @@ export function useSignalsWorker(
     if (worker) return;
     setReady(false);
     setWorker(
-      new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
-        name: 'civitai-signals:1.2.5',
-        type: 'module',
-      })
+      (worker) =>
+        worker ??
+        new SharedWorker(new URL('./worker.v1.2.ts', import.meta.url), {
+          name: 'civitai-signals:1.2.5',
+          type: 'module',
+        })
     );
   }, [worker]);
 
@@ -187,5 +189,6 @@ export function useSignalsWorker(
   }, [workerMethods]);
 
   const connected = state?.status === 'connected' || state?.status === 'reconnected';
-  return connected ? workerMethods : null;
+  console.log({ connected, status: state?.status });
+  return workerMethods;
 }
