@@ -1,5 +1,7 @@
+import { Grid } from '@mantine/core';
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
+import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
@@ -36,6 +38,11 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
     return cosmeticShopSection.items;
   }, [cosmeticShopSection, metadata]);
 
+  const { classes, cx } = useHomeBlockGridStyles({
+    count: items.length ?? 0,
+    rows: 1,
+  });
+
   if (!cosmeticShopSection) {
     return null;
   }
@@ -51,14 +58,14 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         }}
         htmlMode
       />
-      <ShopSection.Items>
-        {items.map((item) => {
-          const { shopItem } = item;
-          return (
-            <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} />
-          );
-        })}
-      </ShopSection.Items>
+        <div className={cx(classes.grid, `mt-2 pb-2`)}>
+          {items.map((item) => {
+            const { shopItem } = item;
+            return (
+              <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} />
+            );
+          })}
+      </div>
     </>
   );
 }

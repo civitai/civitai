@@ -29,7 +29,7 @@ export const homeBlockRouter = router({
   getHomeBlock: publicProcedure
     .input(getHomeBlockByIdInputSchema)
     .use(isFlagProtected('alternateHome'))
-    .use(edgeCacheIt())
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(getHomeBlocksByIdHandler),
   createCollectionHomeBlock: protectedProcedure
     .input(createCollectionHomeBlockInputSchema)

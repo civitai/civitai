@@ -34,7 +34,6 @@ const useStyles = createStyles((theme) => {
       borderRadius: theme.radius.md,
       padding: theme.spacing.md,
       position: 'relative',
-      margin: '3px',
     },
 
     cardHeader: {
@@ -131,7 +130,8 @@ export const ShopItem = ({
       ? Math.max(0, (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0))
       : null;
   const available = item.availableQuantity !== null ? item.availableQuantity : null;
-  const availableTo = item.availableTo ? formatDate(item.availableTo, 'MMM D,') : null;
+  const availableTo = item.availableTo ? formatDate(item.availableTo, 'MMM D') : null;
+  const leavingSoon = item.availableTo && item.availableTo > dayjs().subtract(24, 'hours').toDate();
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
 
   const isNew =
@@ -161,7 +161,7 @@ export const ShopItem = ({
                   </Text>
                 )}
                 {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
-                {availableTo && <Text>Buy by {availableTo}</Text>}
+                {availableTo && (leavingSoon ? <Text>Leaves in <Countdown endTime={item.availableTo!} refreshIntervalMs={1000} format="short" /></Text> : <Text>Until {availableTo}</Text>)}
               </>
             )}
           </Group>
