@@ -41,3 +41,13 @@ export type UpdateSubscriptionInputSchema = z.infer<typeof updateSubscriptionInp
 export const updateSubscriptionInputSchema = z.object({
   priceId: z.string(),
 });
+
+export type GetPaddleAdjustmentsSchema = z.infer<typeof getPaddleAdjustmentsSchema>;
+export const getPaddleAdjustmentsSchema = z.object({
+  limit: z.number().optional().default(50),
+  cursor: z.string().optional(),
+  customerId: z.array(z.string()).optional(),
+  subscriptionId: z.array(z.string()).optional(),
+  transactionId: z.array(z.string()).optional(),
+  action: z.array(z.string()).optional(),
+});

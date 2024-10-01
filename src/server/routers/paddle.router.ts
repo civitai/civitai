@@ -8,9 +8,11 @@ import {
   getOrCreateCustomerHandler,
   refreshSubscriptionHandler,
   hasPaddleSubscriptionHandler,
+  getAdjustmentsInfiniteHandler,
 } from '~/server/controllers/paddle.controller';
-import { router, protectedProcedure } from '~/server/trpc';
+import { router, protectedProcedure, moderatorProcedure } from '~/server/trpc';
 import {
+  getPaddleAdjustmentsSchema,
   transactionCreateSchema,
   transactionWithSubscriptionCreateSchema,
   updateSubscriptionInputSchema,
@@ -36,4 +38,7 @@ export const paddleRouter = router({
   getOrCreateCustomer: protectedProcedure.mutation(getOrCreateCustomerHandler),
   refreshSubscription: protectedProcedure.mutation(refreshSubscriptionHandler),
   hasSubscription: protectedProcedure.query(hasPaddleSubscriptionHandler),
+  getAdjustmentsInfinite: moderatorProcedure
+    .input(getPaddleAdjustmentsSchema)
+    .query(getAdjustmentsInfiniteHandler),
 });
