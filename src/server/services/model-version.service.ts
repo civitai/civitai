@@ -416,6 +416,8 @@ export const upsertModelVersion = async ({
     await bustMvCache(version.id);
     await dataForModelsCache.bust(version.modelId);
 
+    await ingestModelById({ id: version.modelId });
+
     return version;
   }
 };

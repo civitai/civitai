@@ -96,7 +96,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { upsertModelFlag } from '~/server/services/model-flag.service';
 import { isProd } from '~/env/other';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -1419,7 +1418,6 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
-    await upsertModelFlag({ modelId: result.id, name: input.name });
 
     // Check any changes that would require a search index update
     const poiChanged = result.poi !== beforeUpdate.poi;

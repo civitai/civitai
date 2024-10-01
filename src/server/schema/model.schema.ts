@@ -19,6 +19,7 @@ import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
+  getAllQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,

@@ -592,6 +592,8 @@ model ModelFlag {
   nsfw         Boolean         @default(false)
   triggerWords Boolean         @default(false)
   status       ModelFlagStatus @default(Pending)
+  details      Json?
+  createdAt    DateTime        @default(now())
 }
 
 model License {
