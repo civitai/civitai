@@ -125,7 +125,7 @@ export function UserDraftModels() {
                       <Stack spacing={0}>
                         <Text lineClamp={2}> {model.name}</Text>
                         <Divider my={4} />
-                        <Link href={getModelWizardUrl(model)} passHref>
+                        <Link legacyBehavior href={getModelWizardUrl(model)} passHref>
                           <Anchor target="_blank" lineClamp={2}>
                             <Group spacing="xs" noWrap>
                               <Text size="xs">Continue Wizard</Text>{' '}
@@ -133,7 +133,7 @@ export function UserDraftModels() {
                             </Group>
                           </Anchor>
                         </Link>
-                        <Link href={`/models/${model.id}`} passHref>
+                        <Link legacyBehavior href={`/models/${model.id}`} passHref>
                           <Anchor target="_blank" lineClamp={2}>
                             <Group spacing="xs" noWrap>
                               <Text size="xs">Go to model page</Text>

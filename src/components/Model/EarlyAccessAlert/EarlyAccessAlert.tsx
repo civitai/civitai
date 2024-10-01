@@ -1,5 +1,5 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import Link from 'next/link'
 import { Currency, ModelType } from '@prisma/client';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';

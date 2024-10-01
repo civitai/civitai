@@ -50,7 +50,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
             title="Most popular models"
             icon={<IconTrendingUp />}
             action={
-              <Link href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
+              <Link legacyBehavior href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
                 <Button
                   h={34}
                   component="a"

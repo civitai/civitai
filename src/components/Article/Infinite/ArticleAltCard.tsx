@@ -29,7 +29,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
 
   return (
-    <Link href={`/articles/${id}/${slugit(title)}`} passHref>
+    <Link legacyBehavior href={`/articles/${id}/${slugit(title)}`} passHref>
       <Card
         component="a"
         p={0}

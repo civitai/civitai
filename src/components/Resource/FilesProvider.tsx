@@ -162,7 +162,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           <Text size="sm" color="dimmed">
             Your version has been published and is now available to the public.
           </Text>
-          <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
+          <Link legacyBehavior href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
             <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
               Go to model
             </Anchor>
@@ -226,7 +226,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 <Text size="sm" color="dimmed">
                   All files finished uploading.
                 </Text>
-                <Link
+                <Link legacyBehavior
                   href={`/models/${model?.id}?modelVersionId=${result.modelVersion.id}`}
                   passHref
                 >
@@ -269,7 +269,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 <Text size="sm" color="dimmed">
                   Your files have finished uploading, but you still need to add a post.
                 </Text>
-                <Link
+                <Link legacyBehavior
                   href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
                   passHref
                 >

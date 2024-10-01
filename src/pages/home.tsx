@@ -193,7 +193,7 @@ export default function Home() {
                           </Popover>
                         </Group>
 
-                        <Link href="/images" passHref>
+                        <Link legacyBehavior href="/images" passHref>
                           <Button
                             h={34}
                             component="a"
@@ -258,7 +258,7 @@ export default function Home() {
                           </Popover>
                         </Group>
 
-                        <Link href="/models" passHref>
+                        <Link legacyBehavior href="/models" passHref>
                           <Button
                             h={34}
                             component="a"

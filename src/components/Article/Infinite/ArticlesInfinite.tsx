@@ -63,7 +63,7 @@ export function ArticlesInfinite({
       ) : (
         <NoContent py="lg">
           {showEmptyCta && (
-            <Link href="/articles/create">
+            <Link legacyBehavior href="/articles/create">
               <Button radius="xl">Write an Article</Button>
             </Link>
           )}

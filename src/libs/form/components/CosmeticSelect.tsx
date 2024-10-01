@@ -71,7 +71,7 @@ export function CosmeticSelect<TData extends CosmeticItem>({
         {...gridProps}
       >
         {shopUrl && (
-          <Link href={shopUrl}>
+          <Link legacyBehavior href={shopUrl}>
             <UnstyledButton p="sm" className={classes.decoration} onClick={onShopClick}>
               <Stack spacing={4} align="center" justify="center">
                 <IconBuildingStore size={24} />
