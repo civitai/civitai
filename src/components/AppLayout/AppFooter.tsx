@@ -211,7 +211,7 @@ const useStyles = createStyles((theme, args: { fixed: boolean }) => ({
     transitionTimingFunction: 'linear',
     overflowX: 'auto',
     // transform: 'translateY(0)',
-    zIndex: 201,
+    zIndex: 199,
   },
   down: {
     transform: 'translateY(200%)',

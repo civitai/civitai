@@ -348,9 +348,19 @@ export const tagCache = createCachedObject<TagLookup>({
 });
 
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
-export const resourceDataCache = createCachedArray({
+type Resource = Prisma.ModelVersionGetPayload<{
+  select: typeof generationResourceSelect;
+}>;
+export const resourceDataCache = createCachedArray<
+  Omit<Resource, 'generationCoverage'> & {
+    settings?: RecommendedSettingsSchema;
+    covered: boolean;
+    available: boolean;
+  }
+>({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   idKey: 'id',
+  dontCacheFn: (data) => data.availability === Availability.Private,
   lookupFn: async (ids) => {
     const dbResults = (
       await dbWrite.modelVersion.findMany({
@@ -407,8 +417,10 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
   idKey: 'modelId',
   ttl: CacheTTL.day,
-  lookupFn: async (ids) => {
-    const versions = await dbRead.$queryRaw<(ModelVersionDetails & { modelId: number })[]>`
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+
+    const versions = await db.$queryRaw<(ModelVersionDetails & { modelId: number })[]>`
       SELECT
         mv."id",
         mv.index,
@@ -436,7 +448,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
       ORDER BY mv."modelId", mv.index;
     `;
 
-    const hashes = await dbRead.$queryRaw<{ modelId: number; hash: string }[]>`
+    const hashes = await db.$queryRaw<{ modelId: number; hash: string }[]>`
       SELECT "modelId", hash
       FROM "ModelHash"
       WHERE
@@ -445,7 +457,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         AND "fileType" IN ('Model', 'Pruned Model');
     `;
 
-    const tags = await dbRead.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
+    const tags = await db.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
       SELECT "modelId", "tagId", t."name"
       FROM "TagsOnModels"
       JOIN "Tag" t ON "tagId" = t."id"
@@ -486,7 +498,7 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
 
     const userOverviewData = await dbRead.$queryRaw<UserContentOverview[]>`
     SELECT
-        u.id, 
+        u.id,
         (SELECT COUNT(*)::INT FROM "Model" m WHERE m."userId" = u.id AND m."status" = 'Published' AND m.availability != 'Private') as "modelCount",
         (SELECT COUNT(*)::INT FROM "Post" p WHERE p."userId" = u.id AND p."publishedAt" IS NOT NULL AND p.availability != 'Private') as "postCount",
         (SELECT COUNT(*)::INT FROM "Image" i

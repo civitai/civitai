@@ -10,16 +10,14 @@ import {
   Stack,
   Switch,
   Text,
-  ThemeIcon,
 } from '@mantine/core';
-import { Currency, ModelType, ModelVersionMonetizationType } from '@prisma/client';
-import { IconInfoCircle, IconQuestionMark } from '@tabler/icons-react';
+import { ModelType } from '@prisma/client';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -39,12 +37,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  constants,
-  activeBaseModels,
-  modelVersionMonetizationTypeOptions,
-  modelVersionSponsorshipSettingsTypeOptions,
-} from '~/server/common/constants';
+import { constants, activeBaseModels } from '~/server/common/constants';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 import {
   GenerationResourceSchema,
@@ -150,7 +143,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const isTextualInversion = model?.type === 'TextualInversion';
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
   const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
-  const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon'].includes(model?.type ?? '');
+  const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
     (!version?.earlyAccessEndsAt || !isFutureDate(version?.earlyAccessEndsAt));
@@ -206,15 +199,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
-  const monetization = form.watch('monetization') ?? null;
-  const sponsorshipSettings = form.watch('monetization.sponsorshipSettings') ?? null;
   const baseModel = form.watch('baseModel') ?? 'SD 1.5';
   const [minStrength, maxStrength] = form.watch([
     'settings.minStrength',
     'settings.maxStrength',
   ]) as number[];
   const { isDirty } = form.formState;
-  const canMonetize = !model?.poi;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const canSave = true;
 
@@ -651,10 +641,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             )}
           </Group>
           {baseModel === 'SD 3' && (
-            <Alert color="yellow" title="SD3 Unbanned">
+            <Alert color="yellow" title="SD3 Unsupported">
               <Text>
-                Licensing concerns associated Stable Diffusion 3 have been resolved and it&apos;s
-                been unbanned. On-site generation with SD3 is unsupported.{' '}
+                On-site generation with SD3 is unsupported.{' '}
                 <Text
                   variant="link"
                   td="underline"
@@ -797,133 +786,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Group>
           </Stack>
-          {canMonetize && (
-            <Stack spacing={4}>
-              <Divider label="Monetization options" />
-              <AlertWithIcon
-                icon={<IconInfoCircle size={16} />}
-                iconColor="blue"
-                radius={0}
-                size="xs"
-                mb="sm"
-              >
-                <Text size="xs">
-                  {`Monetization is not available yet, however to
-                  start gathering interest for the various ways that we're considering, we invite you to select the way you'd prefer to be able to
-                  monetize this asset.`}
-                </Text>
-              </AlertWithIcon>
-              <Stack spacing="xs">
-                <InputSwitch
-                  name="useMonetization"
-                  label="I'm interested in monetizing this asset"
-                  onChange={(e) => {
-                    return e.target.checked
-                      ? form.setValue('monetization', {
-                          type: ModelVersionMonetizationType.PaidAccess,
-                        })
-                      : form.setValue('monetization', null);
-                  }}
-                />
-                {monetization && (
-                  <>
-                    <InputSelect
-                      name="monetization.type"
-                      label="Monetization Type"
-                      placeholder="Please select monetization type"
-                      withAsterisk
-                      onChange={(type) =>
-                        type !== ModelVersionMonetizationType.Sponsored
-                          ? form.setValue('monetization.sponsorshipSettings', null)
-                          : undefined
-                      }
-                      style={{ flex: 1 }}
-                      data={Object.keys(modelVersionMonetizationTypeOptions).map((k) => {
-                        const key = k as keyof typeof modelVersionMonetizationTypeOptions;
-
-                        return {
-                          value: k,
-                          label: modelVersionMonetizationTypeOptions[key],
-                        };
-                      })}
-                    />
-
-                    {monetization.type && (
-                      <Card withBorder py="xs">
-                        <Group noWrap>
-                          <ThemeIcon color="gray" size={36}>
-                            <IconQuestionMark size={20} />
-                          </ThemeIcon>
-                          <Stack spacing={0}>
-                            <Text weight={500} size="xs">
-                              {`What is "${
-                                modelVersionMonetizationTypeOptions[monetization.type]
-                              }"?`}
-                            </Text>
-                            <Text size="xs">{monetizationTypeExplanation[monetization.type]}</Text>
-                          </Stack>
-                        </Group>
-                      </Card>
-                    )}
-
-                    {monetization.type &&
-                      (
-                        [
-                          ModelVersionMonetizationType.PaidAccess,
-                          ModelVersionMonetizationType.PaidEarlyAccess,
-                          ModelVersionMonetizationType.MySubscribersOnly,
-                        ] as ModelVersionMonetizationType[]
-                      ).includes(monetization.type) && (
-                        <InputNumber
-                          name="monetization.unitAmount"
-                          label="Desired Price"
-                          placeholder="Price"
-                          withAsterisk
-                          min={0}
-                          max={10000}
-                          sx={{ flexGrow: 1 }}
-                          step={5}
-                          icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
-                        />
-                      )}
-                  </>
-                )}
-
-                {monetization?.type === ModelVersionMonetizationType.Sponsored && (
-                  <Group spacing="xs" grow>
-                    <InputSelect
-                      name="monetization.sponsorshipSettings.type"
-                      label="Sponsorship Type"
-                      placeholder="Please select sponsorship type"
-                      withAsterisk
-                      sx={{ flexGrow: 1 }}
-                      data={Object.keys(modelVersionSponsorshipSettingsTypeOptions).map((k) => {
-                        const key = k as keyof typeof modelVersionSponsorshipSettingsTypeOptions;
-
-                        return {
-                          value: k,
-                          label: modelVersionSponsorshipSettingsTypeOptions[key],
-                        };
-                      })}
-                    />
-                    <InputNumber
-                      name="monetization.sponsorshipSettings.unitAmount"
-                      label={
-                        sponsorshipSettings?.type === 'Bidding' ? 'Minimum Price' : 'Desired Price'
-                      }
-                      placeholder="Price"
-                      withAsterisk
-                      min={0}
-                      max={10000}
-                      sx={{ flexGrow: 1 }}
-                      step={5}
-                      icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
-                    />
-                  </Group>
-                )}
-              </Stack>
-            </Stack>
-          )}
           <Stack spacing={8}>
             <Divider label="Additional options" />
 
@@ -963,19 +825,4 @@ type Props = {
   children: (data: { loading: boolean; canSave: boolean }) => React.ReactNode;
   model?: Partial<ModelUpsertInput & { publishedAt: Date | null }>;
   version?: Partial<VersionInput>;
-};
-
-const monetizationTypeExplanation: Record<ModelVersionMonetizationType, string> = {
-  [ModelVersionMonetizationType.PaidAccess]:
-    'This option allows you to charge a one-time fee for access to your asset.',
-  [ModelVersionMonetizationType.PaidEarlyAccess]:
-    'This option allows you to charge a one-time fee for early access (2 weeks) to your asset. After the early access period, your asset will be available to the public.',
-  [ModelVersionMonetizationType.CivitaiClubOnly]:
-    'This option makes your asset available to Civitai Club members only. Civitai Club is a membership program similar to Spotify, Netflix, or Amazon Prime that allows members to access these assets. Proceeds are then divided among the creators based on the number of times their asset was used.',
-  [ModelVersionMonetizationType.MySubscribersOnly]:
-    'This option makes your asset available to your subscribers only. This would give you the ability to charge a monthly fee for access to your library of assets similar to Patreon.',
-  [ModelVersionMonetizationType.Sponsored]:
-    'This option provides a spot for sponsors to advertise their brand or product for a 1-month duration. You can set a fixed price or a bid price with a minimum cost.',
-  [ModelVersionMonetizationType.PaidGeneration]:
-    'This option allows you to charge a price for each generation performed with your asset.',
 };

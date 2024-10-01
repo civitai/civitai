@@ -1,13 +1,15 @@
 import React from 'react';
 
-import { Button, Group, Text, Title } from '@mantine/core';
+import { Button, Group, Text, Title, TypographyStylesProvider } from '@mantine/core';
 import Link from 'next/link';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
-const HomeBlockHeaderMeta = ({ metadata }: Props) => {
+const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
   const { classes: homeBlockClasses } = useHomeBlockStyles();
 
   return (
@@ -40,10 +42,22 @@ const HomeBlockHeaderMeta = ({ metadata }: Props) => {
           )}
         </Group>
       )}
-      {metadata?.description && <Text mb="md">{metadata?.description}</Text>}
+      {metadata?.description && (
+        <>
+          {htmlMode ? (
+            <ContentClamp maxHeight={200}>
+              <TypographyStylesProvider>
+                <RenderHtml html={metadata?.description} />
+              </TypographyStylesProvider>
+            </ContentClamp>
+          ) : (
+            <Text mb="md">{metadata?.description}</Text>
+          )}
+        </>
+      )}
     </>
   );
 };
 
-type Props = { metadata: HomeBlockMetaSchema };
+type Props = { metadata: HomeBlockMetaSchema; htmlMode?: boolean };
 export { HomeBlockHeaderMeta };

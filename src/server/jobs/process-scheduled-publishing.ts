@@ -129,11 +129,11 @@ export const processScheduledPublishing = createJob(
               UPDATE "Model" mo
               SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
               FROM (
-                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline" 
+                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
                 FROM "ModelVersion" mv
                 JOIN "Model" m on m.id = mv."modelId"
                 WHERE mv.id IN (${Prisma.join(earlyAccess)})
-              ) as mea 
+              ) as mea
               WHERE mo."id" = mea."id"
             `;
           }
@@ -177,7 +177,7 @@ export const processScheduledPublishing = createJob(
         ...scheduledModelVersions.map((entity) => entity.extras?.modelId),
       ]),
     ].filter(isDefined);
-    if (processedModelIds.length) await dataForModelsCache.bust(processedModelIds);
+    if (processedModelIds.length) await dataForModelsCache.refresh(processedModelIds);
 
     await setLastRun();
   }

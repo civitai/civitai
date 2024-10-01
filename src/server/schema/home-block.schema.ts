@@ -11,6 +11,11 @@ const socialBlockSchema = z.object({
 });
 export type SocialBlockSchema = z.infer<typeof socialBlockSchema>;
 
+const cosmeticShopSectionSchema = z.object({
+  id: z.number(),
+  maxItems: z.number().optional(),
+});
+
 export const homeBlockMetaSchema = z
   .object({
     title: z.string(),
@@ -38,6 +43,7 @@ export const homeBlockMetaSchema = z
     socials: z.array(socialBlockSchema),
     link: z.string(),
     linkText: z.string(),
+    cosmeticShopSection: cosmeticShopSectionSchema,
   })
   .partial();
 

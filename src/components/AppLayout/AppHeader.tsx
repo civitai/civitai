@@ -804,7 +804,7 @@ export function AppHeader({
     <Header
       height={HEADER_HEIGHT}
       fixed={fixed}
-      zIndex={200}
+      zIndex={199}
       className={clsx({
         ['border-green-8 border-b-[3px]']: features.isGreen,
       })}

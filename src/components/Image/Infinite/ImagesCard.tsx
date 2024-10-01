@@ -61,13 +61,17 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
   return (
-    <TwCosmeticWrapper cosmetic={image.cosmetic?.data}>
-      <TwCard ref={ref} style={{ height }}>
+    <TwCosmeticWrapper cosmetic={image.cosmetic?.data} ref={ref}>
+      <TwCard style={{ height }}>
         {inView && (
           <ImageGuard2 image={image} inView={inView}>
             {(safe) => (
               <>
-                <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                <RoutedDialogLink
+                  name="imageDetail"
+                  state={{ imageId: image.id, images }}
+                  style={{ height: '100%' }}
+                >
                   {safe ? (
                     <EdgeMedia2
                       metadata={image.metadata}

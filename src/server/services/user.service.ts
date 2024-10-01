@@ -727,7 +727,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     deletedAt: response.deletedAt ?? undefined,
     customerId: response.customerId ?? undefined,
     paddleCustomerId: response.paddleCustomerId ?? undefined,
-    subscriptionId: response.subscriptionId ?? undefined,
+    subscriptionId: subscription?.id ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,
     autoplayGifs: response.autoplayGifs ?? undefined,
@@ -765,7 +765,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   const sessionUser: SessionUser = {
     ...rest,
     image: profilePicture?.url ?? rest.image,
-    tier,
+    tier: tier !== 'free' ? tier : undefined,
     permissions,
     memberInBadState,
     allowAds:

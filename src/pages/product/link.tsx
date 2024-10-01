@@ -51,8 +51,8 @@ export default function LinkApp(props: ServerSideProps) {
   return (
     <>
       <Meta
-        title="Civitai Link | One-click install Stable Diffusion models"
-        description="Directly download any models from Civitai to your Stable Diffusion instance."
+        title="Civitai Link | One-click install Stable Diffusion & Flux models"
+        description="Directly download any models from Civitai to your Stable Diffusion & Flux model library."
       />
       <Container>
         <Flex
@@ -84,10 +84,10 @@ export default function LinkApp(props: ServerSideProps) {
 
         <Stack spacing={12} mb={40}>
           <Title className={classes.heading} order={2}>
-            Add models to Stable Diffusion with one click
+            Add models to your library with one click
           </Title>
           <Text className={classes.copy}>
-            Directly add any models from Civitai to your Stable Diffusion instance with just one
+            Directly add any models from Civitai to your Stable Diffusion & Flux model library with just one
             click.
           </Text>
         </Stack>
@@ -150,7 +150,7 @@ export default function LinkApp(props: ServerSideProps) {
               Manage files
             </Title>
             <Text className={classes.copy}>
-              Directly add or remove any models from Civitai to your Stable Diffusion instance.
+              Directly add or remove any models from Civitai to your Stable Diffusion & Flux model library.
             </Text>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -170,7 +170,7 @@ export default function LinkApp(props: ServerSideProps) {
               Keep track of activities
             </Title>
             <Text className={classes.copy}>
-              See the history of all the models you have added to your Stable Diffusion instance.
+              See the history of all the models you have added to your Stable Diffusion & Flux model library.
             </Text>
           </Grid.Col>
         </Grid>

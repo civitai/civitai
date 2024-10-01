@@ -346,14 +346,11 @@ export function ExistingChat() {
   );
 
   useEffect(() => {
-    if (connected && worker) {
-      worker.on(SignalMessages.ChatTypingStatus, handleIsTyping);
-    }
-
+    worker?.on(SignalMessages.ChatTypingStatus, handleIsTyping);
     return () => {
       worker?.off(SignalMessages.ChatTypingStatus, handleIsTyping);
     };
-  }, [connected, worker, handleIsTyping]);
+  }, [worker, handleIsTyping]);
 
   const goBack = () => {
     setState((prev) => ({ ...prev, existingChatId: undefined }));

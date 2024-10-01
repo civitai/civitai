@@ -352,7 +352,7 @@ function EditDetail() {
                     position="right"
                     iconProps={{ size: 20 }}
                   >
-                    Models, LoRAs, embeddings or other Stable Diffusion specific resources used to
+                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
                     create this image.
                   </InfoPopover>
                 </div>
@@ -414,7 +414,7 @@ function EditDetail() {
                       position="right"
                       iconProps={{ size: 20 }}
                     >
-                      Models, LoRAs, embeddings or other Stable Diffusion specific resources used to
+                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
                       create this image.
                     </InfoPopover>
                   </div>

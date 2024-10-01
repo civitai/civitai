@@ -177,7 +177,13 @@ export const comfyMetadataProcessor = createMetadataProcessor({
       metadata.sampler = sampler;
       metadata.denoise = denoise;
       metadata.workflow = workflowId;
-      metadata.civitaiResources = resources;
+      metadata.civitaiResources = resources.map((x: any) => {
+        if (x.strength) {
+          x.weight = x.strength;
+          delete x.strength;
+        }
+        return x;
+      });
       if (extra) metadata.extra = extra;
     } else if (customAdvancedSampler) {
       // Its fancy Flux...

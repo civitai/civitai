@@ -26,8 +26,8 @@ export default function ModelsPage() {
   return (
     <>
       <Meta
-        title="Civitai Models | Discover Free Stable Diffusion Models"
-        description="Browse from thousands of free Stable Diffusion models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
+        title="Civitai Models | Discover Free Stable Diffusion & Flux Models"
+        description="Browse from thousands of free Stable Diffusion & Flux models, spanning unique anime art styles, immersive 3D renders, stunning photorealism, and more"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/models`, rel: 'canonical' }]}
       />
 

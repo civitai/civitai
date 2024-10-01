@@ -12,15 +12,13 @@ import {
   Title,
   Button,
   ActionIcon,
-  Box,
   TextInput,
-  Badge,
   Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import Link from 'next/link'
-import { BuzzWithdrawalRequestStatus, CosmeticType, Currency } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -30,34 +28,23 @@ import {
   useQueryCosmeticShopItemsPaged,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
-import { useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CosmeticSample } from '~/pages/moderator/cosmetic-store/cosmetics';
-import { PurchasableRewardModeratorViewMode } from '~/server/common/enums';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import {
   CosmeticShopItemMeta,
   GetPaginatedCosmeticShopItemInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { GetPaginatedPurchasableRewardsModeratorSchema } from '~/server/schema/purchasable-reward.schema';
-import { NamePlateCosmetic } from '~/server/selectors/cosmetic.selector';
-import { CosmeticGetById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
-
-import { trpc } from '~/utils/trpc';
 
 export default function CosmeticStoreProducts() {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
     page: 1,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const {
     cosmeticShopItems,
     pagination,
@@ -67,7 +54,7 @@ export default function CosmeticStoreProducts() {
 
   const isLoading = isLoadingCosmetics;
 
-  const { deleteShopItem, deletingShopItem } = useMutateCosmeticShop();
+  const { deleteShopItem } = useMutateCosmeticShop();
 
   const handleDeleteItem = (id: number) => {
     const onDelete = async () => {

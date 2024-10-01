@@ -16,7 +16,6 @@ import {
 import { throwAuthorizationError, throwDbError } from '../utils/errorHandling';
 import { GetByIdInput, GetByIdStringInput } from '~/server/schema/base.schema';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
-import { hasFeature } from '~/server/services/feature-flags.service';
 
 export function createBuzzWithdrawalRequestHandler({
   input,
@@ -87,7 +86,7 @@ export function updateBuzzWithdrawalRequestHandler({
       [BuzzWithdrawalRequestStatus.Reverted, BuzzWithdrawalRequestStatus.Transferred].some(
         (s) => s === input.status
       ) &&
-      !hasFeature('buzzWithdrawalTransfer', ctx)
+      ctx.features.buzzWithdrawalTransfer
     ) {
       // Ensure this user has permission to do this:
       throw throwAuthorizationError('You do not have permission to perform this action');

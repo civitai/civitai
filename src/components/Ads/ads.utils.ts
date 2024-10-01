@@ -126,3 +126,8 @@ export function getAdUnitDetails(args: AdUnitKey[]) {
     };
   });
 }
+
+// this is to be used for returning adunits when we support ads on multiple hosts
+export function getAvailableAdunits() {
+  return adDefinitions;
+}

@@ -33,7 +33,7 @@ export default function CivitaiLinkSuccessModal({ context, id }: ContextModalPro
 
       <Form form={form} onSubmit={handleSubmit}>
         <Stack>
-          <InputText name="name" label="Name your stable diffusion instance" placeholder="name" />
+          <InputText name="name" label="Name your Stable Diffusion instance" placeholder="name" />
           <Button type="submit">Save</Button>
         </Stack>
       </Form>
