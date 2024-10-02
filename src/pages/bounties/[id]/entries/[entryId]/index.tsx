@@ -300,7 +300,7 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
-        <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+        <Link legacyBehavior href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
           <Button
             size="md"
             radius="xl"

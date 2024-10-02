@@ -138,7 +138,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
               if (action.type === 'button') {
                 return (
                   <ContainerGrid.Col key={index} span="auto">
-                    <Link href={action.link} passHref>
+                    <Link legacyBehavior href={action.link} passHref>
                       <Button
                         component="a"
                         className={classes.action}

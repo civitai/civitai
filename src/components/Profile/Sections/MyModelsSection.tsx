@@ -64,7 +64,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             icon={<IconCategory />}
             action={
               !isRefetching && (
-                <Link href={`/user/${user.username}/models?sort=${ModelSort.Newest}`} passHref>
+                <Link legacyBehavior href={`/user/${user.username}/models?sort=${ModelSort.Newest}`} passHref>
                   <Button
                     h={34}
                     component="a"

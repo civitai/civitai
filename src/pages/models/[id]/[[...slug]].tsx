@@ -877,7 +877,7 @@ export default function ModelDetailsV2({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link legacyBehavior href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
                         <Badge
                           component="a"
                           size="sm"

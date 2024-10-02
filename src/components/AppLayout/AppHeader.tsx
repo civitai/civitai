@@ -591,7 +591,7 @@ export function AppHeader({
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link key={index} href={link.href} as={link.as} passHref>
+            <Link legacyBehavior key={index} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}

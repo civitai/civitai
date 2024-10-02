@@ -100,7 +100,7 @@ export function ArticlesHitList() {
             </Text>
             <Text>
               Why not{' '}
-              <Link href="/articles/create" passHref>
+              <Link legacyBehavior href="/articles/create" passHref>
                 <Anchor target="_blank">write your own!</Anchor>
               </Link>
             </Text>

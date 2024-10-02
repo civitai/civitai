@@ -1183,7 +1183,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     </Text>
                   )}
                   {showAddendumLicense && (
-                    <Link href={`/models/license/${version.id}`} passHref>
+                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
                       <Anchor
                         variant="text"
                         td="underline"

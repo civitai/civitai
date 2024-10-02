@@ -391,7 +391,7 @@ import { z } from 'zod';
 //             </Group>
 //             {atLimit && (!currentUser || currentUser.tier === 'free') && (
 //               <Text size="xs">
-//                 <Link href="/pricing" passHref>
+//                 <Link legacyBehavior href="/pricing" passHref>
 //                   <Anchor
 //                     color="yellow"
 //                     rel="nofollow"

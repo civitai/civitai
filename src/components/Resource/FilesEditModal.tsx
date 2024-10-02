@@ -30,7 +30,7 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
           </Center>
         ) : modelVersion ? (
           <Stack spacing="xl">
-            <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
+            <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
               <Anchor size="xs">
                 <Group spacing={4}>
                   <IconArrowLeft size={12} />

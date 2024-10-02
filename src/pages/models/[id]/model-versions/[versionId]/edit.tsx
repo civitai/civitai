@@ -35,7 +35,7 @@ export default function ModelVersionEditPage() {
   return (
     <Container size="sm">
       <Stack spacing="xl">
-        <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
+        <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
           <Anchor size="xs">
             <Group spacing={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />

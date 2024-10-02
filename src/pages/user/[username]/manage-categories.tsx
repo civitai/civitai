@@ -176,7 +176,7 @@ export default function ManageCategories({
                     <IconExclamationMark />
                   </ThemeIcon>
                 )}
-                <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
+                <Link legacyBehavior href={`/models/${model.id}/${slugit(model.name)}`} passHref>
                   <Anchor target="_blank" lineClamp={2}>
                     {model.name} <IconExternalLink size={16} stroke={1.5} />
                   </Anchor>

@@ -29,7 +29,7 @@ const HomeBlockHeaderMeta = ({ metadata, htmlMode }: Props) => {
         >
           <Title className={homeBlockClasses.title}>{metadata?.title}</Title>
           {metadata.link && (
-            <Link href={metadata.link} passHref>
+            <Link legacyBehavior href={metadata.link} passHref>
               <Button
                 className={homeBlockClasses.expandButton}
                 component="a"

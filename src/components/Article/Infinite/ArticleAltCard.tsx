@@ -29,7 +29,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
 
   return (
-    <Link href={`/articles/${id}/${slugit(title)}`} passHref>
+    <Link legacyBehavior href={`/articles/${id}/${slugit(title)}`} passHref>
       <Card
         component="a"
         p={0}
@@ -51,8 +51,8 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
         {coverImage && (
           <ImageGuard2 image={coverImage}>
             {(safe) => (
-              <div className="relative flex-1 overflow-hidden h-full">
-                <Group spacing={4} className="absolute top-2 left-2 z-10">
+              <div className="relative h-full flex-1 overflow-hidden">
+                <Group spacing={4} className="absolute left-2 top-2 z-10">
                   <ImageGuard2.BlurToggle />
                   <Badge
                     size="sm"

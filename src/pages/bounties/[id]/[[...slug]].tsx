@@ -291,7 +291,7 @@ export default function BountyDetailsPage({
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link legacyBehavior href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
                         <Badge
                           component="a"
                           size="sm"

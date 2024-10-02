@@ -346,7 +346,7 @@ export function PostDetailContent({ postId }: Props) {
                     limit={5}
                     badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
                     renderItem={(item) => (
-                      <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+                      <Link legacyBehavior key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
                         <Badge
                           component="a"
                           color="gray"

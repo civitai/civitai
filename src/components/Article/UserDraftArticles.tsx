@@ -107,7 +107,7 @@ export function UserDraftArticles() {
               items.map((article) => (
                 <tr key={article.id}>
                   <td>
-                    <Link href={`/articles/${article.id}/edit`} passHref>
+                    <Link legacyBehavior href={`/articles/${article.id}/edit`} passHref>
                       <Anchor lineClamp={2}>
                         {article.title} <IconExternalLink size={16} stroke={1.5} />
                       </Anchor>

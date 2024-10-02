@@ -285,7 +285,7 @@ export default function ImagesAsPostsInfinite({
               {hasModerationPreferences ? (
                 <Text size="xs" color="dimmed" mt="-md">
                   Some images have been hidden based on moderation preferences set by the creator,{' '}
-                  <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
+                  <Link legacyBehavior href={`/images?modelVersionId=${selectedVersionId}`} passHref>
                     <Anchor span>view all images using this resource</Anchor>
                   </Link>
                   .

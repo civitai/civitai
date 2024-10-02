@@ -482,7 +482,7 @@ export default function UserTrainingModels() {
                     <td>
                       <Group position="right" spacing={8} pr="xs" noWrap>
                         {mv.trainingStatus === TrainingStatus.InReview && (
-                          <Link href={getModelTrainingWizardUrl(mv)} passHref>
+                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"
