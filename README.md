@@ -48,7 +48,6 @@ First, make sure that you have the following installed on your machine:
 - Docker (for running the database)
 
 > We recommend you have installed `nvm` in order to set the right node version to run this project
-
 > ```sh
 > curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
 > ```
@@ -121,6 +120,7 @@ Support this project by becoming a sponsor. Your logo will show up here with a l
 
 ## License
 Apache License 2.0 - Please have a look at the [LICENSE](/LICENSE) for more details.
+
 
 [contributors-shield]: https://img.shields.io/github/contributors/civitai/civitai.svg?style=for-the-badge
 [contributors-url]: https://github.com/civitai/civitai/graphs/contributors
