@@ -10,8 +10,6 @@ type AdMatrix = {
   lastIndex: number;
 };
 
-const adMatrices: Record<string, AdMatrix> = {};
-
 export function useCreateAdFeed() {
   const adMatricesRef = useRef<Record<string, AdMatrix>>({});
 
@@ -38,8 +36,8 @@ export function useCreateAdFeed() {
       const min = adMatrix.lastIndex + lower + 1;
       const max = adMatrix.lastIndex + upper;
       const index = adMatrix.indices.length === 0 ? getRandomInt(3, 5) : getRandomInt(min, max);
-      const key = getRandom(keys);
-      const [item] = getAdUnitDetails([key]);
+      const items = getAdUnitDetails(keys);
+      const item = getRandom(items);
       adMatrix.indices.push({ index, ...item });
       adMatrix.lastIndex = index;
     }
@@ -68,28 +66,41 @@ const adDensity: AdDensity[] = [
 ];
 
 const adDefinitions = {
-  '970x250:Leaderboard_A': 'civitaicom47456', // not using
-  '320x50:Leaderboard_A': 'civitaicom47760', // not using
+  // '970x250:Leaderboard_A': 'civitaicom47456', // not using
+  // '320x50:Leaderboard_A': 'civitaicom47760', // not using
 
-  '970x250:Leaderboard_B': 'civitaicom47457', // not using
-  '320x50:Leaderboard_B': 'civitaicom47761', // not using
+  // '970x250:Leaderboard_B': 'civitaicom47457', // not using
+  // '320x50:Leaderboard_B': 'civitaicom47761', // not using
 
-  '970x250:Dynamic_Leaderboard_C': 'civitaicom47458',
-  '320x50:Dynamic_Leaderboard_C': 'civitaicom47762',
+  '970x250:Dynamic_Leaderboard': 'civitaicom47458',
+  '320x50:Dynamic_Leaderboard': 'civitaicom47762',
 
   '300x250:Dynamic_Feeds': 'civitaicom47455',
   '300x600:Dynamic_Feeds': 'civitaicom47453',
 
   '300x250:model_image_pages': 'civitaicom47763',
-  '728x90:Leaderboard': 'civitaicom47842', // not using
+  '728x90:Leaderboard': 'civitaicom47842',
 
   '300x250:Sidebar_A': 'civitaicom47459',
-  '300x250:Sidebar_B': 'civitaicom47460', // not using
+  // '300x250:Sidebar_B': 'civitaicom47460', // not using
 
   '300x600:StickySidebar_A': 'civitaicom47453',
-  '300x600:StickySidebar_B': 'civitaicom47454', // not using
+  // '300x600:StickySidebar_B': 'civitaicom47454', // not using
 };
-const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
+
+const adDefinitionsGreen = {
+  '970x250:Dynamic_Leaderboard': 'civitaigreen47881',
+  '728x90:Dynamic_Leaderboard': 'civitaigreen47885',
+  '320x50:Dynamic_Leaderboard': 'civitaigreen47884',
+
+  '300x250:Dynamic_Feeds': 'civitaigreen47879',
+
+  '300x250:model_image_pages': 'civitaigreen47880',
+
+  '300x600:StickySidebar_A': 'civitaigreen47882',
+};
+
+// const adDefinitionKeys = Object.keys(adDefinitions) as AdDefinitionKey[];
 
 type AdDefinitionKey = keyof typeof adDefinitions;
 
@@ -105,10 +116,13 @@ export type AdUnitKey = AdDefinitionKey | Split<AdDefinitionKey, ':'>[1];
 
 export type AdUnitDetail = ReturnType<typeof getAdUnitDetails>[number];
 export function getAdUnitDetails(args: AdUnitKey[]) {
+  const config = getAdConfig();
+  let adunitKeys: AdDefinitionKey[] = [];
   const keys = args
     .reduce<AdDefinitionKey[]>((acc, adUnitKey) => {
-      if (adUnitKey in adDefinitions) return [...acc, adUnitKey as AdDefinitionKey];
-      return [...acc, ...adDefinitionKeys.filter((key) => key.includes(adUnitKey))];
+      if (adUnitKey in config.adunits) return [...acc, adUnitKey as AdDefinitionKey];
+      if (!adunitKeys) adunitKeys = Object.keys(config.adunits) as AdDefinitionKey[];
+      return [...acc, ...adunitKeys.filter((key) => key.includes(adUnitKey))];
     }, [])
     .sort()
     .reverse();
@@ -127,7 +141,23 @@ export function getAdUnitDetails(args: AdUnitKey[]) {
   });
 }
 
-// this is to be used for returning adunits when we support ads on multiple hosts
-export function getAvailableAdunits() {
-  return adDefinitions;
+export type AdConfig = { cmpScript: string; adScript: string; adunits: Record<string, string> };
+const adConfig: Record<string, AdConfig> = {
+  'civitai.com': {
+    cmpScript: 'https://cmp.uniconsent.com/v2/a635bd9830/cmp.js',
+    adScript: '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js',
+    adunits: adDefinitionsGreen,
+  },
+  'civitai.green': {
+    cmpScript: 'https://cmp.uniconsent.com/v2/7d36e04838/cmp.js',
+    adScript: '//dsh7ky7308k4b.cloudfront.net/publishers/civitaigreen.min.js',
+    adunits: adDefinitionsGreen,
+  },
+};
+
+const defaultAdConfig = 'civitai.com';
+export function getAdConfig() {
+  return typeof window !== 'undefined'
+    ? adConfig[location.host] ?? adConfig[defaultAdConfig]
+    : adConfig[defaultAdConfig];
 }
