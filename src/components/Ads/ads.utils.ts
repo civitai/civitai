@@ -121,7 +121,7 @@ export function getAdUnitDetails(args: AdUnitKey[]) {
   const keys = args
     .reduce<AdDefinitionKey[]>((acc, adUnitKey) => {
       if (adUnitKey in config.adunits) return [...acc, adUnitKey as AdDefinitionKey];
-      if (!adunitKeys) adunitKeys = Object.keys(config.adunits) as AdDefinitionKey[];
+      if (!adunitKeys.length) adunitKeys = Object.keys(config.adunits) as AdDefinitionKey[];
       return [...acc, ...adunitKeys.filter((key) => key.includes(adUnitKey))];
     }, [])
     .sort()
