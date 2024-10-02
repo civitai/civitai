@@ -89,7 +89,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
               </Paper>
             )}
             <Group position="right">
-              <Link legacyBehavior href={`/leaderboard/${event}:all-time`}>
+              <Link href={`/leaderboard/${event}:all-time`}>
                 <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                   View All
                 </Button>
@@ -147,7 +147,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                 </Paper>
               )}
               <Group position="right">
-                <Link legacyBehavior href={`/leaderboard/${event}:day`}>
+                <Link href={`/leaderboard/${event}:day`}>
                   <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                     View All
                   </Button>
@@ -206,7 +206,7 @@ export function EventContributors({ event, endDate }: { event: string; endDate: 
                     )}
 
                     <Group position="right" mt="auto">
-                      <Link legacyBehavior href={`/leaderboard/${event}:${team.toLowerCase()}`}>
+                      <Link href={`/leaderboard/${event}:${team.toLowerCase()}`}>
                         <Button variant="subtle" size="xs" rightIcon={<IconArrowRight size={16} />}>
                           View All
                         </Button>

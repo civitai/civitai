@@ -11,7 +11,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -64,7 +64,7 @@ export default function Notifications() {
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
                 <ActionIcon
-                  component={Link}
+                  component={NextLink}
                   size="lg"
                   href="/user/account#notification-settings"
                 >

@@ -9,7 +9,7 @@ import {
   ScrollArea,
   ThemeIcon,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangle,
   IconBan,
@@ -326,7 +326,7 @@ export function ModelVersionList({
                   )}
 
                   <Menu.Item
-                    component={Link}
+                    component={NextLink}
                     href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                     icon={<IconEdit size={14} stroke={1.5} />}
                   >
@@ -348,7 +348,7 @@ export function ModelVersionList({
                   </Menu.Item>
                   {version.posts.length > 0 ? (
                     <Menu.Item
-                      component={Link}
+                      component={NextLink}
                       icon={<IconPhotoEdit size={14} stroke={1.5} />}
                       onClick={(e) => e.stopPropagation()}
                       href={`/posts/${version.posts[0].id}/edit`}
@@ -357,7 +357,7 @@ export function ModelVersionList({
                     </Menu.Item>
                   ) : (
                     <Menu.Item
-                      component={Link}
+                      component={NextLink}
                       icon={<IconPhotoPlus size={14} stroke={1.5} />}
                       onClick={(e) => e.stopPropagation()}
                       href={`/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`}

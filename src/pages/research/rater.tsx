@@ -19,7 +19,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import {
   IconArrowBackUp,
   IconCrown,
@@ -443,7 +443,7 @@ export default function Rater() {
                 Restart
               </Button>
               <Button
-                component={Link}
+                component={NextLink}
                 color="yellow"
                 variant="light"
                 rightIcon={<IconCrown />}
@@ -474,7 +474,7 @@ export default function Rater() {
           <>
             <ActionIcon
               className={classes.link}
-              component={Link}
+              component={NextLink}
               target="_blank"
               href={`/images/${image?.id}`}
               variant="transparent"
@@ -546,7 +546,7 @@ export default function Rater() {
           <Tooltip label="View Leaderboard">
             <ActionIcon
               size="md"
-              component={Link}
+              component={NextLink}
               href="/leaderboard/rater"
               target="_blank"
               color="yellow"

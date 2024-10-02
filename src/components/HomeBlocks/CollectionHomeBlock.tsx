@@ -127,7 +127,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                   </Text>
                 )}
                 {metadata.link && (
-                  <Link legacyBehavior href={metadata.link} passHref>
+                  <Link href={metadata.link} passHref>
                     <Anchor size="sm">
                       <Group spacing={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
@@ -141,7 +141,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           )}
         </Group>
         {metadata.link && (
-          <Link legacyBehavior href={metadata.link} passHref>
+          <Link href={metadata.link} passHref>
             <Button
               className={homeBlockClasses.expandButton}
               component="a"
@@ -184,7 +184,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       )}
       {metadata.link && (
         <div>
-          <Link legacyBehavior href={metadata.link} passHref>
+          <Link href={metadata.link} passHref>
             <Button
               size="md"
               component="a"

@@ -22,11 +22,12 @@ import {
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link';
+import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
+import Link from 'next/link';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -509,7 +510,7 @@ export function GenerationFormContent() {
 
                                   {atLimit && (!currentUser || currentUser.tier === 'free') && (
                                     <Text size="xs">
-                                      <Link legacyBehavior href="/pricing" passHref>
+                                      <Link href="/pricing" passHref>
                                         <Anchor
                                           color="yellow"
                                           rel="nofollow"
@@ -1048,11 +1049,11 @@ export function GenerationFormContent() {
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
-                          <Text component={Link} href="/content/tos" td="underline">
+                          <Text component={NextLink} href="/content/tos" td="underline">
                             Terms of Service
                           </Text>{' '}
                           presented during onboarding. Failure to abide by{' '}
-                          <Text component={Link} href="/content/tos" td="underline">
+                          <Text component={NextLink} href="/content/tos" td="underline">
                             our content policies
                           </Text>{' '}
                           will result in the loss of your access to the image generator.

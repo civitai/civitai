@@ -55,7 +55,7 @@ export default function ClubPostEdit() {
   return (
     <Container size="md">
       <Stack spacing="xl">
-        <Link legacyBehavior href={`/clubs/${clubPost.clubId}`} passHref shallow>
+        <Link href={`/clubs/${clubPost.clubId}`} passHref shallow>
           <Anchor size="sm">
             <Group spacing={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />

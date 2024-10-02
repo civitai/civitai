@@ -22,6 +22,7 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import {
   IconBarbell,
@@ -54,6 +55,7 @@ import {
   IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
   Fragment,
@@ -96,7 +98,6 @@ import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
 import clsx from 'clsx';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
-import Link from 'next/link'
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(
@@ -591,7 +592,7 @@ export function AppHeader({
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link legacyBehavior key={index} href={link.href} as={link.as} passHref>
+            <Link key={index} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -624,7 +625,7 @@ export function AppHeader({
             <Menu.Item
               key={link.href}
               display="flex"
-              component={Link}
+              component={NextLink}
               href={link.href}
               as={link.as}
               rel={link.rel}
@@ -665,7 +666,7 @@ export function AppHeader({
       if (!currentUser) return null;
 
       return (
-        <Link legacyBehavior href="/user/buzz-dashboard">
+        <Link href="/user/buzz-dashboard">
           <Group
             p="sm"
             position="apart"
@@ -779,7 +780,7 @@ export function AppHeader({
             const menuItem = (
               <Menu.Item
                 key={!link.redirectReason ? index : undefined}
-                component={Link}
+                component={NextLink}
                 href={link.href}
                 as={link.as}
                 rel={link.rel}
@@ -822,7 +823,7 @@ export function AppHeader({
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
             <Anchor
-              component={Link}
+              component={NextLink}
               href="/"
               variant="text"
               onClick={() => setBurgerOpened(false)}
@@ -856,7 +857,7 @@ export function AppHeader({
             </Group>
             {!currentUser ? (
               <Button
-                component={Link}
+                component={NextLink}
                 href={`/login?returnUrl=${router.asPath}`}
                 rel="nofollow"
                 variant="default"
@@ -943,7 +944,7 @@ export function AppHeader({
                         <>
                           <Menu.Item
                             icon={<IconSettings stroke={1.5} />}
-                            component={Link}
+                            component={NextLink}
                             href="/user/account"
                           >
                             Account settings
@@ -1048,7 +1049,7 @@ export function AppHeader({
                           </ActionIcon>
                           {currentUser && (
                             <>
-                              <Link legacyBehavior href="/user/account">
+                              <Link href="/user/account">
                                 <ActionIcon
                                   variant="default"
                                   size="lg"

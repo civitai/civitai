@@ -45,7 +45,7 @@ import {
 } from '~/components/Stripe/MembershipChangePrevention';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -188,7 +188,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             {priceId && (
               <>
                 {isActivePlan ? (
-                  <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
+                  <Button radius="xl" {...btnProps} component={NextLink} href="/user/membership">
                     Manage your Membership
                   </Button>
                 ) : isDowngrade ? (

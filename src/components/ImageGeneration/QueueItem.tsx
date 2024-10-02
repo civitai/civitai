@@ -10,7 +10,7 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
@@ -355,7 +355,7 @@ const ResourceBadge = (props: Generation.Resource) => {
       size="sm"
       color={unstable ? 'yellow' : undefined}
       sx={{ maxWidth: 200, cursor: 'pointer' }}
-      component={Link}
+      component={NextLink}
       href={`/models/${modelId}?modelVersionId=${id}`}
       onClick={() => generationPanel.close()}
     >

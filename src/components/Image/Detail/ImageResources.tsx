@@ -265,7 +265,7 @@ const Wrapper = ({
 }) => {
   if (!resource.modelId) return children;
   return (
-    <Link legacyBehavior
+    <Link
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}

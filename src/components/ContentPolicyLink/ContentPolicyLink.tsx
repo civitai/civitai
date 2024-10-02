@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 export function ContentPolicyLink(props: Props) {
   return (
-    <Link legacyBehavior href="/safety#content-policies" passHref>
+    <Link href="/safety#content-policies" passHref>
       <Anchor {...props} target="_blank" rel="nofollow" span>
         Content Policies
       </Anchor>

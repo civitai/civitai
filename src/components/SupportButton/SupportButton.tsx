@@ -1,5 +1,5 @@
 import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -16,7 +16,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
       getRandom([
         <Button
           key={0}
-          component={Link}
+          component={NextLink}
           variant="light"
           color="gray"
           href="/pricing?utm_campaign=badge"
@@ -32,7 +32,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
         </Button>,
         <Button
           key={1}
-          component={Link}
+          component={NextLink}
           variant="outline"
           color="green"
           href="/pricing?utm_campaign=doit"
@@ -48,7 +48,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
         </Button>,
         <Button
           key={2}
-          component={Link}
+          component={NextLink}
           variant="light"
           color="green"
           href="/pricing?utm_campaign=emoji_money"
@@ -64,7 +64,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
         </Button>,
         <Button
           key={3}
-          component={Link}
+          component={NextLink}
           variant="light"
           color="green"
           href="/pricing?utm_campaign=emoji_kiss"
@@ -80,7 +80,7 @@ export const SupportButton = ({ className, ...props }: Props) => {
         </Button>,
         <Button
           key={4}
-          component={Link}
+          component={NextLink}
           variant="light"
           color="red"
           href="/pricing?utm_campaign=icon_heart"

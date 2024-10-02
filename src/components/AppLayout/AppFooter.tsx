@@ -9,7 +9,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -68,7 +68,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
         )}
         <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
           {/* <Button
-            component={Link}
+            component={NextLink}
             prefetch={false}
             href="/content/careers"
             {...buttonProps}
@@ -79,7 +79,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Join Us 💼
           </Button> */}
           {/* <Button
-            component={Link}
+            component={NextLink}
             prefetch={false}
             href="/advertise-with-us"
             {...buttonProps}
@@ -92,7 +92,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Advertise 📰
           </Button> */}
           <Button
-            component={Link}
+            component={NextLink}
             prefetch={false}
             href="/creators-program"
             {...buttonProps}
@@ -102,7 +102,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Creators
           </Button>
           <Button
-            component={Link}
+            component={NextLink}
             prefetch={false}
             href="/content/tos"
             {...buttonProps}
@@ -111,7 +111,7 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Terms of Service
           </Button>
           <Button
-            component={Link}
+            component={NextLink}
             prefetch={false}
             href="/content/privacy"
             {...buttonProps}
@@ -120,12 +120,12 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
             Privacy
           </Button>
           {features.safety && (
-            <Button component={Link} href="/safety" prefetch={false} {...buttonProps}>
+            <Button component={NextLink} href="/safety" prefetch={false} {...buttonProps}>
               Safety
             </Button>
           )}
           {features.newsroom && (
-            <Button component={Link} href="/newsroom" {...buttonProps}>
+            <Button component={NextLink} href="/newsroom" {...buttonProps}>
               Newsroom
             </Button>
           )}

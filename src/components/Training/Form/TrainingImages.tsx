@@ -26,7 +26,7 @@ import {
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import { ModelFileVisibility } from '@prisma/client';
 import {
@@ -1217,7 +1217,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 Your dataset is temporarily stored for the purposes of training. After training is
                 complete, the dataset is removed. By default, it is not public. Read our{' '}
                 <Text
-                  component={Link}
+                  component={NextLink}
                   variant="link"
                   href="/content/training/data-policy"
                   target="_blank"

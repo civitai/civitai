@@ -11,7 +11,7 @@ export function UserLink({
 }) {
   if (deletedAt || !username) return <>{children}</>;
   return (
-    <Link legacyBehavior href={`/user/${username}`} passHref>
+    <Link href={`/user/${username}`} passHref>
       {children}
     </Link>
   );

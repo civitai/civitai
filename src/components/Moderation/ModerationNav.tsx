@@ -1,5 +1,5 @@
 import { ActionIcon, Menu } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { constants } from '~/server/common/constants';
@@ -23,7 +23,7 @@ export function ModerationNav() {
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
       ].map((link) => (
-        <Menu.Item key={link.href} component={Link} href={link.href}>
+        <Menu.Item key={link.href} component={NextLink} href={link.href}>
           {link.label}
         </Menu.Item>
       )),

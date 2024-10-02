@@ -14,6 +14,7 @@ import {
   Text,
   useMantineTheme,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconUser } from '@tabler/icons-react';
 import { getEdgeUrl, useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
@@ -26,7 +27,6 @@ import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import Link from 'next/link';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -294,8 +294,8 @@ export const UserProfileLink = ({
   if (!user.username) href += `?id=${user.id}`;
 
   return (
-    <Link href={href} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
+    <NextLink href={href} onClick={(e: React.MouseEvent<HTMLAnchorElement>) => e.stopPropagation()}>
       {children}
-    </Link>
+    </NextLink>
   );
 };

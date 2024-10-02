@@ -1,5 +1,5 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconChristmasTree } from '@tabler/icons-react';
 import { wiggle } from '~/libs/animations';
 export const EventButton = ({ className, ...props }: Props) => {
@@ -7,7 +7,7 @@ export const EventButton = ({ className, ...props }: Props) => {
 
   return (
     <Box
-      component={Link}
+      component={NextLink}
       href="/events/holiday2023"
       className={cx(classes.root, className)}
       {...props}

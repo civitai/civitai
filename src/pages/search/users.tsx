@@ -152,7 +152,7 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   const { metrics } = data;
 
   return (
-    <Link legacyBehavior href={`/user/${data.username}`} passHref>
+    <Link href={`/user/${data.username}`} passHref>
       <Card component="a" p="xs" withBorder>
         <Stack spacing="xs">
           <Group position="apart" spacing={8}>

@@ -26,7 +26,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { indexOf, isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
@@ -156,7 +156,7 @@ export default function CosmeticStoreSections() {
           <Text size="sm" color="dimmed">
             You can add and manage shop sections here. Products must be created before hand. If you
             have not created any product, please go{' '}
-            <Anchor component={Link} href="/moderator/cosmetic-store/products">
+            <Anchor component={NextLink} href="/moderator/cosmetic-store/products">
               here.
             </Anchor>
           </Text>
@@ -164,7 +164,7 @@ export default function CosmeticStoreSections() {
         <Group position="apart" mb="md">
           <Group align="flex-end">
             <Button
-              component={Link}
+              component={NextLink}
               href="/moderator/cosmetic-store/sections/create"
               radius="xl"
             >
@@ -246,7 +246,7 @@ export default function CosmeticStoreSections() {
                           </Stack>
                           <Group>
                             <ActionIcon
-                              component={Link}
+                              component={NextLink}
                               href={`/moderator/cosmetic-store/sections/${section.id}/edit`}
                             >
                               <IconEdit />

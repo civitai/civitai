@@ -25,7 +25,7 @@ import {
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -245,7 +245,7 @@ export function VotableTag({
           />
         )}
         <Text
-          component={Link}
+          component={NextLink}
           href={`/images?tags=${tagId}&view=feed`}
           data-activity="tag-click:image"
           title={!isVoting ? `Score: ${score}` : undefined}

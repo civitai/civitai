@@ -207,7 +207,7 @@ export default function ArticleDetailsPage({
               {category && (
                 <>
                   <Divider orientation="vertical" />
-                  <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
+                  <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
@@ -226,12 +226,7 @@ export default function ArticleDetailsPage({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link
-                        legacyBehavior
-                        key={tag.id}
-                        href={`/articles?view=feed&tags=${tag.id}`}
-                        passHref
-                      >
+                      <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
                         <Badge
                           component="a"
                           color="gray"

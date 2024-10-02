@@ -107,7 +107,7 @@ export function EditResourceReview({
         {modelId && modelVersionId ? (
           <Stack spacing={4}>
             <Group align="center" position="apart">
-              <Link legacyBehavior href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
+              <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
                 <Stack spacing={0} sx={{ cursor: 'pointer' }}>
                   {modelName && <Text lineClamp={1}>{modelName}</Text>}
                   {modelVersionName && (
