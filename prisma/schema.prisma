@@ -87,20 +87,14 @@ model UserReferralCode {
   @@index([userId], type: Hash)
 }
 
-enum StripeConnectStatus {
-  PendingOnboarding
-  Approved
-  PendingVerification
-  Rejected
-}
-
-model UserStripeConnect {
-  userId             Int                 @unique
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connectedAccountId String              @unique
-  status             StripeConnectStatus @default(PendingOnboarding)
-  payoutsEnabled     Boolean             @default(false)
-  chargesEnabled     Boolean             @default(false)
+model UserPaymentConfiguration {
+  userId                 Int     @unique
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tipaltiAccountId       String  @unique
+  tipaltiAccountStatus   String  @default("INTERNAL_VALUE")
+  tipaltiPaymentsEnabled Boolean @default(false)
+  payoutsEnabled         Boolean @default(false)
+  chargesEnabled         Boolean @default(false)
 }
 
 enum BuzzWithdrawalRequestStatus {
@@ -181,12 +175,12 @@ model User {
   customerId              String?               @unique // Stripe
   paddleCustomerId        String?               @unique
 
-  profile          UserProfile?
-  profilePictureId Int?               @unique
-  profilePicture   Image?             @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
-  settings         Json?              @default("{}")
-  publicSettings   Json?              @default("{}")
-  connectedAccount UserStripeConnect?
+  profile              UserProfile?
+  profilePictureId     Int?                      @unique
+  profilePicture       Image?                    @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings             Json?                     @default("{}")
+  publicSettings       Json?                     @default("{}")
+  paymentConfiguration UserPaymentConfiguration?
 
   accounts             Account[]
   sessions             Session[]
