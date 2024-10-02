@@ -153,13 +153,13 @@ export const protectedProcedure = publicProcedure.use(isAuthed);
 export const moderatorProcedure = protectedProcedure.use(isMod);
 
 /**
- * Guarded procedure to prevent users from making actions
- * based on muted/banned properties
- */
-export const guardedProcedure = protectedProcedure.use(isMuted);
-
-/**
  * Verified procedure to prevent users from making actions
  * if they haven't completed the onboarding process
  */
 export const verifiedProcedure = protectedProcedure.use(isOnboarded);
+
+/**
+ * Guarded procedure to prevent users from making actions
+ * based on muted/banned properties
+ */
+export const guardedProcedure = verifiedProcedure.use(isMuted);
