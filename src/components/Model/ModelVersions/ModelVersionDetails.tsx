@@ -18,7 +18,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBrush,

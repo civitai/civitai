@@ -8,7 +8,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { containerQuery } from '~/utils/mantine-css-helpers';

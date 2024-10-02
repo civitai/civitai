@@ -1,7 +1,7 @@
 import { ActionIcon, ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';

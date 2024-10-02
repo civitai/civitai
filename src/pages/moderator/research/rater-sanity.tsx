@@ -22,7 +22,7 @@ import {
   IconSquareOff,
   IconTrash,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';

@@ -23,7 +23,7 @@ import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { TagTarget } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });

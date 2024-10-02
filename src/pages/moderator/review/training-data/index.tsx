@@ -1,5 +1,5 @@
 import { Title, Text, Button, Loader } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { createPage } from '~/components/AppLayout/createPage';

@@ -1,5 +1,5 @@
 import { Box, BoxProps, createStyles } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconChristmasTree } from '@tabler/icons-react';
 import { wiggle } from '~/libs/animations';
 export const EventButton = ({ className, ...props }: Props) => {

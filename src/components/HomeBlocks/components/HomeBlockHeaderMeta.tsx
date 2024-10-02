@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { Button, Group, Text, Title, TypographyStylesProvider } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight } from '@tabler/icons-react';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { useHomeBlockStyles } from '~/components/HomeBlocks/HomeBlock.Styles';

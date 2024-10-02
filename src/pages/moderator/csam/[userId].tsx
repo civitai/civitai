@@ -11,7 +11,7 @@ import { Text, Card, Badge, Group } from '@mantine/core';
 import { useStepper } from '~/hooks/useStepper';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export default function ReportCsamUserPage() {
   const router = useRouter();

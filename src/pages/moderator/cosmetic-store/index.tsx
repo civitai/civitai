@@ -13,7 +13,7 @@ import {
   Button,
   ActionIcon,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconEdit } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 

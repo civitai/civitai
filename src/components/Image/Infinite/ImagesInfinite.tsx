@@ -2,7 +2,7 @@ import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '@prisma/client';
 import { isEqual } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect } from 'react';
 import { IntersectionOptions } from 'react-intersection-observer';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';

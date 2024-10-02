@@ -11,7 +11,7 @@ import {
   Box,
 } from '@mantine/core';
 import { GetAnnouncement } from '~/server/services/announcement.service';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

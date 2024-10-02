@@ -1,7 +1,7 @@
 import { Stack, Text, MantineSize, Group, ActionIcon } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import dayjs from 'dayjs';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { DownloadGetAll } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';

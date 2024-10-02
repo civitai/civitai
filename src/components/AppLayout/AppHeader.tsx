@@ -96,7 +96,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
 import clsx from 'clsx';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 
 const FeatureIntroductionModal = dynamic(() =>
   import('~/components/FeatureIntroduction/FeatureIntroduction').then(

@@ -46,7 +46,7 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { ImageMetaProps } from '~/server/schema/image.schema';

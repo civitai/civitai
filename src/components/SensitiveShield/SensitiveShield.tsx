@@ -1,5 +1,5 @@
 import { Button, Text } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';

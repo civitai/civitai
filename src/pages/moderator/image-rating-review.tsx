@@ -19,7 +19,7 @@ import { getImageRatingRequests } from '~/server/services/image.service';
 import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');

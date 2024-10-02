@@ -3,7 +3,7 @@ import { trpc } from '~/utils/trpc';
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ClubMembershipStatus, ClubTierItem } from '../ClubTierItem';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconClubs } from '@tabler/icons-react';
 
 type Props = {

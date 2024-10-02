@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function UserLink({
   username,

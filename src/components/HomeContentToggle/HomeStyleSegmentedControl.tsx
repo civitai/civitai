@@ -10,7 +10,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { IconProps } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 

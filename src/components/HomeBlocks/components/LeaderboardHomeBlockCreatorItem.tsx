@@ -1,6 +1,6 @@
 import { Box, createStyles, Group, Stack, Text } from '@mantine/core';
 import { IconCrown, IconTrophy } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';

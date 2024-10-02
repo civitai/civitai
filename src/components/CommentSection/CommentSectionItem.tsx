@@ -7,7 +7,7 @@ import {
   IconFlag,
   IconArrowBackUp,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

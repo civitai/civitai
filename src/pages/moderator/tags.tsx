@@ -35,7 +35,7 @@ import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInpu
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',

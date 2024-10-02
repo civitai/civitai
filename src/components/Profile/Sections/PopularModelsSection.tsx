@@ -10,7 +10,7 @@ import React from 'react';
 import { useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Button, Text } from '@mantine/core';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';

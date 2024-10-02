@@ -16,7 +16,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,

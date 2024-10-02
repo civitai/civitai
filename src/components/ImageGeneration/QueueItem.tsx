@@ -10,7 +10,7 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,

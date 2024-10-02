@@ -75,7 +75,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';

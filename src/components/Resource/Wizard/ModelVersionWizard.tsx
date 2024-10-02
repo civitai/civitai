@@ -1,7 +1,7 @@
 import { Anchor, Button, Group, Stepper, Text, Title } from '@mantine/core';
 import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconArrowLeft } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NextRouter, useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';

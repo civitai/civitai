@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useClickOutside, useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 

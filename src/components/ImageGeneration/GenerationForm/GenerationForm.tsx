@@ -71,7 +71,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';

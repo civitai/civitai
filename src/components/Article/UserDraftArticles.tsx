@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconExternalLink, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 
 import { NoContent } from '~/components/NoContent/NoContent';

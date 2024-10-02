@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   HoverCard,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { closeSpotlight } from '@mantine/spotlight';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';

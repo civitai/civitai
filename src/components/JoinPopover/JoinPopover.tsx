@@ -1,5 +1,5 @@
 import { Popover, Stack, Group, ThemeIcon, Button, Text } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconLock } from '@tabler/icons-react';
 import { useState, cloneElement } from 'react';
 import { create } from 'zustand';

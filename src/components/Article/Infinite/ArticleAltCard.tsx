@@ -1,6 +1,6 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';

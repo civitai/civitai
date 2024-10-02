@@ -63,7 +63,7 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const useStyles = createStyles((theme, _, getRef) => {
   const infoRef = getRef('info');

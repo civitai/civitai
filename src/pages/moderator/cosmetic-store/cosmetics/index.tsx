@@ -17,7 +17,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { CosmeticType } from '@prisma/client';
 import { IconCloudOff, IconEdit } from '@tabler/icons-react';
 import { useState } from 'react';

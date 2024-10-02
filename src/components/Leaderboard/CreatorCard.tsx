@@ -9,7 +9,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
 import { useEffect } from 'react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const linkQuery: Record<string, string> = {
   overall: '/models',

@@ -7,7 +7,7 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { Stack, Text, Anchor } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ModelStatus, ModelType } from '@prisma/client';

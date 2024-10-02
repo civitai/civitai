@@ -31,7 +31,7 @@ import {
   IconUserOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';

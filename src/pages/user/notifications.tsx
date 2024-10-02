@@ -11,7 +11,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';

@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconArchive,

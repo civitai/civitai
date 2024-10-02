@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { Fragment, useCallback, useRef } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';

@@ -1,7 +1,7 @@
 import { Menu, MenuProps } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';

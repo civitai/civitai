@@ -26,7 +26,7 @@ import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {

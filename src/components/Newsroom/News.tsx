@@ -1,5 +1,5 @@
 import { Button, Card, createStyles, Stack, Text, Title } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';

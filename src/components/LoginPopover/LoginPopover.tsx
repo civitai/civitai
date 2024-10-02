@@ -5,7 +5,7 @@ import { useState, cloneElement } from 'react';
 import { create } from 'zustand';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { v4 as uuidv4 } from 'uuid';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type StoreProps = {
   keys: Record<string, boolean>;

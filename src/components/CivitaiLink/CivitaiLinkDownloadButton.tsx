@@ -1,5 +1,5 @@
 import { Button, Flex, Text, Anchor, createStyles } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 
 type LinkDownloadButtonProps = {
   text: string;

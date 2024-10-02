@@ -34,7 +34,7 @@ import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {

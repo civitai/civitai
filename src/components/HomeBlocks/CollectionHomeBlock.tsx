@@ -21,7 +21,7 @@ import {
   IconLayoutList,
   IconPhoto,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';

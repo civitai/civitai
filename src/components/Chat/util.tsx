@@ -2,7 +2,7 @@ import React, { ReactElement } from 'react';
 import { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { constants } from '~/server/common/constants';
 import { Anchor, Text } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export const getLinkHref = (href: string | undefined) => {
   if (!href) return;

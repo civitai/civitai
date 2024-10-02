@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconLock } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';

@@ -9,7 +9,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import {
   Icon3dCubeSphere,
   IconAccessible,

@@ -18,7 +18,7 @@ import { ArticleEngagementType, Availability } from '@prisma/client';
 import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { z } from 'zod';
 import { setPageOptions } from '~/components/AppLayout/AppLayout';

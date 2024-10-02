@@ -20,7 +20,7 @@ import { useState } from 'react';
 import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

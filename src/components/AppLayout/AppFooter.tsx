@@ -9,7 +9,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

@@ -13,7 +13,7 @@ import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';

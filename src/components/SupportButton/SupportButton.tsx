@@ -1,5 +1,5 @@
 import { Button, ButtonProps, createStyles, HoverCard, Text } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconCaretRightFilled, IconChevronRight, IconHeart } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

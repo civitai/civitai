@@ -12,7 +12,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { truncate } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';

@@ -1,6 +1,6 @@
 import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 

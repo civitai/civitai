@@ -2,7 +2,7 @@ import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { trpc } from '~/utils/trpc';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ImageProcess({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });

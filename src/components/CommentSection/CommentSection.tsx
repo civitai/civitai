@@ -13,7 +13,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';

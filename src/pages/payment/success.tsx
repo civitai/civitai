@@ -9,7 +9,7 @@ import {
   Button,
   Center,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';

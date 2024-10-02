@@ -77,7 +77,7 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';

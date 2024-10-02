@@ -1,7 +1,7 @@
 import { IconExclamationMark } from '@tabler/icons-react';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { Anchor, Text } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type AlertType = 'Bounty' | 'Model';
 type Props = Omit<React.ComponentProps<typeof AlertWithIcon>, 'icon' | 'children'> & {

@@ -12,7 +12,7 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useDebouncer } from '~/utils/debouncer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;

@@ -12,7 +12,7 @@ import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.ut
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { Button, Loader, Stack, Text } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 

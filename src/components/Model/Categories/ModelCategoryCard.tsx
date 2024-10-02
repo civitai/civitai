@@ -56,7 +56,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 

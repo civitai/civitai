@@ -1,7 +1,7 @@
 import { Button, Loader, Text } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
 import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageCard } from '~/components/Cards/ImageCard';

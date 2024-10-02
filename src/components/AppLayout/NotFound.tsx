@@ -1,5 +1,5 @@
 import { Box, Button, Container, Stack, Text, Title, Skeleton } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { useMemo } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';

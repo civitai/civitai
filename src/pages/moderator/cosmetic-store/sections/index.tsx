@@ -26,7 +26,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import Link from 'next/link'
+import { NextLink as Link } from '~/components/NextLink/NextLink'
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { indexOf, isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
