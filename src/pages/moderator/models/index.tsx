@@ -107,7 +107,7 @@ export default function ModeratorModels() {
     <>
       <Meta title="Moderator Models" deIndex />
       <Container size="sm">
-        <Stack spacing={0} mb="xl">
+        <Stack mb="xl">
           <Title order={1}>Models Needing Review</Title>
           <SegmentedControl
             size="sm"
@@ -167,59 +167,61 @@ export default function ModeratorModels() {
                           '& > *': { width: '100%' },
                         })}
                       >
-                        <Group position="apart" align="flex-start" noWrap>
-                          <Stack spacing={0}>
-                            <Group spacing={8} noWrap>
-                              {hasVersion ? (
-                                <Badge color="violet" radius="xl">
-                                  Model Version
-                                </Badge>
-                              ) : (
-                                <Badge radius="xl">Model</Badge>
-                              )}
-                              <Link
-                                legacyBehavior
-                                href={`/models/${model.id}/${slugit(model.name)}${
-                                  model.modelVersion
-                                    ? `?modelVersionId=${model.modelVersion.id}`
-                                    : ''
-                                }`}
-                                passHref
-                              >
-                                <Anchor size="md" target="_blank" lineClamp={2}>
-                                  {`${model.name}${
-                                    model.modelVersion ? ` - ${model.modelVersion.name}` : ''
-                                  }`}{' '}
-                                  <IconExternalLink size={16} stroke={1.5} />
-                                </Anchor>
-                              </Link>
-                            </Group>
-                            {unpublishedAt && (
-                              <Text size="xs" color="dimmed">
-                                Unpublished at: {formatDate(unpublishedAt)}
-                              </Text>
+                        <Stack spacing={8}>
+                          <Group position="apart" align="flex-start" noWrap>
+                            {hasVersion ? (
+                              <Badge color="violet" radius="xl">
+                                Model Version
+                              </Badge>
+                            ) : (
+                              <Badge radius="xl">Model</Badge>
                             )}
-                            {unpublishedReason && (
-                              <Text size="sm">
-                                <Text weight={500} size="sm" span>
-                                  Reason initially unpublished:
-                                </Text>{' '}
-                                {`${unpublishReasons[unpublishedReason].optionLabel}${
-                                  customMessage ? ` - ${customMessage}` : ''
-                                }`}
-                              </Text>
-                            )}
-                          </Stack>
-                          <Button
-                            variant="subtle"
-                            size="xs"
-                            color="red"
-                            onClick={() => toggleModal({ selectedModel: model })}
-                            compact
+                            <Button
+                              variant="subtle"
+                              size="xs"
+                              color="red"
+                              onClick={() => toggleModal({ selectedModel: model })}
+                              compact
+                            >
+                              Decline Request
+                            </Button>
+                          </Group>
+                          <Link
+                            legacyBehavior
+                            href={`/models/${model.id}/${slugit(model.name)}${
+                              model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
+                            }`}
+                            passHref
                           >
-                            Decline Request
-                          </Button>
-                        </Group>
+                            <Anchor size="md" target="_blank" lineClamp={1} inline>
+                              <div className="flex flex-nowrap gap-1">
+                                <IconExternalLink
+                                  className="shrink-0 grow-0"
+                                  size={16}
+                                  stroke={1.5}
+                                />
+                                {`${model.name}${
+                                  model.modelVersion ? ` - ${model.modelVersion.name}` : ''
+                                }`}
+                              </div>
+                            </Anchor>
+                          </Link>
+                          {unpublishedAt && (
+                            <Text size="xs" color="dimmed">
+                              Unpublished at: {formatDate(unpublishedAt)}
+                            </Text>
+                          )}
+                          {unpublishedReason && (
+                            <Text size="sm">
+                              <Text weight={500} size="sm" span>
+                                Reason initially unpublished:
+                              </Text>{' '}
+                              {`${unpublishReasons[unpublishedReason].optionLabel}${
+                                customMessage ? ` - ${customMessage}` : ''
+                              }`}
+                            </Text>
+                          )}
+                        </Stack>
                       </List.Item>
                     );
                   })}
