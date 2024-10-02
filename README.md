@@ -12,7 +12,7 @@
   </a>
 </div>
 
-## Table of Content
+## Table of Contents
 
 - [About the Project](#about-the-project)
   - [Tech Stack](#tech-stack)
@@ -50,7 +50,7 @@ First, make sure that you have the following installed on your machine:
 - Docker (for running the database)
 
 > We recommend you have installed `nvm` in order to set the right node version to run this project
->
+
 > ```sh
 > curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
 > ```
