@@ -36,8 +36,8 @@ export function useCreateAdFeed() {
       const min = adMatrix.lastIndex + lower + 1;
       const max = adMatrix.lastIndex + upper;
       const index = adMatrix.indices.length === 0 ? getRandomInt(3, 5) : getRandomInt(min, max);
-      const key = getRandom(keys);
-      const [item] = getAdUnitDetails([key]);
+      const items = getAdUnitDetails(keys);
+      const item = getRandom(items);
       adMatrix.indices.push({ index, ...item });
       adMatrix.lastIndex = index;
     }
