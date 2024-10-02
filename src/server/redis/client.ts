@@ -195,6 +195,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
+    IMAGE_META: 'packed:caches:image-meta',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

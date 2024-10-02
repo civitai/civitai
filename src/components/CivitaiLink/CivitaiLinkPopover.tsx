@@ -24,7 +24,7 @@ import {
   Box,
   Badge,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { showNotification } from '@mantine/notifications';
 import {
   IconDownload,
@@ -164,7 +164,7 @@ function AboutCivitaiLink() {
         >
           Video Demo
         </Button>
-        <Button rightIcon={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
+        <Button rightIcon={<IconHeart size={18} />} radius={0} component={NextLink} href="/pricing">
           Become a Supporter
         </Button>
       </Group>

@@ -187,7 +187,6 @@ export default function ModeratorModels() {
                             </Button>
                           </Group>
                           <Link
-                            legacyBehavior
                             href={`/models/${model.id}/${slugit(model.name)}${
                               model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
                             }`}

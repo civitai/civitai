@@ -259,7 +259,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <FilesProvider model={modelData} version={modelVersion}>
       <div className="container max-w-sm pb-4">
-        <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
+        <Link href={`/models/${modelData?.id}`} passHref>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />

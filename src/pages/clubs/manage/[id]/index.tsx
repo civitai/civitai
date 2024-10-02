@@ -215,7 +215,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
       <Container size="xl">
         <Stack spacing="md">
           <Stack spacing="md">
-            <Link legacyBehavior href={`/clubs/${club.id}`} passHref shallow>
+            <Link href={`/clubs/${club.id}`} passHref shallow>
               <Anchor size="sm">
                 <Group spacing={4}>
                   <IconArrowLeft />

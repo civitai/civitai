@@ -13,6 +13,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { CollectionType, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
@@ -56,7 +57,6 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import Link from 'next/link';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -281,7 +281,7 @@ export function ModelCategoryCard({
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         sx={{ opacity: isHidden ? 0.1 : undefined }}
       >
-        <Link
+        <NextLink
           href={`/models/${id}/${slugit(name)}`}
           className={classes.link}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -449,7 +449,7 @@ export function ModelCategoryCard({
               </Group>
             </Stack>
           </Stack>
-        </Link>
+        </NextLink>
       </Indicator>
     </MasonryCard>
   );

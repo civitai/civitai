@@ -41,6 +41,7 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  imageMetaCache,
   imagesForModelVersionsCache,
   tagCache,
   tagIdsForImagesCache,
@@ -1343,6 +1344,15 @@ export const getAllImages = async (
 
 // TODO split this into image-index.service because this file is a giant
 
+const getMetaForImages = async (imageIds: number[]) => {
+  if (imageIds.length === 0) {
+    return {};
+  }
+
+  const data = await imageMetaCache.fetch(imageIds);
+  return data;
+};
+
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
@@ -1435,7 +1445,7 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, profilePictures, userCosmetics, imageCosmetics] = await Promise.all([
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
@@ -1445,12 +1455,14 @@ export const getAllImagesIndex = async (
           entity: 'Image',
         })
       : undefined,
+    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
+    const meta = imageMeta?.[sr.id]?.meta ?? null;
 
     return {
       ...sr,
@@ -1483,6 +1495,7 @@ export const getAllImagesIndex = async (
           ? ImageIngestionStatus.NotFound
           : ImageIngestionStatus.Scanned, // add? maybe remove
       postTitle: null, // remove
+      meta,
     };
   });
 

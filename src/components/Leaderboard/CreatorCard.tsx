@@ -1,5 +1,5 @@
 import { createStyles, Paper, Stack, Text } from '@mantine/core';
-
+import { NextLink } from '@mantine/next';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
@@ -9,7 +9,6 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
 import { useEffect } from 'react';
-import Link from 'next/link';
 
 const linkQuery: Record<string, string> = {
   overall: '/models',
@@ -67,7 +66,7 @@ export function CreatorCard({
   return (
     <div className={classes.wrapper} ref={ref} id={position.toString()}>
       {inView && (
-        <Link href={link}>
+        <NextLink href={link}>
           <Paper
             className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
             p="sm"
@@ -114,7 +113,7 @@ export function CreatorCard({
               </ContainerGrid.Col>
             </ContainerGrid>
           </Paper>
-        </Link>
+        </NextLink>
       )}
     </div>
   );

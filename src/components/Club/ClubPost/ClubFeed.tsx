@@ -35,7 +35,7 @@ import {
 } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { isDefined } from '~/utils/type-guards';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
 import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -130,7 +130,7 @@ export function ClubPostContextMenu({
         key="edit"
         icon={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/clubs/${clubPost.clubId}/posts/${clubPost.id}/edit`}
-        component={Link}
+        component={NextLink}
       >
         Edit
       </Menu.Item>
@@ -143,7 +143,7 @@ export function ClubPostContextMenu({
         key="edit"
         icon={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/posts/${clubPost.entityId}/edit`}
-        component={Link}
+        component={NextLink}
       >
         Edit Image Post
       </Menu.Item>

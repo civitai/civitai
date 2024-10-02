@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   HoverCard,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { closeSpotlight } from '@mantine/spotlight';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
@@ -216,7 +216,7 @@ const ActionsWrapper = forwardRef<HTMLDivElement, Props>(({ children }, ref) => 
         </Text>
         <Anchor
           size="xs"
-          component={Link}
+          component={NextLink}
           onClick={() => closeSpotlight()}
           href="/user/account#settings"
           ml="auto"

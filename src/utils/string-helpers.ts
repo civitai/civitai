@@ -62,6 +62,7 @@ const nameOverrides: Record<string, string> = {
   Redeemable: 'Redeemed Code',
   'PixArt E': 'PixArt Σ',
   'PixArt a': 'PixArt α',
+  ProfileDecoration: 'Avatar Decoration',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {

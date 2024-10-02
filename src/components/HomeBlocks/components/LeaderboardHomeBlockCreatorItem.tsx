@@ -38,7 +38,7 @@ export const LeaderHomeBlockCreatorItem = ({
 
   return (
     <div className={classes.wrapper}>
-      <Link legacyBehavior href={link} passHref>
+      <Link href={link} passHref>
         <Box sx={{ cursor: 'pointer' }}>
           <ContainerGrid align="center">
             <ContainerGrid.Col span={8}>

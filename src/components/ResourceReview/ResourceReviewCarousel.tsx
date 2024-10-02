@@ -9,7 +9,7 @@ import {
   createStyles,
   Text,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { MetricTimeframe } from '@prisma/client';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -154,7 +154,7 @@ export function ResourceReviewCarousel({
                 })}
               >
                 <Button
-                  component={Link}
+                  component={NextLink}
                   href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
                   variant="outline"
                   fullWidth

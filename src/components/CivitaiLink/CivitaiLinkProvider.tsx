@@ -153,7 +153,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);
     const worker = new SharedWorker(
-      new URL('../../workers/civitai-link.worker.ts', import.meta.url),
+      new URL('/src/workers/civitai-link.worker.ts', import.meta.url),
       { name: 'civitai-link' }
     );
 

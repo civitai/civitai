@@ -198,7 +198,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 placeholder="empty"
               />
               {!!entityUrl && (
-                <Link legacyBehavior href={entityUrl} passHref>
+                <Link href={entityUrl} passHref>
                   <ActionIcon
                     component="a"
                     variant="transparent"

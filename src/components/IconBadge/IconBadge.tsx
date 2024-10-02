@@ -1,10 +1,10 @@
 import { Badge, BadgeProps, Tooltip } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 
 export function IconBadge({ icon, children, tooltip, href, ...props }: IconBadgeProps) {
   const badge = href ? (
     <Badge
-      component={Link}
+      component={NextLink}
       href={href}
       styles={{
         leftSection: { marginRight: 4 },

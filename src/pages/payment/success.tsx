@@ -9,7 +9,7 @@ import {
   Button,
   Center,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
@@ -66,7 +66,7 @@ export default function PaymentSuccess() {
 
           <Group grow>
             <Button
-              component={Link}
+              component={NextLink}
               href="/models"
               size="md"
               leftIcon={<IconLayoutDashboard />}
@@ -75,7 +75,7 @@ export default function PaymentSuccess() {
             </Button>
             <Button
               variant="light"
-              component={Link}
+              component={NextLink}
               href="/user/account"
               size="md"
               rightIcon={<IconRosette />}

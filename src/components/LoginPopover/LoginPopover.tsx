@@ -1,4 +1,5 @@
 import { Popover, Stack, Group, ThemeIcon, Button, Text, PopoverProps } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useState, cloneElement } from 'react';
@@ -72,7 +73,7 @@ export function LoginPopover({
               )}
             </Group>
 
-            <Link legacyBehavior href={`/login?returnUrl=${router.asPath}`}>
+            <Link href={`/login?returnUrl=${router.asPath}`}>
               <Button size="xs">Login</Button>
             </Link>
           </Stack>

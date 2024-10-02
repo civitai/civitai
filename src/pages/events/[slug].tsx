@@ -15,7 +15,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
@@ -205,7 +205,7 @@ export default function EventPageDetails({
                   <Text color="white" size="xs">
                     Banner created by{' '}
                     <Text
-                      component={Link}
+                      component={NextLink}
                       href={`/user/${eventData.coverImageUser}`}
                       td="underline"
                     >
@@ -261,7 +261,7 @@ export default function EventPageDetails({
                     {eventCosmetic.available && !ended && (
                       <Stack spacing="sm" w="100%">
                         <Button
-                          component={Link}
+                          component={NextLink}
                           href="/posts/create"
                           color="gray"
                           variant="filled"
@@ -394,7 +394,7 @@ export default function EventPageDetails({
                         )}
                       </Stack>
                       <Button
-                        component={Link}
+                        component={NextLink}
                         href={`/leaderboard/${event}:${userTeam}`}
                         color="gray"
                         radius="xl"

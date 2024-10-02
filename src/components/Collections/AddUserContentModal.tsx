@@ -13,7 +13,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
@@ -153,7 +153,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
           </AlertWithIcon>
         )}
 
-        <Button component={Link} href={`/posts/create?collectionId=${collectionId}`}>
+        <Button component={NextLink} href={`/posts/create?collectionId=${collectionId}`}>
           Create a new image post
         </Button>
 

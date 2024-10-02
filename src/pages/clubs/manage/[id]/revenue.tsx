@@ -13,7 +13,7 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { ClubAdminPermission } from '@prisma/client';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ClubWithdrawFunds } from '~/components/Club/ClubWithdrawFunds';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { ClubDepositFunds } from '../../../../components/Club/ClubDepositFunds';
 
 const querySchema = z.object({ id: z.coerce.number() });

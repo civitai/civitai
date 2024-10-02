@@ -11,6 +11,7 @@ import { ArticleSort } from '~/server/common/enums';
 import { useQueryArticles } from '~/components/Article/article.utils';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { Button, Text } from '@mantine/core';
+import { NextLink } from '@mantine/next';
 import Link from 'next/link';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -50,11 +51,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
             title="Most popular articles"
             icon={<IconPencilMinus />}
             action={
-              <Link
-                legacyBehavior
-                href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`}
-                passHref
-              >
+              <Link href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`} passHref>
                 <Button
                   h={34}
                   component="a"

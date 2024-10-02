@@ -1,5 +1,5 @@
 // @ts-check
-import { withAxiom } from "@civitai/next-axiom";
+import { withAxiom } from "next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
 
 /**
@@ -31,20 +31,13 @@ export default defineNextConfig(withAxiom({
   generateEtags: false,
   compress: false,
   images: {
-    remotePatterns: [
-      { hostname: 's3.us-west-1.wasabisys.com', },
-      { hostname: 'model-share.s3.us-west-1.wasabisys.com', },
-      { hostname: 'civitai-prod.s3.us-west-1.wasabisys.com', },
-      { hostname: 'civitai-dev.s3.us-west-1.wasabisys.com', },
-      { hostname: 'image.civitai.com', },
-    ]
-    // domains: [
-    //   's3.us-west-1.wasabisys.com',
-    //   'model-share.s3.us-west-1.wasabisys.com',
-    //   'civitai-prod.s3.us-west-1.wasabisys.com',
-    //   'civitai-dev.s3.us-west-1.wasabisys.com',
-    //   'image.civitai.com',
-    // ],
+    domains: [
+      's3.us-west-1.wasabisys.com',
+      'model-share.s3.us-west-1.wasabisys.com',
+      'civitai-prod.s3.us-west-1.wasabisys.com',
+      'civitai-dev.s3.us-west-1.wasabisys.com',
+      'image.civitai.com',
+    ],
   },
   experimental: {
     // scrollRestoration: true,

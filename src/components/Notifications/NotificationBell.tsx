@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useClickOutside, useLocalStorage } from '@mantine/hooks';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
 import { useState } from 'react';
 
@@ -143,7 +143,7 @@ export function NotificationBell() {
               </Tooltip>
               <Tooltip label="Notification settings" position="bottom">
                 <ActionIcon
-                  component={Link}
+                  component={NextLink}
                   size="lg"
                   href="/user/account#notification-settings"
                 >

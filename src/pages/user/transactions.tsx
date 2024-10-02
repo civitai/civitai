@@ -187,7 +187,7 @@ export default function UserTransactions() {
                         View {label}
                       </RoutedDialogLink>
                     ) : url ? (
-                      <Link legacyBehavior href={url} passHref>
+                      <Link href={url} passHref>
                         <Anchor size="xs">View {label}</Anchor>
                       </Link>
                     ) : null}

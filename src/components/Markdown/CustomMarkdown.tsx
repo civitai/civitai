@@ -43,7 +43,7 @@ export function CustomMarkdown({
             href = href.replace('//civitai.com', `//${location.host}`);
 
           return (
-            <Link legacyBehavior href={href} passHref>
+            <Link href={href} passHref>
               <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
                 {props.children?.[0]}
               </a>

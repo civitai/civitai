@@ -1,5 +1,5 @@
 import { Title, Text, Button, Loader } from '@mantine/core';
-import Link from 'next/link'
+import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { createPage } from '~/components/AppLayout/createPage';
@@ -34,7 +34,7 @@ function TrainingDataReviewPage() {
                 Created: {formatDate(item.createdAt)}
               </Text>
             </div>
-            <Button compact component={Link} href={`${router.asPath}/${item.id}`}>
+            <Button compact component={NextLink} href={`${router.asPath}/${item.id}`}>
               Review
             </Button>
           </div>
