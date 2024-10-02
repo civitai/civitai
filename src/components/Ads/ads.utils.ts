@@ -136,7 +136,7 @@ export function getAdUnitDetails(args: AdUnitKey[]) {
       height,
       key,
       type,
-      id: adDefinitions[key],
+      id: config.adunits[key],
     };
   });
 }
@@ -146,7 +146,7 @@ const adConfig: Record<string, AdConfig> = {
   'civitai.com': {
     cmpScript: 'https://cmp.uniconsent.com/v2/a635bd9830/cmp.js',
     adScript: '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js',
-    adunits: adDefinitionsGreen,
+    adunits: adDefinitions,
   },
   'civitai.green': {
     cmpScript: 'https://cmp.uniconsent.com/v2/7d36e04838/cmp.js',
