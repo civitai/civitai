@@ -40,7 +40,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
 
   const { classes, cx } = useHomeBlockGridStyles({
     count: items.length ?? 0,
-    rows: 1,
+    rows: 2,
   });
 
   if (!cosmeticShopSection) {
@@ -58,11 +58,13 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         }}
         htmlMode
       />
-        <div className={cx(classes.grid, `mt-2 pb-2`)}>
+        <div className={cx(classes.grid, `mt-2 py-2`)}>
           {items.map((item) => {
             const { shopItem } = item;
             return (
-              <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} />
+              <div>
+                <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} hideNew />
+              </div>
             );
           })}
       </div>
