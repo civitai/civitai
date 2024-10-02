@@ -63,7 +63,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
             const { shopItem } = item;
             return (
               <div>
-                <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} hideNew />
+                <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} />
               </div>
             );
           })}
