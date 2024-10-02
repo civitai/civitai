@@ -115,12 +115,12 @@ export function ImagesInfiniteContent({
         <NoContent py="lg">
           {showEmptyCta && (
             <Group>
-              <Link legacyBehavior href="/posts/create">
+              <Link href="/posts/create">
                 <Button variant="default" radius="xl">
                   Post Media
                 </Button>
               </Link>
-              <Link legacyBehavior href="/generate">
+              <Link href="/generate">
                 <Button radius="xl">Generate Images</Button>
               </Link>
             </Group>

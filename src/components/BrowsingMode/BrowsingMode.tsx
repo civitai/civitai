@@ -1,5 +1,5 @@
 import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';

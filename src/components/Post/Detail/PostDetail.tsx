@@ -165,7 +165,7 @@ export function PostDetailContent({ postId }: Props) {
                     {relatedResource && (
                       <>
                         Posted to{' '}
-                        <Link legacyBehavior
+                        <Link
                           href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
                           passHref
                         >
@@ -346,7 +346,7 @@ export function PostDetailContent({ postId }: Props) {
                     limit={5}
                     badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
                     renderItem={(item) => (
-                      <Link legacyBehavior key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+                      <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
                         <Badge
                           component="a"
                           color="gray"

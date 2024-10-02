@@ -69,7 +69,7 @@ export function HomeStyleSegmentedControl({
 
   const options: SegmentedControlItem[] = Object.entries(data).map(([key, value]) => ({
     label: (
-      <Link legacyBehavior href={value.url} passHref>
+      <Link href={value.url} passHref>
         <Anchor variant="text">
           <Group align="center" spacing={8} noWrap>
             <ThemeIcon

@@ -63,7 +63,7 @@ import { VaultItemGetPaged } from '~/types/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VaultItemStatus } from '@prisma/client';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';

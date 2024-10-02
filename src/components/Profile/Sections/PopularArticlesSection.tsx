@@ -50,11 +50,7 @@ export const PopularArticlesSection = ({ user }: ProfileSectionProps) => {
             title="Most popular articles"
             icon={<IconPencilMinus />}
             action={
-              <Link
-                legacyBehavior
-                href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`}
-                passHref
-              >
+              <Link href={`/user/${user.username}/articles?sort=${ArticleSort.Newest}`} passHref>
                 <Button
                   h={34}
                   component="a"

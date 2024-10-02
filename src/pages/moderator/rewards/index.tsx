@@ -14,7 +14,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';

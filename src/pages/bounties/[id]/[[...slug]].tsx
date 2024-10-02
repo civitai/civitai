@@ -77,13 +77,13 @@ import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageVi
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { BountyDiscussion } from '~/components/Bounty/BountyDiscussion';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { BountyEntryCard } from '~/components/Cards/BountyEntryCard';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { AwardBountyAction } from '~/components/Bounty/AwardBountyAction';
 import { BountyContextMenu } from '~/components/Bounty/BountyContextMenu';
 import { Collection } from '~/components/Collection/Collection';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client.mjs';
@@ -291,11 +291,7 @@ export default function BountyDetailsPage({
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-                      <Link
-                        legacyBehavior
-                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                        passHref
-                      >
+                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
                         <Badge
                           component="a"
                           size="sm"

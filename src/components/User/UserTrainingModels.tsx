@@ -357,7 +357,7 @@ export default function UserTrainingModels() {
 
                 return (
                   // nb:
-                  // Cannot use <Link legacyBehavior> here as it doesn't properly wrap rows, handle middle clicks, etc.
+                  // Cannot use <Link> here as it doesn't properly wrap rows, handle middle clicks, etc.
                   // onClick doesn't handle middle clicks
                   // onAuxClick should work, but for some reason doesn't handle middle clicks
                   // onMouseUp is not perfect, but it's the closest thing we've got
@@ -482,7 +482,7 @@ export default function UserTrainingModels() {
                     <td>
                       <Group position="right" spacing={8} pr="xs" noWrap>
                         {mv.trainingStatus === TrainingStatus.InReview && (
-                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
+                          <Link href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"

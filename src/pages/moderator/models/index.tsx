@@ -142,7 +142,7 @@ export default function ModeratorModels() {
                         ) : (
                           <Badge radius="xl">Model</Badge>
                         )}
-                        <Link legacyBehavior
+                        <Link
                           href={`/models/${model.id}/${slugit(model.name)}${
                             model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
                           }`}

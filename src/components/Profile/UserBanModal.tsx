@@ -2,6 +2,7 @@ import { Button, CloseButton, Group, Modal, Select, Stack, Text, Title } from '@
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import { SupportContent } from '~/components/Support/SupportContent';
 import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode } from '~/server/common/enums';
 import { showErrorNotification } from '~/utils/notifications';

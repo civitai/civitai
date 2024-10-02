@@ -10,7 +10,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCloudPlus, IconDownload, IconMapSearch, IconRadar2 } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

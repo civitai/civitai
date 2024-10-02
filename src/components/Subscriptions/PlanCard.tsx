@@ -45,7 +45,7 @@ import {
 } from '~/components/Stripe/MembershipChangePrevention';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type PlanCardProps = {
   product: SubscriptionPlan;

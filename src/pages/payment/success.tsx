@@ -9,7 +9,7 @@ import {
   Button,
   Center,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
@@ -65,12 +65,7 @@ export default function PaymentSuccess() {
           </Text>
 
           <Group grow>
-            <Button
-              component={Link}
-              href="/models"
-              size="md"
-              leftIcon={<IconLayoutDashboard />}
-            >
+            <Button component={Link} href="/models" size="md" leftIcon={<IconLayoutDashboard />}>
               View Models
             </Button>
             <Button

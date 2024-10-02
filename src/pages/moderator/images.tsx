@@ -324,7 +324,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                           placeholder="empty"
                         />
                         {!!entityUrl && (
-                          <Link legacyBehavior href={entityUrl} passHref>
+                          <Link href={entityUrl} passHref>
                             <ActionIcon
                               component="a"
                               variant="transparent"
@@ -385,7 +385,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   Reported by
                 </Text>
                 <Group spacing={4}>
-                  <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
+                  <Link href={`/user/${image.report?.user.username}`} passHref>
                     <Anchor size="xs" target="_blank" lineClamp={1} inline>
                       {image.report?.user.username}
                     </Anchor>

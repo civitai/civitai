@@ -22,11 +22,11 @@ import {
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ModelType } from '@prisma/client';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -509,7 +509,7 @@ export function GenerationFormContent() {
 
                                   {atLimit && (!currentUser || currentUser.tier === 'free') && (
                                     <Text size="xs">
-                                      <Link legacyBehavior href="/pricing" passHref>
+                                      <Link href="/pricing" passHref>
                                         <Anchor
                                           color="yellow"
                                           rel="nofollow"

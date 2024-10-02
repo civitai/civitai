@@ -1,5 +1,5 @@
 import { Alert, Anchor, Button, Group, Stack, Text } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionItemStatus } from '@prisma/client';
 import { PostContestCollectionItem } from '~/types/router';
 

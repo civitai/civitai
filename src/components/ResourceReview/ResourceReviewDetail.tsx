@@ -12,8 +12,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { truncate } from 'lodash-es';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -187,7 +187,6 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
             ) : (
               relatedPosts?.items.map((post) => (
                 <Link
-                  legacyBehavior
                   key={post.id}
                   href={`/posts/${post.id}/${post.title ? slugit(post.title) : ''}`}
                   passHref

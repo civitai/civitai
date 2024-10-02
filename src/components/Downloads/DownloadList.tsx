@@ -14,7 +14,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
 
         return (
           <Group key={download.modelVersion.id} noWrap>
-            <Link legacyBehavior
+            <Link
               href={`/models/${download.modelVersion.model.id}/${slugit(
                 download.modelVersion.model.name
               )}`}

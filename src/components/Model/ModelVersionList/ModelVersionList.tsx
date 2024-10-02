@@ -9,7 +9,7 @@ import {
   ScrollArea,
   ThemeIcon,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconAlertTriangle,
   IconBan,

@@ -72,7 +72,7 @@ export function LoginPopover({
               )}
             </Group>
 
-            <Link legacyBehavior href={`/login?returnUrl=${router.asPath}`}>
+            <Link href={`/login?returnUrl=${router.asPath}`}>
               <Button size="xs">Login</Button>
             </Link>
           </Stack>

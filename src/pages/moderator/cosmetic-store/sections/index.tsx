@@ -26,7 +26,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { indexOf, isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
@@ -163,11 +163,7 @@ export default function CosmeticStoreSections() {
         </Stack>
         <Group position="apart" mb="md">
           <Group align="flex-end">
-            <Button
-              component={Link}
-              href="/moderator/cosmetic-store/sections/create"
-              radius="xl"
-            >
+            <Button component={Link} href="/moderator/cosmetic-store/sections/create" radius="xl">
               <IconPlus />
               Add Section
             </Button>

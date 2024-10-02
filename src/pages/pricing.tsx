@@ -34,7 +34,7 @@ import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -241,12 +241,7 @@ export default function Pricing() {
                         </Text>
                       </Group>
                       {!isFreeTier ? (
-                        <Button
-                          radius="xl"
-                          color="gray"
-                          component={Link}
-                          href="/user/membership"
-                        >
+                        <Button radius="xl" color="gray" component={Link} href="/user/membership">
                           Downgrade to free
                         </Button>
                       ) : (

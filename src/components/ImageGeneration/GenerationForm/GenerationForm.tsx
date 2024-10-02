@@ -71,7 +71,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -80,6 +79,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 // import {
 //   textToImageParamsSchema,
 //   textToImageResourceSchema,
@@ -391,7 +391,7 @@ import { z } from 'zod';
 //             </Group>
 //             {atLimit && (!currentUser || currentUser.tier === 'free') && (
 //               <Text size="xs">
-//                 <Link legacyBehavior href="/pricing" passHref>
+//                 <Link href="/pricing" passHref>
 //                   <Anchor
 //                     color="yellow"
 //                     rel="nofollow"

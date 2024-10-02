@@ -215,11 +215,11 @@ export default createPage(
           <Text size="xs" color="dimmed">
             Our site is mostly used for sharing AI generated content. You can start generating
             images using our{' '}
-            <Link legacyBehavior href="/generate" passHref>
+            <Link href="/generate" passHref>
               <Anchor>onsite generator</Anchor>
             </Link>{' '}
             or train your model using your own images by using our{' '}
-            <Link legacyBehavior href="/models/train" passHref>
+            <Link href="/models/train" passHref>
               <Anchor>onsite LoRA trainer</Anchor>
             </Link>
             .

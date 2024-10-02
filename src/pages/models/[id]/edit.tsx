@@ -52,7 +52,7 @@ export default function ModelEditPage() {
         </Center>
       ) : (
         <Stack spacing="xl">
-          <Link legacyBehavior href={`/models/${modelId}`} passHref>
+          <Link href={`/models/${modelId}`} passHref>
             <Anchor size="xs">
               <Group spacing={4}>
                 <IconArrowLeft size={12} />

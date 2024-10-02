@@ -15,7 +15,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Currency } from '@prisma/client';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {

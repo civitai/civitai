@@ -35,7 +35,7 @@ import {
 } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { isDefined } from '~/utils/type-guards';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
 import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';

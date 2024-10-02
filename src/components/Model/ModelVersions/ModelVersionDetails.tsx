@@ -18,7 +18,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
 import {
   IconBrush,
@@ -38,6 +37,7 @@ import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
 import { AdUnit } from '~/components/Ads/AdUnit';
@@ -1183,7 +1183,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     </Text>
                   )}
                   {showAddendumLicense && (
-                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
+                    <Link href={`/models/license/${version.id}`} passHref>
                       <Anchor
                         variant="text"
                         td="underline"

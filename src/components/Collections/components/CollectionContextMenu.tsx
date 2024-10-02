@@ -157,7 +157,7 @@ export function CollectionContextMenu({
           </Menu.Item>
         )}
         {!isBookmarkCollection && permissions?.manage && (
-          <Link legacyBehavior href={`/collections/${collectionId}/review`} passHref>
+          <Link href={`/collections/${collectionId}/review`} passHref>
             <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
               Review items
             </Menu.Item>

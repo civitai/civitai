@@ -99,7 +99,7 @@ export function CustomSpotlightAction({
   };
 
   return (
-    <Link legacyBehavior href={getHref(action)} passHref>
+    <Link href={getHref(action)} passHref>
       <a
         className={classes.action}
         onClick={(e) => {

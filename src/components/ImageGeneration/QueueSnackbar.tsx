@@ -3,7 +3,7 @@ import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationSt
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
-import { NextLink as Link } from '~/components/NextLink/NextLink'
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
 import { WorkflowStatus } from '@civitai/client';

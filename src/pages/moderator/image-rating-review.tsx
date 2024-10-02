@@ -34,8 +34,8 @@ export default function ImageRatingReview() {
   const hasNextPage = !!data?.nextCursor;
 
   return (
-    <div className="p-4  flex flex-col gap-4">
-      <div className="flex justify-center gap-4 items-center">
+    <div className="flex  flex-col gap-4 p-4">
+      <div className="flex items-center justify-center gap-4">
         <Title>Image Rating Review</Title>
         <Select
           placeholder="Limit"
@@ -55,7 +55,7 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 justify-center"
+            className="grid justify-center gap-6"
             style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (

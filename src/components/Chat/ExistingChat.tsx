@@ -21,7 +21,6 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
 import {
   IconArrowBack,
@@ -41,6 +40,7 @@ import produce from 'immer';
 import Linkify from 'linkify-react';
 import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { throttle } from 'lodash-es';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChatActions } from '~/components/Chat/ChatActions';

@@ -1,5 +1,4 @@
 import { createStyles, Paper, Stack, Text } from '@mantine/core';
-
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';

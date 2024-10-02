@@ -81,8 +81,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       alt={image.name ?? undefined}
                       skip={getSkipValue(image)}
                       type={image.type}
+                      wrapperProps={{ style: { height: '100%' } }}
                       width={450}
                       placeholder="empty"
+                      contain={!!image.cosmetic?.data}
                       fadeIn
                     />
                   ) : (

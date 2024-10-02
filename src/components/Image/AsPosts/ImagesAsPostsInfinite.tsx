@@ -13,7 +13,6 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconArrowsCross,
   IconCloudOff,
@@ -23,6 +22,7 @@ import {
   IconSettings,
   IconStar,
 } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -285,11 +285,7 @@ export default function ImagesAsPostsInfinite({
               {hasModerationPreferences ? (
                 <Text size="xs" color="dimmed" mt="-md">
                   Some images have been hidden based on moderation preferences set by the creator,{' '}
-                  <Link
-                    legacyBehavior
-                    href={`/images?modelVersionId=${selectedVersionId}`}
-                    passHref
-                  >
+                  <Link href={`/images?modelVersionId=${selectedVersionId}`} passHref>
                     <Anchor span>view all images using this resource</Anchor>
                   </Link>
                   .

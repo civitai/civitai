@@ -114,7 +114,7 @@ export function CommentSection({ comments, modelId, parent, highlights }: Props)
                       <Text size="xs" color={theme.colors.gray[4]}>
                         You must be logged in to add a comment
                       </Text>
-                      <Link legacyBehavior href={`/login?returnUrl=${router.asPath}`}>
+                      <Link href={`/login?returnUrl=${router.asPath}`}>
                         <Button size="xs" onClick={() => closeAllModals()} compact>
                           Log In
                         </Button>
