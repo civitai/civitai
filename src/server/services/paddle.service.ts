@@ -15,6 +15,7 @@ import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
+  getPaddleAdjustments,
   getPaddleCustomerSubscriptions,
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
@@ -22,6 +23,7 @@ import {
   // updateTransaction,
 } from '~/server/paddle/client';
 import {
+  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionMetadataSchema,
   TransactionWithSubscriptionCreateInput,
@@ -34,6 +36,8 @@ import {
   EventName,
   SubscriptionNotification,
   TransactionNotification,
+  Adjustment,
+  AdjustmentAction,
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -49,6 +53,7 @@ import { env } from '~/env/server.mjs';
 import dayjs from 'dayjs';
 import { original } from 'immer';
 import { logToAxiom } from '~/server/logging/client';
+import { PaginationInput } from '~/server/schema/base.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -754,4 +759,35 @@ export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId:
   const subsToCancel = subs.filter((sub) => sub.status === 'active');
   const cancelPromises = subsToCancel.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'));
   return Promise.all(cancelPromises);
+};
+
+export const getAdjustmentsInfinite = async ({
+  limit = 50,
+  cursor,
+  customerId,
+  subscriptionId,
+  transactionId,
+  action,
+}: GetPaddleAdjustmentsSchema) => {
+  const data = await getPaddleAdjustments({
+    after: cursor,
+    perPage: limit + 1,
+    // Paddle is picky about empty arrays.....
+    customerId: customerId?.length ? customerId : undefined,
+    subscriptionId: subscriptionId?.length ? subscriptionId : undefined,
+    transactionId: transactionId?.length ? transactionId : undefined,
+    action: action ? (action as AdjustmentAction) : undefined,
+  });
+
+  const hasMore = data.length > limit;
+  let nextItem: Adjustment | undefined;
+  if (hasMore) {
+    data.pop();
+    nextItem = data[data.length - 1];
+  }
+
+  return {
+    items: data,
+    nextCursor: nextItem?.id,
+  };
 };

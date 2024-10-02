@@ -108,6 +108,7 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
   adsEnabled: ['public', 'blue', 'green'],
+  paddleAdjustments: ['dev', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
