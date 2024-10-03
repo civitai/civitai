@@ -90,8 +90,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    const fn = data.modelId ? getAllImages : getAllImagesIndex;
 
-    const { items, nextCursor } = await getAllImagesIndex({
+    const { items, nextCursor } = await fn({
       ...data,
       types: type ? [type] : undefined,
       limit,
