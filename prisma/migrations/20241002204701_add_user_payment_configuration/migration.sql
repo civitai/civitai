@@ -1,12 +1,3 @@
--- DropForeignKey
-ALTER TABLE "UserStripeConnect" DROP CONSTRAINT "UserStripeConnect_userId_fkey";
-
--- DropTable
-DROP TABLE "UserStripeConnect";
-
--- DropEnum
-DROP TYPE "StripeConnectStatus";
-
 -- CreateTable
 CREATE TABLE "UserPaymentConfiguration" (
     "userId" INTEGER NOT NULL,
