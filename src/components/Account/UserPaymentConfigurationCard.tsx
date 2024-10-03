@@ -15,7 +15,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { StripeConnectStatus } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
@@ -27,7 +26,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { StripeConnectStatus } from '~/server/common/enums';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -205,11 +205,11 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
   }
 };
 
-export function StripeConnectCard() {
+export function UserPaymentConfigurationCard() {
   const features = useFeatureFlags();
-  const { userStripeConnect, isLoading } = useUserStripeConnect();
+  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
-  if (!features.creatorsProgram || !userStripeConnect) return null;
+  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
 
   return (
     <Card withBorder id="stripe">
@@ -240,7 +240,7 @@ export function StripeConnectCard() {
         <Center>
           <Loader />
         </Center>
-      ) : !userStripeConnect ? (
+      ) : !userPaymentConfiguration ? (
         <Stack>
           <Alert color="red">
             It looks like you are not authorized to receive payments or setup your account. Please
@@ -249,7 +249,9 @@ export function StripeConnectCard() {
         </Stack>
       ) : (
         <Stack>
-          <StripeConnectStatusDisplay status={userStripeConnect.status} />
+          <StripeConnectStatusDisplay
+            status={userPaymentConfiguration.stripeAccountStatus as StripeConnectStatus}
+          />
         </Stack>
       )}
     </Card>

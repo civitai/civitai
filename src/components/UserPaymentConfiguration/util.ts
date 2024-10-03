@@ -5,7 +5,7 @@ import { trpc } from '~/utils/trpc';
 export const useUserPaymentConfiguration = () => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { data: userStripeConnect, isLoading } = trpc.userPaymentConfiguration.get.useQuery(
+  const { data: userPaymentConfiguration, isLoading } = trpc.userPaymentConfiguration.get.useQuery(
     undefined,
     {
       enabled: !!features.creatorsProgram && !!currentUser,
@@ -13,7 +13,7 @@ export const useUserPaymentConfiguration = () => {
   );
 
   return {
-    userStripeConnect,
+    userPaymentConfiguration,
     isLoading,
   };
 };

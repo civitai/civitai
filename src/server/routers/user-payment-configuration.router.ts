@@ -1,8 +1,8 @@
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
-import { getHandler } from '../controllers/user-stripe-connect.controller';
-import { getStripeConnectOnboardingLink } from '../services/user-stripe-connect.service';
+import { getHandler } from '../controllers/user-payment-configuration.controller';
+import { getStripeConnectOnboardingLink } from '../services/user-payment-configuration.service';
 
-export const userStripeConnectRouter = router({
+export const userPaymentConfigurationRouter = router({
   get: protectedProcedure.use(isFlagProtected('creatorsProgram')).query(getHandler),
   getOnboardinLink: protectedProcedure
     .use(isFlagProtected('creatorsProgram'))

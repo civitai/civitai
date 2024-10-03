@@ -1,4 +1,8 @@
-import { BuzzWithdrawalRequestStatus, Prisma } from '@prisma/client';
+import {
+  BuzzWithdrawalRequestStatus,
+  Prisma,
+  UserPaymentConfigurationProvider,
+} from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
@@ -6,7 +10,7 @@ import { createNotification } from '~/server/services/notification.service';
 import {
   payToStripeConnectAccount,
   revertStripeConnectTransfer,
-} from '~/server/services/user-stripe-connect.service';
+} from '~/server/services/user-payment-configuration.service';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
@@ -29,10 +33,15 @@ import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
 export const createBuzzWithdrawalRequest = async ({
   amount,
   userId,
+  provider,
 }: // Update schema to take target provider if needed.
 CreateBuzzWithdrawalRequestSchema & {
   userId: number;
 }) => {
+  if (provider === UserPaymentConfigurationProvider.Stripe) {
+    throw throwBadRequestError('We have disabled Stripe payments for the time being.');
+  }
+
   const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
   });
@@ -42,7 +51,11 @@ CreateBuzzWithdrawalRequestSchema & {
   }
 
   // Update here to support another provider.
-  if (!userPaymentConfiguration.tipaltiPaymentsEnabled) {
+  const requirements =
+    provider === UserPaymentConfigurationProvider.Tipalti
+      ? userPaymentConfiguration.tipaltiPaymentsEnabled && userPaymentConfiguration.tipaltiAccountId
+      : userPaymentConfiguration.stripePaymentsEnabled && userPaymentConfiguration.stripeAccountId;
+  if (!requirements) {
     throw throwBadRequestError('Your account has not been approved yet and cannot withdraw funds');
   }
 
@@ -76,15 +89,27 @@ CreateBuzzWithdrawalRequestSchema & {
   });
 
   try {
+    const providerData: {
+      requestedToProvider: UserPaymentConfigurationProvider;
+      requestedToId: string;
+    } =
+      provider === UserPaymentConfigurationProvider.Tipalti
+        ? {
+            requestedToProvider: UserPaymentConfigurationProvider.Tipalti,
+            requestedToId: userPaymentConfiguration.tipaltiAccountId as string,
+          }
+        : {
+            requestedToProvider: UserPaymentConfigurationProvider.Stripe,
+            requestedToId: userPaymentConfiguration.stripeAccountId as string,
+          };
     // Create the withdrawal request:
     const request = await dbWrite.buzzWithdrawalRequest.create({
       data: {
         userId,
-        requestedToProvider: 'Tipalti',
-        requestedToId: userPaymentConfiguration.tipaltiAccountId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
         platformFeeRate: constants.buzz.platformFeeRate,
+        ...providerData,
       },
       select: buzzWithdrawalRequestDetails,
     });
@@ -314,7 +339,7 @@ export const updateBuzzWithdrawalRequest = async ({
       throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
     }
 
-    if (request.requestedToProvider === 'Stripe') {
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Stripe) {
       const transfer = await payToStripeConnectAccount({
         toUserId: request.userId as number, // Ofcs, user should exist for one.
         amount: payoutAmount,

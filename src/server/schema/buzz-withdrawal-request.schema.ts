@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, UserPaymentConfigurationProvider } from '@prisma/client';
 import { paginationSchema } from './base.schema';
 import { constants } from '~/server/common/constants';
 
@@ -9,6 +9,9 @@ export const createBuzzWithdrawalRequestSchema = z.object({
     .number()
     .min(constants.buzz.minBuzzWithdrawal)
     .default(constants.buzz.minBuzzWithdrawal),
+  provider: z
+    .nativeEnum(UserPaymentConfigurationProvider)
+    .default(UserPaymentConfigurationProvider.Tipalti),
 });
 
 export type GetPaginatedOwnedBuzzWithdrawalRequestSchema = z.infer<

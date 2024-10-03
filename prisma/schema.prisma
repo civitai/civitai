@@ -92,11 +92,11 @@ model UserPaymentConfiguration {
   user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Tipalti
   tipaltiAccountId       String? @unique
-  tipaltiAccountStatus   String  @default("INTERNAL_VALUE")
+  tipaltiAccountStatus   String  @default("PendingOnboarding")
   tipaltiPaymentsEnabled Boolean @default(false)
   // Stripe, mainly here for safekeeping or in case we ever support this again.
   stripeAccountId        String? @unique
-  stripeAccountStatus    String  @default("Pending")
+  stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
 }
 

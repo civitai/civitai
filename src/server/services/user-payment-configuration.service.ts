@@ -1,36 +1,36 @@
-import { StripeConnectStatus, UserStripeConnect } from '@prisma/client';
 import Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, StripeConnectStatus } from '~/server/common/enums';
 import { env } from '../../env/server.mjs';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { createNotification } from './notification.service';
+import { UserPaymentConfiguration } from '@prisma/client';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
   logToAxiom({ name: 'stripe-connect', type: 'error', ...data }).catch();
 };
 
-export async function getUserStripeConnectAccount({ userId }: { userId: number }) {
-  return dbRead.userStripeConnect.findUnique({ where: { userId } });
+export async function getUserPaymentConfiguration({ userId }: { userId: number }) {
+  return dbRead.userPaymentConfiguration.findUnique({ where: { userId } });
 }
 
-export async function createUserStripeConnectAccount({ userId }: { userId: number }) {
+export async function createStripeConnectAccount({ userId }: { userId: number }) {
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe not available');
   const user = await dbRead.user.findUnique({ where: { id: userId } });
 
   if (!user) throw throwBadRequestError(`User not found: ${userId}`);
 
-  const existingStripeConnectAccount = await dbRead.userStripeConnect.findFirst({
+  const existingConfig = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
   });
 
-  if (existingStripeConnectAccount) {
-    return existingStripeConnectAccount;
+  if (existingConfig && existingConfig.stripeAccountId) {
+    return existingConfig;
   }
 
   try {
@@ -48,16 +48,22 @@ export async function createUserStripeConnectAccount({ userId }: { userId: numbe
       },
     });
 
-    const userStripeConnect = await dbWrite.userStripeConnect.create({
-      data: {
+    const userStripeConnect = await dbWrite.userPaymentConfiguration.upsert({
+      create: {
         userId,
-        connectedAccountId: connectedAccount.id,
+        stripeAccountId: connectedAccount.id,
+      },
+      update: {
+        stripeAccountId: connectedAccount.id,
+      },
+      where: {
+        userId,
       },
     });
 
     return userStripeConnect;
   } catch (error) {
-    log({ method: 'createUserStripeConnectAccount', error, userId });
+    log({ method: 'createStripeConnectAccount', error, userId });
     throw error;
   }
 }
@@ -65,14 +71,16 @@ export async function createUserStripeConnectAccount({ userId }: { userId: numbe
 export async function getStripeConnectOnboardingLink({ userId }: { userId: number }) {
   if (!env.NEXT_PUBLIC_BASE_URL) throw throwBadRequestError('NEXT_PUBLIC_BASE_URL not set');
 
-  const userStripeConnect = await getUserStripeConnectAccount({ userId });
-  if (!userStripeConnect) throw throwBadRequestError('User stripe connect account not found');
+  const userPaymentConfig = await getUserPaymentConfiguration({ userId });
+  if (!userPaymentConfig || !userPaymentConfig.stripeAccountId)
+    throw throwBadRequestError('User stripe connect account not found');
 
   const stripe = await getServerStripe();
 
   if (!stripe) throw throwBadRequestError('Stripe not available');
+
   const accountLink = await stripe.accountLinks.create({
-    account: userStripeConnect.connectedAccountId,
+    account: userPaymentConfig.stripeAccountId,
     refresh_url: `${env.NEXT_PUBLIC_BASE_URL}/user/stripe-connect/onboard`,
     return_url: `${env.NEXT_PUBLIC_BASE_URL}/user/account#stripe`,
     type: 'account_onboarding',
@@ -86,34 +94,32 @@ export async function updateByStripeConnectAccount({
 }: {
   stripeAccount: Stripe.Account;
 }) {
-  const userStripeConnect = await dbWrite.userStripeConnect.findUnique({
-    where: { connectedAccountId: stripeAccount.id },
+  const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
+    where: { stripeAccountId: stripeAccount.id },
   });
 
-  if (!userStripeConnect) throw throwBadRequestError('User stripe connect account not found');
+  if (!userPaymentConfig) throw throwBadRequestError('User stripe connect account not found');
 
-  let updated: UserStripeConnect = userStripeConnect;
+  let updated: UserPaymentConfiguration = userPaymentConfig;
 
   const data = {
-    payoutsEnabled: stripeAccount.payouts_enabled,
-    // Mainly a future-proofing, we're not doing charges really, but might be good to store.
-    chargesEnabled: stripeAccount.charges_enabled,
+    stripePaymentsEnabled: stripeAccount.payouts_enabled,
   };
 
   if (stripeAccount.payouts_enabled && stripeAccount.details_submitted) {
     // If we're here, user is good to go!
 
-    updated = await dbWrite.userStripeConnect.update({
-      where: { connectedAccountId: stripeAccount.id },
+    updated = await dbWrite.userPaymentConfiguration.update({
+      where: { stripeAccountId: stripeAccount.id },
       data: {
-        status: StripeConnectStatus.Approved,
+        stripeAccountStatus: StripeConnectStatus.Approved,
         ...data,
       },
     });
 
-    if (userStripeConnect.status !== StripeConnectStatus.Approved) {
+    if (userPaymentConfig.stripeAccountStatus !== StripeConnectStatus.Approved) {
       await createNotification({
-        userId: userStripeConnect.userId,
+        userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
         category: NotificationCategory.System,
         key: `creators-program-payments-enabled:${uuid()}`,
@@ -122,17 +128,17 @@ export async function updateByStripeConnectAccount({
     }
   } else if (stripeAccount.requirements?.disabled_reason) {
     // If we're here, user is not good to go!
-    updated = await dbWrite.userStripeConnect.update({
-      where: { connectedAccountId: stripeAccount.id },
+    updated = await dbWrite.userPaymentConfiguration.update({
+      where: { stripeAccountId: stripeAccount.id },
       data: {
-        status: StripeConnectStatus.Rejected,
+        stripeAccountStatus: StripeConnectStatus.Rejected,
         ...data,
       },
     });
 
-    if (userStripeConnect.status !== StripeConnectStatus.Rejected) {
+    if (userPaymentConfig.stripeAccountStatus !== StripeConnectStatus.Rejected) {
       await createNotification({
-        userId: userStripeConnect.userId,
+        userId: userPaymentConfig.userId,
         type: 'creators-program-rejected-stripe',
         category: NotificationCategory.System,
         key: `creators-program-rejected-stripe:${uuid()}`,
@@ -140,10 +146,10 @@ export async function updateByStripeConnectAccount({
       }).catch();
     }
   } else if (stripeAccount.details_submitted) {
-    updated = await dbWrite.userStripeConnect.update({
-      where: { connectedAccountId: stripeAccount.id },
+    updated = await dbWrite.userPaymentConfiguration.update({
+      where: { stripeAccountId: stripeAccount.id },
       data: {
-        status: StripeConnectStatus.PendingVerification,
+        stripeAccountStatus: StripeConnectStatus.PendingVerification,
         ...data,
       },
     });
@@ -168,14 +174,18 @@ export const payToStripeConnectAccount = async ({
   const stripe = await getServerStripe();
   if (!stripe) throw throwBadRequestError('Stripe not available');
 
-  const toUserStripeConnect = await getUserStripeConnectAccount({ userId: toUserId });
-  if (!toUserStripeConnect) throw throwBadRequestError('User stripe connect account not found');
+  const toUserPaymentConfig = await getUserPaymentConfiguration({ userId: toUserId });
+  if (!toUserPaymentConfig || !toUserPaymentConfig.stripeAccountId)
+    throw throwBadRequestError('User stripe connect account not found');
+
+  if (!toUserPaymentConfig.stripePaymentsEnabled)
+    throw throwBadRequestError('User stripe connect account not enabled for payments');
 
   try {
     const transfer = await stripe.transfers.create({
       amount,
       currency: 'usd',
-      destination: toUserStripeConnect.connectedAccountId,
+      destination: toUserPaymentConfig.stripeAccountId,
       description,
       metadata: {
         byUserId: byUserId.toString(),
