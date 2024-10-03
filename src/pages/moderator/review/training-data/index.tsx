@@ -1,4 +1,4 @@
-import { Title, Text, Button, Loader } from '@mantine/core';
+import { Button, Loader, Text, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -9,6 +9,7 @@ import { trpc } from '~/utils/trpc';
 
 function TrainingDataReviewPage() {
   const router = useRouter();
+  // TODO maybe hook into orchestrator and pull Gate
   const { data, isFetching, hasNextPage, fetchNextPage } =
     trpc.moderator.modelVersions.query.useInfiniteQuery(
       {

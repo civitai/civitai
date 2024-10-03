@@ -30,7 +30,7 @@ export async function createCsamReportHandler({
   const modelVersionIds = details?.modelVersionIds ?? [];
   if (type === 'TrainingData' && !!modelVersionIds.length) {
     const modelVersionId = modelVersionIds[0];
-    await handleDenyTrainingData({ input: { id: modelVersionId }, ctx });
+    await handleDenyTrainingData({ input: { id: modelVersionId } });
   }
 
   if (userId !== -1) {

@@ -4,11 +4,9 @@ import {
   handleApproveTrainingData,
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
-import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
-import { getVersionById } from '~/server/services/model-version.service';
-import { createTrainingRequest } from '~/server/services/training.service';
 import { moderatorProcedure, router } from '~/server/trpc';
 
 export const modRouter = router({

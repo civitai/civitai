@@ -1,25 +1,25 @@
 import {
   Center,
   Container,
+  createStyles,
   Group,
   Modal,
   Stack,
-  StepProps,
   Stepper,
+  StepProps,
   Text,
   Title,
-  createStyles,
 } from '@mantine/core';
 import { createContext, useContext, useRef, useState } from 'react';
-import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
-import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
-import { OnboardingProfile } from '~/components/Onboarding/OnboardingProfile';
-import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
-import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
-import { OnboardingSteps } from '~/server/common/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
+import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
+import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
+import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
+import { OnboardingProfile } from '~/components/Onboarding/OnboardingProfile';
+import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
+import { OnboardingSteps } from '~/server/common/enums';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type StepPropsCustom = StepProps & {
   Component: React.FC;

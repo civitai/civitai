@@ -9,6 +9,7 @@ import {
   createStyles,
   Group,
   Image as MImage,
+  List,
   Loader,
   Modal,
   Pagination,
@@ -22,12 +23,12 @@ import {
   Title,
   Tooltip,
   useMantineTheme,
-  List,
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { showNotification, updateNotification } from '@mantine/notifications';
+import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
+import type { NotificationProps } from '@mantine/notifications/lib/types';
 import { ModelFileVisibility } from '@prisma/client';
 import {
   IconAlertTriangle,
@@ -278,6 +279,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
 
   const notificationId = `${thisModelVersion.id}-uploading-data-notification`;
+  const notificationFailBase: NotificationProps & { id: string } = {
+    id: notificationId,
+    icon: <IconX size={18} />,
+    color: 'red',
+    title: 'Failed to upload archive',
+    message: 'Please try again (or contact us if it continues)',
+    autoClose: false,
+  };
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
@@ -590,10 +599,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     onError(error) {
       setZipping(false);
       updateNotification({
-        id: notificationId,
-        icon: <IconX size={18} />,
-        color: 'red',
-        title: 'Failed to upload archive.',
+        ...notificationFailBase,
         message: error.message,
       });
     },
@@ -754,6 +760,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         type: 'application/zip',
       });
 
+      hideNotification(notificationId);
       showNotification({
         id: notificationId,
         loading: true,
@@ -801,11 +808,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               } catch (e: unknown) {
                 setZipping(false);
                 updateNotification({
-                  id: notificationId,
-                  icon: <IconX size={18} />,
-                  color: 'red',
-                  title: 'Failed to upload archive.',
-                  message: 'Please try again (or contact us if it continues)',
+                  ...notificationFailBase,
                 });
               }
             } else {
@@ -816,21 +819,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (!uploadResp) {
           setZipping(false);
           updateNotification({
-            id: notificationId,
-            icon: <IconX size={18} />,
-            color: 'red',
-            title: 'Failed to upload archive.',
-            message: 'Please try again (or contact us if it continues)',
+            ...notificationFailBase,
           });
         }
       } catch (e) {
         setZipping(false);
         updateNotification({
-          id: notificationId,
-          icon: <IconX size={18} />,
-          color: 'red',
-          title: 'Failed to upload archive.',
-          message: e instanceof Error ? e.message : '',
+          ...notificationFailBase,
+          message:
+            e instanceof Error
+              ? e.message.startsWith('Unexpected token')
+                ? 'Server error :('
+                : e.message
+              : '',
         });
       }
     });
@@ -925,325 +926,329 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           </Text>
         </div>
         {confirmed.status && (
-          <ImageDropzone
-            mt="md"
-            onDrop={handleDrop}
-            label="Drag images (or a zip file) here or click to select files"
-            description={
-              <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
-                Changes made here are not permanently saved until you hit &quot;Next&quot;
-              </Text>
-            }
-            max={MAX_FILES_ALLOWED}
-            // loading={isLoading}
-            count={imageList.length}
-            accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
-            onExceedMax={() =>
-              showErrorNotification({
-                title: 'Too many images',
-                error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
-                autoClose: false,
-              })
-            }
-          />
-        )}
-        {imageList.length > 0 && (
-          <Group my="md">
-            <Paper
-              shadow="xs"
-              radius="sm"
-              px={8}
-              py={2}
-              style={{
-                backgroundColor:
-                  theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-              }}
-            >
-              <Text
-                style={{ lineHeight: '22px' }}
-                color={
-                  totalLabeled === 0
-                    ? theme.colors.red[5]
-                    : totalLabeled < imageList.length
-                    ? theme.colors.orange[5]
-                    : theme.colors.green[5]
-                }
-              >
-                {`${totalLabeled} / ${imageList.length} labeled`}
-              </Text>
-            </Paper>
-            <Tooltip
-              label="Not connected - will not receive updates. Please try refreshing the page."
-              disabled={connected}
-            >
-              <Button
-                compact
-                color="violet"
-                disabled={autoLabeling.isRunning || !connected}
-                style={!connected ? { pointerEvents: 'initial' } : undefined}
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AutoLabelModal,
-                    props: { modelId: model.id },
-                  })
-                }
-              >
-                <Group spacing={4}>
-                  <IconTags size={16} />
-                  <Text>Auto Label</Text>
-                  {Date.now() < new Date('2024-09-27').getTime() && (
-                    <Badge color="green" variant="filled" size="sm" ml={4}>
-                      NEW
-                    </Badge>
-                  )}
-                </Group>
-              </Button>
-            </Tooltip>
-            <Button
-              compact
-              color="cyan"
-              loading={zipping}
-              onClick={() => handleNextAfterCheck(true)}
-            >
-              <IconFileDownload size={16} />
-              <Text inline ml={4}>
-                Download
-              </Text>
-            </Button>
+          <>
+            <ImageDropzone
+              mt="md"
+              onDrop={handleDrop}
+              label="Drag images (or a zip file) here or click to select files"
+              description={
+                <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
+                  Changes made here are not permanently saved until you hit &quot;Next&quot;
+                </Text>
+              }
+              max={MAX_FILES_ALLOWED}
+              // loading={isLoading}
+              count={imageList.length}
+              accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+              onExceedMax={() =>
+                showErrorNotification({
+                  title: 'Too many images',
+                  error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                  autoClose: false,
+                })
+              }
+            />
 
-            <Button
-              compact
-              color="red"
-              disabled={autoLabeling.isRunning}
-              onClick={() => {
-                openConfirmModal({
-                  title: 'Remove all images?',
-                  children: 'This cannot be undone.',
-                  labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                  centered: true,
-                  onConfirm: () => setImageList(model.id, []),
-                });
-              }}
-            >
-              <IconTrash size={16} />
-              <Text inline ml={4}>
-                Reset
-              </Text>
-            </Button>
-          </Group>
-        )}
-        {filteredImages.length > maxImgPerPage && (
-          <Pagination
-            withEdges
-            mb="md"
-            page={page}
-            onChange={setPage}
-            total={Math.ceil(filteredImages.length / maxImgPerPage)}
-          />
-        )}
-        {autoLabeling.isRunning && (
-          <Paper
-            my="lg"
-            p="md"
-            withBorder
-            style={{
-              backgroundColor:
-                theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-            }}
-          >
-            <Stack>
-              <Text>Running auto labeling...</Text>
-              {autoLabeling.successes + autoLabeling.fails.length > 0 ? (
-                <Progress
-                  value={
-                    ((autoLabeling.successes + autoLabeling.fails.length) / autoLabeling.total) *
-                    100
-                  }
-                  label={`${autoLabeling.successes + autoLabeling.fails.length} / ${
-                    autoLabeling.total
-                  }`}
-                  size="xl"
-                  radius="xl"
-                  striped
-                  animate
+            {imageList.length > 0 && (
+              <Group my="md">
+                <Paper
+                  shadow="xs"
+                  radius="sm"
+                  px={8}
+                  py={2}
+                  style={{
+                    backgroundColor:
+                      theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                  }}
+                >
+                  <Text
+                    style={{ lineHeight: '22px' }}
+                    color={
+                      totalLabeled === 0
+                        ? theme.colors.red[5]
+                        : totalLabeled < imageList.length
+                        ? theme.colors.orange[5]
+                        : theme.colors.green[5]
+                    }
+                  >
+                    {`${totalLabeled} / ${imageList.length} labeled`}
+                  </Text>
+                </Paper>
+                <Tooltip
+                  label="Not connected - will not receive updates. Please try refreshing the page."
+                  disabled={connected}
+                >
+                  <Button
+                    compact
+                    color="violet"
+                    disabled={autoLabeling.isRunning || !connected}
+                    style={!connected ? { pointerEvents: 'initial' } : undefined}
+                    onClick={() =>
+                      dialogStore.trigger({
+                        component: AutoLabelModal,
+                        props: { modelId: model.id },
+                      })
+                    }
+                  >
+                    <Group spacing={4}>
+                      <IconTags size={16} />
+                      <Text>Auto Label</Text>
+                      {Date.now() < new Date('2024-09-27').getTime() && (
+                        <Badge color="green" variant="filled" size="sm" ml={4}>
+                          NEW
+                        </Badge>
+                      )}
+                    </Group>
+                  </Button>
+                </Tooltip>
+                <Button
+                  compact
+                  color="cyan"
+                  loading={zipping}
+                  onClick={() => handleNextAfterCheck(true)}
+                >
+                  <IconFileDownload size={16} />
+                  <Text inline ml={4}>
+                    Download
+                  </Text>
+                </Button>
+
+                <Button
+                  compact
+                  color="red"
+                  disabled={autoLabeling.isRunning}
+                  onClick={() => {
+                    openConfirmModal({
+                      title: 'Remove all images?',
+                      children: 'This cannot be undone.',
+                      labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                      centered: true,
+                      onConfirm: () => setImageList(model.id, []),
+                    });
+                  }}
+                >
+                  <IconTrash size={16} />
+                  <Text inline ml={4}>
+                    Reset
+                  </Text>
+                </Button>
+              </Group>
+            )}
+            {filteredImages.length > maxImgPerPage && (
+              <Pagination
+                withEdges
+                mb="md"
+                page={page}
+                onChange={setPage}
+                total={Math.ceil(filteredImages.length / maxImgPerPage)}
+              />
+            )}
+            {autoLabeling.isRunning && (
+              <Paper
+                my="lg"
+                p="md"
+                withBorder
+                style={{
+                  backgroundColor:
+                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
+                }}
+              >
+                <Stack>
+                  <Text>Running auto labeling...</Text>
+                  {autoLabeling.successes + autoLabeling.fails.length > 0 ? (
+                    <Progress
+                      value={
+                        ((autoLabeling.successes + autoLabeling.fails.length) /
+                          autoLabeling.total) *
+                        100
+                      }
+                      label={`${autoLabeling.successes + autoLabeling.fails.length} / ${
+                        autoLabeling.total
+                      }`}
+                      size="xl"
+                      radius="xl"
+                      striped
+                      animate
+                    />
+                  ) : (
+                    <Progress
+                      value={100}
+                      label="Waiting for data..."
+                      size="xl"
+                      radius="xl"
+                      striped
+                      animate
+                    />
+                  )}
+                </Stack>
+              </Paper>
+            )}
+            {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
+            {imageList.length > 0 ? (
+              labelType === 'caption' ? (
+                <TrainingImagesCaptionViewer
+                  selectedTags={selectedTags}
+                  setSelectedTags={setSelectedTags}
+                  searchCaption={searchCaption}
+                  setSearchCaption={setSearchCaption}
+                  numImages={filteredImages.length}
                 />
               ) : (
-                <Progress
-                  value={100}
-                  label="Waiting for data..."
-                  size="xl"
-                  radius="xl"
-                  striped
-                  animate
+                <TrainingImagesTagViewer
+                  selectedTags={selectedTags}
+                  setSelectedTags={setSelectedTags}
+                  modelId={model.id}
+                  numImages={filteredImages.length}
                 />
-              )}
-            </Stack>
-          </Paper>
-        )}
-        {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
-        {imageList.length > 0 ? (
-          labelType === 'caption' ? (
-            <TrainingImagesCaptionViewer
-              selectedTags={selectedTags}
-              setSelectedTags={setSelectedTags}
-              searchCaption={searchCaption}
-              setSearchCaption={setSearchCaption}
-              numImages={filteredImages.length}
-            />
-          ) : (
-            <TrainingImagesTagViewer
-              selectedTags={selectedTags}
-              setSelectedTags={setSelectedTags}
-              modelId={model.id}
-              numImages={filteredImages.length}
-            />
-          )
-        ) : (
-          <></>
-        )}
-        {loadingZip ? (
-          <Center mt="md" style={{ flexDirection: 'column' }}>
-            <Loader />
-            <Text>Parsing existing images...</Text>
-          </Center>
-        ) : imageList.length > 0 && filteredImages.length === 0 ? (
-          <Stack mt="md" align="center">
-            <ThemeIcon size={64} radius={100}>
-              <IconCloudOff size={64 / 1.6} />
-            </ThemeIcon>
-            <Text size={20} align="center">
-              No images found
-            </Text>
-          </Stack>
-        ) : (
-          // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
-          <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
-            {filteredImages
-              .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
-              .map((imgData, index) => {
-                return (
-                  <Card key={index} shadow="sm" p={4} radius="sm" withBorder>
-                    {/* TODO [bw] probably lightbox here or something similar */}
-                    <Card.Section mb="xs">
-                      <div className={classes.imgOverlay}>
-                        <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
-                          <Tooltip label="Remove labels">
-                            <ActionIcon
-                              color="violet"
-                              variant="filled"
-                              size="md"
-                              disabled={autoLabeling.isRunning || !imgData.label.length}
-                              onClick={() => {
-                                updateImage(model.id, {
-                                  matcher: getShortNameFromUrl(imgData),
-                                  label: '',
-                                });
-                              }}
-                            >
-                              <IconTagsOff />
-                            </ActionIcon>
-                          </Tooltip>
-                          <Tooltip label="Remove image">
-                            <ActionIcon
-                              color="red"
-                              variant="filled"
-                              size="md"
-                              disabled={autoLabeling.isRunning}
-                              onClick={() => {
-                                const newLen = imageList.length - 1;
-                                setImageList(
-                                  model.id,
-                                  imageList.filter((i) => i.url !== imgData.url)
-                                );
-                                if (
-                                  page === Math.ceil(imageList.length / maxImgPerPage) &&
-                                  newLen % maxImgPerPage === 0
-                                )
-                                  setPage(Math.max(page - 1, 1));
-                              }}
-                            >
-                              <IconTrash />
-                            </ActionIcon>
-                          </Tooltip>
-                        </Group>
-                        <MImage
-                          alt={imgData.name}
-                          src={imgData.url}
-                          imageProps={{
-                            style: {
-                              height: '250px',
-                              // if we want to show full image, change objectFit to contain
-                              objectFit: 'cover',
-                              // object-position: top;
-                              width: '100%',
-                            },
-                            // onLoad: () => URL.revokeObjectURL(imageUrl)
-                          }}
-                        />
-                      </div>
-                    </Card.Section>
-                    {labelType === 'caption' ? (
-                      <TrainingImagesCaptions
-                        imgData={imgData}
-                        modelId={model.id}
-                        searchCaption={searchCaption}
-                      />
-                    ) : (
-                      <TrainingImagesTags
-                        imgData={imgData}
-                        modelId={model.id}
-                        selectedTags={selectedTags}
-                      />
-                    )}
-                  </Card>
-                );
-              })}
-          </SimpleGrid>
-        )}
-        {filteredImages.length > maxImgPerPage && (
-          <Pagination
-            withEdges
-            mt="md"
-            page={page}
-            onChange={setPage}
-            total={Math.ceil(filteredImages.length / maxImgPerPage)}
-          />
-        )}
-        {imageList.length > 0 && (
-          <Paper mt="xl" radius="md" p="xl" withBorder>
-            <Stack>
-              <Title order={4}>Data Ownership and Sharing</Title>
-              <Text size="sm">
-                Your dataset is temporarily stored for the purposes of training. After training is
-                complete, the dataset is removed. By default, it is not public. Read our{' '}
-                <Text
-                  component={NextLink}
-                  variant="link"
-                  href="/content/training/data-policy"
-                  target="_blank"
-                >
-                  dataset storage policy
+              )
+            ) : (
+              <></>
+            )}
+            {loadingZip ? (
+              <Center mt="md" style={{ flexDirection: 'column' }}>
+                <Loader />
+                <Text>Parsing existing images...</Text>
+              </Center>
+            ) : imageList.length > 0 && filteredImages.length === 0 ? (
+              <Stack mt="md" align="center">
+                <ThemeIcon size={64} radius={100}>
+                  <IconCloudOff size={64 / 1.6} />
+                </ThemeIcon>
+                <Text size={20} align="center">
+                  No images found
                 </Text>
-                .
-              </Text>
-              <Checkbox
-                label="I own the rights to all these images"
-                checked={ownRights}
-                onChange={(event) => {
-                  setOwnRights(model.id, event.currentTarget.checked);
-                  !event.currentTarget.checked && setShareDataset(model.id, false);
-                }}
+              </Stack>
+            ) : (
+              // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
+              <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
+                {filteredImages
+                  .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
+                  .map((imgData, index) => {
+                    return (
+                      <Card key={index} shadow="sm" p={4} radius="sm" withBorder>
+                        {/* TODO [bw] probably lightbox here or something similar */}
+                        <Card.Section mb="xs">
+                          <div className={classes.imgOverlay}>
+                            <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
+                              <Tooltip label="Remove labels">
+                                <ActionIcon
+                                  color="violet"
+                                  variant="filled"
+                                  size="md"
+                                  disabled={autoLabeling.isRunning || !imgData.label.length}
+                                  onClick={() => {
+                                    updateImage(model.id, {
+                                      matcher: getShortNameFromUrl(imgData),
+                                      label: '',
+                                    });
+                                  }}
+                                >
+                                  <IconTagsOff />
+                                </ActionIcon>
+                              </Tooltip>
+                              <Tooltip label="Remove image">
+                                <ActionIcon
+                                  color="red"
+                                  variant="filled"
+                                  size="md"
+                                  disabled={autoLabeling.isRunning}
+                                  onClick={() => {
+                                    const newLen = imageList.length - 1;
+                                    setImageList(
+                                      model.id,
+                                      imageList.filter((i) => i.url !== imgData.url)
+                                    );
+                                    if (
+                                      page === Math.ceil(imageList.length / maxImgPerPage) &&
+                                      newLen % maxImgPerPage === 0
+                                    )
+                                      setPage(Math.max(page - 1, 1));
+                                  }}
+                                >
+                                  <IconTrash />
+                                </ActionIcon>
+                              </Tooltip>
+                            </Group>
+                            <MImage
+                              alt={imgData.name}
+                              src={imgData.url}
+                              imageProps={{
+                                style: {
+                                  height: '250px',
+                                  // if we want to show full image, change objectFit to contain
+                                  objectFit: 'cover',
+                                  // object-position: top;
+                                  width: '100%',
+                                },
+                                // onLoad: () => URL.revokeObjectURL(imageUrl)
+                              }}
+                            />
+                          </div>
+                        </Card.Section>
+                        {labelType === 'caption' ? (
+                          <TrainingImagesCaptions
+                            imgData={imgData}
+                            modelId={model.id}
+                            searchCaption={searchCaption}
+                          />
+                        ) : (
+                          <TrainingImagesTags
+                            imgData={imgData}
+                            modelId={model.id}
+                            selectedTags={selectedTags}
+                          />
+                        )}
+                      </Card>
+                    );
+                  })}
+              </SimpleGrid>
+            )}
+            {filteredImages.length > maxImgPerPage && (
+              <Pagination
+                withEdges
+                mt="md"
+                page={page}
+                onChange={setPage}
+                total={Math.ceil(filteredImages.length / maxImgPerPage)}
               />
-              <Checkbox
-                label="I want to share my dataset"
-                disabled={!ownRights}
-                checked={shareDataset}
-                onChange={(event) => setShareDataset(model.id, event.currentTarget.checked)}
-              />
-            </Stack>
-          </Paper>
-        )}
+            )}
 
+            {imageList.length > 0 && (
+              <Paper mt="xl" radius="md" p="xl" withBorder>
+                <Stack>
+                  <Title order={4}>Data Ownership and Sharing</Title>
+                  <Text size="sm">
+                    Your dataset is temporarily stored for the purposes of training. After training
+                    is complete, the dataset is removed. By default, it is not public. Read our{' '}
+                    <Text
+                      component={NextLink}
+                      variant="link"
+                      href="/content/training/data-policy"
+                      target="_blank"
+                    >
+                      dataset storage policy
+                    </Text>
+                    .
+                  </Text>
+                  <Checkbox
+                    label="I own the rights to all these images"
+                    checked={ownRights}
+                    onChange={(event) => {
+                      setOwnRights(model.id, event.currentTarget.checked);
+                      !event.currentTarget.checked && setShareDataset(model.id, false);
+                    }}
+                  />
+                  <Checkbox
+                    label="I want to share my dataset"
+                    disabled={!ownRights}
+                    checked={shareDataset}
+                    onChange={(event) => setShareDataset(model.id, event.currentTarget.checked)}
+                  />
+                </Stack>
+              </Paper>
+            )}
+          </>
+        )}
         <Paper mb="md" radius="md" p="xl" withBorder>
           <div className="flex flex-col gap-4">
             <Title order={4}>Acknowledgement</Title>

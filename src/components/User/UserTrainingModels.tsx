@@ -17,7 +17,6 @@ import {
   Stack,
   Table,
   Text,
-  Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -41,7 +40,6 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
-import { constants } from '~/server/common/constants';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
@@ -51,7 +49,6 @@ import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
-import { calcEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 
@@ -93,7 +90,6 @@ type ModalData = {
   file?: TrainingFileData;
   baseModel?: string;
   params?: TrainingDetailsParams;
-  eta?: string;
 };
 
 const trainingStatusFields: {
@@ -161,8 +157,6 @@ export default function UserTrainingModels() {
     pageSize: 1,
     totalPages: 1,
   };
-
-  const { data: estData, isLoading: isEstLoading } = trpc.training.getJobEstStarts.useQuery();
 
   const deleteMutation = trpc.modelVersion.delete.useMutation({
     onSuccess: async () => {
@@ -276,7 +270,6 @@ export default function UserTrainingModels() {
               <th>Training Status</th>
               <th>Created</th>
               <th>Start</th>
-              <th>ETA</th>
               <th>Missing info</th>
               <th>Actions</th>
             </tr>
@@ -285,7 +278,7 @@ export default function UserTrainingModels() {
             {isLoading && (
               <tr>
                 <td colSpan={7}>
-                  <LoadingOverlay visible />
+                  <LoadingOverlay visible={true} />
                 </td>
               </tr>
             )}
@@ -307,52 +300,14 @@ export default function UserTrainingModels() {
 
                 const numEpochs = trainingParams?.maxTrainEpochs;
                 const epochsDone =
-                  thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number ?? 0;
+                  (thisFileMetadata?.trainingResults?.version === 2
+                    ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber
+                    : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
                 // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
 
-                const baseModelType = thisTrainingDetails?.baseModelType ?? 'sd15';
-
-                const startDate = isSubmitted
-                  ? (estData ?? {})[mv.id]
-                  : thisFileMetadata?.trainingResults?.submittedAt;
+                const startDate = thisFileMetadata?.trainingResults?.submittedAt;
                 const startStr = !!startDate
                   ? formatDate(startDate, 'MMM D, YYYY hh:mm:ss A')
-                  : undefined;
-                const startDiv = isSubmitted ? (
-                  !!startStr ? (
-                    <Tooltip label="Estimated start time based on queue position">
-                      <Group>
-                        <Text>{startStr}</Text>
-                        <Badge>Est.</Badge>
-                      </Group>
-                    </Tooltip>
-                  ) : isEstLoading ? (
-                    <Loader size="sm" />
-                  ) : (
-                    <Text>Unknown</Text>
-                  )
-                ) : mv.trainingStatus === TrainingStatus.Pending ? (
-                  <Text>-</Text>
-                ) : (
-                  <Text>{startStr ?? 'Unknown'}</Text>
-                );
-
-                const etaMins = hasTrainingParams
-                  ? calcEta({
-                      cost: status.cost,
-                      baseModel: baseModelType,
-                      params: trainingParams,
-                    })
-                  : undefined;
-                // mins wait here might need to only be calced if the last history entry is "Submitted"
-                const eta =
-                  !!startDate && !!etaMins
-                    ? new Date(new Date(startDate).getTime() + etaMins * 60 * 1000)
-                    : undefined;
-                const etaStr = isRunning
-                  ? !!eta
-                    ? formatDate(eta, 'MMM D, YYYY hh:mm:ss A')
-                    : 'Unknown'
                   : '-';
 
                 return (
@@ -365,7 +320,15 @@ export default function UserTrainingModels() {
                   <tr
                     key={mv.id}
                     style={{ cursor: 'pointer' }}
-                    onMouseUp={(e) => goToModel(e, getModelTrainingWizardUrl(mv))}
+                    onMouseUp={(e) => {
+                      goToModel(e, getModelTrainingWizardUrl(mv));
+                    }}
+                    onMouseDown={(e) => {
+                      if (e.button == 1) {
+                        e.preventDefault();
+                        return false;
+                      }
+                    }}
                   >
                     <td>
                       <Group spacing={4}>
@@ -456,9 +419,8 @@ export default function UserTrainingModels() {
                         )}
                       </HoverCard>
                     </td>
-                    <td>{startDiv}</td>
                     <td>
-                      <Text>{etaStr}</Text>
+                      <Text>{startStr}</Text>
                     </td>
                     <td>
                       <Group spacing={8} noWrap>
@@ -508,7 +470,6 @@ export default function UserTrainingModels() {
                               file: thisFile as TrainingFileData,
                               baseModel: thisTrainingDetails?.baseModel,
                               params: thisTrainingDetails?.params,
-                              eta: etaStr,
                             });
                             open();
                           }}
@@ -564,23 +525,18 @@ export default function UserTrainingModels() {
           items={[
             {
               label: 'Training Start',
-              value: modalData.file?.metadata?.trainingResults?.start_time
+              value: (
+                modalData.file?.metadata?.trainingResults?.version === 2
+                  ? modalData.file?.metadata?.trainingResults?.startedAt
+                  : modalData.file?.metadata?.trainingResults?.start_time
+              )
                 ? formatDate(
-                    modalData.file.metadata.trainingResults.start_time as unknown as Date,
+                    (modalData.file?.metadata?.trainingResults?.version === 2
+                      ? modalData.file?.metadata?.trainingResults?.startedAt
+                      : modalData.file?.metadata?.trainingResults?.start_time) as unknown as Date,
                     'MMM D, YYYY hh:mm:ss A'
                   )
                 : 'Unknown',
-            },
-            {
-              label: 'ETA',
-              value: modalData.eta,
-            },
-            {
-              label: 'Training Attempts',
-              value: `${Math.min(
-                constants.maxTrainingRetries + 1,
-                (modalData.file?.metadata?.trainingResults?.attempts || 0) + 1
-              )} / ${constants.maxTrainingRetries + 1}`,
             },
             {
               label: 'History',

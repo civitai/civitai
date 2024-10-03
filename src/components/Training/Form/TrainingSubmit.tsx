@@ -14,6 +14,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
@@ -27,10 +28,9 @@ import {
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
-import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -61,6 +61,7 @@ import {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
+import { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import {
   defaultRun,
   defaultTrainingState,
@@ -71,10 +72,9 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
-  calcBuzzFromEta,
-  calcEta,
+  discountInfo,
+  getTrainingFields,
   isInvalidRapid,
-  isValidDiscount,
   isValidRapid,
   rapidEta,
 } from '~/utils/training';
@@ -140,9 +140,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
-
-  const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
-  // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const status = useTrainingServiceStatus();
@@ -179,58 +176,49 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
-  // Calc ETA and Cost
-  useEffect(() => {
-    const eta = calcEta({
-      cost: status.cost,
-      baseModel: formBaseModelType,
-      params: selectedRun.params,
-    });
-    const isCustom = isTrainingCustomModel(formBaseModel);
-    const price = calcBuzzFromEta({
-      cost: status.cost,
-      eta,
-      isCustom,
-      isFlux: selectedRun.baseType === 'flux',
-      isPriority: selectedRun.highPriority ?? false,
-      isRapid: isValidRapid(selectedRun.baseType, selectedRun.params.engine),
-      numImages: thisNumImages ?? 1,
-    });
-    setEtaMins(eta);
-    if (price !== selectedRun.buzzCost) {
-      updateRun(model.id, selectedRun.id, { buzzCost: price });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const whatIfData = useMemo(() => {
+    const retData: ImageTrainingRouterWhatIfSchema = {
+      model: getTrainingFields.getModel(formBaseModel),
+      priority: getTrainingFields.getPriority(selectedRun.highPriority),
+      engine: getTrainingFields.getEngine(selectedRun.params.engine),
+      trainingDataImagesCount: thisNumImages ?? 1,
+      resolution: selectedRun.params.resolution,
+      trainBatchSize: selectedRun.params.trainBatchSize,
+      maxTrainEpochs: selectedRun.params.maxTrainEpochs,
+      numRepeats: selectedRun.params.numRepeats ?? 200,
+    };
+    return retData;
   }, [
-    status.cost,
-    selectedRun.params.targetSteps,
-    selectedRun.params.resolution,
-    selectedRun.params.engine,
-    selectedRun.highPriority,
     formBaseModel,
     formBaseModelType,
+    selectedRun.highPriority,
+    selectedRun.params.engine,
+    thisNumImages,
+    selectedRun.params.resolution,
+    selectedRun.params.trainBatchSize,
+    selectedRun.params.maxTrainEpochs,
+    selectedRun.params.numRepeats,
   ]);
 
-  const { data: dryRunData, isFetching: dryRunLoading } =
-    trpc.training.createRequestDryRun.useQuery(
-      {
-        baseModel: formBaseModel,
-        isPriority: selectedRun.highPriority,
-        // cost: debouncedEtaMins,
-      },
-      {
-        refetchInterval: 1000 * 60,
-        refetchIntervalInBackground: false,
-        refetchOnWindowFocus: true,
-        staleTime: 1000 * 60,
-        enabled: !!formBaseModel,
-      }
-    );
+  const [debounced] = useDebouncedValue(whatIfData, 100);
+
+  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced, {
+    enabled: !!debounced,
+  });
+
+  // Calc ETA and Cost
+  useEffect(() => {
+    if (!isDefined(dryRunResult.data) || !isDefined(dryRunResult.data.cost)) return;
+    if (dryRunResult.data.cost !== selectedRun.buzzCost) {
+      updateRun(model.id, selectedRun.id, { buzzCost: dryRunResult.data.cost });
+    }
+  }, [dryRunResult.data?.cost]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation();
   const createFileMutation = trpc.modelFile.create.useMutation();
-  const doTraining = trpc.training.createRequest.useMutation();
+
+  const doTraining = trpc.orchestrator.createTraining.useMutation();
 
   const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
@@ -495,16 +483,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           {status.message ?? 'Training is currently disabled.'}
         </AlertWithIcon>
       )}
-      {isValidDiscount(status.cost) && (
+      {discountInfo.amt !== 0 && (
         <DismissibleAlert
-          id="rapid-training-discount-9-13-24"
+          id={`rapid-training-discount-${discountInfo.bannerId}`}
           icon={<IconConfetti />}
           color="pink"
           content={
             <Text>
-              Flux-Dev Rapid Training is currently{' '}
-              {<b>{(1 - status.cost.rapid.discountFactor) * 100}%</b>} off! (Ends on{' '}
-              {new Date(status.cost.rapid.discountEnd).toLocaleDateString('en-us', {
+              Flux-Dev Rapid Training is currently {<b>{discountInfo.amt * 100}%</b>} off! (Ends on{' '}
+              {new Date(discountInfo.endDate).toLocaleDateString('en-us', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'short',
@@ -768,51 +755,46 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Group spacing="sm">
               <Badge>
                 <Group spacing={4} noWrap>
-                  <Text>Est. Wait Time</Text>
+                  <Text>Queue</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long before your job is expected to be picked up</Text>
+                    <Text size="sm">How many jobs are in the queue before you</Text>
                   </InfoPopover>
                 </Group>
               </Badge>
 
-              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
-                <Text>{dayjs(Date.now()).add(10, 's').fromNow(true)}</Text>
-              ) : dryRunLoading ? (
+              {dryRunResult.isLoading ? (
                 <Loader size="sm" />
               ) : (
-                <Text>
-                  {!!dryRunData ? dayjs(dryRunData).add(10, 's').fromNow(true) : 'Unknown'}
-                </Text>
+                <Text>{dryRunResult.data?.precedingJobs ?? 'Unknown'}</Text>
               )}
+
               <Divider orientation="vertical" />
 
               <Badge>
                 <Group spacing={4} noWrap>
                   <Text>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long in total before your job is done</Text>
+                    <Text size="sm">How long your job is expected to run</Text>
                   </InfoPopover>
                 </Group>
               </Badge>
 
               {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
                 <Text>{minsToHours(rapidEta)}</Text>
-              ) : dryRunLoading ? (
+              ) : dryRunResult.isLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>
-                  {!isDefined(etaMins)
+                  {!isDefined(dryRunResult.data?.eta)
                     ? 'Unknown'
-                    : etaMins > 20000
+                    : dryRunResult.data?.eta > 20000
                     ? 'Forever'
-                    : minsToHours(
-                        (!!dryRunData
-                          ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000
-                          : 10) + etaMins
-                      )}
+                    : minsToHours(dryRunResult.data?.eta)}
                 </Text>
               )}
+
               <Divider orientation="vertical" />
+
               <Badge>Cost</Badge>
               <CurrencyBadge
                 currency={Currency.BUZZ}
@@ -837,6 +819,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
           buzzAmount={buzzCost ?? 0}
+          transactionType="Generation"
           onPerformTransaction={handleSubmit}
         />
       </Group>
