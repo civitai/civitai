@@ -1,4 +1,3 @@
-import { forwardRef } from 'react';
 import { SubNav } from '~/components/AppLayout/SubNav';
 import { ScrollArea, ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 
