@@ -7,7 +7,7 @@ export const HomeBlockWrapper = ({ children, showAds, ...props }: Props) => {
   return (
     <MasonryContainer {...props}>
       {children}
-      {showAds && <AdUnit keys={['Dynamic_Leaderboard_C']} />}
+      {showAds && <AdUnit keys={['Dynamic_Leaderboard']} />}
     </MasonryContainer>
   );
 };
