@@ -14,6 +14,7 @@ import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/c
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
@@ -523,4 +524,25 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
     return Object.fromEntries(userOverviewData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+});
+
+type ImageWithMeta = {
+  id: number;
+  meta?: ImageMetaProps | null;
+};
+
+export const imageMetaCache = createCachedObject<ImageWithMeta>({
+  key: REDIS_KEYS.CACHES.IMAGE_META,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const images = await dbRead.$queryRaw<ImageWithMeta[]>`
+      SELECT
+        i.id,
+        (CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta"
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(ids as number[])})
+    `;
+    return Object.fromEntries(images.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.hour,
 });

@@ -96,7 +96,15 @@ function trackPageView({ path, duration }: { path: string; duration: number }) {
   fetch('/api/page-view', {
     method: 'post',
     keepalive: true,
-    body: JSON.stringify(removeEmpty({ duration, ads: ads ? true : undefined, path })),
+    body: JSON.stringify(
+      removeEmpty({
+        duration,
+        ads: ads ? true : undefined,
+        path,
+        windowWidth: window.outerWidth,
+        windowHeight: window.outerHeight,
+      })
+    ),
   });
 
   useAdUnitLoadedStore.setState({});

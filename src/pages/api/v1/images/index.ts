@@ -9,7 +9,7 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { usernameSchema } from '~/server/schema/user.schema';
-import { getAllImages } from '~/server/services/image.service';
+import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import {
@@ -90,17 +90,19 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
+    const fn = data.modelId ? getAllImages : getAllImagesIndex;
 
-    const { items, nextCursor } = await getAllImages({
+    const { items, nextCursor } = await fn({
       ...data,
       types: type ? [type] : undefined,
       limit,
       skip,
       cursor,
-      include: withMeta ? ['meta', 'metaSelect'] : ['metaSelect'],
+      include: ['metaSelect', 'tagIds', 'profilePictures'],
       periodMode: 'published',
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,
+      withMeta,
     });
 
     const metadata: Metadata = {

@@ -25,6 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 const useStyles = createStyles((theme) => {
   return {
@@ -34,7 +35,6 @@ const useStyles = createStyles((theme) => {
       borderRadius: theme.radius.md,
       padding: theme.spacing.md,
       position: 'relative',
-      margin: '3px',
     },
 
     cardHeader: {
@@ -86,8 +86,18 @@ const useStyles = createStyles((theme) => {
         margin: '0 auto',
       },
     },
+    type: {
+      position: 'absolute',
+      left: theme.spacing.md,
+      right: theme.spacing.md,
+      bottom: theme.spacing.md,
+      zIndex: 2,
+      textAlign: 'center',
+      fontWeight: 600,
+    },
 
     new: {
+      outline: `1px solid ${theme.colors.yellow[4]}`,
       '&::before': {
         content: '""',
         position: 'absolute',
@@ -96,9 +106,11 @@ const useStyles = createStyles((theme) => {
         bottom: 0,
         left: 0,
         zIndex: -1,
-        margin: '-3px' /* !importanté */,
-        borderRadius: 'inherit' /* !importanté */,
+        margin: '-2px' /* !important */,
+        borderRadius: 'inherit' /* !important */,
         background: theme.fn.linearGradient(45, theme.colors.yellow[4], theme.colors.yellow[1]),
+        filter: 'blur(3px)',
+        opacity: 0.5,
       },
     },
 
@@ -131,10 +143,12 @@ export const ShopItem = ({
       ? Math.max(0, (item.availableQuantity ?? 0) - (itemMeta.purchases ?? 0))
       : null;
   const available = item.availableQuantity !== null ? item.availableQuantity : null;
-  const availableTo = item.availableTo ? formatDate(item.availableTo) : null;
+  const availableTo = item.availableTo ? formatDate(item.availableTo, 'MMM D') : null;
+  const leavingSoon = item.availableTo && item.availableTo > dayjs().subtract(24, 'hours').toDate();
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
+  const hasDate = isUpcoming || item.availableTo;
 
-  const isNew =
+  const isNew = remaining !== 0 &&
     lastViewed && sectionItemCreatedAt && dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
@@ -155,13 +169,18 @@ export const ShopItem = ({
               <Text>Out of Stock</Text>
             ) : (
               <>
+                {isUpcoming ? (
+                  <Text>
+                    Available in{' '}
+                    <Countdown endTime={item.availableFrom!} refreshIntervalMs={1000} format="short" />
+                  </Text>
+                ) : availableTo ? (leavingSoon ? <Text>Leaves in <Countdown endTime={item.availableTo!} refreshIntervalMs={1000} format="short" /></Text> : <Text>Until {availableTo}</Text>) : null}
+                {hasDate && remaining && <Divider orientation="vertical" color="grape.3" />}
                 {remaining && available && (
                   <Text>
                     {remaining}/{available} remaining
                   </Text>
                 )}
-                {availableTo && remaining && <Divider orientation="vertical" color="grape.3" />}
-                {availableTo && <Text>Available until {availableTo}</Text>}
               </>
             )}
           </Group>
@@ -185,12 +204,9 @@ export const ShopItem = ({
           >
             <div className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
-              {isUpcoming && item.availableFrom && (
-                <Badge color="grape" className={classes.countdown} px={6}>
-                  Available in{' '}
-                  <Countdown endTime={item.availableFrom} refreshIntervalMs={1000} format="short" />
-                </Badge>
-              )}
+              <Text size="xs" color="dimmed" px={6} component="div" className={classes.type}>
+                  {getDisplayName(item.cosmetic.type)}
+              </Text>
             </div>
           </UnstyledButton>
           <Stack spacing={4} align="flex-start">

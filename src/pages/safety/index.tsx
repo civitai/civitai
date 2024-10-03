@@ -25,7 +25,8 @@ const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];
 export const getStaticProps: GetStaticProps<{
   content: Record<string, string>;
-}> = async () => {
+}> = async (context) => {
+  console.log(context);
   const content = files.reduce((acc, file) => {
     const fileName = fs.readFileSync(`${contentRoot}/${file}.md`, 'utf-8');
     const { content } = matter(fileName);

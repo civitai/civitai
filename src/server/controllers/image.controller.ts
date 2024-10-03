@@ -13,7 +13,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   addBlockedImage,
   bulkAddBlockedImages,
@@ -253,8 +252,7 @@ export const getInfiniteImagesHandler = async ({
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
-  const { user } = ctx;
-  const features = getFeatureFlags(ctx);
+  const { user, features } = ctx;
   const fetchFn = features.imageIndexFeed && input.useIndex ? getAllImagesIndex : getAllImages;
   // console.log(fetchFn === getAllImagesIndex ? 'Using search index for feed' : 'Using DB for feed');
 
@@ -296,8 +294,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const { user } = ctx;
-    const features = getFeatureFlags(ctx);
+    const { user, features } = ctx;
     const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
     // console.log(features.imageIndex ? 'Using search index' : 'Using DB');
     type ResultType = typeof features.imageIndex extends true

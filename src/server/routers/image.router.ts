@@ -34,6 +34,7 @@ import {
   protectedProcedure,
   publicProcedure,
   router,
+  verifiedProcedure,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import {
@@ -91,7 +92,7 @@ export const imageRouter = router({
     .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
     .mutation(({ input }) => ingestArticleCoverImages(input)),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
-  delete: protectedProcedure
+  delete: verifiedProcedure
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteImageHandler),
@@ -151,25 +152,25 @@ export const imageRouter = router({
     .query(({ input }) => getImageGenerationData(input)),
 
   // #region [tools]
-  addTools: protectedProcedure
+  addTools: verifiedProcedure
     .input(addOrRemoveImageToolsSchema)
     .mutation(({ input, ctx }) => addImageTools({ ...input, user: ctx.user })),
-  removeTools: protectedProcedure
+  removeTools: verifiedProcedure
     .input(addOrRemoveImageToolsSchema)
     .mutation(({ input, ctx }) => removeImageTools({ ...input, user: ctx.user })),
-  updateTools: protectedProcedure
+  updateTools: verifiedProcedure
     .input(updateImageToolsSchema)
     .mutation(({ input, ctx }) => updateImageTools({ ...input, user: ctx.user })),
   // #endregion
 
   // #region [techniques]
-  addTechniques: protectedProcedure
+  addTechniques: verifiedProcedure
     .input(addOrRemoveImageTechniquesSchema)
     .mutation(({ input, ctx }) => addImageTechniques({ ...input, user: ctx.user })),
-  removeTechniques: protectedProcedure
+  removeTechniques: verifiedProcedure
     .input(addOrRemoveImageTechniquesSchema)
     .mutation(({ input, ctx }) => removeImageTechniques({ ...input, user: ctx.user })),
-  updateTechniques: protectedProcedure
+  updateTechniques: verifiedProcedure
     .input(updateImageTechniqueSchema)
     .mutation(({ input, ctx }) => updateImageTechniques({ ...input, user: ctx.user })),
   // #endregion

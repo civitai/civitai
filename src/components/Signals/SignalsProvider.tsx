@@ -69,7 +69,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
           queryUtils.orchestrator.queryGeneratedImages.invalidate();
         }
       },
-      onClosed: () => {
+      onError: () => {
         queryUtils.signals.getToken.invalidate();
       },
       onStatusChange: ({ status }) => setStatus(status),

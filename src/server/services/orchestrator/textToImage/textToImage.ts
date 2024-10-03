@@ -14,7 +14,6 @@ import { env } from '~/env/server.mjs';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { getRandomInt } from '~/utils/number-helpers';
 import { generation } from '~/server/common/constants';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -68,10 +67,13 @@ export async function createTextToImageStep(
 }
 
 export async function createTextToImage(
-  args: z.infer<typeof generateImageSchema> & { user: SessionUser; token: string }
+  args: z.infer<typeof generateImageSchema> & {
+    user: SessionUser;
+    token: string;
+    experimental?: boolean;
+  }
 ) {
-  const { params, tips, user } = args;
-  const features = getFeatureFlags({ user });
+  const { params, tips, user, experimental } = args;
   const step = await createTextToImageStep(args);
   const workflow = (await submitWorkflow({
     token: args.token,
@@ -80,10 +82,10 @@ export async function createTextToImage(
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
-      experimental: features.experimentalGen ? params.experimental : undefined,
+      experimental,
       callbacks: [
         {
-          url: `${env.SIGNALS_ENDPOINT}/users/${args.user.id}/signals/${SignalMessages.TextToImageUpdate}`,
+          url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
           type: ['job:*', 'workflow:*'],
         },
       ],

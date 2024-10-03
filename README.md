@@ -12,7 +12,7 @@
   </a>
 </div>
 
-## Table of Content
+## Table of Contents
 - [About the Project](#about-the-project)
   - [Tech Stack](#tech-stack)
 - [Getting Started](#getting-started)
@@ -61,7 +61,7 @@ First, make sure that you have the following installed on your machine:
 1. Create your `.env` by making a copy of the contents from `.env-example` file.
     * Most default values are configured to work with the docker-compose setup, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
     * Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
-    * Comment out or remove 
+    * Comment out or remove
       * `CLICKHOUSE_HOST`
       * `CLICKHOUSE_USERNAME`
       * `CLICKHOUSE_PASSWORD`
@@ -111,6 +111,8 @@ Don't forget to give the project a star! Thanks again!
 1. Make your changes to the code.
 1. Commit your changes and push the branch to your forked repository.
 1. Open a pull request on our repository.
+
+If you would like to be more involved, consider joining the **Community Development Team**! For more information on the team as well as how to join, see [Calling All Developers: Join Civitai's Community Development Team](https://civitai.com/articles/7782).
 
 ## Sponsors
 

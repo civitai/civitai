@@ -2420,6 +2420,7 @@ enum HomeBlockType {
   Leaderboard
   Social
   Event
+  CosmeticShop
 }
 
 model HomeBlock {

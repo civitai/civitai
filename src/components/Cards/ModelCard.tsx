@@ -58,7 +58,7 @@ import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardCon
 const IMAGE_CARD_WIDTH = 450;
 
 export function ModelCard({ data, forceInView }: Props) {
-  const { ref, inView } = useInView({
+  const { ref, inView } = useInView<HTMLAnchorElement>({
     rootMargin: '200% 0px',
     skip: forceInView,
     initialInView: forceInView,
@@ -256,8 +256,9 @@ export function ModelCard({ data, forceInView }: Props) {
       className={!image ? classes.noImage : undefined}
       href={href}
       frameDecoration={data.cosmetic}
+      ref={ref}
     >
-      <div className={classes.root} ref={ref}>
+      <div className={classes.root}>
         <div className={classes.content} style={{ opacity: inView ? 1 : undefined }}>
           {inView && (
             <>
