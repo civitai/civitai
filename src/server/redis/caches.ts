@@ -544,5 +544,5 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.day,
+  ttl: CacheTTL.hour,
 });

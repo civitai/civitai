@@ -1545,6 +1545,7 @@ type ImageSearchInput = GetAllImagesInput & {
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  let { postIds = [] } = input;
 
   const {
     sort,
@@ -1561,7 +1562,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     baseModels,
     period,
     isModerator,
-    postIds,
     currentUserId,
     excludedUserIds,
     excludeCrossPosts,
@@ -1570,6 +1570,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit = 100,
     offset,
     entry,
+    postId,
     //
     reviewId,
     modelId,
@@ -1581,6 +1582,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  if (postId) {
+    postIds = [...(postIds ?? []), postId];
+  }
 
   // Filter
   //------------------------

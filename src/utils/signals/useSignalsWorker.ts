@@ -188,7 +188,7 @@ export function useSignalsWorker(
     }
   }, [workerMethods]);
 
-  const connected = state?.status === 'connected' || state?.status === 'reconnected';
-  console.log({ connected, status: state?.status });
+  // const connected = state?.status === 'connected' || state?.status === 'reconnected';
+  // console.log({ connected, status: state?.status });
   return workerMethods;
 }
