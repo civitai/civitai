@@ -2,55 +2,56 @@ import { ModelFlagStatus, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetFlaggedModelsInput, ModelScanResult } from '~/server/schema/model-flag.schema';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
-import { hasNsfwWords } from '~/utils/metadata/audit';
 
 export async function upsertModelFlag({
   modelId,
-  name,
   scanResult,
   details,
 }: {
   modelId: number;
-  name?: string;
-  scanResult?: { poi: boolean; nsfw: boolean; minor: boolean; triggerWords: boolean };
+  poiName?: string;
+  scanResult?: {
+    poi: boolean;
+    nsfw: boolean;
+    minor: boolean;
+    triggerWords: boolean;
+    poiName: boolean;
+  };
   details?: MixedObject;
 }) {
-  const nameNsfw = hasNsfwWords(name);
   const isFlagged = scanResult && Object.values(scanResult).some((flag) => flag);
-  const status =
-    nameNsfw || isFlagged
-      ? Prisma.sql`${ModelFlagStatus.Pending}::"ModelFlagStatus"`
-      : Prisma.sql`${ModelFlagStatus.Resolved}::"ModelFlagStatus"`;
+  if (!isFlagged) return null;
 
   const [modelFlag] = await dbWrite.$queryRaw<
     {
       modelId: number;
-      nameNsfw: boolean;
       poi: boolean;
       nsfw: boolean;
       minor: boolean;
       triggerWords: boolean;
+      poiName: string | null;
       status: ModelFlagStatus;
     }[]
   >`
-    INSERT INTO "ModelFlag" ("modelId", "nameNsfw", "poi", "nsfw", "minor", "triggerWords", "status", "details")
+    INSERT INTO "ModelFlag" ("modelId", "poi", "nsfw", "minor", "triggerWords", "poiName", "status", "details")
     VALUES (
       ${modelId},
-      ${nameNsfw},
       ${scanResult?.poi ?? false},
       ${scanResult?.nsfw ?? false},
       ${scanResult?.minor ?? false},
       ${scanResult?.triggerWords ?? false},
-      ${status},
+      ${scanResult?.poiName ?? false},
+      ${Prisma.sql`${ModelFlagStatus.Pending}::"ModelFlagStatus"`},
       ${details ? Prisma.sql`${JSON.stringify(details)}::jsonb` : Prisma.JsonNull}
     )
     ON CONFLICT ("modelId") DO UPDATE
-      SET "nameNsfw" = EXCLUDED."nameNsfw",
-        "poi" = EXCLUDED."poi",
+      SET "poi" = EXCLUDED."poi",
         "nsfw" = EXCLUDED."nsfw",
         "minor" = EXCLUDED."minor",
         "triggerWords" = EXCLUDED."triggerWords",
+        "poiName" = EXCLUDED."poiName",
         "status" = EXCLUDED."status",
         "details" = EXCLUDED."details"
     RETURNING *;
@@ -73,7 +74,21 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
           triggerWords: true,
           minor: true,
           details: true,
-          model: { select: { id: true, name: true } },
+          poiName: true,
+          model: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              nsfw: true,
+              poi: true,
+              minor: true,
+              // These are needed to comply with upsert schema
+              status: true,
+              uploadType: true,
+              type: true,
+            },
+          },
         },
       }),
       dbRead.modelFlag.count({ where: { status: ModelFlagStatus.Pending } }),
@@ -93,9 +108,13 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
   });
 }
 
-export function resolveFlaggedModel({ id }: GetByIdInput) {
-  return dbWrite.modelFlag.update({
+export async function resolveFlaggedModel({ id, userId }: GetByIdInput & { userId: number }) {
+  const updated = await dbWrite.modelFlag.update({
     where: { modelId: id },
     data: { status: ModelFlagStatus.Resolved },
   });
+
+  await trackModActivity(userId, { entityType: 'model', entityId: id, activity: 'moderateFlag' });
+
+  return updated;
 }

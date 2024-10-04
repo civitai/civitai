@@ -586,14 +586,16 @@ enum ModelFlagStatus {
 model ModelFlag {
   modelId      Int             @id
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  nameNsfw     Boolean         @default(false)
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
   nsfw         Boolean         @default(false)
   triggerWords Boolean         @default(false)
+  poiName      Boolean         @default(false)
   status       ModelFlagStatus @default(Pending)
   details      Json?
   createdAt    DateTime        @default(now())
+
+  @@index([status])
 }
 
 model License {

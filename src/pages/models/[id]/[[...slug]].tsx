@@ -100,7 +100,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, CAROUSEL_LIMIT } from '~/server/common/constants';
+import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort, ModelType } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
@@ -113,7 +113,13 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getBaseModelEcosystemName, getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import {
+  getBaseModelEcosystemName,
+  getDisplayName,
+  removeTags,
+  slugit,
+  splitUppercase,
+} from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
@@ -203,6 +209,7 @@ export default function ModelDetailsV2({
     }
   );
 
+  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -227,7 +234,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
-  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel)
+  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
@@ -508,12 +515,13 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage}.` ?? '';
+      : `Removal reason: ${model.meta?.customMessage}.`;
 
   return (
     <>

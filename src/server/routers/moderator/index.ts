@@ -19,7 +19,7 @@ export const modRouter = router({
       .query(({ input }) => getFlaggedModels(input)),
     resolveFlagged: moderatorProcedure
       .input(getByIdSchema)
-      .mutation(({ input }) => resolveFlaggedModel(input)),
+      .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure

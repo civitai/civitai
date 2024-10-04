@@ -2315,7 +2315,7 @@ export async function ingestModel(data: IngestModelInput) {
   // get version data
   const db = await getDbWithoutLag('modelVersion');
   const versions = await db.modelVersion.findMany({
-    where: { modelId: data.id },
+    where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
     select: { description: true, trainedWords: true },
   });
 

@@ -47,6 +47,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
         nsfw: data.flags.NSFW_flag,
         minor: data.flags.minor_flag,
         triggerWords: data.flags.triggerwords_flag,
+        poiName: !!data.llm_interrogation.POIName?.length,
       },
       details: data.llm_interrogation,
     });
