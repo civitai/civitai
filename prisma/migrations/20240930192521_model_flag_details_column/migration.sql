@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "ModelFlag" ADD COLUMN     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "details" JSONB;
