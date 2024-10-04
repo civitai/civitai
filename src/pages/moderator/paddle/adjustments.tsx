@@ -163,11 +163,22 @@ export default function ModeratorPaddleAdjustments() {
                           >
                             Paddle
                           </Anchor>
-                          <Link href={`/moderator/paddle/customer/${adjustment.customerId}`}>
-                            <Anchor size="xs" target="_blank">
-                              Civitai
-                            </Anchor>
-                          </Link>
+                          <Anchor
+                            href={`/moderator/paddle/customer/${adjustment.customerId}`}
+                            size="xs"
+                            target="_blank"
+                          >
+                            Civitai
+                          </Anchor>
+                          <Anchor
+                            size="xs"
+                            // Not keen on this approach, but will have to do in the meantime.
+                            href={`/moderator/paddle/customer/${adjustment.customerId}?app=retool`}
+                            target="_blank"
+                            rel="nofollow noreferrer"
+                          >
+                            Retool
+                          </Anchor>
                         </Stack>
                       </td>
                       <td>{adjustment.reason}</td>
