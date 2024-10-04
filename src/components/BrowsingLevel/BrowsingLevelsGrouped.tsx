@@ -34,7 +34,9 @@ function BrowsingLevelLabel({ level }: { level: BrowsingLevel }) {
       onChange={() => toggleBrowsingLevel(level)}
       variant={!isDefaultBrowsingLevel ? 'outline' : 'filled'}
     >
-      {browsingLevelLabels[level]}
+      {/* Turns out, that when people are using google translate that string literals should be wrapped in a span to avoid errors  */}
+      {/* https://github.com/remarkjs/react-markdown/pull/365 - at least this appears to have fixed the issue */}
+      <span>{browsingLevelLabels[level]}</span>
     </Chip>
   );
 }

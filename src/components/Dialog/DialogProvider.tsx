@@ -38,7 +38,7 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
       value={{
         opened,
         onClose,
-        zIndex: 200 + index,
+        zIndex: 300 + index,
         target: dialog.target,
       }}
     >
