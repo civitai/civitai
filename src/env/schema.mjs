@@ -181,6 +181,9 @@ export const serverSchema = z.object({
   CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
   CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
+  CONTENT_SCAN_ENDPOINT: z.string().optional(),
+  CONTENT_SCAN_CALLBACK_URL: z.string().optional(),
+  CONTENT_SCAN_MODEL: z.string().optional(),
 });
 
 /**

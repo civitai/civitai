@@ -18,7 +18,6 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { imagesForModelVersionsCache } from '~/server/redis/caches';
 import { ImagesForModelVersions } from '~/server/services/image.service';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -102,7 +101,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'lastVersionAtUnix',
     'versions.hashes',
     'versions.baseModel',
-    'flags.nameNsfw',
   ];
 
   if (
@@ -154,9 +152,6 @@ const modelSelect = {
   mode: true,
   checkpointType: true,
   availability: true,
-  flags: {
-    select: { nameNsfw: true },
-  },
   // Joins:
   user: {
     select: userWithCosmeticsSelect,
@@ -214,7 +209,6 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
     .map((modelRecord) => {
       const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
-      const flags = removeEmpty(model.flags[0] ?? {});
 
       const weightedRating =
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
@@ -281,7 +275,6 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         },
         canGenerate,
         cosmetic: cosmetics[model.id] ?? null,
-        flags: Object.keys(flags).length > 0 ? flags : undefined,
       };
     })
     // Removes null models that have no versionIDs

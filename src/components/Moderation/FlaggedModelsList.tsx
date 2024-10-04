@@ -1,0 +1,282 @@
+import { Anchor, Badge, Button, Chip, JsonInput, Modal, Paper, Stack, Text } from '@mantine/core';
+import { IconExternalLink } from '@tabler/icons-react';
+import {
+  MantineReactTable,
+  MRT_ColumnDef,
+  MRT_PaginationState,
+  MRT_SortingState,
+} from 'mantine-react-table';
+import Link from 'next/link';
+import { useRouter } from 'next/router';
+import { useMemo, useState } from 'react';
+import { z } from 'zod';
+import { Collection } from '~/components/Collection/Collection';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { Form, InputCheckbox, InputRTE, InputText, useForm } from '~/libs/form';
+import { modelUpsertSchema } from '~/server/schema/model.schema';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+import { isNumber } from '~/utils/type-guards';
+
+export function FlaggedModelsList() {
+  const router = useRouter();
+  const page = isNumber(router.query.page) ? Number(router.query.page) : 1;
+  const [pagination, setPagination] = useState<MRT_PaginationState>({
+    pageIndex: page - 1,
+    pageSize: 20,
+  });
+  const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'createdAt', desc: true }]);
+
+  const { data, isLoading, isFetching, isRefetching } = trpc.moderator.models.queryFlagged.useQuery(
+    { page: pagination.pageIndex + 1, limit: pagination.pageSize, sort: sorting }
+  );
+  const flaggedModels = data?.items ?? [];
+
+  const columns = useMemo<MRT_ColumnDef<(typeof flaggedModels)[number]>[]>(
+    () => [
+      {
+        id: 'modelId',
+        header: 'Model',
+        accessorKey: 'model.name',
+        enableColumnActions: false,
+        enableSorting: false,
+        Cell: ({ row: { original } }) => (
+          <Link href={`/models/${original.modelId}?view=basic`} passHref>
+            <Anchor target="_blank">
+              <div className="flex flex-nowrap gap-1">
+                <IconExternalLink className="shrink-0 grow-0" size={16} />
+                <Text span inline>
+                  {original.model.name}
+                </Text>
+              </div>
+            </Anchor>
+          </Link>
+        ),
+      },
+      {
+        header: 'Review',
+        accessorFn: (row) => row.model.id,
+        enableColumnActions: false,
+        enableSorting: false,
+        Cell: ({ row: { original } }) => {
+          const items = Object.entries(original)
+            .filter(
+              ([key, value]) =>
+                ['poi', 'nsfw', 'minor', 'triggerWords', 'poiName'].includes(key) && !!value
+            )
+            .map(([key, value]) => ({ name: key, value }));
+
+          return (
+            <Collection
+              items={items}
+              renderItem={(item) => <Badge color="yellow">{item.name}</Badge>}
+              grouped
+            />
+          );
+        },
+      },
+      {
+        header: 'Action',
+        accessorKey: 'model.id',
+        size: 100,
+        enableColumnActions: false,
+        enableSorting: false,
+        mantineTableHeadCellProps: { align: 'right' },
+        mantineTableBodyCellProps: { align: 'right' },
+        Cell: ({ row: { original } }) => (
+          <Button
+            size="sm"
+            onClick={() =>
+              dialogStore.trigger({
+                component: DetailsModal,
+                props: { model: original.model, details: original.details },
+              })
+            }
+            compact
+          >
+            Resolve
+          </Button>
+        ),
+      },
+    ],
+    []
+  );
+
+  return (
+    <MantineReactTable
+      columns={columns}
+      data={flaggedModels}
+      rowCount={data?.totalItems ?? 0}
+      maxMultiSortColCount={2}
+      onPaginationChange={setPagination}
+      onSortingChange={setSorting}
+      enableStickyHeader
+      enableSortingRemoval
+      enableHiding={false}
+      enableGlobalFilter={false}
+      enableColumnFilters={false}
+      mantineTableProps={{
+        sx: { tableLayout: 'fixed' },
+      }}
+      mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
+      initialState={{
+        density: 'xs',
+      }}
+      state={{
+        isLoading: isLoading || isRefetching,
+        showProgressBars: isFetching,
+        sorting,
+        pagination,
+      }}
+      renderTopToolbarCustomActions={({ table }) => (
+        <div className="flex items-center gap-2">
+          <Text span>Filters: </Text>
+          <Chip
+            size="xs"
+            variant="filled"
+            onChange={(value) =>
+              value
+                ? setSorting([
+                    { id: 'poi', desc: true },
+                    { id: 'nsfw', desc: true },
+                  ])
+                : table.resetSorting(true)
+            }
+          >
+            High Priority
+          </Chip>
+        </div>
+      )}
+    />
+  );
+}
+
+const schema = modelUpsertSchema.pick({
+  id: true,
+  name: true,
+  description: true,
+  poi: true,
+  nsfw: true,
+  minor: true,
+  type: true,
+  uploadType: true,
+  status: true,
+});
+
+function DetailsModal({ model, details }: { model: z.infer<typeof schema>; details: MixedObject }) {
+  const context = useDialogContext();
+  const queryUtils = trpc.useUtils();
+  const form = useForm({ schema, defaultValues: { ...model }, shouldUnregister: false });
+  const isDirty = form.formState.isDirty;
+
+  const upsertModelMutation = trpc.model.upsert.useMutation({
+    onSuccess: async (result) => {
+      await queryUtils.model.getById.invalidate({ id: result.id });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Error saving model',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const resolveFlaggedModelMutation = trpc.moderator.models.resolveFlagged.useMutation({
+    onSuccess: async () => {
+      await queryUtils.moderator.models.queryFlagged.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Error resolving flagged model',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleSubmit = async (data: z.infer<typeof schema>) => {
+    if (!data.id) return;
+
+    try {
+      if (isDirty) await upsertModelMutation.mutateAsync(data);
+
+      await resolveFlaggedModelMutation.mutateAsync({ id: data.id });
+
+      context.onClose();
+    } catch {
+      // Error is handled in the mutation
+    }
+  };
+
+  const [poi, nsfw] = form.watch(['poi', 'nsfw']);
+
+  return (
+    <Modal {...context} title="Resolve Model" size="75%" centered>
+      <div className="flex flex-nowrap gap-8">
+        <Form form={form} onSubmit={handleSubmit}>
+          <div className="flex flex-col gap-4">
+            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+
+            <InputRTE
+              name="description"
+              label="Description"
+              description="Tell us what your model does"
+              includeControls={[
+                'heading',
+                'formatting',
+                'list',
+                'link',
+                'media',
+                'mentions',
+                'colors',
+              ]}
+              editorSize="xl"
+              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
+              withAsterisk
+            />
+            <Paper radius="md" p="xl" withBorder>
+              <Stack spacing="xs">
+                <Text size="md" weight={500}>
+                  This resource:
+                </Text>
+                <InputCheckbox
+                  name="poi"
+                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator)"
+                  onChange={(e) => {
+                    form.setValue('nsfw', e.target.checked ? false : undefined);
+                  }}
+                />
+                <InputCheckbox
+                  name="nsfw"
+                  label="Is intended to produce mature themes"
+                  disabled={poi}
+                  onChange={(event) =>
+                    event.target.checked ? form.setValue('minor', false) : null
+                  }
+                />
+                <InputCheckbox
+                  name="minor"
+                  label="Cannot be used for NSFW generation"
+                  disabled={nsfw}
+                />
+              </Stack>
+            </Paper>
+            <Button
+              type="submit"
+              loading={resolveFlaggedModelMutation.isLoading || upsertModelMutation.isLoading}
+            >
+              Save & Resolve
+            </Button>
+          </div>
+        </Form>
+
+        <div className="w-64 flex-none">
+          <Text size="md" weight={600} className="mb-2">
+            Scan Details
+          </Text>
+          <JsonInput value={JSON.stringify(details, null, 2)} minRows={4} formatOnBlur autosize />
+        </div>
+      </div>
+    </Modal>
+  );
+}

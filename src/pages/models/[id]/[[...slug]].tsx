@@ -101,7 +101,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, CAROUSEL_LIMIT } from '~/server/common/constants';
+import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort, ModelType } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
@@ -211,6 +211,7 @@ export default function ModelDetailsV2({
     }
   );
 
+  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -516,7 +517,8 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
