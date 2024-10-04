@@ -80,7 +80,12 @@ export default function MigrateModelToCollection({ modelId }: { modelId: number 
             <List.Item>The collection will have the same mature content rating.</List.Item>
             <List.Item>The collection will be public.</List.Item>
           </List>
-          <AlertWithIcon icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
+          <AlertWithIcon
+            icon={<IconAlertCircle />}
+            title="This Action is Irreversible"
+            color="red"
+            iconColor="red"
+          >
             Please make sure this is something you want to do. This action cannot be undone.
           </AlertWithIcon>
           <TextInput

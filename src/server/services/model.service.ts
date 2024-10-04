@@ -2322,6 +2322,7 @@ export async function migrateResourceToCollection({
           read: 'Public',
           write: 'Private',
           contributors: { create: { userId: model.userId, permissions: ['VIEW', 'ADD'] } },
+          metadata: { originalModelId: model.id },
         },
       });
 
@@ -2378,7 +2379,7 @@ export async function migrateResourceToCollection({
         })),
       });
 
-      // update the original modal name to include the version
+      // update the original model name to include the version
       await tx.model.update({
         where: { id: model.id },
         data: { name: `${model.name} - ${filteredVersions[0].name}` },

@@ -114,7 +114,13 @@ import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getBaseModelEcosystemName, getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import {
+  getBaseModelEcosystemName,
+  getDisplayName,
+  removeTags,
+  slugit,
+  splitUppercase,
+} from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
@@ -229,7 +235,7 @@ export default function ModelDetailsV2({
     publishedVersions[0] ??
     null;
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
-  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel)
+  const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
@@ -515,7 +521,7 @@ export default function ModelDetailsV2({
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage}.` ?? '';
+      : `Removal reason: ${model.meta?.customMessage}.`;
 
   return (
     <>
@@ -830,7 +836,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </>
                         )}
-                        {isOwner && (
+                        {isModerator && (
                           <>
                             <ToggleLockModel modelId={model.id} locked={model.locked}>
                               {({ onClick }) => (
