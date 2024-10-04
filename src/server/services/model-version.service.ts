@@ -58,6 +58,7 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -416,7 +417,10 @@ export const upsertModelVersion = async ({
     await bustMvCache(version.id);
     await dataForModelsCache.bust(version.modelId);
 
-    await ingestModelById({ id: version.modelId });
+    // Run it in the background to avoid blocking the request.
+    ingestModelById({ id: version.modelId }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+    );
 
     return version;
   }
@@ -687,7 +691,10 @@ export const publishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  await ingestModelById({ id: version.modelId });
+  // Run it in the background to avoid blocking the request.
+  ingestModelById({ id: version.modelId }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+  );
 
   return version;
 };

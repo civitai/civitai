@@ -1444,7 +1444,10 @@ export const upsertModel = async (
       (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
     ) {
       const parsedModel = ingestModelSchema.parse(result);
-      await ingestModel({ ...parsedModel });
+      // Run it in the background to prevent blocking the request
+      ingestModel({ ...parsedModel }).catch((error) =>
+        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+      );
     }
     return result;
   }
@@ -1548,7 +1551,10 @@ export const publishModelById = async ({
   );
 
   const parsedModel = ingestModelSchema.parse(model);
-  await ingestModel({ ...parsedModel });
+  // Run it in the background to prevent blocking the request
+  ingestModel({ ...parsedModel }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+  );
 
   return model;
 };
