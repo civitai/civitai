@@ -29,7 +29,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
-import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
+import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { z } from 'zod';
 import {
   CaptchaState,
@@ -53,7 +53,7 @@ const referralSchema = z.object({
 });
 
 export function OnboardingBuzz() {
-  const { next } = useOnboardingWizardContext();
+  const { next } = useOnboardingContext();
   const { code, source } = useReferralsContext();
   const theme = useMantineTheme();
   const features = useFeatureFlags();

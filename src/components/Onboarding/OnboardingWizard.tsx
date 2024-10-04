@@ -1,35 +1,58 @@
 import {
   Center,
   Container,
-  createStyles,
   Group,
   Modal,
   Stack,
-  Stepper,
   StepProps,
+  Stepper,
   Text,
   Title,
+  createStyles,
 } from '@mantine/core';
-import { createContext, useContext, useRef, useState } from 'react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { LogoBadge } from '~/components/Logo/LogoBadge';
-import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
-import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
+import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
+import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
 import { OnboardingProfile } from '~/components/Onboarding/OnboardingProfile';
 import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
+import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { LogoBadge } from '~/components/Logo/LogoBadge';
+import { OnboardingProvider } from '~/components/Onboarding/OnboardingProvider';
 
-type StepPropsCustom = StepProps & {
+type StepPropsCustom = Omit<StepProps, 'step'> & {
+  step: number;
   Component: React.FC;
 };
 
-const OnboardingWizardCtx = createContext<{ next: () => void; isReturningUser: boolean }>({
-  next: () => undefined,
-  isReturningUser: false,
-});
-export const useOnboardingWizardContext = () => useContext(OnboardingWizardCtx);
+const steps: StepPropsCustom[] = [
+  {
+    step: OnboardingSteps.TOS,
+    label: 'Terms',
+    description: 'Review our terms',
+    Component: OnboardingTos,
+  },
+  {
+    step: OnboardingSteps.Profile,
+    label: 'Account Details',
+    description: 'Please verify your account details',
+    Component: OnboardingProfile,
+  },
+  {
+    step: OnboardingSteps.BrowsingLevels,
+    label: 'Experience',
+    description: 'Personalize your experience',
+    Component: OnboardingContentExperience,
+  },
+  {
+    step: OnboardingSteps.Buzz,
+    label: 'Buzz',
+    description: 'Power-up your experience',
+    Component: OnboardingBuzz,
+  },
+];
 
 export default function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
   const dialog = useDialogContext();
@@ -43,35 +66,11 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
     else onComplete();
   };
 
-  const steps: StepPropsCustom[] = [
-    {
-      step: OnboardingSteps.TOS,
-      label: 'Terms',
-      description: 'Review our terms',
-      Component: OnboardingTos,
-    },
-    {
-      step: OnboardingSteps.Profile,
-      label: 'Account Details',
-      description: 'Please verify your account details',
-      Component: OnboardingProfile,
-    },
-    {
-      step: OnboardingSteps.BrowsingLevels,
-      label: 'Experience',
-      description: 'Personalize your experience',
-      Component: OnboardingContentExperience,
-    },
-    {
-      step: OnboardingSteps.Buzz,
-      label: 'Buzz',
-      description: 'Power-up your experience',
-      Component: OnboardingBuzz,
-    },
-  ].filter((item) => onboardingStepsRef.current.includes(item.step));
-  const Component = steps[active]?.Component;
+  const availableSteps = steps.filter((item) => onboardingStepsRef.current.includes(item.step));
+  const Component = availableSteps[active]?.Component;
 
-  const isReturningUser = steps.length === 1 && steps[0].step === OnboardingSteps.BrowsingLevels;
+  const isReturningUser =
+    availableSteps.length === 1 && availableSteps[0].step === OnboardingSteps.BrowsingLevels;
 
   return (
     <Modal
@@ -92,16 +91,16 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
           </Group>
         </Center>
       )}
-      <OnboardingWizardCtx.Provider value={{ next, isReturningUser }}>
+      <OnboardingProvider next={next} isReturningUser={isReturningUser}>
         <Container size="lg" px="0" h="100%">
-          {steps.length > 1 ? (
+          {availableSteps.length > 1 ? (
             <Stepper
               active={active}
               color="green"
               allowNextStepsSelect={false}
               classNames={classes}
             >
-              {steps.map(({ Component, ...item }, index) => (
+              {availableSteps.map(({ Component, ...item }, index) => (
                 <Stepper.Step key={index} {...item} step={index}>
                   <Component />
                 </Stepper.Step>
@@ -111,7 +110,7 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
             Component && <Component />
           )}
         </Container>
-      </OnboardingWizardCtx.Provider>
+      </OnboardingProvider>
     </Modal>
   );
 }

@@ -1,29 +1,17 @@
-import {
-  Button,
-  Card,
-  Container,
-  Group,
-  Stack,
-  createStyles,
-  Text,
-  Switch,
-  Title,
-} from '@mantine/core';
+import { Button, Card, Container, Group, Stack, createStyles, Text, Switch } from '@mantine/core';
 import { IconEyeExclamation } from '@tabler/icons-react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
-import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
+import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
-import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
 
 // TODO.manuel - On merge of NSFW stuff, feel free to throw away everything I've done here...
 export function OnboardingContentExperience() {
   const { classes } = useStyles();
-  const { next, isReturningUser } = useOnboardingWizardContext();
+  const { next, isReturningUser } = useOnboardingContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
-  const { source } = useReferralsContext();
 
   const handleStepComplete = () => {
     mutate({ step: OnboardingSteps.BrowsingLevels }, { onSuccess: () => next() });
