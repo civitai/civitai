@@ -98,6 +98,8 @@ model UserPaymentConfiguration {
   stripeAccountId        String? @unique
   stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
+  // 
+  meta                   Json    @default("{}")
 }
 
 enum BuzzWithdrawalRequestStatus {

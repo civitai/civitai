@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory, StripeConnectStatus } from '~/server/common/enums';
+import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import { env } from '../../env/server.mjs';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
@@ -8,6 +8,7 @@ import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { createNotification } from './notification.service';
 import { UserPaymentConfiguration } from '@prisma/client';
+import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -222,3 +223,108 @@ export const revertStripeConnectTransfer = async ({ transferId }: { transferId: 
     throw error;
   }
 };
+
+export async function createTipaltiPayee({ userId }: { userId: number }) {
+  if (!tipaltiCaller) {
+    throw throwBadRequestError('Tipalti not available');
+  }
+
+  const user = await dbRead.user.findUnique({ where: { id: userId } });
+
+  if (!user) throw throwBadRequestError(`User not found: ${userId}`);
+
+  const existingConfig = await dbRead.userPaymentConfiguration.findFirst({
+    where: { userId },
+  });
+
+  if (existingConfig && existingConfig.stripeAccountId) {
+    return existingConfig;
+  }
+
+  try {
+    const tipaltiPayee = await tipaltiCaller.createPayee({
+      refCode: user.id.toString(),
+      entityType: 'INDIVIDUAL',
+      contactInformation: {
+        email: user.email as string,
+      },
+    });
+
+    // Send invite right away:
+    // TODO: store some info on the meta object.
+    const invitation = await tipaltiCaller.createPayeeInvitation(tipaltiPayee.id);
+
+    const updatedPaymentConfiguration = await dbWrite.userPaymentConfiguration.upsert({
+      create: {
+        userId,
+        tipaltiAccountId: tipaltiPayee.id,
+      },
+      update: {
+        tipaltiAccountId: tipaltiPayee.id,
+      },
+      where: {
+        userId,
+      },
+    });
+
+    return updatedPaymentConfiguration;
+  } catch (error) {
+    log({ method: 'createTipaltiPayee', error, userId });
+    throw error;
+  }
+}
+
+export async function updateByTipaltiAccount({
+  tipaltiAccountId,
+  tipaltiAccountStatus,
+  tipaltiPaymentsEnabled,
+}: {
+  tipaltiAccountId: string;
+  tipaltiAccountStatus: TipaltiStatus;
+  tipaltiPaymentsEnabled: boolean;
+}) {
+  const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
+    where: { tipaltiAccountId },
+  });
+
+  if (!userPaymentConfig) throw throwBadRequestError('User stripe connect account not found');
+
+  let updated: UserPaymentConfiguration = userPaymentConfig;
+
+  const data = {
+    tipaltiAccountStatus,
+    tipaltiPaymentsEnabled,
+  };
+
+  updated = await dbWrite.userPaymentConfiguration.update({
+    where: { tipaltiAccountId },
+    data: {
+      ...data,
+    },
+  });
+
+  if (tipaltiPaymentsEnabled) {
+    if (userPaymentConfig.tipaltiAccountStatus !== TipaltiStatus.Active) {
+      await createNotification({
+        userId: userPaymentConfig.userId,
+        type: 'creators-program-payments-enabled',
+        category: NotificationCategory.System,
+        key: `creators-program-payments-enabled:${uuid()}`,
+        details: {},
+      }).catch();
+    }
+  } else if (
+    tipaltiAccountStatus === TipaltiStatus.BlockedByTipalti ||
+    tipaltiAccountStatus === TipaltiStatus.Blocked
+  ) {
+    await createNotification({
+      userId: userPaymentConfig.userId,
+      type: 'creators-program-rejected-stripe',
+      category: NotificationCategory.System,
+      key: `creators-program-rejected-stripe:${uuid()}`,
+      details: {},
+    }).catch();
+  }
+
+  return updated;
+}

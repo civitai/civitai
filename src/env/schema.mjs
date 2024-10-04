@@ -182,7 +182,10 @@ export const serverSchema = z.object({
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
   CF_MANAGED_TURNSTILE_SECRET: z.string().optional(), 
   TIPALTI_TOKEN: z.string().optional(),
-  TIPALTI_URL: z.string().optional(),
+  TIPALTI_URL: z.string().optional(), 
+  TIPALTI_PAYEE_DASHBOARD_URL: z.string().optional(), 
+  TIPALTI_MASTER_KEY: z.string().optional(), 
+  TIPALTI_WEBTOKEN_SECRET: z.string().optional(), 
 });
 
 /**
