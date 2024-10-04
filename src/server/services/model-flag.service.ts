@@ -61,7 +61,7 @@ export async function upsertModelFlag({
 }
 
 export function getFlaggedModels(input: GetFlaggedModelsInput) {
-  return getPagedData(input, async ({ skip, take, ...rest }) => {
+  return getPagedData(input, async ({ skip, take, sort = [], ...rest }) => {
     const [flaggedModels, count] = await dbRead.$transaction([
       dbRead.modelFlag.findMany({
         where: { status: ModelFlagStatus.Pending },
@@ -90,6 +90,10 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
             },
           },
         },
+        orderBy: [
+          ...sort.map(({ id, desc }) => ({ [id]: desc ? 'desc' : 'asc' })),
+          { createdAt: 'desc' },
+        ],
       }),
       dbRead.modelFlag.count({ where: { status: ModelFlagStatus.Pending } }),
     ]);

@@ -1,10 +1,16 @@
-import { Anchor, Badge, Button, JsonInput, Modal, Paper, Stack, Text } from '@mantine/core';
+import { Anchor, Badge, Button, Chip, JsonInput, Modal, Paper, Stack, Text } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import { MantineReactTable, MRT_ColumnDef, MRT_PaginationState } from 'mantine-react-table';
+import {
+  MantineReactTable,
+  MRT_ColumnDef,
+  MRT_PaginationState,
+  MRT_SortingState,
+} from 'mantine-react-table';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
+import { Collection } from '~/components/Collection/Collection';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { Form, InputCheckbox, InputRTE, InputText, useForm } from '~/libs/form';
@@ -20,9 +26,10 @@ export function FlaggedModelsList() {
     pageIndex: page - 1,
     pageSize: 20,
   });
+  const [sorting, setSorting] = useState<MRT_SortingState>([{ id: 'createdAt', desc: true }]);
 
   const { data, isLoading, isFetching, isRefetching } = trpc.moderator.models.queryFlagged.useQuery(
-    { page: pagination.pageIndex + 1, limit: pagination.pageSize }
+    { page: pagination.pageIndex + 1, limit: pagination.pageSize, sort: sorting }
   );
   const flaggedModels = data?.items ?? [];
 
@@ -33,49 +40,48 @@ export function FlaggedModelsList() {
         header: 'Model',
         accessorKey: 'model.name',
         enableColumnActions: false,
+        enableSorting: false,
         Cell: ({ row: { original } }) => (
           <Link href={`/models/${original.modelId}?view=basic`} passHref>
-            <Anchor target="_blank" inline>
+            <Anchor target="_blank">
               <div className="flex flex-nowrap gap-1">
                 <IconExternalLink className="shrink-0 grow-0" size={16} />
-                <Text>{original.model.name}</Text>
+                <Text span inline>
+                  {original.model.name}
+                </Text>
               </div>
             </Anchor>
           </Link>
         ),
       },
       {
-        header: 'POI',
-        accessorKey: 'poi',
-        size: 150,
+        header: 'Review',
+        accessorFn: (row) => row.model.id,
         enableColumnActions: false,
-        mantineTableHeadCellProps: { align: 'right' },
-        mantineTableBodyCellProps: { align: 'right' },
-        Cell: ({ row: { original } }) => <FlagCell value={original.poi} />,
-      },
-      {
-        header: 'NSFW',
-        accessorKey: 'nsfw',
-        size: 150,
-        enableColumnActions: false,
-        mantineTableHeadCellProps: { align: 'right' },
-        mantineTableBodyCellProps: { align: 'right' },
-        Cell: ({ row: { original } }) => <FlagCell value={original.nsfw} />,
-      },
-      {
-        header: 'Trigger Words',
-        accessorKey: 'triggerWords',
-        size: 150,
-        enableColumnActions: false,
-        mantineTableHeadCellProps: { align: 'right' },
-        mantineTableBodyCellProps: { align: 'right' },
-        Cell: ({ row: { original } }) => <FlagCell value={original.triggerWords} />,
+        enableSorting: false,
+        Cell: ({ row: { original } }) => {
+          const items = Object.entries(original)
+            .filter(
+              ([key, value]) =>
+                ['poi', 'nsfw', 'minor', 'triggerWords', 'poiName'].includes(key) && !!value
+            )
+            .map(([key, value]) => ({ name: key, value }));
+
+          return (
+            <Collection
+              items={items}
+              renderItem={(item) => <Badge color="yellow">{item.name}</Badge>}
+              grouped
+            />
+          );
+        },
       },
       {
         header: 'Action',
         accessorKey: 'model.id',
         size: 100,
         enableColumnActions: false,
+        enableSorting: false,
         mantineTableHeadCellProps: { align: 'right' },
         mantineTableBodyCellProps: { align: 'right' },
         Cell: ({ row: { original } }) => (
@@ -98,44 +104,51 @@ export function FlaggedModelsList() {
   );
 
   return (
-    <div>
-      <MantineReactTable
-        columns={columns}
-        data={flaggedModels}
-        rowCount={data?.totalItems ?? 0}
-        enableSorting={false}
-        enableFilters={false}
-        enableHiding={false}
-        enableMultiSort={false}
-        enableGlobalFilter={false}
-        onPaginationChange={setPagination}
-        enableStickyHeader
-        enablePinning
-        manualPagination
-        mantineTableProps={{
-          sx: { tableLayout: 'fixed' },
-        }}
-        mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
-        initialState={{ density: 'xs', columnPinning: { left: ['model.name'] } }}
-        state={{
-          isLoading: isLoading || isRefetching,
-          showProgressBars: isFetching,
-          pagination,
-        }}
-      />
-    </div>
-  );
-}
-
-function FlagCell({ value }: { value: boolean }) {
-  return value ? (
-    <Badge color="yellow" size="sm">
-      Needs Attention
-    </Badge>
-  ) : (
-    <Badge color="green" size="sm">
-      Clear
-    </Badge>
+    <MantineReactTable
+      columns={columns}
+      data={flaggedModels}
+      rowCount={data?.totalItems ?? 0}
+      maxMultiSortColCount={2}
+      onPaginationChange={setPagination}
+      onSortingChange={setSorting}
+      enableStickyHeader
+      enableSortingRemoval
+      enableHiding={false}
+      enableGlobalFilter={false}
+      enableColumnFilters={false}
+      mantineTableProps={{
+        sx: { tableLayout: 'fixed' },
+      }}
+      mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
+      initialState={{
+        density: 'xs',
+      }}
+      state={{
+        isLoading: isLoading || isRefetching,
+        showProgressBars: isFetching,
+        sorting,
+        pagination,
+      }}
+      renderTopToolbarCustomActions={({ table }) => (
+        <div className="flex items-center gap-2">
+          <Text span>Filters: </Text>
+          <Chip
+            size="xs"
+            variant="filled"
+            onChange={(value) =>
+              value
+                ? setSorting([
+                    { id: 'poi', desc: true },
+                    { id: 'nsfw', desc: true },
+                  ])
+                : table.resetSorting(true)
+            }
+          >
+            High Priority
+          </Chip>
+        </div>
+      )}
+    />
   );
 }
 
