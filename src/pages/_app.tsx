@@ -101,17 +101,10 @@ function MyApp(props: CustomAppProps) {
     Component.getLayout ??
     ((page: ReactElement) => {
       const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-      const withScrollArea = Component.options?.withScrollArea ?? true;
       return (
         <FeatureLayout conditional={Component.options?.features}>
           <AppLayout withFooter={Component.options?.withFooter}>
-            {InnerLayout ? (
-              <InnerLayout>{page}</InnerLayout>
-            ) : withScrollArea ? (
-              <ScrollAreaMain>{page}</ScrollAreaMain>
-            ) : (
-              page
-            )}
+            {InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}
           </AppLayout>
         </FeatureLayout>
       );

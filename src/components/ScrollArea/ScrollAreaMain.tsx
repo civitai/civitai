@@ -3,7 +3,7 @@ import { ScrollArea, ScrollAreaProps } from '~/components/ScrollArea/ScrollArea'
 
 export function ScrollAreaMain({ children, ...props }: ScrollAreaProps) {
   return (
-    <ScrollArea pt={0} {...props}>
+    <ScrollArea {...props}>
       <SubNav />
       {children}
     </ScrollArea>

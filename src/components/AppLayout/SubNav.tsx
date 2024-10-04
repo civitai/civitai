@@ -47,16 +47,15 @@ export function SubNav() {
   const currentPath = router.pathname.replace('/', '') || 'home';
   const isFeedPage = sections.includes(currentPath as HomeSection);
 
-  const node = useScrollAreaRef({
-    onScroll: () => {
-      if (!node?.current) return;
-
-      const scroll = node.current.scrollTop;
-      if (currentScrollRef.current > 0 && scroll > currentScrollRef.current)
+  useScrollAreaRef({
+    onScroll: (node) => {
+      if (currentScrollRef.current > 0 && node.scrollTop > currentScrollRef.current) {
         subNavRef?.current?.style?.setProperty('transform', 'translateY(-200%)');
-      else subNavRef?.current?.style?.setProperty('transform', 'translateY(0)');
+      } else {
+        subNavRef?.current?.style?.setProperty('transform', 'translateY(0)');
+      }
 
-      currentScrollRef.current = scroll;
+      currentScrollRef.current = node.scrollTop;
     },
   });
 
@@ -75,5 +74,27 @@ export function SubNav() {
         {isFeedPage && (filtersBySection[currentPath as HomeSection] ?? null)}
       </Group>
     </Paper>
+  );
+}
+
+export function SubNav2() {
+  const router = useRouter();
+
+  const currentPath = router.pathname.replace('/', '') || 'home';
+  const isFeedPage = sections.includes(currentPath as HomeSection);
+
+  return (
+    <Group
+      py={4}
+      px={8}
+      mb={currentPath !== 'home' ? 'sm' : undefined}
+      spacing={8}
+      position="apart"
+      noWrap={currentPath === 'home'}
+    >
+      <HomeTabs />
+
+      {isFeedPage && (filtersBySection[currentPath as HomeSection] ?? null)}
+    </Group>
   );
 }

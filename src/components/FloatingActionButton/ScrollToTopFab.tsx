@@ -13,10 +13,7 @@ type Props = Omit<
 export function ScrollToTopFab(props: Props) {
   const [show, setShow] = useState(false);
   const node = useScrollAreaRef({
-    onScroll: () => {
-      if (!node?.current) return;
-      setShow(node.current.scrollTop > 100);
-    },
+    onScroll: (node) => setShow(node.scrollTop > 100),
   });
 
   return (
