@@ -18,9 +18,8 @@ import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getTrainingServiceStatus, TrainingRequest } from '~/server/services/training.service';
 import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
+import { parseAIRSafe } from '~/utils/string-helpers';
 import { getTrainingFields, isInvalidRapid, modelMap } from '~/utils/training';
-
-const modelAIRRegex = /^civitai:(?<custModelId>\d+)@(?<custModelVersionId>\d+)$/i;
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -36,20 +35,28 @@ async function isSafeTensor(modelVersionId: number) {
   return data?.fmt === 'SafeTensor';
 }
 
-const checkCustomModel = async (model: string) => {
+const checkCustomModel = async (
+  model: string,
+  check_st = true
+): Promise<
+  | {
+      ok: true;
+    }
+  | { ok: false; message: string }
+> => {
   if (model in modelMap) return { ok: true };
 
-  const mMatch = model.match(modelAIRRegex);
-  if (!mMatch || !mMatch.groups)
-    return { ok: false, message: 'Invalid structure for custom model.' };
+  const mMatch = parseAIRSafe(model);
+  if (!mMatch) return { ok: false, message: 'Invalid structure for custom model.' };
 
-  const { custModelVersionId } = mMatch.groups;
-  const isST = await isSafeTensor(Number(custModelVersionId));
-  if (!isST)
-    return {
-      ok: false,
-      message: 'Custom model does not have a SafeTensor file. Please choose another model.',
-    };
+  if (check_st) {
+    const isST = await isSafeTensor(mMatch.version);
+    if (!isST)
+      return {
+        ok: false,
+        message: 'Custom model does not have a SafeTensor file. Please choose another model.',
+      };
+  }
 
   return { ok: true };
 };
@@ -94,7 +101,6 @@ const createTrainingStep_Run = (
       ...params,
       engine,
     };
-    console.log({ ...base, input });
     return {
       ...base,
       input,
@@ -166,7 +172,6 @@ export const createTrainingWorkflow = async ({
 
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 
-  // TODO check if custom models are working with new air format
   if (!(baseModel in modelMap)) {
     const customCheck = await checkCustomModel(baseModel);
     if (!customCheck.ok) {
@@ -212,7 +217,6 @@ export const createTrainingWorkflow = async ({
     },
   });
 
-  console.log(workflow);
   // check workflow.status?
 
   const workflowId = workflow.id ?? 'unknown';

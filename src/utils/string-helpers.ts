@@ -1,4 +1,6 @@
+import { Air } from '@civitai/client';
 import { ModelType } from '@prisma/client';
+import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import {
@@ -7,8 +9,6 @@ import {
   baseModelSets,
   BaseModelSetType,
 } from '~/server/common/constants';
-import { Air } from '@civitai/client';
-import he from 'he';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -196,6 +196,18 @@ export function normalizeText(input?: string): string {
 export function parseAIR(identifier: string) {
   const { id, version, ...value } = Air.parse(identifier);
   return { ...value, model: Number(id), version: Number(version) };
+}
+
+export function parseAIRSafe(identifier: string) {
+  const match = Air.parseSafe(identifier);
+  if (!match) return match;
+
+  const { id, version, ...value } = match;
+  return { ...value, model: Number(id), version: Number(version) };
+}
+
+export function isAir(identifier: string) {
+  return Air.isAir(identifier);
 }
 
 const typeUrnMap: Partial<Record<ModelType, string>> = {

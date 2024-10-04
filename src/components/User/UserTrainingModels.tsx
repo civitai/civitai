@@ -36,6 +36,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -44,13 +45,18 @@ import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
 } from '~/server/common/model-helpers';
-import { TrainingDetailsObj, TrainingDetailsParams } from '~/server/schema/model-version.schema';
+import {
+  TrainingDetailsBaseModelList,
+  TrainingDetailsObj,
+  TrainingDetailsParams,
+} from '~/server/schema/model-version.schema';
 import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
+import { baseModelPretty } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { isDefined } from '~/utils/type-guards';
 
 // TODO make this an importable var
 const useStyles = createStyles((theme) => ({
@@ -267,6 +273,7 @@ export default function UserTrainingModels() {
             <tr>
               <th>Name</th>
               <th>Type</th>
+              <th>Model</th>
               <th>Training Status</th>
               <th>Created</th>
               <th>Start</th>
@@ -337,7 +344,18 @@ export default function UserTrainingModels() {
                       </Group>
                     </td>
                     <td>
-                      <Badge>{splitUppercase(thisTrainingDetails?.type || 'N/A')}</Badge>
+                      <Badge>{splitUppercase(thisTrainingDetails?.type ?? '-')}</Badge>
+                    </td>
+                    <td>
+                      <Text>
+                        {isDefined(thisTrainingDetails?.baseModel)
+                          ? thisTrainingDetails.baseModel in baseModelPretty
+                            ? baseModelPretty[
+                                thisTrainingDetails.baseModel as TrainingDetailsBaseModelList
+                              ]
+                            : 'Custom'
+                          : '-'}
+                      </Text>
                     </td>
                     <td>
                       {mv.trainingStatus ? (
@@ -573,10 +591,14 @@ export default function UserTrainingModels() {
               label: 'Label Type',
               value: modalData.file?.metadata?.labelType ?? 'tag',
             },
-            // TODO make the base model prettier when custom
+            // TODO could get the name of the custom model (parseAIR)
             {
               label: 'Base Model',
-              value: modalData.baseModel ?? 'Unknown',
+              value: isDefined(modalData.baseModel)
+                ? modalData.baseModel in baseModelPretty
+                  ? baseModelPretty[modalData.baseModel as TrainingDetailsBaseModelList]
+                  : modalData.baseModel
+                : '-',
             },
             {
               label: 'Privacy',

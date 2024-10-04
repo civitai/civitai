@@ -43,7 +43,6 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
   goBack,
-  isTrainingCustomModel,
   minsToHours,
 } from '~/components/Training/Form/TrainingCommon';
 import {
@@ -174,7 +173,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const formBaseModel = selectedRun.base;
   const formBaseModelType = selectedRun.baseType;
 
-  const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
+  const hasIssue = runs.some((r) => r.hasIssue);
+  const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
   const whatIfData = useMemo(() => {
     const retData: ImageTrainingRouterWhatIfSchema = {
@@ -206,11 +206,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     enabled: !!debounced,
   });
 
-  // Calc ETA and Cost
   useEffect(() => {
-    if (!isDefined(dryRunResult.data) || !isDefined(dryRunResult.data.cost)) return;
-    if (dryRunResult.data.cost !== selectedRun.buzzCost) {
-      updateRun(model.id, selectedRun.id, { buzzCost: dryRunResult.data.cost });
+    if (dryRunResult.isLoading) return;
+    const cost = dryRunResult.data?.cost;
+    if (!isDefined(cost) || cost < 0) {
+      if (!selectedRun.hasIssue) {
+        updateRun(model.id, selectedRun.id, { hasIssue: true, buzzCost: -1 });
+        showErrorNotification({
+          title: 'Error computing cost',
+          error: new Error(
+            'There was an issue computing the cost for these settings. Please change your settings or contact us if this persists.'
+          ),
+          autoClose: false,
+        });
+      }
+    } else if (cost !== selectedRun.buzzCost) {
+      updateRun(model.id, selectedRun.id, { hasIssue: false, buzzCost: cost });
     }
   }, [dryRunResult.data?.cost]);
 
@@ -258,6 +269,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         await deleteVersionMutation.mutateAsync({ id: modelVersionId });
       }
 
+      finishedRuns++;
       if (finishedRuns === runs.length) {
         setAwaitInvalidate(false);
       }
@@ -337,7 +349,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
-                  {(buzzCost ?? 0).toLocaleString()}
+                  {totalBuzzCost.toLocaleString()}
                 </Text>
               </Group>
             </Group>
@@ -348,7 +360,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
-                  {(balance - (buzzCost ?? 0)).toLocaleString()}
+                  {(balance - totalBuzzCost).toLocaleString()}
                 </Text>
               </Group>
             </Group>
@@ -363,7 +375,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       });
     };
 
-    conditionalPerformTransaction(buzzCost ?? 0, performTransaction);
+    conditionalPerformTransaction(totalBuzzCost, performTransaction);
   };
 
   const handleConfirm = () => {
@@ -626,7 +638,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <SegmentedControl
           data={runs.map((run, idx) => ({
             label: `Run #${idx + 1} (${
-              isTrainingCustomModel(run.base)
+              !!run.customModel
                 ? 'Custom'
                 : run.base === 'sdxl'
                 ? 'SDXL'
@@ -796,11 +808,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Divider orientation="vertical" />
 
               <Badge>Cost</Badge>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                unitAmount={selectedRun.buzzCost}
-                displayCurrency={false}
-              />
+              {dryRunResult.isLoading ? (
+                <Loader size="sm" />
+              ) : !isDefined(dryRunResult.data?.cost) || selectedRun.hasIssue ? (
+                <Text>Error</Text>
+              ) : (
+                <CurrencyBadge
+                  currency={Currency.BUZZ}
+                  unitAmount={dryRunResult.data.cost}
+                  displayCurrency={false}
+                />
+              )}
             </Group>
           </Paper>
         </>
@@ -813,14 +831,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           Back
         </Button>
         <BuzzTransactionButton
-          loading={awaitInvalidate}
+          loading={awaitInvalidate || dryRunResult.isLoading}
           disabled={
-            blockedModels.includes(formBaseModel ?? '') || !status.available || awaitInvalidate
+            blockedModels.includes(formBaseModel ?? '') ||
+            !status.available ||
+            awaitInvalidate ||
+            dryRunResult.isLoading
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
-          buzzAmount={buzzCost ?? 0}
+          buzzAmount={totalBuzzCost}
           transactionType="Generation"
           onPerformTransaction={handleSubmit}
+          error={hasIssue ? 'Error computing cost' : undefined}
         />
       </Group>
     </Stack>

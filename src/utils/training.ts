@@ -76,3 +76,15 @@ export const discountInfo = {
   bannerId: '9-13-24',
   endDate: '2024-09-28 00:00:00',
 };
+
+export const baseModelPretty: {
+  [key in TrainingDetailsBaseModelList]: string;
+} = {
+  sd_1_5: 'SD 1.5',
+  anime: 'Anime',
+  semi: 'Semi Real',
+  realistic: 'Realistic',
+  sdxl: 'SDXL',
+  pony: 'Pony',
+  flux_dev: 'Flux',
+};

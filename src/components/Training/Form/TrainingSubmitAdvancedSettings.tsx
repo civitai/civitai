@@ -21,7 +21,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { getPrecision, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import { getPrecision } from '~/components/Training/Form/TrainingCommon';
 import {
   optimizerArgMap,
   optimizerArgMapFlux,
@@ -305,7 +305,7 @@ export const AdvancedSettings = ({
               <Stack spacing={4}>
                 <Group spacing="sm">
                   <Text>Training Parameters</Text>
-                  {isTrainingCustomModel(selectedRun.base) && (
+                  {!!selectedRun.customModel && (
                     <Tooltip
                       label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
                       maw={300}

@@ -1,8 +1,6 @@
-import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
 import { Center, Grid, Group, Loader, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core';
-import { UserBuzz } from '~/components/User/UserBuzz';
-import { Line } from 'react-chartjs-2';
-import React, { useMemo } from 'react';
+import { Currency } from '@prisma/client';
+import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -11,15 +9,17 @@ import {
   PointElement,
   Tooltip as ChartTooltip,
 } from 'chart.js';
-import { trpc } from '~/utils/trpc';
-import { formatDate } from '~/utils/date-helpers';
+import React, { useMemo } from 'react';
+import { Line } from 'react-chartjs-2';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
+import { formatDate } from '~/utils/date-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
@@ -174,7 +174,7 @@ export const BuzzDashboardOverview = ({
             )}
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md">
-                <Stack spacing={8}>
+                <Stack spacing={8} mr={14}>
                   {transactions.map((transaction) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;

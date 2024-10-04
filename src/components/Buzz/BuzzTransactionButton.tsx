@@ -4,7 +4,6 @@ import {
   ButtonProps,
   createStyles,
   Group,
-  Loader,
   MantineSize,
   Text,
   Tooltip,
@@ -150,9 +149,9 @@ export function BuzzTransactionButton({
             label={error ?? 'There was an error'}
             multiline={true}
             withArrow
-            w={200}
+            maw={200}
             opened={true} // Forcefully open becuse button is disabled
-            style={{ whiteSpace: 'normal' }}
+            // style={{ whiteSpace: 'normal' }}
           >
             <Badge
               color="dark.8"

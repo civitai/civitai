@@ -27,7 +27,7 @@ import { ModelVersionById } from '~/types/router';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { bytesToKB } from '~/utils/number-helpers';
+import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -95,7 +95,9 @@ const EpochRow = ({
               variant="light"
             >
               <Text align="center">
-                {epoch.modelSize > 0 ? `Download (${epoch.modelSize})` : 'Download'}
+                {epoch.modelSize > 0
+                  ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
+                  : 'Download'}
               </Text>
             </DownloadButton>
             <Button
