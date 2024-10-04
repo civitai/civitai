@@ -131,7 +131,9 @@ export function FlaggedModelsList() {
       }}
       renderTopToolbarCustomActions={({ table }) => (
         <div className="flex items-center gap-2">
-          <Text span>Filters: </Text>
+          <Text span inline>
+            Sort By:{' '}
+          </Text>
           <Chip
             size="xs"
             variant="filled"
@@ -213,7 +215,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
   return (
     <Modal {...context} title="Resolve Model" size="75%" centered>
       <div className="flex flex-nowrap gap-8">
-        <Form form={form} onSubmit={handleSubmit}>
+        <Form className="flex-1" form={form} onSubmit={handleSubmit}>
           <div className="flex flex-col gap-4">
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
 
