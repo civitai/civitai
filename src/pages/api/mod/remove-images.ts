@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   getResourceIdsForImages,
   getTagNamesForImages,
@@ -23,6 +24,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     const images = await dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { nsfwLevel: true, userId: true, id: true },
+    });
+
+    res.status(200).json({
+      images: imageIds.length,
     });
 
     // Get Additional Data
@@ -48,11 +53,13 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         userId,
       });
     }
-
-    return res.status(200).json({
-      images: imageIds.length,
-    });
   } catch (e) {
-    return handleEndpointError(res, e);
+    const err = e as Error;
+    logToAxiom({
+      type: 'mod-remove-images-error',
+      error: err.message,
+      cause: err.cause,
+      stack: err.stack,
+    });
   }
 });
