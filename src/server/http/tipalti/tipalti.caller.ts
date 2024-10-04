@@ -36,6 +36,16 @@ class TipaltiCaller extends HttpCaller {
     const data = await response.json();
     return Tipalti.createPayeeResponseSchema.parse(data);
   }
+
+  async createPayeeInvitation(payeeId: string) {
+    const response = await this.postRaw(`/payees/${payeeId}/invitation`, {
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json();
+
+    return Tipalti.createPayeeInvitationResponseSchema.parse(data);
+  }
 }
 
 export default TipaltiCaller.getInstance();

@@ -30,4 +30,10 @@ export namespace Tipalti {
     isPayable: z.boolean().optional(),
     lastChangeDateTimeUTC: z.string().optional(),
   });
+
+  export const createPayeeInvitationResponseSchema = z.object({
+    payeeId: z.string(),
+    sentTime: z.string(),
+    status: z.string(),
+  });
 }

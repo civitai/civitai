@@ -180,7 +180,9 @@ export const serverSchema = z.object({
   PADDLE_WEBHOOK_SECRET: z.string().optional(),
   CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
-  CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
+  CF_MANAGED_TURNSTILE_SECRET: z.string().optional(), 
+  TIPALTI_TOKEN: z.string().optional(),
+  TIPALTI_URL: z.string().optional(),
 });
 
 /**
