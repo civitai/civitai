@@ -27,6 +27,8 @@ import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
   GetModelVersionsSchema,
+  IngestModelInput,
+  ingestModelSchema,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -94,7 +96,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { upsertModelFlag } from '~/server/services/model-flag.service';
+import { isProd } from '~/env/other';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1352,7 +1354,15 @@ export const upsertModel = async (
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
-      select: { poi: true, userId: true, minor: true, gallerySettings: true },
+      select: {
+        name: true,
+        description: true,
+        poi: true,
+        userId: true,
+        minor: true,
+        nsfw: true,
+        gallerySettings: true,
+      },
     });
     if (!beforeUpdate) return null;
 
@@ -1362,7 +1372,17 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
 
     const result = await dbWrite.model.update({
-      select: { id: true, nsfwLevel: true, poi: true, minor: true, gallerySettings: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        nsfwLevel: true,
+        poi: true,
+        minor: true,
+        nsfw: true,
+        gallerySettings: true,
+        status: true,
+      },
       where: { id },
       data: {
         ...data,
@@ -1398,11 +1418,13 @@ export const upsertModel = async (
       },
     });
     await preventReplicationLag('model', id);
-    await upsertModelFlag({ modelId: result.id, name: input.name });
 
     // Check any changes that would require a search index update
     const poiChanged = result.poi !== beforeUpdate.poi;
     const minorChanged = result.minor !== beforeUpdate.minor;
+    const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
+    const nameChanged = input.name !== beforeUpdate.name;
+    const descriptionChanged = input.description !== beforeUpdate.description;
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
@@ -1415,6 +1437,18 @@ export const upsertModel = async (
     if (galleryBrowsingLevelChanged) await redis.del(`model:gallery-settings:${id}`);
 
     await userContentOverviewCache.bust(userId);
+
+    // Ingest model if it's published and any of the following fields have changed:
+    if (
+      (result.status === 'Published' || result.status === 'Scheduled') &&
+      (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
+    ) {
+      const parsedModel = ingestModelSchema.parse(result);
+      // Run it in the background to prevent blocking the request
+      ingestModel({ ...parsedModel }).catch((error) =>
+        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+      );
+    }
     return result;
   }
 };
@@ -1514,6 +1548,12 @@ export const publishModelById = async ({
   );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
+  const parsedModel = ingestModelSchema.parse(model);
+  // Run it in the background to prevent blocking the request
+  ingestModel({ ...parsedModel }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
   );
 
   return model;
@@ -2255,4 +2295,68 @@ export async function copyGallerySettingsToAllModelsByUser({
 
   await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
   return result;
+}
+
+export async function ingestModelById({ id }: GetByIdInput) {
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: { id: true, name: true, description: true, poi: true, nsfw: true, minor: true },
+  });
+  if (!model) throw new TRPCError({ code: 'NOT_FOUND' });
+
+  const parsedModel = ingestModelSchema.parse(model);
+  return await ingestModel({ ...parsedModel });
+}
+
+export async function ingestModel(data: IngestModelInput) {
+  if (!isProd || !env.CONTENT_SCAN_ENDPOINT) {
+    console.log('Skipping model ingestion');
+    await dbWrite.model.update({
+      where: { id: data.id },
+      data: { scannedAt: new Date() },
+    });
+    return true;
+  }
+
+  // get version data
+  const db = await getDbWithoutLag('modelVersion');
+  const versions = await db.modelVersion.findMany({
+    where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+    select: { description: true, trainedWords: true },
+  });
+
+  const versionDescriptions = versions.map((x) => x.description || null).filter(isDefined);
+  const triggerWords = versions.flatMap((x) => x.trainedWords);
+
+  const payload = {
+    callbackUrl:
+      env.CONTENT_SCAN_CALLBACK_URL ??
+      `${env.NEXTAUTH_URL}/api/webhooks/model-scan-result?token=${env.WEBHOOK_TOKEN}`,
+    request: {
+      llm_model: env.CONTENT_SCAN_MODEL ?? 'gpt-4o-mini',
+      content: {
+        id: data.id,
+        name: data.name,
+        content: [data.description, ...versionDescriptions].join('\n'),
+        POI: data.poi,
+        NSFW: data.nsfw,
+        minor: data.minor,
+        triggerwords: triggerWords,
+      },
+    },
+  };
+
+  const response = await fetch(`${env.CONTENT_SCAN_ENDPOINT}/scan_model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok)
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Failed to scan model. Service is unavailable.',
+    });
+
+  if (response.status === 202) return true;
+  else return false;
 }

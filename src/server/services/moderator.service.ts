@@ -4,7 +4,7 @@ type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
 type ModelModActivity = {
   entityType: 'model';
-  activity: TagActivities | 'review';
+  activity: TagActivities | 'review' | 'moderateFlag';
 };
 
 type ModelVersionModActivity = {
