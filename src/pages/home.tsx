@@ -27,6 +27,7 @@ import {
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
 import { AdUnit } from '~/components/Ads/AdUnit';
+import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 
 export default function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
@@ -46,7 +47,7 @@ export default function Home() {
     <>
       <Meta
         title="Civitai: The Home of Open-Source Generative AI"
-        description="Explore thousands of high-quality Stable Diffusion models, share your AI-generated art, and engage with a vibrant community of creators"
+        description="Explore thousands of high-quality Stable Diffusion & Flux models, share your AI-generated art, and engage with a vibrant community of creators"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
       />
       <MasonryProvider
@@ -97,8 +98,14 @@ export default function Home() {
                   {homeBlock.type === HomeBlockType.Event && (
                     <EventHomeBlock metadata={homeBlock.metadata} />
                   )}
+                  {homeBlock.type === HomeBlockType.CosmeticShop && (
+                    <CosmeticShopSectionHomeBlock
+                      metadata={homeBlock.metadata}
+                      homeBlockId={homeBlock.id}
+                    />
+                  )}
                   {showAds && (
-                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard_C']} />
+                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard']} />
                   )}
                 </React.Fragment>
               );

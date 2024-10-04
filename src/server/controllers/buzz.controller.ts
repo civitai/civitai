@@ -39,6 +39,7 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
+import dayjs from 'dayjs';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -134,6 +135,18 @@ export async function createBuzzTipTransactionHandler({
 
     if (input.toAccountId === -1) {
       throw throwBadRequestError('You cannot send buzz to the system account');
+    }
+
+    let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
+    if (!accountCreatedAt) {
+      const user = await dbRead.user.findUnique({
+        where: { id: fromAccountId },
+        select: { createdAt: true },
+      });
+      accountCreatedAt = user?.createdAt;
+    }
+    if (!accountCreatedAt || accountCreatedAt > dayjs().subtract(1, 'day').toDate()) {
+      throw throwBadRequestError('You cannot send buzz until you have been a member for 24 hours');
     }
 
     const blocked = await amIBlockedByUser({

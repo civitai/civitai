@@ -40,7 +40,13 @@ import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
-import { imagesForModelVersionsCache, tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import {
+  imageMetaCache,
+  imagesForModelVersionsCache,
+  tagCache,
+  tagIdsForImagesCache,
+  userContentOverviewCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -638,7 +644,6 @@ type GetAllImagesRaw = {
   hideMeta: boolean;
   hasMeta: boolean;
   onSite: boolean;
-  generationProcess: ImageGenerationProcess | null;
   createdAt: Date;
   sortAt: Date;
   mimeType: string | null;
@@ -1124,7 +1129,6 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) as "onSite",
-      i."generationProcess",
       i."createdAt",
       COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
@@ -1340,6 +1344,15 @@ export const getAllImages = async (
 
 // TODO split this into image-index.service because this file is a giant
 
+const getMetaForImages = async (imageIds: number[]) => {
+  if (imageIds.length === 0) {
+    return {};
+  }
+
+  const data = await imageMetaCache.fetch(imageIds);
+  return data;
+};
+
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
@@ -1432,7 +1445,7 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, profilePictures, userCosmetics, imageCosmetics] = await Promise.all([
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
@@ -1442,12 +1455,14 @@ export const getAllImagesIndex = async (
           entity: 'Image',
         })
       : undefined,
+    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
+    const meta = imageMeta?.[sr.id]?.meta ?? null;
 
     return {
       ...sr,
@@ -1471,7 +1486,6 @@ export const getAllImagesIndex = async (
       availability: Availability.Public,
       tags: [], // needed?
       name: null, // leave
-      generationProcess: null, // deprecated
       scannedAt: null, // remove
       mimeType: null, // need?
       ingestion:
@@ -1481,6 +1495,7 @@ export const getAllImagesIndex = async (
           ? ImageIngestionStatus.NotFound
           : ImageIngestionStatus.Scanned, // add? maybe remove
       postTitle: null, // remove
+      meta,
     };
   });
 
@@ -1530,6 +1545,7 @@ type ImageSearchInput = GetAllImagesInput & {
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  let { postIds = [] } = input;
 
   const {
     sort,
@@ -1546,7 +1562,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     baseModels,
     period,
     isModerator,
-    postIds,
     currentUserId,
     excludedUserIds,
     excludeCrossPosts,
@@ -1555,6 +1570,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit = 100,
     offset,
     entry,
+    postId,
     //
     reviewId,
     modelId,
@@ -1566,6 +1582,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  if (postId) {
+    postIds = [...(postIds ?? []), postId];
+  }
 
   // Filter
   //------------------------
@@ -2078,7 +2098,6 @@ export const getImage = async ({
       i.hash,
       -- i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i."scannedAt",
@@ -2109,6 +2128,7 @@ export const getImage = async ({
       COALESCE(im."commentCount", 0) as "commentCount",
       COALESCE(im."tippedAmountCount", 0) as "tippedAmountCount",
       COALESCE(im."viewCount", 0) as "viewCount",
+      COALESCE(im."collectedCount", 0) as "collectedCount",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2159,6 +2179,7 @@ export const getImage = async ({
       commentCount,
       tippedAmountCount,
       viewCount,
+      collectedCount,
       ...firstRawImage
     },
   ] = rawImages;
@@ -2185,6 +2206,7 @@ export const getImage = async ({
       commentCountAllTime: commentCount,
       tippedAmountCountAllTime: tippedAmountCount,
       viewCountAllTime: viewCount,
+      collectedCountAllTime: collectedCount,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
@@ -2504,7 +2526,6 @@ export const getImagesForPosts = async ({
       height: number;
       hash: string;
       createdAt: Date;
-      generationProcess: ImageGenerationProcess | null;
       postId: number;
       cryCount: number;
       laughCount: number;
@@ -2531,7 +2552,6 @@ export const getImagesForPosts = async ({
       i.type,
       i.metadata,
       i."createdAt",
-      i."generationProcess",
       i."postId",
       (
         CASE
@@ -2693,7 +2713,6 @@ type GetImageConnectionRaw = {
   hash: string;
   meta: ImageMetaProps; // TODO - remove
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -2775,7 +2794,6 @@ export const getImagesByEntity = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i.type,
@@ -2856,6 +2874,8 @@ export async function createImage({ toolIds, ...image }: ImageSchema & { userId:
     },
   });
 
+  await userContentOverviewCache.bust(image.userId);
+
   return result;
 }
 
@@ -2924,7 +2944,6 @@ type GetEntityImageRaw = {
   hash: string;
   meta: ImageMetaProps;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   mimeType: string;
   scannedAt: Date;
@@ -3056,7 +3075,6 @@ export const getEntityCoverImage = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       i."mimeType",
       i.type,
@@ -3194,7 +3212,6 @@ type GetImageModerationReviewQueueRaw = {
   hash: string;
   meta: ImageMetaProps;
   hideMeta: boolean;
-  generationProcess: ImageGenerationProcess;
   createdAt: Date;
   sortAt: Date;
   mimeType: string;
@@ -3304,7 +3321,6 @@ export const getImageModerationReviewQueue = async ({
       i.hash,
       i.meta,
       i."hideMeta",
-      i."generationProcess",
       i."createdAt",
       COALESCE(p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",

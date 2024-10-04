@@ -8,21 +8,25 @@ export default PublicEndpoint(
 
     if (!url || url.host !== host) return res.status(400).send('invalid request');
 
-    const { ads, duration } = JSON.parse(req.body);
+    const { ads, duration, path, windowWidth, windowHeight } = JSON.parse(req.body);
     const country = (req.headers['cf-ipcountry'] as string) ?? 'undefined';
 
-    const match = getMatchingPathname(url.pathname);
+    const match = getMatchingPathname(path);
     if (!match) return res.status(200).end();
 
     const tracker = new Tracker(req, res);
-    tracker.pageView({
+    await tracker.pageView({
       pageId: match,
-      path: url.pathname,
+      path,
       host,
       country,
-      ads,
+      ads: ads ?? false,
       duration: Math.floor(duration),
+      windowWidth,
+      windowHeight,
     });
+
+    return res.status(200).end();
   },
   ['POST']
 );
@@ -38,9 +42,10 @@ function getMatchingPathname(url: string) {
       break;
     }
 
+    const softTokenLength = tokens.filter((part) => !part.includes('[[')).length;
     const softMatch = urlTokens.every(
       (token, index) =>
-        tokens.length === urlTokens.length &&
+        (tokens.length === urlTokens.length || softTokenLength === urlTokens.length) &&
         (token === tokens[index] || tokens[index]?.startsWith('['))
     );
     if (softMatch) {

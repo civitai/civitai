@@ -62,7 +62,6 @@ import {
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
@@ -110,6 +109,7 @@ import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
@@ -134,7 +134,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       if (blocked) throw throwNotFoundError();
     }
 
-    const features = getFeatureFlags(ctx);
+    const features = ctx.features;
     const filteredVersions = model.modelVersions.filter((version) => {
       const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
       if (isOwner) return true;
@@ -415,7 +415,10 @@ export const upsertModelHandler = async ({
       ...input,
       userId,
       isModerator: ctx.user.isModerator,
-      gallerySettings,
+      gallerySettings: {
+        ...gallerySettings,
+        level: input.minor ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+      },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 

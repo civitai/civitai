@@ -33,17 +33,27 @@ export const useQueryModelVersionsEngagement = (
   return { alreadyNotifying, alreadyDownloaded, ...rest };
 };
 
-export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId: number }) => {
-  const { data: modelVersion } = trpc.modelVersion.getById.useQuery({ id: modelVersionId });
-  const { data: entities, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
-    {
-      entityId: [modelVersionId],
-      entityType: 'ModelVersion',
-    },
-    {
-      enabled: !!modelVersion,
-    }
+export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?: number }) => {
+  const { data: modelVersion } = trpc.modelVersion.getById.useQuery(
+    { id: modelVersionId as number },
+    { enabled: !!modelVersionId }
   );
+  const { data: entities, isLoading: isLoadingAccess } = trpc.common.getEntityAccess.useQuery(
+    { entityId: [modelVersionId], entityType: 'ModelVersion' },
+    { enabled: !!modelVersion }
+  );
+
+  if (!modelVersion) {
+    return {
+      isLoadingAccess,
+      canDownload: false,
+      canGenerate: false,
+      earlyAccessEndsAt: undefined,
+      earlyAccessConfig: undefined,
+      modelVersion: undefined,
+      isEarlyAccess: false,
+    };
+  }
 
   const [access] = entities ?? [];
   const isEarlyAccess =

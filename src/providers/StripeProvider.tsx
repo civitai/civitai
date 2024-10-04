@@ -7,15 +7,17 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { Anchor, Stack, Text } from '@mantine/core';
 import { removeEmpty } from '~/utils/object-helpers';
 
-const stripePromise = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-  ? loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
-  : null;
+// const stripePromise = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+//   ? loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+//   : null;
 
 export const useStripePromise = () => {
   const ref = useRef<Promise<Stripe | null> | null>(null);
 
   useEffect(() => {
-    ref.current = stripePromise;
+    ref.current = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+      ? loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
+      : null;
     return () => {
       ref.current = null;
     };

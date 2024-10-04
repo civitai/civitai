@@ -44,6 +44,7 @@ import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
@@ -54,6 +55,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import ProfileLayout from '~/components/Profile/ProfileLayout';
+import UserBanModal from '~/components/Profile/UserBanModal';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { Username } from '~/components/User/Username';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
@@ -113,6 +115,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
       );
 
       return { prevUser };
+    },
+    async onSuccess() {
+      await queryUtils.userProfile.get.invalidate({ username });
     },
     onError(_error, _vars, context) {
       queryUtils.user.getCreator.setData({ username }, context?.prevUser);
@@ -174,12 +179,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     if (user) {
       if (user.bannedAt) toggleBanMutation.mutate({ id: user.id });
       else
-        openConfirmModal({
-          title: 'Ban User',
-          children: `Are you sure you want to ban this user? Once a user is banned, they won't be able to access the app again.`,
-          labels: { confirm: 'Yes, ban the user', cancel: 'Cancel' },
-          confirmProps: { color: 'red' },
-          onConfirm: () => toggleBanMutation.mutate({ id: user.id }),
+        dialogStore.trigger({
+          component: UserBanModal,
+          props: { userId: user.id, username: user.username as string },
         });
     }
   };

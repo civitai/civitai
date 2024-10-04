@@ -74,15 +74,11 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         </Link>
       );
 
-    if (frameDecoration) {
-      card = (
-        <div className={classes.glow}>
-          <div className={cx('frame-decoration', classes.frame)}>{card}</div>
-        </div>
+    return (
+      <div className={frameDecoration ? classes.glow : undefined}>
+        <div className={cx(frameDecoration && 'frame-decoration', frameDecoration && classes.frame)}>{card}</div>
+      </div>
       );
-    }
-
-    return card;
   }
 );
 

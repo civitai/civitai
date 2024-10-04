@@ -102,11 +102,11 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                       }, ${JSON.stringify(d.details)}::jsonb)`
                   )
                 )}
-                ON CONFLICT
-                DO NOTHING
+                ON CONFLICT (key) DO UPDATE SET "users" = excluded."users", "lastTriggered" = NOW()
               `;
 
-                await notifDbWrite.cancellableQuery(insertQuery);
+                const resp = await notifDbWrite.cancellableQuery(insertQuery);
+                await resp.result();
               }
             }
 

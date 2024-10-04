@@ -6,8 +6,8 @@ import {
   TagEngagementType,
 } from '@prisma/client';
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import { OnboardingSteps } from '~/server/common/enums';
+import { banReasonDetails, constants } from '~/server/common/constants';
+import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import {
@@ -267,6 +267,13 @@ export const userScoreMetaSchema = z.object({
 export const userMeta = z.object({
   firstImage: z.date().optional(),
   scores: userScoreMetaSchema.optional(),
+  banDetails: z
+    .object({
+      reasonCode: z.nativeEnum(BanReasonCode).optional(),
+      detailsInternal: z.string().optional(),
+      detailsExternal: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -281,4 +288,12 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+});
+
+export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
+export const toggleBanUserSchema = z.object({
+  id: z.number(),
+  reasonCode: z.nativeEnum(BanReasonCode).optional(),
+  detailsInternal: z.string().optional(),
+  detailsExternal: z.string().optional(),
 });

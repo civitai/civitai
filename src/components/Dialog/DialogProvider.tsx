@@ -6,7 +6,7 @@ import { Freeze } from '~/components/Freeze/Freeze';
 type DialogState = {
   opened: boolean;
   onClose: () => void;
-  zIndex: number;
+  zIndex?: number;
   target?: string | HTMLElement;
   focused?: 'true';
 };
@@ -14,7 +14,6 @@ type DialogState = {
 const DialogContext = createContext<DialogState>({
   opened: false,
   onClose: () => undefined,
-  zIndex: 200,
 });
 export const useDialogContext = () => useContext(DialogContext);
 
@@ -35,7 +34,14 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
   }, []);
 
   return (
-    <DialogContext.Provider value={{ opened, onClose, zIndex: 200 + index, target: dialog.target }}>
+    <DialogContext.Provider
+      value={{
+        opened,
+        onClose,
+        zIndex: 200 + index,
+        target: dialog.target,
+      }}
+    >
       <Dialog {...dialog.props} />
     </DialogContext.Provider>
   );

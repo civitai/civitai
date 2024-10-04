@@ -15,6 +15,7 @@ import {
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
+  getPaddleAdjustments,
   getPaddleCustomerSubscriptions,
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
@@ -22,6 +23,7 @@ import {
   // updateTransaction,
 } from '~/server/paddle/client';
 import {
+  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionMetadataSchema,
   TransactionWithSubscriptionCreateInput,
@@ -34,6 +36,8 @@ import {
   EventName,
   SubscriptionNotification,
   TransactionNotification,
+  Adjustment,
+  AdjustmentAction,
 } from '@paddle/paddle-node-sdk';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -46,6 +50,10 @@ import {
 } from '~/server/schema/subscriptions.schema';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import { env } from '~/env/server.mjs';
+import dayjs from 'dayjs';
+import { original } from 'immer';
+import { logToAxiom } from '~/server/logging/client';
+import { PaginationInput } from '~/server/schema/base.schema';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -394,7 +402,6 @@ export const upsertSubscription = async (
     if (userSubscription) {
       await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
     }
-    await dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: null } });
     const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
     if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
       // This is a migration that we reached out to:
@@ -450,10 +457,6 @@ export const upsertSubscription = async (
         ),
         currentPeriodEnd: new Date(subscriptionNotification.currentBillingPeriod?.endsAt as string),
       },
-    }),
-    dbWrite.user.update({
-      where: { id: user.id },
-      data: { subscriptionId: subscriptionNotification.id },
     }),
   ]);
 
@@ -635,6 +638,8 @@ export const updateSubscriptionPlan = async ({
     throw throwNotFoundError('No active subscription found on Paddle');
   }
 
+  console.log('SUBSC', subscription, priceId);
+
   try {
     if (
       subscription.priceId === priceId &&
@@ -646,17 +651,40 @@ export const updateSubscriptionPlan = async ({
         scheduledChange: null,
       });
     } else if (subscription.priceId !== priceId) {
-      await updatePaddleSubscription({
-        subscriptionId: subscription.id,
-        items: [
-          {
-            priceId,
-            quantity: 1,
+      try {
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          items: [
+            {
+              priceId,
+              quantity: 1,
+            },
+          ],
+          prorationBillingMode: 'full_immediately',
+          onPaymentFailure: 'prevent_change',
+        });
+
+        // For whatever random reason in the world, Paddle doesn't update the next billed at date
+        // automatically when you change the subscription. So we do it manually.
+        await updatePaddleSubscription({
+          subscriptionId: subscription.id,
+          nextBilledAt: dayjs().add(1, 'month').toISOString(),
+          prorationBillingMode: 'do_not_bill',
+          customData: {
+            ...paddleSubscription.customData,
+            originalNextBilledAt: paddleSubscription?.nextBilledAt,
           },
-        ],
-        prorationBillingMode: 'full_immediately',
-        onPaymentFailure: 'prevent_change',
-      });
+        });
+      } catch (e) {
+        throw new Error('Failed to update subscription');
+        logToAxiom({
+          subscriptionId: paddleSubscription.id,
+          type: 'error',
+          message: 'Failed to update subscription',
+          userId,
+          priceId,
+        });
+      }
     }
 
     await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
@@ -674,7 +702,7 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   let customerId = '';
   const user = await dbRead.user.findUnique({
     where: { id: userId },
-    select: { paddleCustomerId: true, email: true, id: true, subscriptionId: true },
+    select: { paddleCustomerId: true, email: true, id: true },
   });
 
   const customerSubscription = await dbRead.customerSubscription.findFirst({
@@ -707,7 +735,6 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   if (customerSubscription && customerSubscription.id !== subscription.id) {
     // This is a different subscription, we should update the user.
     await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
-    await dbWrite.user.update({ where: { id: userId }, data: { subscriptionId: null } });
   }
 
   // This should trigger an update...
@@ -725,4 +752,42 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
   await getMultipliersForUser(userId, true);
 
   return true;
+};
+
+export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {
+  const subs = await getPaddleCustomerSubscriptions({ customerId });
+  const subsToCancel = subs.filter((sub) => sub.status === 'active');
+  const cancelPromises = subsToCancel.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'));
+  return Promise.all(cancelPromises);
+};
+
+export const getAdjustmentsInfinite = async ({
+  limit = 50,
+  cursor,
+  customerId,
+  subscriptionId,
+  transactionId,
+  action,
+}: GetPaddleAdjustmentsSchema) => {
+  const data = await getPaddleAdjustments({
+    after: cursor,
+    perPage: limit + 1,
+    // Paddle is picky about empty arrays.....
+    customerId: customerId?.length ? customerId : undefined,
+    subscriptionId: subscriptionId?.length ? subscriptionId : undefined,
+    transactionId: transactionId?.length ? transactionId : undefined,
+    action: action ? (action as AdjustmentAction) : undefined,
+  });
+
+  const hasMore = data.length > limit;
+  let nextItem: Adjustment | undefined;
+  if (hasMore) {
+    data.pop();
+    nextItem = data[data.length - 1];
+  }
+
+  return {
+    items: data,
+    nextCursor: nextItem?.id,
+  };
 };

@@ -1,6 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { commentDedupeKey, threadUrlMap } from '~/server/notifications/comment.notifications';
+import { threadUrlMap } from '~/server/notifications/comment.notifications';
 
 // Moveable (possibly)
 
@@ -146,7 +146,7 @@ export const mentionNotifications = createNotificationProcessor({
           AND m.status = 'Published'
       )
       SELECT
-        concat('${commentDedupeKey}', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
         "ownerId"    "userId",
         'new-mention' "type",
         details

@@ -52,6 +52,7 @@ type CachedLookupOptions<T extends object> = {
   ttl?: number;
   debounceTime?: number;
   cacheNotFound?: boolean;
+  dontCacheFn?: (data: T) => boolean;
 };
 export function createCachedArray<T extends object>({
   key,
@@ -61,6 +62,7 @@ export function createCachedArray<T extends object>({
   ttl = CacheTTL.xs,
   debounceTime = 10,
   cacheNotFound = true,
+  dontCacheFn,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -112,7 +114,7 @@ export function createCachedArray<T extends object>({
           continue;
         }
         results.add(result as T);
-        if (!dontCache.has(id)) toCache[id] = { ...result, cachedAt };
+        if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
       }
 
       // then cache the results
@@ -140,7 +142,7 @@ export function createCachedArray<T extends object>({
     return [...results];
   }
 
-  async function bust(id: number | number[]) {
+  async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
 
@@ -150,7 +152,7 @@ export function createCachedArray<T extends object>({
           `${key}:${id}`,
           { [idKey]: id, debounce: true },
           {
-            EX: debounceTime,
+            EX: options.debounceTime ?? debounceTime,
           }
         )
       )

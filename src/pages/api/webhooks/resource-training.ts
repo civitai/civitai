@@ -97,7 +97,10 @@ export default WebhookEndpoint(async (req, res) => {
 
   const bodyResults = schema.safeParse(req.body);
   if (!bodyResults.success) {
-    logWebhook({ message: 'Could not parse body', data: { error: bodyResults.error } });
+    logWebhook({
+      message: 'Could not parse body',
+      data: { error: bodyResults.error, body: JSON.stringify(req.body) },
+    });
     return res.status(400).json({ ok: false, error: bodyResults.error });
   }
 

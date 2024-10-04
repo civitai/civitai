@@ -25,7 +25,13 @@ import {
   upsertCosmeticShopItem,
   upsertCosmeticShopSection,
 } from '~/server/services/cosmetic-shop.service';
-import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+  verifiedProcedure,
+} from '~/server/trpc';
 
 export const cosmeticShopRouter = router({
   // #region [Shop Items]
@@ -37,11 +43,9 @@ export const cosmeticShopRouter = router({
   getShopItemById: protectedProcedure.input(getByIdSchema).query(({ input }) => {
     return getShopItemById(input);
   }),
-  upsertCosmetic: moderatorProcedure
-    .input(upsertCosmeticInput)
-    .mutation(({ input }) => {
-      return upsertCosmetic(input);
-    }),
+  upsertCosmetic: moderatorProcedure.input(upsertCosmeticInput).mutation(({ input }) => {
+    return upsertCosmetic(input);
+  }),
   upsertShopItem: moderatorProcedure
     .input(upsertCosmeticShopItemInput)
     .mutation(({ input, ctx }) => {
@@ -85,7 +89,7 @@ export const cosmeticShopRouter = router({
       isModerator: ctx?.user?.isModerator,
     });
   }),
-  purchaseShopItem: protectedProcedure
+  purchaseShopItem: verifiedProcedure
     .input(purchaseCosmeticShopItemInput)
     .mutation(({ input, ctx }) => {
       return purchaseCosmeticShopItem({

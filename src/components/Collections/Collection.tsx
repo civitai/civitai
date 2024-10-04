@@ -101,6 +101,8 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         supportsGeneration: undefined,
         followed: undefined,
         hidden: undefined,
+        fromPlatform: undefined,
+        fileFormats: undefined,
         sort,
         period: MetricTimeframe.AllTime,
         collectionId: collection.id,
@@ -111,7 +113,6 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         sort,
         followed: undefined,
         hidden: undefined,
-        period: MetricTimeframe.AllTime,
         collectionId: collection.id,
       };
 
@@ -147,6 +148,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
                 />
                 <Group spacing="xs">
                   <ModelFiltersDropdown
+                    filterMode="query"
                     maxPopoverHeight={'calc(75vh - var(--mantine-header-height))'}
                   />
                 </Group>
@@ -175,12 +177,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
               clearable
             />
           )}
-          <ModelsInfinite
-            filters={{
-              // For contest collections, we should always have a clean slate.
-              ...filters,
-            }}
-          />
+          <ModelsInfinite filters={filters} disableStoreFilters />
         </IsClient>
       </Stack>
     </ModelContextMenuProvider>

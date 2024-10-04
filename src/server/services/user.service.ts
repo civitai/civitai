@@ -10,8 +10,13 @@ import {
 } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  banReasonDetails,
+  CacheTTL,
+  constants,
+  USERS_SEARCH_INDEX,
+} from '~/server/common/constants';
+import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { searchClient } from '~/server/meilisearch/client';
@@ -31,6 +36,7 @@ import {
   GetAllUsersInput,
   GetByUsernameSchema,
   GetUserCosmeticsSchema,
+  ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
   UserMeta,
@@ -75,17 +81,23 @@ import {
 import { redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
-import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
+import {
+  cancelAllPaddleSubscriptions,
+  cancelSubscriptionPlan,
+} from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
+import { getUserBanDetails } from '~/utils/user-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
   leaderboardId,
+  isModerator,
   ...where
 }: {
   username?: string;
   id?: number;
   leaderboardId?: string;
+  isModerator?: boolean;
 }) => {
   const user = await dbRead.user.findFirst({
     where: {
@@ -158,6 +170,7 @@ export const getUserCreator = async ({
 
   return {
     ...user,
+
     _count: {
       models: Number(modelCount),
     },
@@ -596,7 +609,10 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
 export async function softDeleteUser({ id }: { id: number }) {
-  const user = await dbWrite.user.findFirst({ where: { id }, select: { isModerator: true } });
+  const user = await dbWrite.user.findFirst({
+    where: { id },
+    select: { isModerator: true, paddleCustomerId: true },
+  });
   if (user?.isModerator) return;
   await dbWrite.model.updateMany({
     where: { userId: id },
@@ -615,9 +631,11 @@ export async function softDeleteUser({ id }: { id: number }) {
   await invalidateSession(id);
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
-  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
+  if (user?.paddleCustomerId) {
+    await cancelAllPaddleSubscriptions({ customerId: user.paddleCustomerId }).catch((error) =>
+      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+    );
+  }
 }
 
 export const updateAccountScope = async ({
@@ -695,6 +713,8 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // nb: doing this because these fields are technically nullable, but prisma
   // likes returning them as undefined. that messes with the typing.
+  const userMeta = (response.meta ?? {}) as UserMeta;
+
   const user = {
     ...response,
     image: response.image ?? undefined,
@@ -707,13 +727,17 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     deletedAt: response.deletedAt ?? undefined,
     customerId: response.customerId ?? undefined,
     paddleCustomerId: response.paddleCustomerId ?? undefined,
-    subscriptionId: response.subscriptionId ?? undefined,
+    subscriptionId: subscription?.id ?? undefined,
     mutedAt: response.mutedAt ?? undefined,
     bannedAt: response.bannedAt ?? undefined,
     autoplayGifs: response.autoplayGifs ?? undefined,
     leaderboardShowcase: response.leaderboardShowcase ?? undefined,
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-    meta: (response.meta ?? {}) as UserMeta,
+    meta: {
+      ...userMeta,
+      banDetails: undefined,
+    },
+    banDetails: getUserBanDetails({ meta: userMeta }),
   };
 
   const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
@@ -741,7 +765,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
   const sessionUser: SessionUser = {
     ...rest,
     image: profilePicture?.url ?? rest.image,
-    tier,
+    tier: tier !== 'free' ? tier : undefined,
     permissions,
     memberInBadState,
     allowAds:
@@ -991,26 +1015,48 @@ export const updateLeaderboardRank = async ({
   ]);
 };
 
-export const toggleBan = async ({ id }: { id: number }) => {
-  const user = await getUserById({ id, select: { bannedAt: true } });
+export const toggleBan = async ({
+  id,
+  reasonCode,
+  detailsInternal,
+  detailsExternal,
+}: ToggleBanUser) => {
+  const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const userMeta = (user.meta ?? {}) as UserMeta;
+  const updatedMeta = user.bannedAt
+    ? {
+        ...(userMeta ?? {}),
+        banDetails: undefined,
+      }
+    : {
+        ...(userMeta ?? {}),
+        banDetails: {
+          reasonCode,
+          detailsInternal,
+          detailsExternal,
+        },
+      };
 
   const updatedUser = await updateUserById({
     id,
-    data: { bannedAt: user.bannedAt ? null : new Date() },
+    data: { bannedAt: user.bannedAt ? null : new Date(), meta: updatedMeta },
   });
   await invalidateSession(id);
 
-  // Unpublish their models
-  await dbWrite.model.updateMany({
-    where: { userId: id },
-    data: { publishedAt: null, status: 'Unpublished' },
-  });
+  if (!user.bannedAt) {
+    // Unpublish their models
+    await dbWrite.model.updateMany({
+      where: { userId: id },
+      data: { publishedAt: null, status: 'Unpublished' },
+    });
 
-  // Cancel their subscription
-  await cancelSubscriptionPlan({ userId: id }).catch((error) =>
-    logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-  );
+    // Cancel their subscription
+    await cancelSubscriptionPlan({ userId: id }).catch((error) =>
+      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+    );
+  }
 
   return updatedUser;
 };
@@ -1544,3 +1590,16 @@ export async function updateContentSettings({
   }
   await invalidateSession(userId);
 }
+
+export const getUserByPaddleCustomerId = async ({
+  paddleCustomerId,
+}: {
+  paddleCustomerId: string;
+}) => {
+  const user = await dbRead.user.findFirst({
+    where: { paddleCustomerId },
+    select: { id: true, username: true },
+  });
+
+  return user;
+};

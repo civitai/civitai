@@ -30,7 +30,7 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
+// import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
@@ -45,7 +45,7 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
-import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
+// import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -168,7 +168,7 @@ function MyApp(props: CustomAppProps) {
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
-                                                      <StripeSetupSuccessProvider />
+                                                      {/* <StripeSetupSuccessProvider /> */}
                                                       <DialogProvider />
                                                       <RoutedDialogProvider />
                                                     </CustomModalsProvider>
@@ -215,7 +215,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
   const flags = getFeatureFlags({ user: session?.user, req: appContext.ctx?.req });
-  // console.log(flags);
 
   // Pass this via the request so we can use it in SSR
   if (session) {

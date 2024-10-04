@@ -5,6 +5,7 @@ import {
   Group,
   Input,
   Paper,
+  Radio,
   Stack,
   Text,
   ThemeIcon,
@@ -27,6 +28,7 @@ import {
   Form,
   InputCheckbox,
   InputMultiSelect,
+  InputRadioGroup,
   InputRTE,
   InputSegmentedControl,
   InputSelect,
@@ -51,16 +53,19 @@ const schema = modelUpsertSchema
     description: getSanitizedStringSchema().refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
+    poi: z.string().refine((data) => !!data.length, 'Required'),
+    attestation: z.boolean().refine((data) => !!data, 'Required'),
   })
   .refine((data) => (data.type === 'Checkpoint' ? !!data.checkpointType : true), {
     message: 'Please select the checkpoint type',
     path: ['checkpointType'],
   })
-  .refine((data) => !(data.nsfw && data.poi), {
+  .refine((data) => !(data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
   .refine((data) => !(data.nsfw && data.minor), {
-    message: 'Mature content depicting minors is not permitted.',
+    message:
+      'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   });
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
@@ -92,7 +97,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     type: model?.type ?? 'Checkpoint',
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
-    poi: model?.poi ?? false,
+    poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
     nsfw: model?.nsfw ?? false,
     allowCommercialUse: model?.allowCommercialUse ?? [
       CommercialUse.Image,
@@ -104,6 +109,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowNoCredit: model?.allowNoCredit ?? true,
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
+    attestation: !!model?.id,
   };
 
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
@@ -112,7 +118,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
-  const hasPoiInNsfw = nsfw && poi;
+  const hasPoiInNsfw = nsfw && poi === 'true';
   const hasMinorInNsfw = nsfw && minor;
   const { isDirty, errors } = form.formState;
 
@@ -148,7 +154,20 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
     },
   });
-  const handleSubmit = ({ category, tagsOnModels = [], ...rest }: z.infer<typeof schema>) => {
+  const handleSubmit = ({
+    category,
+    tagsOnModels = [],
+    poi,
+    attestation,
+    ...rest
+  }: z.infer<typeof schema>) => {
+    if (!attestation)
+      return form.setError(
+        'attestation',
+        { message: 'Required', type: 'required' },
+        { shouldFocus: true }
+      );
+
     const bountyId = result.success ? result.data.bountyId : undefined;
     if (isDirty || bountyId) {
       const templateId = result.success ? result.data.templateId : undefined;
@@ -160,12 +179,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         tagsOnModels: tags,
         templateId,
         bountyId,
+        // manually transform poi
+        poi: poi === 'true',
       });
     } else onSubmit(defaultValues);
   };
 
   useEffect(() => {
-    const subscription = form.watch((value, { name, type }) => {
+    const subscription = form.watch((value, { name }) => {
       if (
         currentUser?.isModerator &&
         name &&
@@ -188,6 +209,8 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
         tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
         category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
         description: model.description ?? '',
+        poi: model?.poi == null ? '' : model?.poi === true ? 'true' : 'false',
+        attestation: !!model?.id,
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultCategory, model]);
@@ -411,25 +434,34 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 <Text size="md" weight={500}>
                   This resource:
                 </Text>
-                <InputCheckbox
+                <InputRadioGroup
                   name="poi"
-                  label="Depicts an actual person"
+                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator)"
                   description={isLockedDescription(
                     'category',
-                    'For Example: Tom Cruise or Tom Cruise as Maverick'
+                    'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
-                  disabled={isLocked('poi')}
-                />
+                  onChange={(value) => {
+                    form.setValue('nsfw', value === 'true' ? false : undefined);
+                    form.setValue('minor', value === 'true');
+                  }}
+                >
+                  <Radio value="true" label="Yes" disabled={isLocked('poi')} />
+                  <Radio value="false" label="No" disabled={isLocked('poi')} />
+                </InputRadioGroup>
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw')}
+                  disabled={isLocked('nsfw') || poi === 'true'}
                   description={isLockedDescription('category')}
+                  onChange={(event) =>
+                    event.target.checked ? form.setValue('minor', false) : null
+                  }
                 />
                 <InputCheckbox
                   name="minor"
                   label="Cannot be used for NSFW generation"
-                  disabled={isLocked('minor')}
+                  disabled={isLocked('minor') || nsfw}
                   description={isLockedDescription('minor')}
                 />
               </Stack>
@@ -469,15 +501,21 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                       <IconExclamationMark />
                     </ThemeIcon>
                     <Text size="xs" sx={{ lineHeight: 1.2 }}>
-                      Mature content depicting minors is not permitted.
+                      This resource is intended to produce mature themes and cannot be used for NSFW
+                      generation. These options are mutually exclusive.
                     </Text>
                   </Group>
                 </Alert>
                 <Text size="xs" color="dimmed" sx={{ lineHeight: 1.2 }}>
-                  Please revise the content of this listing to ensure no minors are depicted in an
-                  mature context out of respect for the individual.
+                  Please revise the content of this listing.
                 </Text>
               </>
+            )}
+            {!model?.id && (
+              <InputCheckbox
+                name="attestation"
+                label="I acknowledge that I have reviewed the choices above, selected the appropriate option, and understand that my account may be at risk if the selection is found to be incorrect."
+              />
             )}
           </Stack>
         </ContainerGrid.Col>

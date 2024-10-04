@@ -12,7 +12,7 @@ export function numericStringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
   return z.preprocess((value) => parseNumericStringArray(value), schema ?? z.number().array());
 }
 
-export function stringArray<I extends ZodArray<ZodNumber>>(schema?: I) {
+export function stringArray<I extends ZodArray<any>>(schema?: I) {
   return z.preprocess(
     (value) => (!Array.isArray(value) ? [value] : value),
     schema ?? z.string().array()

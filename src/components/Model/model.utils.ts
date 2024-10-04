@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelStatus } from '@prisma/client';
+import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
@@ -16,6 +16,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { booleanString, stringArray } from '~/utils/zod-helpers';
 
 const modelQueryParamSchema = z
   .object({
@@ -27,10 +28,10 @@ const modelQueryParamSchema = z
     username: usernameSchema.transform(postgresSlugify),
     tagname: z.string(),
     tag: z.string(),
-    favorites: z.coerce.boolean(),
-    hidden: z.coerce.boolean(),
-    archived: z.coerce.boolean(),
-    followed: z.coerce.boolean(),
+    favorites: booleanString(),
+    hidden: booleanString(),
+    archived: booleanString(),
+    followed: booleanString(),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'draft', 'training']),
     collectionId: z.coerce.number(),
@@ -42,6 +43,22 @@ const modelQueryParamSchema = z
     ),
     clubId: z.coerce.number().optional(),
     collectionTagId: z.coerce.number().optional(),
+    earlyAccess: booleanString().optional(),
+    types: z
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(ModelType).array())
+      .optional(),
+    checkpointType: z.nativeEnum(CheckpointType).optional(),
+    supportsGeneration: booleanString().optional(),
+    status: z
+      .preprocess((val) => (Array.isArray(val) ? val : [val]), z.nativeEnum(ModelStatus).array())
+      .optional(),
+    fileFormats: z
+      .preprocess(
+        (val) => (Array.isArray(val) ? val : [val]),
+        z.enum(constants.modelFileFormats).array()
+      )
+      .optional(),
+    fromPlatform: booleanString().optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;
