@@ -3,7 +3,7 @@ import { IconCheck, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
-import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
+import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,7 +25,7 @@ const schema = z.object({
 
 export function OnboardingProfile() {
   const currentUser = useCurrentUser();
-  const { next } = useOnboardingWizardContext();
+  const { next } = useOnboardingContext();
   const { mutate, isLoading, error } = useOnboardingStepCompleteMutation();
 
   const debouncer = useDebouncer(500);
