@@ -31,6 +31,9 @@ export const collectedContentReward = createBuzzEvent({
       input.ownerId = userId;
     }
 
+    // Don't reward the user for collecting their own content
+    if (input.ownerId === input.collectorId) return false;
+
     return {
       toUserId: input.ownerId,
       forId: input.entityId,
