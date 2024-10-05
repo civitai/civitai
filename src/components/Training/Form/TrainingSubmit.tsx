@@ -843,6 +843,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           transactionType="Generation"
           onPerformTransaction={handleSubmit}
           error={hasIssue ? 'Error computing cost' : undefined}
+          showTypePct
         />
       </Group>
     </Stack>

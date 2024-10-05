@@ -2,16 +2,15 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
-import { env } from '~/env/client.mjs';
-import { QS } from '~/utils/qs';
-import { ModalProps } from '@mantine/core';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -141,6 +140,29 @@ export const useBuzzTransaction = (opts?: {
         return userBalance >= buzzAmount;
     }
   };
+  const getTypeDistribution = (buzzAmount: number) => {
+    switch (type) {
+      case 'Generation':
+        if (generationBalance >= buzzAmount)
+          return { amt: { blue: buzzAmount, yellow: 0 }, pct: { blue: 1, yellow: 0 } };
+
+        const blueAmt = Math.max(0, generationBalance);
+        const yellowAmt = buzzAmount - generationBalance;
+
+        return {
+          amt: {
+            blue: blueAmt,
+            yellow: yellowAmt,
+          },
+          pct: {
+            blue: blueAmt / buzzAmount,
+            yellow: yellowAmt / buzzAmount,
+          },
+        };
+      default:
+        return { amt: { blue: 0, yellow: buzzAmount }, pct: { blue: 0, yellow: 1 } };
+    }
+  };
 
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
@@ -171,6 +193,7 @@ export const useBuzzTransaction = (opts?: {
   return {
     hasRequiredAmount,
     hasTypeRequiredAmount,
+    getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
   };
