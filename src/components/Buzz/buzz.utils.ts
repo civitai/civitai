@@ -97,6 +97,11 @@ export const useBuyBuzz = (): ((...args: OpenBuyBuzzModalProps) => void) => {
   }
 };
 
+export type BuzzTypeDistribution = {
+  pct: { blue: number; yellow: number };
+  amt: { blue: number; yellow: number };
+};
+
 export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
@@ -140,7 +145,7 @@ export const useBuzzTransaction = (opts?: {
         return userBalance >= buzzAmount;
     }
   };
-  const getTypeDistribution = (buzzAmount: number) => {
+  const getTypeDistribution = (buzzAmount: number): BuzzTypeDistribution => {
     switch (type) {
       case 'Generation':
         if (generationBalance >= buzzAmount)

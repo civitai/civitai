@@ -135,11 +135,7 @@ export function BuzzTransactionButton({
               meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
             }
             color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
-            typeDistrib={
-              showTypePct
-                ? { bluePct: typeDistrib.pct.blue, yellowPct: typeDistrib.pct.yellow }
-                : undefined
-            }
+            typeDistrib={showTypePct ? typeDistrib : undefined}
           >
             {!hasRequiredAmount(buzzAmount) && (
               <Tooltip
