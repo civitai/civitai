@@ -205,14 +205,30 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
   }
 };
 
-export function UserPaymentConfigurationCard() {
-  const features = useFeatureFlags();
+const StripeConnectConfigurationCard = () => {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+  if (!userPaymentConfiguration) return null;
 
-  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+  if (userPaymentConfiguration?.stripeAccountId) {
+    // True as of now, we don't support stripe anymore
+    return (
+      <Stack>
+        <Group position="apart">
+          <Title order={2} id="payment-methods">
+            Stripe Connect
+          </Title>
+        </Group>
+
+        <Text>
+          We will no longer be supporting Stripe connect for payments. Please setup Tipalti in order
+          to receive payments.
+        </Text>
+      </Stack>
+    );
+  }
 
   return (
-    <Card withBorder id="stripe">
+    <>
       <Stack>
         <Group position="apart">
           <Title order={2} id="payment-methods">
@@ -254,6 +270,101 @@ export function UserPaymentConfigurationCard() {
           />
         </Stack>
       )}
+    </>
+  );
+};
+
+const TipaltiConfigurationCard = () => {
+  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+  if (!userPaymentConfiguration) return null;
+
+  if (!userPaymentConfiguration?.tipaltiAccountId) {
+    // True as of now, we don't support stripe anymore
+    return (
+      <Stack>
+        <Group position="apart">
+          <Title order={2} id="payment-methods">
+            Tipalti
+          </Title>
+        </Group>
+
+        <Text>
+          Tipalti is the new way to receive payments. We are slowly rolling invitations to Tipalti
+          to all creators. If you have not received an invitation yet, please be patient.
+        </Text>
+        <Text>A notification will be sent to you once you are invited to Tipalti.</Text>
+      </Stack>
+    );
+
+    return (
+      <Stack>
+        <Group position="apart">
+          <Title order={2} id="payment-methods">
+            Tipalti
+          </Title>
+        </Group>
+      </Stack>
+    );
+  }
+
+  return (
+    <>
+      <Stack>
+        <Group position="apart">
+          <Title order={2} id="payment-methods">
+            Stripe Connect
+          </Title>
+          <ActionIcon
+            onClick={() => {
+              dialogStore.trigger({
+                component: FeatureIntroductionModal,
+                props: {
+                  feature: 'getting-started',
+                  contentSlug: ['feature-introduction', 'stripe-connect'],
+                },
+              });
+            }}
+          >
+            <IconInfoCircle />
+          </ActionIcon>
+        </Group>
+      </Stack>
+
+      <Divider my="xl" />
+
+      {isLoading ? (
+        <Center>
+          <Loader />
+        </Center>
+      ) : !userPaymentConfiguration ? (
+        <Stack>
+          <Alert color="red">
+            It looks like you are not authorized to receive payments or setup your account. Please
+            contact support.
+          </Alert>
+        </Stack>
+      ) : (
+        <Stack>
+          <StripeConnectStatusDisplay
+            status={userPaymentConfiguration.stripeAccountStatus as StripeConnectStatus}
+          />
+        </Stack>
+      )}
+    </>
+  );
+};
+
+export function UserPaymentConfigurationCard() {
+  const features = useFeatureFlags();
+  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+
+  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+
+  return (
+    <Card withBorder id="payments">
+      <StripeConnectConfigurationCard />
+      <Divider my="xl" />
+      <TipaltiConfigurationCard />
     </Card>
   );
 }

@@ -83,7 +83,7 @@ export async function getStripeConnectOnboardingLink({ userId }: { userId: numbe
   const accountLink = await stripe.accountLinks.create({
     account: userPaymentConfig.stripeAccountId,
     refresh_url: `${env.NEXT_PUBLIC_BASE_URL}/user/stripe-connect/onboard`,
-    return_url: `${env.NEXT_PUBLIC_BASE_URL}/user/account#stripe`,
+    return_url: `${env.NEXT_PUBLIC_BASE_URL}/user/account#payments`,
     type: 'account_onboarding',
   });
 
