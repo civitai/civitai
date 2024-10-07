@@ -328,3 +328,22 @@ export async function updateByTipaltiAccount({
 
   return updated;
 }
+
+export async function getTipaltiOnboardingUrl({ userId }: { userId: number }) {
+  if (!env.NEXT_PUBLIC_BASE_URL) throw throwBadRequestError('NEXT_PUBLIC_BASE_URL not set');
+
+  const userPaymentConfig = await getUserPaymentConfiguration({ userId });
+  if (!userPaymentConfig || !userPaymentConfig.tipaltiAccountId)
+    throw throwBadRequestError('User tipalti account not found');
+
+  const stripe = await getServerStripe();
+
+  if (!stripe) throw throwBadRequestError('Stripe not available');
+
+  const accountLink = await tipaltiCaller.getPaymentDashboardUrl(
+    userPaymentConfig.tipaltiAccountId,
+    'setup'
+  );
+
+  return accountLink;
+}

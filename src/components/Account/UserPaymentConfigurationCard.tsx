@@ -26,8 +26,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { StripeConnectStatus } from '~/server/common/enums';
-import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import {
+  useTipaltiConfigurationUrl,
+  useUserPaymentConfiguration,
+} from '~/components/UserPaymentConfiguration/util';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -276,6 +279,10 @@ const StripeConnectConfigurationCard = () => {
 
 const TipaltiConfigurationCard = () => {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+  const [setupAccount, setSetupAccount] = useState(false);
+  const { tipaltiConfigurationUrl, isLoading: isLoadingTipaltiConfigurationUrl } =
+    useTipaltiConfigurationUrl(setupAccount);
+
   if (!userPaymentConfiguration) return null;
 
   if (!userPaymentConfiguration?.tipaltiAccountId) {
@@ -293,16 +300,6 @@ const TipaltiConfigurationCard = () => {
           to all creators. If you have not received an invitation yet, please be patient.
         </Text>
         <Text>A notification will be sent to you once you are invited to Tipalti.</Text>
-      </Stack>
-    );
-
-    return (
-      <Stack>
-        <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Tipalti
-          </Title>
-        </Group>
       </Stack>
     );
   }
@@ -332,23 +329,28 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xl" />
 
-      {isLoading ? (
-        <Center>
-          <Loader />
-        </Center>
-      ) : !userPaymentConfiguration ? (
-        <Stack>
-          <Alert color="red">
-            It looks like you are not authorized to receive payments or setup your account. Please
-            contact support.
-          </Alert>
-        </Stack>
+      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
+        <>
+          {isLoadingTipaltiConfigurationUrl ? (
+            <Center>
+              <Loader />
+            </Center>
+          ) : tipaltiConfigurationUrl ? (
+            <iframe href={tipaltiConfigurationUrl} width="100%" height="800px" />
+          ) : (
+            <Button onClick={() => setSetupAccount(true)}>Setup my Tipalti account</Button>
+          )}
+        </>
+      ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
+        <Text>
+          Your account is setup and you should be good to withdraw. You can click the button below
+          if you need to make any adjustments to your account.
+        </Text>
       ) : (
-        <Stack>
-          <StripeConnectStatusDisplay
-            status={userPaymentConfiguration.stripeAccountStatus as StripeConnectStatus}
-          />
-        </Stack>
+        <Text>
+          We are unable to setup your account so that you can withdraw funds. You may contact
+          support if you think this is a mistake to get a better understanding of the issue.
+        </Text>
       )}
     </>
   );
@@ -362,9 +364,11 @@ export function UserPaymentConfigurationCard() {
 
   return (
     <Card withBorder id="payments">
-      <StripeConnectConfigurationCard />
-      <Divider my="xl" />
-      <TipaltiConfigurationCard />
+      {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
+      {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
+        <Divider my="xl" />
+      )}
+      {userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
     </Card>
   );
 }

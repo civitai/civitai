@@ -17,3 +17,12 @@ export const useUserPaymentConfiguration = () => {
     isLoading,
   };
 };
+
+export const useTipaltiConfigurationUrl = (enabled: boolean) => {
+  const { data: tipaltiConfigurationUrl, ...rest } =
+    trpc.userPaymentConfiguration.getTipaltiOnboardingUrl.useQuery(undefined, {
+      enabled,
+    });
+
+  return { tipaltiConfigurationUrl, ...rest };
+};
