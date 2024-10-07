@@ -1,4 +1,3 @@
-import { deleteCookie } from 'cookies-next';
 import { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
@@ -6,7 +5,6 @@ import { createContext, useContext, useEffect, useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useDomainSync } from '~/hooks/useDomainSync';
-import { useCookies } from '~/providers/CookiesProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserMeta } from '~/server/schema/user.schema';
 import {
@@ -14,7 +12,8 @@ import {
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
-
+import { useCookies } from '~/providers/CookiesProvider';
+import { deleteCookie } from 'cookies-next';
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
   ssr: false,
 });

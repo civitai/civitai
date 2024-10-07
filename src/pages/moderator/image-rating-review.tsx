@@ -34,8 +34,8 @@ export default function ImageRatingReview() {
   const hasNextPage = !!data?.nextCursor;
 
   return (
-    <div className="p-4  flex flex-col gap-4">
-      <div className="flex justify-center gap-4 items-center">
+    <div className="flex  flex-col gap-4 p-4">
+      <div className="flex items-center justify-center gap-4">
         <Title>Image Rating Review</Title>
         <Select
           placeholder="Limit"
@@ -55,7 +55,7 @@ export default function ImageRatingReview() {
       ) : (
         <>
           <div
-            className="grid gap-6 justify-center"
+            className="grid justify-center gap-6"
             style={{ gridTemplateColumns: 'repeat(auto-fit, 300px' }}
           >
             {flatData?.map((item) => (
@@ -107,7 +107,8 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
             const votes = item.votes[level];
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
-              const count = item.ownerVote > 0 ? votes - 1 : votes;
+              const count = item.ownerVote === level && item.ownerVote > 0 ? votes - 1 : votes;
+              // const count = votes;
               const percentage = count / maxRating;
               sections.unshift({
                 value: percentage * 100,
@@ -118,6 +119,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
             if (item.ownerVote > 0 && item.ownerVote === level) {
               sections.unshift({
                 value: (1 / maxRating) * 100,
+                label: String(votes),
                 color: 'yellow',
               });
             }
@@ -142,7 +144,13 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
             );
           })}
         </div>
-        <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAddModerated />
+        <VotableTags
+          entityType="image"
+          entityId={item.id}
+          tags={item.tags}
+          canAddModerated
+          nsfwLevel={item.nsfwLevel}
+        />
       </div>
     </div>
   );

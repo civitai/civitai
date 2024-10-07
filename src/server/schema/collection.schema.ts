@@ -37,6 +37,8 @@ export const saveCollectionItemInputSchema = collectionItemSchema
       z.object({
         collectionId: z.number(),
         tagId: z.number().nullish(),
+        userId: z.number().nullish(),
+        read: z.nativeEnum(CollectionReadConfiguration).optional(),
       })
     ),
     removeFromCollectionIds: z.coerce.number().array().optional(),

@@ -136,7 +136,6 @@ export function CollectionHitList() {
           return (
             <CollectionCard
               key={hit.id}
-              sx={{}}
               data={{
                 ...hit,
                 // Reset values not relevant

@@ -1,6 +1,7 @@
 import { ModelFlagStatus, Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { logToAxiom } from '~/server/logging/client';
+import { GetByIdsInput } from '~/server/schema/base.schema';
 import { GetFlaggedModelsInput, ModelScanResult } from '~/server/schema/model-flag.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
@@ -61,7 +62,7 @@ export async function upsertModelFlag({
 }
 
 export function getFlaggedModels(input: GetFlaggedModelsInput) {
-  return getPagedData(input, async ({ skip, take, sort = [], ...rest }) => {
+  return getPagedData(input, async ({ skip, take, sort = [] }) => {
     const [flaggedModels, count] = await dbRead.$transaction([
       dbRead.modelFlag.findMany({
         where: { status: ModelFlagStatus.Pending },
@@ -75,6 +76,7 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
           minor: true,
           details: true,
           poiName: true,
+          createdAt: true,
           model: {
             select: {
               id: true,
@@ -112,13 +114,30 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
   });
 }
 
-export async function resolveFlaggedModel({ id, userId }: GetByIdInput & { userId: number }) {
-  const updated = await dbWrite.modelFlag.update({
-    where: { modelId: id },
+export async function resolveFlaggedModel({ ids, userId }: GetByIdsInput & { userId: number }) {
+  if (ids.length === 0) return null;
+
+  const updated = await dbWrite.modelFlag.updateMany({
+    where: { modelId: { in: ids } },
     data: { status: ModelFlagStatus.Resolved },
   });
 
-  await trackModActivity(userId, { entityType: 'model', entityId: id, activity: 'moderateFlag' });
+  await Promise.all(
+    ids.map((id) =>
+      trackModActivity(userId, { entityType: 'model', entityId: id, activity: 'moderateFlag' })
+    )
+  ).catch((error) =>
+    logToAxiom(
+      {
+        name: 'track-resolve-model-flag',
+        type: 'error',
+        message: 'Failed to track mod activity',
+        error,
+        details: { entityType: 'model', activity: 'moderateFlag', ids },
+      },
+      'moderation'
+    )
+  );
 
   return updated;
 }

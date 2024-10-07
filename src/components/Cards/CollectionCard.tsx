@@ -1,10 +1,9 @@
-import { ActionIcon, Badge, Group, Stack, Sx, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
@@ -16,6 +15,7 @@ import { truncate } from 'lodash-es';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NsfwLevel } from '~/server/common/enums';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 type ImageProps = {
   id: number;
@@ -33,8 +33,8 @@ type ImageProps = {
   meta?: ImageMetaProps | null;
 };
 
-export function CollectionCard({ data, sx }: Props) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+export function CollectionCard({ data }: Props) {
+  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
 
   const getCoverImages = () => {
     if (data.image) return [data.image];
@@ -67,9 +67,6 @@ export function CollectionCard({ data, sx }: Props) {
     <FeedCard
       className={coverImages.length === 0 ? classes.noImage : undefined}
       href={`/collections/${data.id}`}
-      aspectRatio="square"
-      // Necessary when inside a UniformGrid
-      sx={sx || { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
     >
       <div
         className={cx({
@@ -95,31 +92,39 @@ export function CollectionCard({ data, sx }: Props) {
           )}
         </div>
 
-        <Stack className={cx(classes.contentOverlay, classes.bottom)} spacing="sm">
-          <Group position="apart" align="flex-end" noWrap>
-            <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
-              {data.name}
-            </Text>
-            <Group spacing={4} noWrap>
-              <IconBadge className={classes.iconBadge} icon={<IconLayoutGrid size={14} />}>
+        <div className={cx('flex flex-col gap-2', classes.contentOverlay, classes.bottom)}>
+          {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
+          <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={2} lh={1.2}>
+            {data.name}
+          </Text>
+          <div className="flex flex-nowrap gap-1">
+            <Badge className={cx(classes.statChip, classes.chip)} variant="light" radius="xl">
+              <Group spacing={2}>
+                <IconLayoutGrid size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(itemCount)}</Text>
-              </IconBadge>
-              <IconBadge className={classes.iconBadge} icon={<IconUser size={14} />}>
+              </Group>
+              <Group spacing={2}>
+                <IconUser size={14} stroke={2.5} />
                 <Text size="xs">{abbreviateNumber(contributorCount)}</Text>
-              </IconBadge>
-            </Group>
-          </Group>
-        </Stack>
+              </Group>
+            </Badge>
+          </div>
+        </div>
       </div>
     </FeedCard>
   );
 }
 
+type HeaderData = Pick<Props['data'], 'id' | 'userId' | 'type' | 'mode'>;
+
 function CollectionCardHeader({
   data,
   withinImageGuard = true,
-}: Props & { withinImageGuard?: boolean }) {
-  const { classes, cx } = useCardStyles({ aspectRatio: 1 });
+}: {
+  data: HeaderData;
+  withinImageGuard?: boolean;
+}) {
+  const { classes, cx } = useCardStyles({ aspectRatio: 7 / 9 });
 
   return (
     <Group spacing={4} position="apart" className={cx(classes.contentOverlay, classes.top)} noWrap>
@@ -152,8 +157,8 @@ function CollectionCardHeader({
   );
 }
 
-function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 1 });
+export function ImageCover({ data, coverImages }: { data: HeaderData; coverImages: ImageProps[] }) {
+  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
 
@@ -168,7 +173,7 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
               {safe ? (
                 <EdgeMedia
                   src={image.url}
-                  type={image.type}
+                  type="image"
                   className={classes.image}
                   name={image.name ?? image.id.toString()}
                   alt={
@@ -209,14 +214,15 @@ function ImageCover({ data, coverImages }: Props & { coverImages: ImageProps[] }
   );
 }
 
-function ImageSrcCover({ data, coverSrcs }: Props & { coverSrcs: string[] }) {
-  const { classes } = useCardStyles({ aspectRatio: 1 });
+export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
+  const { classes } = useCardStyles({ aspectRatio: 7 / 9 });
 
   return (
     <>
       {coverSrcs.map((src) => (
         <EdgeMedia
           src={src}
+          type="image"
           width={DEFAULT_EDGE_IMAGE_WIDTH}
           placeholder="empty"
           className={classes.image}
@@ -241,5 +247,4 @@ type Props = {
   } & {
     image?: ImageProps | null;
   };
-  sx?: Sx;
 };
