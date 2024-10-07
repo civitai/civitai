@@ -3,12 +3,12 @@ import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
+import { ingestModel } from '~/server/services/model.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { hasNsfwWords } from '~/utils/metadata/audit';
 
 const schema = z.object({
-  concurrency: z.coerce.number().min(1).max(50).optional().default(15),
-  batchSize: z.coerce.number().min(0).optional().default(500),
+  concurrency: z.coerce.number().min(1).max(10).optional().default(1),
+  batchSize: z.coerce.number().min(0).optional().default(100),
   start: z.coerce.number().min(0).optional().default(0),
   end: z.coerce.number().min(0).optional(),
   after: z.coerce.date().optional(),
@@ -16,60 +16,62 @@ const schema = z.object({
 });
 
 export default WebhookEndpoint(async (req, res) => {
-  const params = schema.parse(req.query);
-  let totalProcessed = 0;
-  let totalTitleNsfw = 0;
+  try {
+    const params = schema.parse(req.query);
+    let totalProcessed = 0;
 
-  await dataProcessor({
-    params,
-    runContext: res,
-    rangeFetcher: async (context) => {
-      if (params.after) {
-        const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
-          WITH dates AS (
-            SELECT
-            MIN("createdAt") as start,
-            MAX("createdAt") as end
-            FROM "Model" WHERE "createdAt" > ${params.after}
-          )
-          SELECT MIN(id) as start, MAX(id) as end
-          FROM "Model" i
-          JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
-        return results[0];
-      }
-      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
-        Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
-      );
-      return { ...context, end: max };
-    },
-    processor: async ({ start, end, cancelFns }) => {
-      const modelsQuery = await pgDbWrite.cancellableQuery<{ id: number; name: string }>(Prisma.sql`
-        SELECT id, name FROM "Model" WHERE id BETWEEN ${start} AND ${end}
-      `);
-      cancelFns.push(modelsQuery.cancel);
-
-      const models = await modelsQuery.result();
-
-      const toInsert = models
-        .map(({ id, name }) => {
-          return { id, titleNsfw: hasNsfwWords(name) };
-        })
-        .filter((x) => x.titleNsfw);
-      totalProcessed += models.length;
-      totalTitleNsfw += toInsert.length;
-
-      if (toInsert.length > 0) {
-        const insertQuery = await pgDbWrite.cancellableQuery(Prisma.sql`
-          INSERT INTO "ModelFlag" ("modelId", "titleNsfw")
-          VALUES ${Prisma.raw(
-            toInsert.map(({ id, titleNsfw }) => `(${id}, ${titleNsfw})`).join(', ')
-          )}
-          ON CONFLICT DO NOTHING;
+    await dataProcessor({
+      params,
+      runContext: res,
+      rangeFetcher: async (context) => {
+        if (params.after) {
+          const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+            WITH dates AS (
+              SELECT
+              MIN("createdAt") as start,
+              MAX("createdAt") as end
+              FROM "Model" WHERE "createdAt" > ${params.after}
+            )
+            SELECT MIN(id) as start, MAX(id) as end
+            FROM "Model" i
+            JOIN dates d ON d.start = i."createdAt" OR d.end = i."createdAt";`;
+          return results[0];
+        }
+        const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+          Prisma.sql`SELECT MAX(id) "max" FROM "Model";`
+        );
+        return { ...context, end: max };
+      },
+      processor: async ({ start, end, cancelFns }) => {
+        const modelsQuery = await pgDbWrite.cancellableQuery<{
+          id: number;
+          name: string;
+          description: string;
+          poi: boolean;
+          nsfw: boolean;
+          minor: boolean;
+        }>(Prisma.sql`
+          SELECT id, name, description, poi, nsfw, minor
+          FROM "Model"
+          WHERE id BETWEEN ${start} AND ${end}
+            AND (status = 'Published'::"ModelStatus" OR status = 'Scheduled'::"ModelStatus")
         `);
-        cancelFns.push(insertQuery.cancel);
-        await insertQuery.result();
-      }
-      console.log(`Processed models ${start} - ${end}`, { totalProcessed, totalTitleNsfw });
-    },
-  });
+        cancelFns.push(modelsQuery.cancel);
+
+        const models = await modelsQuery.result();
+        if (!models.length) return;
+
+        const toIngest = models.map(ingestModel);
+        await Promise.all(toIngest);
+        totalProcessed += toIngest.length;
+
+        console.log(`Processed models ${start} - ${end}`, { totalProcessed });
+      },
+    });
+
+    return res.status(200).json({ fiished: true, totalProcessed });
+  } catch (error) {
+    const e = error as Error;
+    return res.status(500).json({ error: e.message, query: req.query });
+  }
 });

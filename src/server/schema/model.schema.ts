@@ -19,6 +19,7 @@ import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
+  getAllQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,
@@ -323,4 +324,14 @@ export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCover
 export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
   versionId: z.number().nullish(),
+});
+
+export type IngestModelInput = z.input<typeof ingestModelSchema>;
+export const ingestModelSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.coerce.string(),
+  poi: z.coerce.boolean(),
+  nsfw: z.coerce.boolean(),
+  minor: z.coerce.boolean(),
 });

@@ -241,26 +241,22 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
 
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
       SELECT
-        cs."userId",
+        u.id as "userId",
         CASE
           WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
+          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
           ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
         COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
-      FROM "CustomerSubscription" cs
-      JOIN "User" u ON u.id = cs."userId"
-      JOIN "Product" p ON p.id = cs."productId"
-      WHERE cs."userId" IN (${Prisma.join(ids)})
-        AND cs."status" IN ('active', 'trialing');
+      FROM "User" u
+      LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
+      LEFT JOIN "Product" p ON p.id = cs."productId"
+      WHERE u.id IN (${Prisma.join(ids)});
     `;
 
     const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
       multipliers.map((m) => [m.userId, m])
     );
-    for (const userId of ids) {
-      if (records[userId]) continue;
-      records[userId] = { userId, rewardsMultiplier: 1, purchasesMultiplier: 1 };
-    }
 
     return records;
   },
