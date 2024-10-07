@@ -347,3 +347,62 @@ export async function getTipaltiOnboardingUrl({ userId }: { userId: number }) {
 
   return accountLink;
 }
+
+export const payToTipaltiAccount = async ({
+  byUserId,
+  toUserId,
+  amount,
+  description,
+  metadata,
+}: {
+  byUserId: number;
+  toUserId: number;
+  amount: number;
+  description: string;
+  metadata?: MixedObject;
+}) => {
+  const toUserPaymentConfig = await getUserPaymentConfiguration({ userId: toUserId });
+  if (!toUserPaymentConfig || !toUserPaymentConfig.tipaltiAccountId)
+    throw throwBadRequestError('User tipalti account not found');
+
+  if (!toUserPaymentConfig.tipaltiPaymentsEnabled)
+    throw throwBadRequestError('User tipalti account not enabled for payments');
+
+  metadata ??= {};
+
+  try {
+    const paymentBatch = await tipaltiCaller.createPaymentBatch([
+      {
+        payeeId: toUserPaymentConfig.tipaltiAccountId,
+        amountSubmitted: {
+          currency: 'USD',
+          amount,
+        },
+        refCode: description,
+        customFieldValues: [
+          {
+            customFieldId: 'description',
+            value: description,
+          },
+          {
+            customFieldId: 'byUserId',
+            value: byUserId.toString(),
+          },
+          {
+            customFieldId: 'toUserId',
+            value: toUserId.toString(),
+          },
+          ...Object.keys(metadata).map((key) => ({
+            customFieldId: key,
+            value: metadata[key].toString(),
+          })),
+        ],
+      },
+    ]);
+
+    return paymentBatch;
+  } catch (error) {
+    log({ method: 'payToStripeConnectAccount', error, byUserId, toUserId, amount, description });
+    throw error;
+  }
+};

@@ -9,6 +9,7 @@ import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
   payToStripeConnectAccount,
+  payToTipaltiAccount,
   revertStripeConnectTransfer,
 } from '~/server/services/user-payment-configuration.service';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
@@ -356,6 +357,25 @@ export const updateBuzzWithdrawalRequest = async ({
       });
 
       metadata.stripeTransferId = transfer.id;
+    }
+
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti) {
+      const transfer = await payToTipaltiAccount({
+        toUserId: request.userId as number, // Ofcs, user should exist for one.
+        amount: payoutAmount,
+        description: `Payment for withdrawal request ${requestId}`,
+        byUserId: userId,
+        metadata: {
+          requestId,
+          platformFee,
+          paymentBy: userId,
+          platformFeeRate: request.platformFeeRate,
+          requestedBuzzAmount: request.requestedBuzzAmount,
+          buzzTransactionId: request.buzzWithdrawalTransactionId,
+        },
+      });
+
+      metadata.tipaltiPaymentBatchId = transfer.id;
     }
   }
 

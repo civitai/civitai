@@ -93,6 +93,16 @@ class TipaltiCaller extends HttpCaller {
 
     return hash.toLowerCase() === v;
   }
+
+  async createPaymentBatch(payments: Tipalti.PaymentInput[]) {
+    const response = await this.postRaw('/payment-batches', {
+      body: JSON.stringify({ paymentInstructions: payments }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const data = await response.json();
+    return Tipalti.createPaymentBatchResponseSchema.parse(data);
+  }
 }
 
 export default TipaltiCaller.getInstance();

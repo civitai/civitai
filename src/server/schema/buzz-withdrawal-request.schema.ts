@@ -50,4 +50,5 @@ export const buzzWithdrawalRequestHistoryMetadataSchema = z.object({
   buzzTransactionId: z.string().optional(),
   stripeTransferId: z.string().optional(),
   stripeReversalId: z.string().optional(),
+  tipaltiPaymentBatchId: z.string().optional(),
 });

@@ -36,4 +36,24 @@ export namespace Tipalti {
     sentTime: z.string(),
     status: z.string(),
   });
+
+  export type PaymentInput = z.infer<typeof paymentInput>;
+  export const paymentInput = z.object({
+    payeeId: z.string(),
+    amountSubmitted: z.object({
+      currency: z.string(),
+      amount: z.number(),
+    }),
+    refCode: z.string(),
+    customFieldValues: z.array(
+      z.object({
+        customFieldId: z.string(),
+        value: z.string(),
+      })
+    ),
+  });
+
+  export const createPaymentBatchResponseSchema = z.object({
+    id: z.string(),
+  });
 }

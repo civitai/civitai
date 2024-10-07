@@ -279,8 +279,6 @@ const TipaltiConfigurationCard = () => {
   const { tipaltiConfigurationUrl, isLoading: isLoadingTipaltiConfigurationUrl } =
     useTipaltiConfigurationUrl(setupAccount);
 
-  console.log(isLoadingTipaltiConfigurationUrl, tipaltiConfigurationUrl, userPaymentConfiguration);
-
   if (!userPaymentConfiguration) return null;
 
   if (!userPaymentConfiguration?.tipaltiAccountId) {
@@ -321,7 +319,7 @@ const TipaltiConfigurationCard = () => {
         </Group>
       </Stack>
 
-      <Divider my="xl" />
+      <Divider my="xs" />
 
       {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
         <>
@@ -349,6 +347,8 @@ const TipaltiConfigurationCard = () => {
           support if you think this is a mistake to get a better understanding of the issue.
         </Text>
       )}
+
+      <Divider my="xs" />
 
       {setupAccount && tipaltiConfigurationUrl && (
         <iframe src={tipaltiConfigurationUrl} width="100%" height="800px" />
