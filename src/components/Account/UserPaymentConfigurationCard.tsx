@@ -217,9 +217,7 @@ const StripeConnectConfigurationCard = () => {
     return (
       <Stack>
         <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Stripe Connect
-          </Title>
+          <Title order={3}>Stripe Connect</Title>
         </Group>
 
         <Text>
@@ -234,9 +232,7 @@ const StripeConnectConfigurationCard = () => {
     <>
       <Stack>
         <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Stripe Connect
-          </Title>
+          <Title order={3}>Stripe Connect</Title>
           <ActionIcon
             onClick={() => {
               dialogStore.trigger({
@@ -278,10 +274,12 @@ const StripeConnectConfigurationCard = () => {
 };
 
 const TipaltiConfigurationCard = () => {
-  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const [setupAccount, setSetupAccount] = useState(false);
   const { tipaltiConfigurationUrl, isLoading: isLoadingTipaltiConfigurationUrl } =
     useTipaltiConfigurationUrl(setupAccount);
+
+  console.log(isLoadingTipaltiConfigurationUrl, tipaltiConfigurationUrl, userPaymentConfiguration);
 
   if (!userPaymentConfiguration) return null;
 
@@ -290,9 +288,7 @@ const TipaltiConfigurationCard = () => {
     return (
       <Stack>
         <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Tipalti
-          </Title>
+          <Title order={3}>Tipalti Account</Title>
         </Group>
 
         <Text>
@@ -308,9 +304,7 @@ const TipaltiConfigurationCard = () => {
     <>
       <Stack>
         <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Stripe Connect
-          </Title>
+          <Title order={3}>Tipalti Account</Title>
           <ActionIcon
             onClick={() => {
               dialogStore.trigger({
@@ -331,14 +325,17 @@ const TipaltiConfigurationCard = () => {
 
       {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
         <>
-          {isLoadingTipaltiConfigurationUrl ? (
+          {isLoadingTipaltiConfigurationUrl && setupAccount ? (
             <Center>
               <Loader />
             </Center>
-          ) : tipaltiConfigurationUrl ? (
-            <iframe href={tipaltiConfigurationUrl} width="100%" height="800px" />
           ) : (
-            <Button onClick={() => setSetupAccount(true)}>Setup my Tipalti account</Button>
+            <Stack>
+              <Text>
+                Your account requires setup. Click the button below to start/continue your setup
+                process.
+              </Text>
+            </Stack>
           )}
         </>
       ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
@@ -351,6 +348,18 @@ const TipaltiConfigurationCard = () => {
           We are unable to setup your account so that you can withdraw funds. You may contact
           support if you think this is a mistake to get a better understanding of the issue.
         </Text>
+      )}
+
+      {setupAccount && tipaltiConfigurationUrl && (
+        <iframe src={tipaltiConfigurationUrl} width="100%" height="800px" />
+      )}
+
+      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
+        (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
+      ) && (
+        <Button onClick={() => setSetupAccount(true)} fullWidth>
+          Setup my Tipalti Account
+        </Button>
       )}
     </>
   );
