@@ -25,6 +25,7 @@ import { imageSelect } from '~/server/selectors/image.selector';
 import {
   addContributorToCollection,
   bulkSaveItems,
+  checkUserOwnsCollectionAndItem,
   deleteCollectionById,
   getAllCollections,
   getCollectionById,
@@ -53,6 +54,9 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { setModelShowcaseCollection } from '~/server/services/model.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -73,6 +77,7 @@ export const getAllCollectionsInfiniteHandler = async ({
         read: true,
         type: true,
         userId: true,
+        user: { select: userWithCosmeticsSelect },
         nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,
@@ -228,6 +233,39 @@ export const saveItemHandler = async ({
         amount: status === 'added' ? 1 : -1,
       });
     }
+
+    // Remove collection from model showcase if removed
+    if (input.type === 'Model' && status === 'removed' && input.modelId) {
+      // letting this run in the background to avoid blocking the response
+      setModelShowcaseCollection({
+        id: input.modelId,
+        collectionId: null,
+        userId: user.id,
+        isModerator: user.isModerator,
+      }).catch((error) =>
+        logToAxiom({
+          name: 'remove-model-showcase-collection',
+          type: 'error',
+          message: error.message,
+        })
+      );
+    }
+
+    // Check ownership if only one collection is being modified
+    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
+      isDefined
+    );
+    if (input.collections.length === 1) {
+      const [collection] = input.collections;
+      const isOwner = await checkUserOwnsCollectionAndItem({
+        itemId,
+        userId: user.id,
+        collectionId: collection.collectionId,
+      });
+      return { status, isOwner };
+    }
+
+    return { status };
   } catch (error) {
     throw throwDbError(error);
   }
@@ -281,7 +319,16 @@ export const upsertCollectionHandler = async ({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
 
-    return collection;
+    const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
+      isDefined
+    );
+    const isOwner = await checkUserOwnsCollectionAndItem({
+      itemId,
+      userId: user.id,
+      collectionId: collection.id,
+    });
+
+    return { ...collection, isOwner };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

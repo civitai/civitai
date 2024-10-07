@@ -24,7 +24,6 @@ import { z } from 'zod';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import {
   Form,
-  InputCheckboxGroup,
   InputCheckbox,
   InputSelect,
   InputText,
@@ -32,11 +31,7 @@ import {
   useForm,
   InputDatePicker,
 } from '~/libs/form';
-import {
-  AddCollectionItemInput,
-  saveCollectionItemInputSchema,
-  upsertCollectionInput,
-} from '~/server/schema/collection.schema';
+import { AddCollectionItemInput, upsertCollectionInput } from '~/server/schema/collection.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import {
@@ -47,6 +42,7 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
+import { closeAllModals, openModal } from '@mantine/modals';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -82,17 +78,23 @@ const useCollectionListStyles = createStyles((theme) => ({
   contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
 }));
 
+type SelectedCollection = {
+  collectionId: number;
+  tagId?: number | null;
+  userId: number;
+  read: CollectionReadConfiguration;
+};
+
 function CollectionListForm({
   onNewClick,
   onSubmit,
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
+  const currentUser = useCurrentUser();
   const { classes } = useCollectionListStyles();
-  const queryUtils = trpc.useContext();
-  const [selectedCollections, setSelectedCollections] = useState<
-    { collectionId: number; tagId?: number | null }[]
-  >([]);
+  const queryUtils = trpc.useUtils();
+  const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
@@ -134,13 +136,39 @@ function CollectionListForm({
     addCollectionItemMutation.mutate(
       { ...props, collections: selectedCollections, removeFromCollectionIds },
       {
-        async onSuccess(_, { type }) {
+        async onSuccess(result, { type, modelId, collections }) {
+          const added = result.status === 'added';
           showNotification({
-            title: 'Item added',
-            message: 'Your item has been added to the selected collections.',
+            title: added ? 'Item added' : 'Item removed',
+            message: added
+              ? 'Your item has been added to the selected collections.'
+              : 'Your item has been removed from the selected collections.',
           });
 
           onSubmit();
+
+          // Ask the user if they want to set this collection as the showcase collection for the model only
+          if (
+            added &&
+            result.isOwner &&
+            type === CollectionType.Model &&
+            modelId &&
+            collections.length === 1
+          ) {
+            const [collection] = collections;
+            if (collection.read === CollectionReadConfiguration.Public) {
+              openModal({
+                title: 'Set Showcase Collection',
+                centered: true,
+                children: (
+                  <ConfirmSetShowcaseCollection
+                    modelId={modelId}
+                    collectionId={collection.collectionId}
+                  />
+                ),
+              });
+            }
+          }
 
           // TODO.optimization: Invalidate only the collection that was updated
           await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
@@ -162,6 +190,8 @@ function CollectionListForm({
     const existingSelectedCollections = collectionItems.map((collectionItem) => ({
       collectionId: collectionItem.collectionId,
       tagId: collectionItem.tagId,
+      userId: collectionItem.collection.userId,
+      read: collectionItem.collection.read,
     }));
 
     setSelectedCollections(existingSelectedCollections);
@@ -216,7 +246,11 @@ function CollectionListForm({
                               } else {
                                 setSelectedCollections((curr) => [
                                   ...curr,
-                                  { collectionId: collection.id },
+                                  {
+                                    collectionId: collection.id,
+                                    userId: collection.userId,
+                                    read: collection.read,
+                                  },
                                 ]);
                               }
                             }}
@@ -299,6 +333,8 @@ function CollectionListForm({
                                       collectionId: collection.id,
                                       tagId:
                                         collection.tags?.length > 0 ? collection.tags[0].id : null,
+                                      userId: collection.userId,
+                                      read: collection.read,
                                     },
                                   ]);
                                 }
@@ -308,7 +344,7 @@ function CollectionListForm({
                                   <Text lineClamp={1} inherit>
                                     {collection.name}
                                   </Text>
-                                  <Icon size={18} />
+                                  <Icon className="shrink-0 grow-0" size={18} />
                                 </Group>
                               }
                             />
@@ -378,7 +414,7 @@ function NewCollectionForm({
     },
     shouldUnregister: false,
   });
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: z.infer<typeof upsertCollectionInput>) => {
@@ -391,10 +427,24 @@ function NewCollectionForm({
     });
 
     upsertCollectionMutation.mutate(data, {
-      async onSuccess() {
+      async onSuccess(result, { type, modelId }) {
         await queryUtils.collection.getAllUser.invalidate();
         await queryUtils.collection.getUserCollectionItemsByItem.invalidate();
         onSubmit();
+
+        if (
+          type === CollectionType.Model &&
+          modelId &&
+          result.read === CollectionReadConfiguration.Public &&
+          result.isOwner
+        ) {
+          openModal({
+            title: 'Set Showcase Collection',
+            centered: true,
+            children: <ConfirmSetShowcaseCollection modelId={modelId} collectionId={result.id} />,
+          });
+        }
+
         showSuccessNotification({
           title: 'Collection created',
           message: 'Your collection has been created.',
@@ -523,3 +573,31 @@ const SelectItem = forwardRef<HTMLDivElement, PrivacyData>(
   }
 );
 SelectItem.displayName = 'SelectItem';
+
+function ConfirmSetShowcaseCollection({
+  modelId,
+  collectionId,
+}: {
+  modelId: number;
+  collectionId: number;
+}) {
+  const setShowcaseCollectionMutation = trpc.model.setCollectionShowcase.useMutation({
+    onSuccess: () => closeAllModals(),
+  });
+
+  const handleSetShowcase = () => {
+    setShowcaseCollectionMutation.mutate({ id: modelId, collectionId });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Text>Would you like to set this collection as this model&apos;s showcase collection?</Text>
+      <div className="flex justify-end gap-2">
+        <Button variant="default">No</Button>
+        <Button onClick={handleSetShowcase} loading={setShowcaseCollectionMutation.isLoading}>
+          Yes
+        </Button>
+      </div>
+    </div>
+  );
+}
