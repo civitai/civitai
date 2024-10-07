@@ -2,6 +2,7 @@ import { Table } from '@mantine/core';
 import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import { ReactMarkdownOptions } from 'react-markdown/lib/react-markdown';
+import clsx from 'clsx';
 
 type CustomOptions = ReactMarkdownOptions & {
   allowExternalVideo?: boolean;
@@ -16,7 +17,7 @@ export function CustomMarkdown({
   return (
     <ReactMarkdown
       {...options}
-      className={className}
+      className={clsx(className, 'notranslate')}
       components={{
         ...components,
         a: ({ node, href, ...props }) => {
