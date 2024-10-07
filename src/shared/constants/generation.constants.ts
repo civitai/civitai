@@ -413,6 +413,7 @@ export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
   { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
+  { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
 ];
 
 // const generationInputConfig: GenerationInputConfig = {

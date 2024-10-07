@@ -95,13 +95,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     }
 
     const _browsingLevel = browsingLevel ?? nsfw ?? publicBrowsingLevelsFlag;
-
-    const fn = features?.apiImageIndex ? getAllImagesIndex : getAllImages;
-    const include = features?.apiImageIndex
-      ? ['metaSelect', 'tagIds', 'profilePictures']
-      : withMeta
-      ? ['meta', 'metaSelect']
-      : ['metaSelect'];
+    const fn = data.modelId ? getAllImages : getAllImagesIndex;
 
     const { items, nextCursor } = await fn({
       ...data,
@@ -109,7 +103,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       limit,
       skip,
       cursor,
-      include: include as any,
+      include: ['metaSelect', 'tagIds', 'profilePictures'],
       periodMode: 'published',
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,

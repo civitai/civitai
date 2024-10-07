@@ -436,6 +436,8 @@ export const purchaseCosmeticShopItem = async ({
       id: true,
       cosmeticId: true,
       availableQuantity: true,
+      availableFrom: true,
+      availableTo: true,
       unitAmount: true,
       title: true,
       meta: true,
@@ -475,6 +477,14 @@ export const purchaseCosmeticShopItem = async ({
       });
     }
     throw new Error('Cosmetic is out of stock');
+  }
+
+  if (shopItem.availableFrom && shopItem.availableFrom > new Date()) {
+    throw new Error('Cosmetic is not available yet');
+  }
+
+  if (shopItem.availableTo && shopItem.availableTo < new Date()) {
+    throw new Error('Cosmetic is no longer available');
   }
 
   const onlySupportsSinglePurchase =

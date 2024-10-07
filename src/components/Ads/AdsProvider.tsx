@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
-import { getAvailableAdunits } from '~/components/Ads/ads.utils';
+import { AdConfig, getAdConfig } from '~/components/Ads/ads.utils';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -33,6 +33,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(!isProd ? true : undefined);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const config = getAdConfig();
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
@@ -91,7 +92,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             onLoad={handleCmpLoaded}
             onError={handleCmpError}
           />
-          <Script src="https://cmp.uniconsent.com/v2/a635bd9830/cmp.js" async />
+          <Script src={config.cmpScript} async />
           {adsBlocked === false && (
             <>
               <Script
@@ -122,7 +123,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
                           var script = document.createElement('script');
                           script.async = true;
-                          script.src = '//dsh7ky7308k4b.cloudfront.net/publishers/civitaicom.min.js';
+                          script.src = '${config.adScript}';
                           document.head.appendChild(script);
 
                           var script = document.createElement('script');
@@ -150,7 +151,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 }}
               />
               <GoogletagManager />
-              <ImpressionTracker />
+              <ImpressionTracker config={config} />
             </>
           )}
           <div id="uniconsent-config" />
@@ -209,14 +210,14 @@ export const useAdUnitLoadedStore = create<Record<string, boolean>>()(
   devtools(() => ({}), { name: 'adunits-loaded' })
 );
 
-function ImpressionTracker() {
+function ImpressionTracker({ config }: { config: AdConfig }) {
   const currentUser = useCurrentUser();
   const { adsEnabled, adsBlocked } = useAdsContext();
   const { worker } = useSignalContext();
   const { fingerprint } = useDeviceFingerprint();
 
   useEffect(() => {
-    const availableAdunitIds = Object.values(getAvailableAdunits());
+    const availableAdunitIds = Object.values(config.adunits);
     const listener = ((e: CustomEvent) => {
       if (!adsEnabled || adsBlocked) return;
 
