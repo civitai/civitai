@@ -179,3 +179,50 @@ export const useToggleCheckpointCoverageMutation = () => {
 
   return { ...toggleMutation, toggle: handleToggle };
 };
+
+export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {
+  const queryUtils = trpc.useUtils();
+
+  const { data: showcase, isLoading: loadingCollection } =
+    trpc.model.getCollectionShowcase.useQuery({ id: modelId });
+
+  const {
+    data,
+    models,
+    isLoading: loadingModels,
+    ...rest
+  } = useQueryModels(
+    {
+      collectionId: showcase?.id,
+      sort: ModelSort.Newest,
+      period: MetricTimeframe.AllTime,
+      periodMode: 'published',
+      limit: 10,
+    },
+    { enabled: !loadingCollection && !!showcase?.id, keepPreviousData: true }
+  );
+
+  const setShowcaseMutation = trpc.model.setCollectionShowcase.useMutation({
+    onSuccess: async () => {
+      await queryUtils.model.getCollectionShowcase.invalidate({ id: modelId });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to set showcase collection',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const handleSetShowcaseCollection = (collectionId: number) => {
+    return setShowcaseMutation.mutateAsync({ id: modelId, collectionId });
+  };
+
+  return {
+    ...rest,
+    collection: showcase,
+    items: models,
+    isLoading: loadingCollection || loadingModels,
+    setShowcaseCollection: handleSetShowcaseCollection,
+    settingShowcase: setShowcaseMutation.isLoading,
+  };
+};

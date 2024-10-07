@@ -1,5 +1,6 @@
 import {
   BountyType,
+  CollectionItemStatus,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -46,6 +47,7 @@ import {
   ModelUpsertInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
+  SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
   UnpublishModelSchema,
@@ -70,6 +72,7 @@ import {
   getModel,
   getModels,
   getModelsRaw,
+  GetModelsWithImagesAndModelVersions,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
   getTrainingModelsByUserId,
@@ -77,6 +80,7 @@ import {
   permaDeleteModelById,
   publishModelById,
   restoreModelById,
+  setModelShowcaseCollection,
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
@@ -104,6 +108,7 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getDownloadUrl } from '~/utils/delivery-worker';
@@ -112,6 +117,7 @@ import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
 import { bustMvCache } from '~/server/services/model-version.service';
+import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -1113,7 +1119,7 @@ export const declineReviewHandler = async ({
       meta: {
         ...meta,
         declinedReason: input.reason,
-        decliendAt: new Date().toISOString(),
+        declinedAt: new Date().toISOString(),
         needsReview: false,
       },
     });
@@ -1618,6 +1624,45 @@ export async function copyGalleryBrowsingLevelHandler({
       model.gallerySettings as ModelGallerySettingsSchema;
 
     await copyGallerySettingsToAllModelsByUser({ userId, settings });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}
+
+export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
+  try {
+    const model = await getModel({ id: input.id, select: { id: true, meta: true } });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    const modelMeta = model.meta as ModelMeta | null;
+    if (!modelMeta?.showcaseCollectionId) return null;
+
+    const collection = await getCollectionById({ input: { id: modelMeta.showcaseCollectionId } });
+    const [itemCount] = await getCollectionItemCount({
+      collectionIds: [collection.id],
+      status: CollectionItemStatus.ACCEPTED,
+    });
+
+    return {
+      ...collection,
+      itemCount: itemCount.count,
+    };
+  } catch (error) {
+    throw throwDbError(error);
+  }
+}
+
+export function setModelCollectionShowcaseHandler({
+  input,
+  ctx,
+}: {
+  input: SetModelCollectionShowcaseInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+
+    return setModelShowcaseCollection({ ...input, userId, isModerator });
   } catch (error) {
     throw throwDbError(error);
   }

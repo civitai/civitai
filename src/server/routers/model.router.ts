@@ -31,6 +31,8 @@ import {
   upsertModelHandler,
   getModelOwnerHandler,
   copyGalleryBrowsingLevelHandler,
+  getModelCollectionShowcaseHandler,
+  setModelCollectionShowcaseHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -48,11 +50,13 @@ import {
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
+  migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
+  setModelCollectionShowcaseSchema,
   setModelsCategorySchema,
   toggleCheckpointCoverageSchema,
   toggleModelLockSchema,
@@ -63,6 +67,7 @@ import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
   getSimpleModelWithVersions,
+  migrateResourceToCollection,
   rescanModel,
   setAssociatedResources,
   setModelsCategory,
@@ -207,4 +212,15 @@ export const modelRouter = router({
     .input(copyGallerySettingsSchema)
     .use(isOwnerOrModerator)
     .mutation(copyGalleryBrowsingLevelHandler),
+  getCollectionShowcase: publicProcedure
+    .input(getByIdSchema)
+    .query(getModelCollectionShowcaseHandler),
+  setCollectionShowcase: protectedProcedure
+    .input(setModelCollectionShowcaseSchema)
+    .use(isOwnerOrModerator)
+    .mutation(setModelCollectionShowcaseHandler),
+  migrateToCollection: moderatorProcedure
+    .input(migrateResourceToCollectionSchema)
+    .use(isOwnerOrModerator)
+    .mutation(({ input }) => migrateResourceToCollection(input)),
 });
