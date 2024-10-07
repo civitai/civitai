@@ -103,9 +103,7 @@ function MyApp(props: CustomAppProps) {
       const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
       return (
         <FeatureLayout conditional={Component.options?.features}>
-          <AppLayout withFooter={Component.options?.withFooter}>
-            {InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}
-          </AppLayout>
+          <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
         </FeatureLayout>
       );
     });

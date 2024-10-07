@@ -1,36 +1,41 @@
 import { Button, ButtonProps } from '@mantine/core';
 import { IconMessageChatbot, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { env } from '~/env/client.mjs';
-import { isDev, isProd } from '~/env/other';
-import { trpc } from '~/utils/trpc';
+import { isProd } from '~/env/other';
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { useState } from 'react';
 
 const WIDTH = 320;
 const HEIGHT = 500;
 export function AssistantButton({ ...props }: ButtonProps) {
-  const [opened, setOpened] = useState(false);
-  const { data: { token = null } = {} } = trpc.user.getToken.useQuery(undefined, {
-    enabled: opened && isProd,
-  });
+  const [open, setOpen] = useState(false);
   if (!env.NEXT_PUBLIC_GPTT_UUID && isProd) return null;
 
   return (
     <>
-      <AssistantChat
-        token={token}
-        width={WIDTH}
-        height={HEIGHT}
-        style={{ display: opened ? 'block' : 'none' }}
-      />
-      <Button
-        px="xs"
-        {...props}
-        onClick={() => setOpened((x) => !x)}
-        color={opened ? 'gray' : 'blue'}
-      >
-        {opened ? <IconX size={20} stroke={2.5} /> : <IconMessageChatbot size={20} stroke={2.5} />}
-      </Button>
+      <Popover>
+        <PopoverButton>
+          <Button
+            component="span"
+            px="xs"
+            {...props}
+            color={open ? 'gray' : 'blue'}
+            onClick={() => setOpen((o) => !o)}
+          >
+            {open ? (
+              <IconX size={20} stroke={2.5} />
+            ) : (
+              <IconMessageChatbot size={20} stroke={2.5} />
+            )}
+          </Button>
+        </PopoverButton>
+        {open && (
+          <PopoverPanel anchor="bottom end" className="[--anchor-gap:8px]" static>
+            <AssistantChat width={WIDTH} height={HEIGHT} />
+          </PopoverPanel>
+        )}
+      </Popover>
     </>
   );
 }

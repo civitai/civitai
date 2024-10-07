@@ -204,7 +204,7 @@ function FloatingActions(props: {
   const { showFooter, assistant = true, scrollToTop = true } = props;
 
   return (
-    <div className="absolute bottom-full right-0 flex gap-2 pb-2 pr-2">
+    <div className="absolute bottom-full right-0 flex gap-2 overflow-hidden pb-2 pr-2">
       {scrollToTop && <ScrollToTop show={!showFooter} />}
       {assistant && <AssistantButton />}
     </div>

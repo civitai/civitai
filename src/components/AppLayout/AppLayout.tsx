@@ -14,14 +14,22 @@ type AppLayoutProps = {
 export function AppLayout({
   children,
   renderSearchComponent,
+  subNav = <SubNav2 />,
+  left,
+  right,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
+  subNav?: React.ReactNode | null;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
 }) {
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <Main>{children}</Main>
+      <Main left={left} right={right} subNav={subNav}>
+        {children}
+      </Main>
     </>
   );
 }
@@ -30,18 +38,14 @@ export function setPageOptions(Component: (...args: any) => JSX.Element, options
   (Component as any).options = options;
 }
 
-// function Main({
+// function MainContent({
 //   children,
-//   left,
-//   right,
 //   subNav = <SubNav2 />,
 // }: {
 //   children: React.ReactNode;
-//   left?: React.ReactNode;
-//   right?: React.ReactNode;
-//   subNav?: React.ReactNode;
+//   subNav?: React.ReactNode | null;
 // }) {
-//   const main = (
+//   return (
 //     <ScrollArea>
 //       <main>
 //         {subNav && <SubNav>{subNav}</SubNav>}
@@ -50,28 +54,20 @@ export function setPageOptions(Component: (...args: any) => JSX.Element, options
 //       <AppFooter />
 //     </ScrollArea>
 //   );
-
-//   if (left || right) {
-//     return (
-//       <div className="flex flex-1">
-//         {left && <aside className="relative h-full">{left}</aside>}
-//         {main}
-//         {right && <aside className="relative h-full">{right}</aside>}
-//       </div>
-//     );
-//   }
-
-//   return main;
 // }
 
 function Main({
   children,
+  left,
+  right,
   subNav = <SubNav2 />,
 }: {
   children: React.ReactNode;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
   subNav?: React.ReactNode;
 }) {
-  return (
+  const main = (
     <ScrollArea>
       <main>
         {subNav && <SubNav>{subNav}</SubNav>}
@@ -80,6 +76,18 @@ function Main({
       <AppFooter />
     </ScrollArea>
   );
+
+  if (left || right) {
+    return (
+      <div className="flex flex-1">
+        {left && <aside className="relative h-full">{left}</aside>}
+        {main}
+        {right && <aside className="relative h-full">{right}</aside>}
+      </div>
+    );
+  }
+
+  return main;
 }
 
 function SubNav({
