@@ -4,7 +4,7 @@ import {
   handleApproveTrainingData,
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
@@ -18,7 +18,7 @@ export const modRouter = router({
       .input(getFlaggedModelsSchema)
       .query(({ input }) => getFlaggedModels(input)),
     resolveFlagged: moderatorProcedure
-      .input(getByIdSchema)
+      .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
   }),
   modelVersions: router({

@@ -6,11 +6,11 @@ import {
   useQueryCollections,
 } from '~/components/Collections/collection.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
-import { UniformGrid } from '~/components/MasonryColumns/UniformGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 
 export function CollectionsInfinite({
   filters: filterOverrides = {},
@@ -35,7 +35,7 @@ export function CollectionsInfinite({
       ) : !!collections.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={20} />
-          <UniformGrid
+          <MasonryGrid
             data={collections}
             render={CollectionCard}
             itemId={(x) => x.id}
