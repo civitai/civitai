@@ -8,6 +8,11 @@ type CustomOptions = ReactMarkdownOptions & {
   allowExternalVideo?: boolean;
 };
 
+/**
+ Links for `notranslate` context
+ https://stackoverflow.com/a/65110044
+ https://github.com/facebook/react/issues/11538
+ */
 export function CustomMarkdown({
   allowExternalVideo,
   components,
