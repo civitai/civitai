@@ -440,27 +440,38 @@ export const ingestImage = async ({
   image: IngestImageInput;
   tx?: Prisma.TransactionClient;
 }): Promise<boolean> => {
-  if (!env.IMAGE_SCANNING_ENDPOINT)
-    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-  const { url, id, type, width, height } = ingestImageSchema.parse(image);
-
-  const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd && !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.update({
-      where: { id },
+  if (!isProd && !env.IMAGE_SCANNING_ENDPOINT) {
+    console.log('skipping image ingestion');
+    const updated = await dbClient.image.update({
+      where: { id: image.id },
+      select: { postId: true },
       data: {
         scanRequestedAt,
         scannedAt: scanRequestedAt,
         ingestion: ImageIngestionStatus.Scanned,
+        nsfwLevel: NsfwLevel.PG,
       },
     });
+    // TODO.manuel: Create default tagsOnImage record
+    // await dbWrite.tagsOnImage.create();
+
+    // Update post NSFW level
+    if (updated.postId) await updatePostNsfwLevel(updated.postId);
 
     return true;
   }
+
+  const parsedImage = ingestImageSchema.safeParse(image);
+  if (!parsedImage.success) throw new Error('Failed to parse image data');
+
+  const { url, id, type, width, height } = parsedImage.data;
+
+  const callbackUrl =
+    env.IMAGE_SCANNING_CALLBACK ??
+    `${env.NEXTAUTH_URL}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
   if (!image.prompt) {
     const { prompt } = await dbClient.$queryRaw<{ prompt?: string }>`

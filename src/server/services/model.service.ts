@@ -2467,7 +2467,7 @@ export async function ingestModelById({ id }: GetByIdInput) {
 }
 
 export async function ingestModel(data: IngestModelInput) {
-  if (!isProd || !env.CONTENT_SCAN_ENDPOINT) {
+  if (!env.CONTENT_SCAN_ENDPOINT) {
     console.log('Skipping model ingestion');
     await dbWrite.model.update({
       where: { id: data.id },

@@ -27,7 +27,6 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
-import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -528,7 +527,6 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
   return true;
 };
 
@@ -559,7 +557,6 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   return true;
 };
 
