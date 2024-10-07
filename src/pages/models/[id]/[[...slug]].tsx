@@ -66,6 +66,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
+import { openMigrateModelToCollectionModal } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -168,6 +169,7 @@ export const getServerSideProps = createServerSideProps({
         await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
+      await ssg.model.getCollectionShowcase.prefetch({ id });
       if (session) {
         await ssg.user.getEngagedModelVersions.prefetch({ id });
         await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
@@ -836,23 +838,34 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </>
                         )}
-                        {isOwner && (
-                          <ToggleLockModel modelId={model.id} locked={model.locked}>
-                            {({ onClick }) => (
+                        {isModerator && (
+                          <>
+                            <ToggleLockModel modelId={model.id} locked={model.locked}>
+                              {({ onClick }) => (
+                                <Menu.Item
+                                  icon={
+                                    model.locked ? (
+                                      <IconLockOff size={14} stroke={1.5} />
+                                    ) : (
+                                      <IconLock size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={onClick}
+                                >
+                                  {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                </Menu.Item>
+                              )}
+                            </ToggleLockModel>
+                            {published && (
                               <Menu.Item
-                                icon={
-                                  model.locked ? (
-                                    <IconLockOff size={14} stroke={1.5} />
-                                  ) : (
-                                    <IconLock size={14} stroke={1.5} />
-                                  )
+                                onClick={() =>
+                                  openMigrateModelToCollectionModal({ modelId: model.id })
                                 }
-                                onClick={onClick}
                               >
-                                {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                Migrate to Collection
                               </Menu.Item>
                             )}
-                          </ToggleLockModel>
+                          </>
                         )}
                       </Menu.Dropdown>
                     </Menu>

@@ -409,7 +409,9 @@ export const saveItemInCollections = async ({
 }: {
   input: AddCollectionItemInput & { userId: number; isModerator?: boolean };
 }) => {
-  const itemKey = Object.keys(inputToCollectionType).find((key) => input.hasOwnProperty(key));
+  const itemKey = Object.keys(inputToCollectionType).find((key) =>
+    input.hasOwnProperty(key)
+  ) as keyof typeof inputToCollectionType;
   if (!itemKey) throw throwBadRequestError(`We don't know the type of thing you're adding`);
   // Safeguard against duppes.
   upsertCollectionItems = uniqBy(upsertCollectionItems, 'collectionId');
@@ -423,7 +425,7 @@ export const saveItemInCollections = async ({
   });
 
   if (itemKey && inputToCollectionType.hasOwnProperty(itemKey)) {
-    const type = inputToCollectionType[itemKey as keyof typeof inputToCollectionType];
+    const type = inputToCollectionType[itemKey];
     // check if all collections match the Model type
     const filteredCollections = collections.filter((c) => c.type === type || c.type == null);
 
@@ -480,7 +482,7 @@ export const saveItemInCollections = async ({
             collectionId,
             userId,
             isModerator,
-            [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
+            [`${itemKey}s`]: [input[itemKey]],
           });
         }
 
@@ -489,7 +491,7 @@ export const saveItemInCollections = async ({
         if (collection.userId == -1 && !collection.mode && collection.name.includes('Featured')) {
           // Assume it's a featured collection:
           await validateFeaturedCollectionEntry({
-            [`${itemKey}s`]: [input[itemKey as keyof typeof input]],
+            [`${itemKey}s`]: [input[itemKey]],
           });
         }
 
@@ -510,7 +512,7 @@ export const saveItemInCollections = async ({
             : CollectionItemStatus.ACCEPTED,
           reviewedById: permission.write ? userId : null,
           reviewedAt: permission.write ? new Date() : null,
-          [itemKey]: input[itemKey as keyof typeof input],
+          [itemKey]: input[itemKey],
           tagId,
         };
       })
@@ -581,6 +583,7 @@ export const saveItemInCollections = async ({
       )
     ).filter(isDefined);
 
+    // if we have items to remove, add a deleteMany mutation to the transaction
     if (removeAllowedCollectionItemIds.length > 0)
       transactions.push(
         dbWrite.collectionItem.deleteMany({
@@ -589,14 +592,25 @@ export const saveItemInCollections = async ({
       );
   }
 
-  // if we have items to remove, add a deleteMany mutation to the transaction
+  await dbWrite.$transaction(transactions);
+
+  // Clear cache for homeBlocks
   await Promise.all(
     upsertCollectionItems.map((item) =>
       homeBlockCacheBust(HomeBlockType.Collection, item.collectionId)
     )
   );
 
-  await dbWrite.$transaction(transactions);
+  // Update collection search index
+  const affectedCollections = [
+    ...upsertCollectionItems.map((item) => item.collectionId),
+    ...removeFromCollectionIds,
+  ];
+  if (affectedCollections.length > 0) {
+    await collectionsSearchIndex.queueUpdate(
+      affectedCollections.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 
   return data.length > 0 ? 'added' : removeFromCollectionIds?.length > 0 ? 'removed' : null;
 };
@@ -818,7 +832,13 @@ export const upsertCollection = async ({
 
   // TODO allow cover image
   const collection = await dbWrite.collection.create({
-    select: { id: true, image: { select: { id: true, url: true } } },
+    select: {
+      id: true,
+      image: { select: { id: true, url: true } },
+      read: true,
+      write: true,
+      userId: true,
+    },
     data: {
       name,
       description,
@@ -1172,6 +1192,7 @@ export const getUserCollectionItemsByItem = async ({
       collection: {
         select: {
           userId: true,
+          read: true,
         },
       },
     },
@@ -1423,7 +1444,7 @@ export function getCollectionItemCount({
   collectionIds: number[];
   status?: CollectionItemStatus;
 }) {
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return [] as { id: number; count: number }[];
 
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
   if (status) where.push(Prisma.sql`"status" = ${status}::"CollectionItemStatus"`);
@@ -1437,7 +1458,7 @@ export function getCollectionItemCount({
 }
 
 export function getContributorCount({ collectionIds: ids }: { collectionIds: number[] }) {
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return [] as { id: number; count: number }[];
 
   const where = [Prisma.sql`"collectionId" IN (${Prisma.join(ids)})`];
 
@@ -2049,3 +2070,39 @@ export const removeCollectionItem = async ({
     type: permissions.collectionType,
   };
 };
+
+export async function checkUserOwnsCollectionAndItem({
+  itemId,
+  collectionId,
+  userId,
+}: {
+  itemId: number;
+  collectionId: number;
+  userId: number;
+}) {
+  const collection = await dbRead.collection.findFirst({
+    where: { id: collectionId, userId },
+    select: { type: true, userId: true },
+  });
+  if (!collection) return false;
+
+  const tableKey =
+    collection.type === CollectionType.Model
+      ? 'Model'
+      : collection.type === CollectionType.Article
+      ? 'Article'
+      : collection.type === CollectionType.Image
+      ? 'Image'
+      : collection.type === CollectionType.Post
+      ? 'Post'
+      : null;
+
+  if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
+
+  const [item] = await dbRead.$queryRaw<{ userId: number }[]>`
+    SELECT "userId" FROM "${Prisma.raw(tableKey)}" WHERE id = ${itemId}
+  `;
+  if (!item) return false;
+
+  return item.userId === collection.userId;
+}
