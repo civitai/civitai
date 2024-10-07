@@ -5,6 +5,7 @@ import {
   MRT_ColumnDef,
   MRT_PaginationState,
   MRT_SortingState,
+  MRT_TableInstance,
 } from 'mantine-react-table';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -20,6 +21,7 @@ import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
 export function FlaggedModelsList() {
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const page = isNumber(router.query.page) ? Number(router.query.page) : 1;
   const [pagination, setPagination] = useState<MRT_PaginationState>({
@@ -32,6 +34,29 @@ export function FlaggedModelsList() {
     { page: pagination.pageIndex + 1, limit: pagination.pageSize, sort: sorting }
   );
   const flaggedModels = data?.items ?? [];
+
+  const resolveFlaggedModelMutation = trpc.moderator.models.resolveFlagged.useMutation({
+    onSuccess: async () => {
+      await queryUtils.moderator.models.queryFlagged.invalidate();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Error resolving flagged model',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const handleResolveSelectedModels = async (
+    mrtInstance: MRT_TableInstance<(typeof flaggedModels)[number]>
+  ) => {
+    const selectedRows = mrtInstance.getSelectedRowModel().rows.map((row) => row.original.modelId);
+    try {
+      await resolveFlaggedModelMutation.mutateAsync({ ids: selectedRows });
+      mrtInstance.resetRowSelection(true);
+    } catch {
+      // Error is handled in the mutation
+    }
+  };
 
   const columns = useMemo<MRT_ColumnDef<(typeof flaggedModels)[number]>[]>(
     () => [
@@ -76,6 +101,10 @@ export function FlaggedModelsList() {
           );
         },
       },
+      // These are here just to comply with MRT sorting
+      { accessorKey: 'createdAt', header: 'createdAt', Cell: () => null },
+      { accessorKey: 'poi', header: 'poi', Cell: () => null },
+      { accessorKey: 'nsfw', header: 'nsfw', Cell: () => null },
       {
         header: 'Action',
         accessorKey: 'model.id',
@@ -113,6 +142,9 @@ export function FlaggedModelsList() {
       onSortingChange={setSorting}
       enableStickyHeader
       enableSortingRemoval
+      enableMultiRowSelection
+      enableRowSelection
+      manualPagination
       enableHiding={false}
       enableGlobalFilter={false}
       enableColumnFilters={false}
@@ -122,6 +154,12 @@ export function FlaggedModelsList() {
       mantineTableContainerProps={{ sx: { maxHeight: 450 } }}
       initialState={{
         density: 'xs',
+        // Hiding these columns because they're irrelevant
+        columnVisibility: {
+          createdAt: false,
+          poi: false,
+          nsfw: false,
+        },
       }}
       state={{
         isLoading: isLoading || isRefetching,
@@ -129,6 +167,19 @@ export function FlaggedModelsList() {
         sorting,
         pagination,
       }}
+      renderToolbarInternalActions={({ table }) =>
+        table.getSelectedRowModel().rows.length > 0 ? (
+          <Button
+            size="sm"
+            ml="auto"
+            onClick={() => handleResolveSelectedModels(table)}
+            loading={resolveFlaggedModelMutation.isLoading}
+            compact
+          >
+            Resolve Selected
+          </Button>
+        ) : undefined
+      }
       renderTopToolbarCustomActions={({ table }) => (
         <div className="flex items-center gap-2">
           <Text span inline>
@@ -201,8 +252,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
 
     try {
       if (isDirty) await upsertModelMutation.mutateAsync(data);
-
-      await resolveFlaggedModelMutation.mutateAsync({ id: data.id });
+      await resolveFlaggedModelMutation.mutateAsync({ ids: [data.id] });
 
       context.onClose();
     } catch {

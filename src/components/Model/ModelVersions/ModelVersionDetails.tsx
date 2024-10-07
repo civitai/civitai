@@ -111,6 +111,9 @@ import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersion
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
+import { useModelShowcaseCollection } from '~/components/Model/model.utils';
+import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -126,7 +129,7 @@ const useStyles = createStyles(() => ({
 
 export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteClick }: Props) {
   const user = useCurrentUser();
-  const { classes } = useStyles();
+  const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -146,6 +149,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     canGenerate: hasGeneratePermissions,
   } = useModelVersionPermission({
     modelVersionId: version.id,
+  });
+
+  const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
+    modelId: model.id,
   });
 
   const canDownload = version.canDownload || hasDownloadPermissions;
@@ -974,6 +981,51 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               },
             })}
           >
+            {model.meta?.showcaseCollectionId && collection && (
+              <Accordion.Item value="collection-showcase">
+                <Accordion.Control
+                  disabled={settingShowcase}
+                  className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Text inherit>{collection.name}</Text>
+                      <Text size="xs" color="dimmed">
+                        Collection
+                        {collection.itemCount > 0
+                          ? ` - ${collection.itemCount.toLocaleString()} items`
+                          : ''}
+                      </Text>
+                    </div>
+                    {isOwnerOrMod && (
+                      <Anchor
+                        size="sm"
+                        className={cx(
+                          settingShowcase && 'text-dark-2 cursor-not-allowed pointer-events-none'
+                        )}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          if (model.user.username)
+                            openCollectionSelectModal({
+                              username: model.user.username,
+                              onSelect: (value) => {
+                                if (collection.id !== value)
+                                  setShowcaseCollection(value).catch(() => null);
+                              },
+                            });
+                        }}
+                      >
+                        Edit
+                      </Anchor>
+                    )}
+                  </div>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <CollectionShowcase modelId={model.id} loading={settingShowcase} />
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
             <Accordion.Item value="version-details">
               <Accordion.Control>
                 <Group position="apart">
@@ -1265,7 +1317,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             />
           )}
           {model.description ? (
-            <ContentClamp maxHeight={300}>
+            <ContentClamp maxHeight={460}>
               <RenderHtml html={model.description} withMentions />
             </ContentClamp>
           ) : null}
