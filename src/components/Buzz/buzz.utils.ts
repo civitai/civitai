@@ -152,7 +152,7 @@ export const useBuzzTransaction = (opts?: {
           return { amt: { blue: buzzAmount, yellow: 0 }, pct: { blue: 1, yellow: 0 } };
 
         const blueAmt = Math.max(0, generationBalance);
-        const yellowAmt = buzzAmount - generationBalance;
+        const yellowAmt = buzzAmount - blueAmt;
 
         return {
           amt: {
