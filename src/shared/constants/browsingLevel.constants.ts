@@ -45,7 +45,15 @@ export const sfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.
 export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel(sfwBrowsingLevelsArray);
 
 // nsfw browsing levels
-export const nsfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+export const nsfwBrowsingLevelsArray: NsfwLevel[] = [
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+  NsfwLevel.Blocked,
+];
+export function getBrowsingLevelLabel(value: number) {
+  return browsingLevelLabels[value as keyof typeof browsingLevelLabels] ?? '?';
+}
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
 
 // all browsing levels
