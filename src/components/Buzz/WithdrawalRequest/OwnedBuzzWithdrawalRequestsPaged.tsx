@@ -79,10 +79,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
     });
   };
 
-  if (
-    !userPaymentConfiguration ||
-    userPaymentConfiguration.stripeAccountStatus !== StripeConnectStatus.Approved
-  ) {
+  if (!userPaymentConfiguration || !userPaymentConfiguration.tipaltiPaymentsEnabled) {
     return null;
   }
 
