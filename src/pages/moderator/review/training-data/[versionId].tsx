@@ -59,7 +59,7 @@ function ReviewTrainingData() {
     </div>
   ) : error ? (
     <div className="p-3">
-      <pre className="mx-auto">{error}</pre>
+      <pre className="mx-auto">{JSON.stringify(error)}</pre>
     </div>
   ) : (
     <>
@@ -132,7 +132,7 @@ function ReviewImages({
       <ScrollArea className="size-auto pt-0">
         <div className="container max-w-lg">
           <div className="grid grid-cols-4 gap-4">
-            {[...urls, ...urls, ...urls, ...urls, ...urls, ...urls].map((url, index) => (
+            {urls.map((url, index) => (
               <div key={index} className="flex items-center justify-center card">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={url} alt="" className="max-w-full" loading="lazy" />

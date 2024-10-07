@@ -7,7 +7,6 @@ import {
   stringToArray,
 } from '~/utils/zod-helpers';
 
-
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -101,6 +100,7 @@ export const serverSchema = z.object({
   ORCHESTRATOR_MODE: z.string().default('dev'),
   GENERATION_CALLBACK_HOST: z.string().url().optional(),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+  ORCHESTRATOR_USER_ACCESS_TOKEN: z.string().default(''),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
@@ -272,8 +272,10 @@ export const clientEnv = {
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
   // Default to Stripe in case the env var is not set
-  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER:
+    process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
   NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
-  NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
+  NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY:
+    process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
 };

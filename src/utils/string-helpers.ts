@@ -210,6 +210,12 @@ export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }
 
+export function getAirModelLink(identifier: string) {
+  const parsed = parseAIRSafe(identifier);
+  if (!parsed) return '/';
+  return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
+}
+
 const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.AestheticGradient]: 'ag',
   [ModelType.Checkpoint]: 'checkpoint',

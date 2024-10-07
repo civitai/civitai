@@ -1,6 +1,7 @@
 import {
   Accordion,
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -53,7 +54,7 @@ import {
 import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { baseModelPretty } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -591,14 +592,22 @@ export default function UserTrainingModels() {
               label: 'Label Type',
               value: modalData.file?.metadata?.labelType ?? 'tag',
             },
-            // TODO could get the name of the custom model (parseAIR)
+            // TODO could get the name of the custom model
             {
               label: 'Base Model',
-              value: isDefined(modalData.baseModel)
-                ? modalData.baseModel in baseModelPretty
-                  ? baseModelPretty[modalData.baseModel as TrainingDetailsBaseModelList]
-                  : modalData.baseModel
-                : '-',
+              value: isDefined(modalData.baseModel) ? (
+                modalData.baseModel in baseModelPretty ? (
+                  baseModelPretty[modalData.baseModel as TrainingDetailsBaseModelList]
+                ) : isAir(modalData.baseModel) ? (
+                  <Link href={getAirModelLink(modalData.baseModel)} passHref>
+                    <Anchor>Custom</Anchor>
+                  </Link>
+                ) : (
+                  modalData.baseModel
+                )
+              ) : (
+                '-'
+              ),
             },
             {
               label: 'Privacy',

@@ -74,11 +74,12 @@ export default WebhookEndpoint(async (req, res) => {
         });
         await updateRecords(workflow);
       } catch (e: unknown) {
+        const err = e as Error | undefined;
         logWebhook({
           message: 'Failed to update record',
-          data: { error: (e as Error)?.message, cause: (e as Error)?.cause, workflowId },
+          data: { error: err?.message, cause: err?.cause, workflowId },
         });
-        return res.status(500).json({ ok: false, error: (e as Error)?.message, workflowId });
+        return res.status(500).json({ ok: false, error: err?.message, workflowId });
       }
 
       break;

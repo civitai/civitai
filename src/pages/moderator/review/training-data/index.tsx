@@ -30,7 +30,9 @@ function TrainingDataReviewPage() {
         {flatData?.map((item) => (
           <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
             <div className="flex flex-col">
-              <Text lineClamp={1}>{item.name}</Text>
+              <Text lineClamp={1}>
+                {item.model.name} - {item.name}
+              </Text>
               <Text color="dimmed" size="xs">
                 Created: {formatDate(item.createdAt)}
               </Text>
