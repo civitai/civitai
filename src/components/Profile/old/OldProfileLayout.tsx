@@ -277,7 +277,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                   component="a"
                   target="_blank"
                   icon={<IconInfoCircle size={14} stroke={1.5} />}
-                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}?userId=${user.id}`}
+                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
                 >
                   Lookup User
                 </Menu.Item>

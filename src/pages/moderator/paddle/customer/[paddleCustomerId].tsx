@@ -31,7 +31,7 @@ export const getServerSideProps = createServerSideProps({
     if (query?.app === 'retool') {
       return {
         redirect: {
-          destination: `${env.NEXT_PUBLIC_USER_LOOKUP_URL}?userId=${user.id}`,
+          destination: `${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`,
           permanent: false,
         },
       };
