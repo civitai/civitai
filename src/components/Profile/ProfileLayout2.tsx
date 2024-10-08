@@ -58,7 +58,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         }
         subNav={<ProfileNavigation username={username} />}
       >
-        <div className="px-3 pt-3">
+        <div className="px-3">
           {isBlocked ? (
             <div className="mx-auto flex h-full items-center">
               <NoContent message="Unable to display content because you have blocked this user" />

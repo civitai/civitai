@@ -40,11 +40,19 @@ export function AppLayout({
         <NotFound />
       ) : (
         <div className="flex flex-1 overflow-hidden">
-          {left && <aside className="scroll-area relative">{left}</aside>}
+          {left && (
+            <aside className="scroll-area relative border-r border-gray-3 dark:border-dark-4">
+              {left}
+            </aside>
+          )}
           <MainContent subNav={subNav} scrollable={scrollable} footer={footer}>
             {children}
           </MainContent>
-          {right && <aside className="scroll-area relative">{right}</aside>}
+          {right && (
+            <aside className="scroll-area relative border-l border-gray-3 dark:border-dark-4">
+              {right}
+            </aside>
+          )}
         </div>
       )}
     </>
@@ -120,7 +128,7 @@ export function SubNav({
     <div
       {...props}
       className={clsx(
-        'sticky inset-x-0 top-0 z-50 bg-gray-1 shadow transition-transform dark:bg-dark-6',
+        'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
         className
       )}
       style={!showNav ? { transform: 'translateY(-200%)' } : undefined}
@@ -128,14 +136,4 @@ export function SubNav({
       {children}
     </div>
   );
-}
-
-function getShouldShowSubNav(node: HTMLElement, lastScrollTop: number) {
-  if (node.scrollTop === 0) return true;
-  if (node.scrollTop > lastScrollTop) {
-    return false;
-  }
-  if (node.scrollTop <= lastScrollTop) {
-    return true;
-  }
 }

@@ -87,7 +87,7 @@ export function SubNav2() {
     <Group
       py={4}
       px={8}
-      mb={currentPath !== 'home' ? 'sm' : undefined}
+      // mb={currentPath !== 'home' ? 'sm' : undefined}
       spacing={8}
       position="apart"
       noWrap={currentPath === 'home'}
