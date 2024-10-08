@@ -10,7 +10,6 @@ import {
   CosmeticType,
   MediaType,
   Prisma,
-  PrismaClient,
 } from '@prisma/client';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
@@ -18,6 +17,7 @@ import { uniqBy } from 'lodash-es';
 import { dbRead } from '~/server/db/client';
 import { imageGenerationSchema, ImageMetaProps } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ProfileImage, profileImageSelect } from '~/server/selectors/image.selector';
 
 const READ_BATCH_SIZE = 1000; // 10 items per collection are fetched for images. Careful with this number
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
@@ -125,6 +125,7 @@ type CollectionForSearchIndex = {
     image: string | null;
     username: string | null;
     deletedAt: Date | null;
+    profilePictureId: number | null;
   };
   cosmetics: {
     data: Prisma.JsonValue;
@@ -162,10 +163,12 @@ const transformData = async ({
   collections,
   itemImages,
   tags,
+  profilePictures,
 }: {
   collections: CollectionForSearchIndex[];
   itemImages: CollectionImageRaw[];
   tags: { imageId: number; tagId: number }[];
+  profilePictures: ProfileImage[];
 }) => {
   const records = collections
     .map(({ cosmetics, user, image, ...collection }) => {
@@ -185,6 +188,7 @@ const transformData = async ({
           meta: parseImageMeta(i.meta as ImageMetaProps),
           tags: tags.filter((t) => t.imageId === i.id).map((t) => ({ id: t.tagId })),
         }));
+      const profilePicture = profilePictures.find((p) => p.id === user.profilePictureId) ?? null;
 
       return {
         ...collection,
@@ -194,6 +198,7 @@ const transformData = async ({
         user: {
           ...user,
           cosmetics: cosmetics ?? [],
+          profilePicture,
         },
         images: uniqBy(images, 'id') ?? [],
         srcs: [...new Set(collectionImages.map((i) => i.src).filter(isDefined) ?? [])],
@@ -232,7 +237,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       endId,
     };
   },
-  pullData: async ({ db, logger }, batch) => {
+  pullData: async ({ db, logger }, batch, step) => {
     logger(`PullData :: Pulling data for batch: ${batch}`);
     const where = [
       ...WHERE,
@@ -286,7 +291,8 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
           'id', u.id,
           'username', u.username,
           'deletedAt', u."deletedAt",
-          'image', u.image
+          'image', u.image,
+          'profilePictureId', u."profilePictureId"
         ) user
       FROM "User" u
       WHERE u.id IN (SELECT "userId" FROM target)
@@ -420,22 +426,31 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     `;
     }
 
-    logger(`PullData :: Pulled tags & profile pics.`);
-
     const collectionImages = collections.map((c) => c.image?.id).filter(isDefined);
     const imageIds = [
       ...collectionImages,
       ...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined)),
     ];
+
+    logger(`PullData :: Pulled collection images.`);
+
     const tags = await dbRead.tagsOnImage.findMany({
       where: { imageId: { in: imageIds }, disabled: false },
       select: { imageId: true, tagId: true },
     });
 
+    const profilePictures = await db.image.findMany({
+      where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },
+      select: profileImageSelect,
+    });
+
+    logger(`PullData :: Pulled tags & profile pics.`);
+
     return {
       collections,
       itemImages,
       tags,
+      profilePictures,
     };
   },
   transformData,

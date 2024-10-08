@@ -14,6 +14,7 @@ import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/c
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
@@ -240,26 +241,22 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
 
     const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
       SELECT
-        cs."userId",
+        u.id as "userId",
         CASE
           WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
+          WHEN cs.status NOT IN ('active', 'trialing') THEN 1
           ELSE COALESCE((p.metadata->>'rewardsMultiplier')::float, 1)
         END as "rewardsMultiplier",
         COALESCE((p.metadata->>'purchasesMultiplier')::float, 1) as "purchasesMultiplier"
-      FROM "CustomerSubscription" cs
-      JOIN "User" u ON u.id = cs."userId"
-      JOIN "Product" p ON p.id = cs."productId"
-      WHERE cs."userId" IN (${Prisma.join(ids)})
-        AND cs."status" IN ('active', 'trialing');
+      FROM "User" u
+      LEFT JOIN "CustomerSubscription" cs ON u.id = cs."userId"
+      LEFT JOIN "Product" p ON p.id = cs."productId"
+      WHERE u.id IN (${Prisma.join(ids)});
     `;
 
     const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
       multipliers.map((m) => [m.userId, m])
     );
-    for (const userId of ids) {
-      if (records[userId]) continue;
-      records[userId] = { userId, rewardsMultiplier: 1, purchasesMultiplier: 1 };
-    }
 
     return records;
   },
@@ -523,4 +520,25 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
     return Object.fromEntries(userOverviewData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
+});
+
+type ImageWithMeta = {
+  id: number;
+  meta?: ImageMetaProps | null;
+};
+
+export const imageMetaCache = createCachedObject<ImageWithMeta>({
+  key: REDIS_KEYS.CACHES.IMAGE_META,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const images = await dbRead.$queryRaw<ImageWithMeta[]>`
+      SELECT
+        i.id,
+        (CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta"
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(ids as number[])})
+    `;
+    return Object.fromEntries(images.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.hour,
 });

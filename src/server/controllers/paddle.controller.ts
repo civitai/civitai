@@ -8,12 +8,14 @@ import {
   cancelSubscriptionPlan,
   createBuzzPurchaseTransaction,
   createCustomer,
+  getAdjustmentsInfinite,
   processCompleteBuzzTransaction,
   purchaseBuzzWithSubscription,
   refreshSubscription,
   updateSubscriptionPlan,
 } from '~/server/services/paddle.service';
 import {
+  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
@@ -206,4 +208,18 @@ export const hasPaddleSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullab
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }
+};
+
+export const getAdjustmentsInfiniteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: DeepNonNullable<Context>;
+  input: GetPaddleAdjustmentsSchema;
+}) => {
+  if (!ctx.user.isModerator || !ctx.features.paddleAdjustments) {
+    throwAuthorizationError('You are not authorized to view this resource');
+  }
+
+  return getAdjustmentsInfinite(input);
 };

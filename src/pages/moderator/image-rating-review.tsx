@@ -16,7 +16,11 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
-import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevelLabels,
+  browsingLevels,
+  getBrowsingLevelLabel,
+} from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -103,11 +107,12 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
       </Link>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
-          {browsingLevels.map((level) => {
+          {[...browsingLevels, 32].map((level) => {
             const votes = item.votes[level];
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
-              const count = item.ownerVote > 0 ? votes - 1 : votes;
+              const count = item.ownerVote === level && item.ownerVote > 0 ? votes - 1 : votes;
+              // const count = votes;
               const percentage = count / maxRating;
               sections.unshift({
                 value: percentage * 100,
@@ -118,6 +123,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
             if (item.ownerVote > 0 && item.ownerVote === level) {
               sections.unshift({
                 value: (1 / maxRating) * 100,
+                label: String(votes),
                 color: 'yellow',
               });
             }
@@ -135,14 +141,20 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                       : 'blue'
                   }
                 >
-                  {browsingLevelLabels[level]}
+                  {getBrowsingLevelLabel(level)}
                 </Button>
                 <Progress size={26} sections={sections} />
               </React.Fragment>
             );
           })}
         </div>
-        <VotableTags entityType="image" entityId={item.id} tags={item.tags} canAddModerated />
+        <VotableTags
+          entityType="image"
+          entityId={item.id}
+          tags={item.tags}
+          canAddModerated
+          nsfwLevel={item.nsfwLevel}
+        />
       </div>
     </div>
   );

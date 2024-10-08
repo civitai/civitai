@@ -3,11 +3,13 @@ import {
   Environment,
   ITransactionItemWithPrice,
   ITransactionItemWithPriceId,
+  ListAdjustmentQueryParameters,
   Paddle,
   UpdateSubscriptionRequestBody,
 } from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
+import { PaginationInput } from '~/server/schema/base.schema';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -187,4 +189,16 @@ export const cancelPaddleSubscription = (
 ) => {
   const paddle = getPaddle();
   return paddle.subscriptions.cancel(subscriptionId, { effectiveFrom });
+};
+
+export const getPaddleAdjustments = async (params: ListAdjustmentQueryParameters) => {
+  const paddle = getPaddle();
+  const perPage = params.perPage ?? 50;
+  const query = paddle.adjustments.list({
+    ...params,
+    perPage,
+  });
+
+  const data = await query.next();
+  return data;
 };

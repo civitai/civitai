@@ -2,11 +2,17 @@ import { Table } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import ReactMarkdown from 'react-markdown';
 import { ReactMarkdownOptions } from 'react-markdown/lib/react-markdown';
+import clsx from 'clsx';
 
 type CustomOptions = ReactMarkdownOptions & {
   allowExternalVideo?: boolean;
 };
 
+/**
+ Links for `notranslate` context
+ https://stackoverflow.com/a/65110044
+ https://github.com/facebook/react/issues/11538
+ */
 export function CustomMarkdown({
   allowExternalVideo,
   components,
@@ -16,7 +22,7 @@ export function CustomMarkdown({
   return (
     <ReactMarkdown
       {...options}
-      className={className}
+      className={clsx(className, 'notranslate')}
       components={{
         ...components,
         a: ({ node, href, ...props }) => {

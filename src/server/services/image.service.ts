@@ -41,6 +41,7 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  imageMetaCache,
   imagesForModelVersionsCache,
   tagCache,
   tagIdsForImagesCache,
@@ -1343,6 +1344,15 @@ export const getAllImages = async (
 
 // TODO split this into image-index.service because this file is a giant
 
+const getMetaForImages = async (imageIds: number[]) => {
+  if (imageIds.length === 0) {
+    return {};
+  }
+
+  const data = await imageMetaCache.fetch(imageIds);
+  return data;
+};
+
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
@@ -1435,7 +1445,7 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, profilePictures, userCosmetics, imageCosmetics] = await Promise.all([
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
     include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
@@ -1445,12 +1455,14 @@ export const getAllImagesIndex = async (
           entity: 'Image',
         })
       : undefined,
+    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
+    const meta = imageMeta?.[sr.id]?.meta ?? null;
 
     return {
       ...sr,
@@ -1483,6 +1495,7 @@ export const getAllImagesIndex = async (
           ? ImageIngestionStatus.NotFound
           : ImageIngestionStatus.Scanned, // add? maybe remove
       postTitle: null, // remove
+      meta,
     };
   });
 
@@ -1532,6 +1545,7 @@ type ImageSearchInput = GetAllImagesInput & {
 
 async function getImagesFromSearch(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  let { postIds = [] } = input;
 
   const {
     sort,
@@ -1548,7 +1562,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     baseModels,
     period,
     isModerator,
-    postIds,
     currentUserId,
     excludedUserIds,
     excludeCrossPosts,
@@ -1557,6 +1570,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     limit = 100,
     offset,
     entry,
+    postId,
     //
     reviewId,
     modelId,
@@ -1568,6 +1582,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  if (postId) {
+    postIds = [...(postIds ?? []), postId];
+  }
 
   // Filter
   //------------------------
@@ -3666,13 +3684,7 @@ export async function updateImageNsfwLevel({
 
 type ImageRatingRequestResponse = {
   id: number;
-  votes: {
-    [NsfwLevel.PG]: NsfwLevel.PG;
-    [NsfwLevel.PG13]: NsfwLevel.PG13;
-    [NsfwLevel.R]: NsfwLevel.R;
-    [NsfwLevel.X]: NsfwLevel.X;
-    [NsfwLevel.XXX]: NsfwLevel.XXX;
-  };
+  votes: Record<number, number>;
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
@@ -3689,41 +3701,92 @@ export async function getImageRatingRequests({
   limit,
   user,
 }: ImageRatingReviewOutput & { user: SessionUser }) {
+  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  //   WITH CTE_Requests AS (
+  //     SELECT
+  //       DISTINCT ON (irr."imageId") irr."imageId" as id,
+  //       MIN(irr."createdAt") as "createdAt",
+  //       COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
+  //       SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
+  //       i.url,
+  //       i."nsfwLevel",
+  //       i."nsfwLevelLocked",
+  //       i.type,
+  //       i.height,
+  //       i.width,
+  //       jsonb_build_object(
+  //         ${NsfwLevel.PG}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
+  //         ${NsfwLevel.PG13}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
+  //         ${NsfwLevel.R}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
+  //         ${NsfwLevel.X}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
+  //         ${NsfwLevel.XXX}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
+  //       ) "votes"
+  //       FROM "ImageRatingRequest" irr
+  //       JOIN "Image" i on i.id = irr."imageId"
+  //       WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //         AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  //       GROUP BY irr."imageId", i.id
+  //   )
+  //   SELECT
+  //     r.*
+  //   FROM CTE_Requests r
+  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
+  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+  //   ORDER BY r."createdAt"
+  //   LIMIT ${limit + 1}
+  // `;
+
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-    WITH CTE_Requests AS (
+  WITH image_rating_requests AS (
       SELECT
-        DISTINCT ON (irr."imageId") irr."imageId" as id,
-        MIN(irr."createdAt") as "createdAt",
-        COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
-        SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
-        i.url,
-        i."nsfwLevel",
-        i."nsfwLevelLocked",
-        i.type,
-        i.height,
-        i.width,
+        irr.*,
+        i."userId"  "imageUserId",
+        i."nsfwLevel"  "imageNsfwLevel"
+      FROM "ImageRatingRequest" irr
+      JOIN "Image" i ON i.id = irr."imageId"
+      WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+      AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
+      ORDER BY irr."createdAt"
+    ),
+    requests AS (
+      SELECT
+        "imageId" id,
+        MIN("createdAt") as "createdAt",
+        COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
+        COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
         jsonb_build_object(
-          ${NsfwLevel.PG}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
-          ${NsfwLevel.PG13}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
-          ${NsfwLevel.R}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
-          ${NsfwLevel.X}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
-          ${NsfwLevel.XXX}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
-        ) "votes"
-        FROM "ImageRatingRequest" irr
-        JOIN "Image" i on i.id = irr."imageId"
-        WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-        GROUP BY irr."imageId", i.id
+            ${NsfwLevel.PG}, count("nsfwLevel")
+              FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
+            ${NsfwLevel.PG13}, count("nsfwLevel")
+              FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
+            ${NsfwLevel.R}, count("nsfwLevel")
+              FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
+            ${NsfwLevel.X}, count("nsfwLevel")
+              FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
+            ${NsfwLevel.XXX}, count("nsfwLevel")
+              FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
+          ) "votes"
+      FROM image_rating_requests
+      GROUP BY "imageId"
     )
     SELECT
+      i.url,
+      i."nsfwLevel",
+      i."nsfwLevelLocked",
+      i."userId",
+      i.type,
+      i.width,
+      i.height,
       r.*
-    FROM CTE_Requests r
-    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
+    FROM requests r
+    JOIN "Image" i ON i.id = r."id"
+    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
+    AND i."blockedFor" IS NULL
     ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
     ORDER BY r."createdAt"
     LIMIT ${limit + 1}
@@ -3740,7 +3803,13 @@ export async function getImageRatingRequests({
     ids: imageIds,
     user,
     type: 'image',
-    nsfwLevel: Flags.arrayToInstance([NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
+    nsfwLevel: Flags.arrayToInstance([
+      NsfwLevel.PG13,
+      NsfwLevel.R,
+      NsfwLevel.X,
+      NsfwLevel.XXX,
+      NsfwLevel.Blocked,
+    ]),
   });
 
   return {

@@ -105,7 +105,7 @@ export default function Home() {
                     />
                   )}
                   {showAds && (
-                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard_C']} />
+                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard']} />
                   )}
                 </React.Fragment>
               );

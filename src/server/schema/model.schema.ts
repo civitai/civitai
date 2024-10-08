@@ -19,6 +19,7 @@ import { ModelSort } from '~/server/common/enums';
 import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import {
   baseQuerySchema,
+  getAllQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
   paginationSchema,
@@ -184,6 +185,13 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   lockedProperties: z.string().array().optional(),
   minor: z.boolean().default(false).optional(),
+  meta: z
+    .object({
+      showcaseCollectionId: z.number().nullish(),
+    })
+    .passthrough()
+    .transform((val) => val as ModelMeta | null)
+    .nullish(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -235,6 +243,9 @@ export type ModelMeta = Partial<{
   takenDownBy: number;
   bountyId: number;
   unpublishedBy: number;
+  declinedReason: string;
+  declinedAt: string;
+  showcaseCollectionId: number;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;
@@ -323,4 +334,26 @@ export type ToggleCheckpointCoverageInput = z.infer<typeof toggleCheckpointCover
 export const toggleCheckpointCoverageSchema = z.object({
   id: z.number(),
   versionId: z.number().nullish(),
+});
+
+export type SetModelCollectionShowcaseInput = z.infer<typeof setModelCollectionShowcaseSchema>;
+export const setModelCollectionShowcaseSchema = z.object({
+  id: z.number(),
+  collectionId: z.number().nullable(),
+});
+
+export type MigrateResourceToCollectionInput = z.infer<typeof migrateResourceToCollectionSchema>;
+export const migrateResourceToCollectionSchema = z.object({
+  id: z.coerce.number(),
+  collectionName: z.string().optional(),
+});
+
+export type IngestModelInput = z.input<typeof ingestModelSchema>;
+export const ingestModelSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  description: z.coerce.string(),
+  poi: z.coerce.boolean(),
+  nsfw: z.coerce.boolean(),
+  minor: z.coerce.boolean(),
 });

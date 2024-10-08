@@ -7,7 +7,6 @@ import {
   stringToArray,
 } from '~/utils/zod-helpers';
 
-
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -16,6 +15,7 @@ export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_PG_URL: z.string().url().optional(),
   DATABASE_REPLICA_URL: z.string().url(),
+  DATABASE_REPLICA_LONG_URL: z.string().url().optional(),
   NOTIFICATION_DB_URL: z.string().url(),
   NOTIFICATION_DB_REPLICA_URL: z.string().url(),
   DATABASE_SSL_CA: z.string().optional(),
@@ -181,6 +181,9 @@ export const serverSchema = z.object({
   CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
   CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
+  CONTENT_SCAN_ENDPOINT: z.string().optional(),
+  CONTENT_SCAN_CALLBACK_URL: z.string().optional(),
+  CONTENT_SCAN_MODEL: z.string().optional(),
 });
 
 /**
@@ -269,8 +272,10 @@ export const clientEnv = {
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
   NEXT_PUBLIC_PADDLE_TOKEN: process.env.NEXT_PUBLIC_PADDLE_TOKEN,
   // Default to Stripe in case the env var is not set
-  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER: process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
+  NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER:
+    process.env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === 'Paddle' ? 'Paddle' : 'Stripe',
   NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
-  NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
+  NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY:
+    process.env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY,
   NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY: process.env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY,
 };

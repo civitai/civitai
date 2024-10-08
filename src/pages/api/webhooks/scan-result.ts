@@ -2,7 +2,7 @@ import { ModelFile, ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req, res) => {
   const { metadata, ...scanResult }: ScanResult = req.body;
 
   const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
-  const file = await dbRead.modelFile.findUnique({ where });
+  const file = await dbWrite.modelFile.findUnique({ where });
   if (!file) return res.status(404).json({ error: 'File not found' });
 
   const data: Prisma.ModelFileUpdateInput = {};
@@ -107,7 +107,7 @@ export default WebhookEndpoint(async (req, res) => {
     }
 
     // Update search index
-    const version = await dbRead.modelVersion.findUnique({
+    const version = await dbWrite.modelVersion.findUnique({
       where: { id: file.modelVersionId },
       select: { modelId: true },
     });
@@ -124,7 +124,7 @@ export default WebhookEndpoint(async (req, res) => {
   await deleteFilesForModelVersionCache(file.modelVersionId);
 
   if (scanResult.fixed?.includes('sshs_hash')) {
-    const version = await dbRead.modelVersion.findUnique({
+    const version = await dbWrite.modelVersion.findUnique({
       where: { id: file.modelVersionId },
       select: { id: true, name: true, model: { select: { userId: true, id: true, name: true } } },
     });

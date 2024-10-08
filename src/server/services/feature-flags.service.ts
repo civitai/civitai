@@ -107,7 +107,8 @@ const featureFlags = createFeatureFlags({
   canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
-  adsEnabled: ['public', 'blue'],
+  adsEnabled: ['public', 'blue', 'green'],
+  paddleAdjustments: ['granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -117,14 +118,17 @@ export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
 // --------------------------
 type FeatureAccessContext = {
   user?: SessionUser;
+  host?: string;
   req?: {
     headers: IncomingHttpHeaders;
     // url?: string;
   };
 };
-const hasFeature = (key: FeatureFlagKey, { user, req }: FeatureAccessContext) => {
+const hasFeature = (
+  key: FeatureFlagKey,
+  { user, req, host = req?.headers.host }: FeatureAccessContext
+) => {
   const { availability } = featureFlags[key];
-  const host = req?.headers.host;
 
   // Check environment availability
   const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;

@@ -65,6 +65,7 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
+import { openMigrateModelToCollectionModal } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -99,7 +100,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, CAROUSEL_LIMIT } from '~/server/common/constants';
+import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort, ModelType } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
@@ -167,6 +168,7 @@ export const getServerSideProps = createServerSideProps({
         await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
+      await ssg.model.getCollectionShowcase.prefetch({ id });
       if (session) {
         await ssg.user.getEngagedModelVersions.prefetch({ id });
         await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
@@ -208,6 +210,7 @@ export default function ModelDetailsV2({
     }
   );
 
+  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -513,12 +516,13 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${model.meta?.customMessage}.` ?? '';
+      : `Removal reason: ${model.meta?.customMessage}.`;
 
   return (
     <>
@@ -833,23 +837,34 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </>
                         )}
-                        {isOwner && (
-                          <ToggleLockModel modelId={model.id} locked={model.locked}>
-                            {({ onClick }) => (
+                        {isModerator && (
+                          <>
+                            <ToggleLockModel modelId={model.id} locked={model.locked}>
+                              {({ onClick }) => (
+                                <Menu.Item
+                                  icon={
+                                    model.locked ? (
+                                      <IconLockOff size={14} stroke={1.5} />
+                                    ) : (
+                                      <IconLock size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={onClick}
+                                >
+                                  {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                </Menu.Item>
+                              )}
+                            </ToggleLockModel>
+                            {published && (
                               <Menu.Item
-                                icon={
-                                  model.locked ? (
-                                    <IconLockOff size={14} stroke={1.5} />
-                                  ) : (
-                                    <IconLock size={14} stroke={1.5} />
-                                  )
+                                onClick={() =>
+                                  openMigrateModelToCollectionModal({ modelId: model.id })
                                 }
-                                onClick={onClick}
                               >
-                                {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                Migrate to Collection
                               </Menu.Item>
                             )}
-                          </ToggleLockModel>
+                          </>
                         )}
                       </Menu.Dropdown>
                     </Menu>

@@ -5,15 +5,21 @@ import {
   handleDenyTrainingData,
 } from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
+import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
-import { getVersionById } from '~/server/services/model-version.service';
-import { createTrainingRequest } from '~/server/services/training.service';
+import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import { moderatorProcedure, router } from '~/server/trpc';
 
 export const modRouter = router({
   models: router({
     query: moderatorProcedure.input(getAllModelsSchema).query(getModelsPagedSimpleHandler),
+    queryFlagged: moderatorProcedure
+      .input(getFlaggedModelsSchema)
+      .query(({ input }) => getFlaggedModels(input)),
+    resolveFlagged: moderatorProcedure
+      .input(getByIdsSchema)
+      .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure

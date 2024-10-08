@@ -11,7 +11,7 @@ import {
 import { IconCheck } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
-import { useOnboardingWizardContext } from '~/components/Onboarding/OnboardingWizard';
+import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import rehypeRaw from 'rehype-raw';
@@ -20,7 +20,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 
 export function OnboardingTos() {
-  const { next } = useOnboardingWizardContext();
+  const { next } = useOnboardingContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
 
   const handleStepComplete = () => {

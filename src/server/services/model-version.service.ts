@@ -57,7 +57,8 @@ import {
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { updateModelLastVersionAt } from './model.service';
+import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -253,6 +254,8 @@ export const upsertModelVersion = async ({
       select: {
         id: true,
         status: true,
+        description: true,
+        trainedWords: true,
         earlyAccessEndsAt: true,
         earlyAccessConfig: true,
         publishedAt: true,
@@ -413,6 +416,11 @@ export const upsertModelVersion = async ({
     await preventReplicationLag('modelVersion', version.id);
     await bustMvCache(version.id);
     await dataForModelsCache.bust(version.modelId);
+
+    // Run it in the background to avoid blocking the request.
+    ingestModelById({ id: version.modelId }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+    );
 
     return version;
   }
@@ -681,6 +689,11 @@ export const publishModelVersionById = async ({
   );
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+
+  // Run it in the background to avoid blocking the request.
+  ingestModelById({ id: version.modelId }).catch((error) =>
+    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
   );
 
   return version;

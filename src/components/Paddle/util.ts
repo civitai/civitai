@@ -1,6 +1,8 @@
+import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import {
+  GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
@@ -92,5 +94,27 @@ export const useHasPaddleSubscription = () => {
   return {
     hasPaddleSubscription,
     isLoading,
+  };
+};
+
+export const usePaddleAdjustmentsInfinite = (
+  input?: GetPaddleAdjustmentsSchema,
+  options?: { keepPreviousData?: boolean; enabled?: boolean }
+) => {
+  const { data, isLoading, ...rest } = trpc.paddle.getAdjustmentsInfinite.useInfiniteQuery(
+    { ...(input ?? {}) },
+    {
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+      trpc: { context: { skipBatch: true } },
+      ...options,
+    }
+  );
+
+  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
+
+  return {
+    adjustments: flatData,
+    isLoading,
+    ...rest,
   };
 };

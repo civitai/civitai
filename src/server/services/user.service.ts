@@ -1590,3 +1590,16 @@ export async function updateContentSettings({
   }
   await invalidateSession(userId);
 }
+
+export const getUserByPaddleCustomerId = async ({
+  paddleCustomerId,
+}: {
+  paddleCustomerId: string;
+}) => {
+  const user = await dbRead.user.findFirst({
+    where: { paddleCustomerId },
+    select: { id: true, username: true },
+  });
+
+  return user;
+};

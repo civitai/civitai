@@ -369,6 +369,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
       case 'articles':
         return `/${indexName}/${hit.id}/${slugit(hit.title)}`;
       case 'images':
+      case 'collections':
         return `/${indexName}/${hit.id}`;
       case 'users':
         return `/user/${hit.username}`;
