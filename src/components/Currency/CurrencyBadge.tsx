@@ -83,19 +83,19 @@ export function CurrencyBadge({
                 '::after': {
                   content: '""',
                   position: 'absolute',
+                  pointerEvents: 'none',
                   left: '1px',
                   right: '1px',
                   top: '1px',
                   bottom: '1px',
-                  border: '2px solid red',
-                  pointerEvents: 'none',
+                  border: '1px solid yellow',
                   borderRadius: '50%',
                   borderImage: `linear-gradient(to right, ${theme.colors.blue[4]} ${Math.round(
                     typeDistrib.pct.blue * 100
                   )}%, ${theme.colors.yellow[7]} ${Math.round(typeDistrib.pct.blue * 100)}%, ${
                     theme.colors.yellow[7]
                   } ${Math.round(typeDistrib.pct.yellow * 100)}%) 1`,
-                  clipPath: 'inset(0% 0% 0% 0% round 2px)',
+                  clipPath: 'inset(0% 0% 0% 0% round 1px)',
                 },
               }
             : undefined,

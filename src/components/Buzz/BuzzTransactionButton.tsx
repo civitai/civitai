@@ -127,7 +127,7 @@ export function BuzzTransactionButton({
             unitAmount={buzzAmount}
             displayCurrency={false}
             radius={buttonProps?.radius ?? 'sm'}
-            py={10}
+            py={12}
             pl={4}
             pr={8}
             loading={loading}
