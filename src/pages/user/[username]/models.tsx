@@ -26,7 +26,7 @@ import { ModelSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { Page } from '~/components/AppLayout/Page';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
@@ -40,7 +40,7 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export default function UserModelsPage() {
+function UserModelsPage() {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { classes } = useStyles();
@@ -174,4 +174,4 @@ function ContentToggle({
   );
 }
 
-setPageOptions(UserModelsPage, { innerLayout: UserProfileLayout });
+export default Page(UserModelsPage, { InnerLayout: UserProfileLayout });

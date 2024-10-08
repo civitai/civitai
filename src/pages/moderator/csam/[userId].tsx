@@ -1,5 +1,4 @@
 import { useRouter } from 'next/router';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { CsamImageSelection } from '~/components/Csam/CsamImageSelection';
 import React, { useRef } from 'react';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
@@ -12,8 +11,9 @@ import { useStepper } from '~/hooks/useStepper';
 import { trpc } from '~/utils/trpc';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import Link from 'next/link';
+import { Page } from '~/components/AppLayout/Page';
 
-export default function ReportCsamUserPage() {
+function ReportCsamUserPage() {
   const router = useRouter();
   const userIds = z.coerce
     .number()
@@ -73,4 +73,6 @@ export default function ReportCsamUserPage() {
   );
 }
 
-setPageOptions(ReportCsamUserPage, { withScrollArea: false });
+export default Page(ReportCsamUserPage, {
+  // withScrollArea: false
+});

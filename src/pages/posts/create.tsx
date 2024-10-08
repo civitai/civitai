@@ -15,7 +15,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { createPage } from '~/components/AppLayout/createPage';
+import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -47,8 +47,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default createPage(
-  function PostCreate() {
+export default Page(
+  function () {
     const currentUser = useCurrentUser();
     const router = useRouter();
     const params = postEditQuerySchema.parse(router.query);

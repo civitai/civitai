@@ -1,12 +1,11 @@
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
-import { createPage } from '~/components/AppLayout/createPage';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { dbRead } from '~/server/db/client';
 import { z } from 'zod';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { Meta } from '~/components/Meta/Meta';
+import { Page } from '~/components/AppLayout/Page';
 
 const paramsSchema = z.object({
   postId: z.coerce.number(),
@@ -37,8 +36,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default createPage(
-  function PostEditPage() {
+export default Page(
+  function () {
     return (
       <>
         <Meta deIndex />

@@ -15,15 +15,9 @@ import { Flags } from '~/shared/utils';
 import { useCookies } from '~/providers/CookiesProvider';
 import { deleteCookie } from 'cookies-next';
 const UserBanned = dynamic(() => import('~/components/User/UserBanned'), { ssr: false });
-const OnboardingModal = dynamic(
-  () => import('~/components/Onboarding/OnboardingWizard'),
-  {
-    ssr: false,
-  },
-  {
-    ssr: false,
-  }
-);
+const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
+  ssr: false,
+});
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();

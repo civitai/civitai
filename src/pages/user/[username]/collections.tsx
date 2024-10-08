@@ -14,7 +14,7 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { Page } from '~/components/AppLayout/Page';
 
 export const getServerSideProps = createServerSideProps({
   resolver: async ({ ctx, features }) => {
@@ -28,7 +28,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function UserCollectionsPage() {
+function UserCollectionsPage() {
   const router = useRouter();
   const { set, ...queryFilters } = useCollectionQueryParams();
   const sort = queryFilters.sort ?? constants.collectionFilterDefaults.sort;
@@ -80,4 +80,4 @@ export default function UserCollectionsPage() {
   );
 }
 
-setPageOptions(UserCollectionsPage, { innerLayout: UserProfileLayout });
+export default Page(UserCollectionsPage, { InnerLayout: UserProfileLayout });

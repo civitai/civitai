@@ -6,88 +6,37 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
-type AppLayoutProps = {
-  innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
-  withScrollArea?: boolean;
-};
-
 export function AppLayout({
   children,
   renderSearchComponent,
   subNav = <SubNav2 />,
   left,
   right,
-}: {
+}: // scrollable = true
+{
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
   subNav?: React.ReactNode | null;
   left?: React.ReactNode;
   right?: React.ReactNode;
+  // scrollable?: boolean;
 }) {
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <Main left={left} right={right} subNav={subNav}>
-        {children}
-      </Main>
-    </>
-  );
-}
-
-export function setPageOptions(Component: (...args: any) => JSX.Element, options?: AppLayoutProps) {
-  (Component as any).options = options;
-}
-
-// function MainContent({
-//   children,
-//   subNav = <SubNav2 />,
-// }: {
-//   children: React.ReactNode;
-//   subNav?: React.ReactNode | null;
-// }) {
-//   return (
-//     <ScrollArea>
-//       <main>
-//         {subNav && <SubNav>{subNav}</SubNav>}
-//         {children}
-//       </main>
-//       <AppFooter />
-//     </ScrollArea>
-//   );
-// }
-
-function Main({
-  children,
-  left,
-  right,
-  subNav = <SubNav2 />,
-}: {
-  children: React.ReactNode;
-  left?: React.ReactNode;
-  right?: React.ReactNode;
-  subNav?: React.ReactNode;
-}) {
-  const main = (
-    <ScrollArea>
-      <main>
-        {subNav && <SubNav>{subNav}</SubNav>}
-        {children}
-      </main>
-      <AppFooter />
-    </ScrollArea>
-  );
-
-  if (left || right) {
-    return (
-      <div className="flex flex-1">
+      <div className="flex flex-1 overflow-hidden">
         {left && <aside className="relative h-full">{left}</aside>}
-        {main}
+        <ScrollArea>
+          <main>
+            {subNav && <SubNav>{subNav}</SubNav>}
+            {children}
+          </main>
+          <AppFooter />
+        </ScrollArea>
         {right && <aside className="relative h-full">{right}</aside>}
       </div>
-    );
-  }
-
-  return main;
+    </>
+  );
 }
 
 function SubNav({
@@ -96,9 +45,12 @@ function SubNav({
   ...props
 }: { children: React.ReactNode } & React.HTMLProps<HTMLDivElement>) {
   const lastScrollRef = useRef(0);
+  // const upScrollRef = useRef(0);
+  // const downScrollRef = useRef(0);
   const scrollRef = useScrollAreaRef({
     onScroll: (node) => {
       const showNav = getShouldShowSubNav(node, lastScrollRef.current);
+      // if(node.scrollTop > lastScrollRef.current) downScrollRef.current = node.scrollTop;
       setShowNav(showNav);
       lastScrollRef.current = node.scrollTop;
     },
@@ -130,15 +82,3 @@ function getShouldShowSubNav(node: HTMLElement, lastScrollTop: number) {
     return true;
   }
 }
-
-/*
-function UserProfileLayout() {
-  return (
-    <Main left={<ProfileSidebar username={username} />}>
-      {children}
-    </Main>
-  )
-}
-
-innerLayout: <
-*/
