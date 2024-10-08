@@ -10,7 +10,7 @@ type Props = TextProps & {
   withTooltip?: boolean;
   withAbbreviation?: boolean;
   accountId?: number;
-  accountType?: BuzzAccountType;
+  accountType?: BuzzAccountType | null;
 };
 
 export function UserBuzz({
