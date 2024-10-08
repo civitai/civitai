@@ -44,7 +44,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -333,11 +332,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
 export default Page(ArticleDetailsPage, {
   InnerLayout: ({ children }) => {
-    return (
-      <ImageViewer>
-        <ScrollAreaMain>{children}</ScrollAreaMain>
-      </ImageViewer>
-    );
+    return <ImageViewer>{children}</ImageViewer>;
   },
 });
 
