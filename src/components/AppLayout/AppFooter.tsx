@@ -1,6 +1,6 @@
 import { Anchor, Button, ButtonProps, Code, Group, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
@@ -27,17 +27,17 @@ export function AppFooter() {
   const features = useFeatureFlags();
   const footerRef = useRef<HTMLElement | null>(null);
 
-  const scrollRef = useScrollAreaRef({
-    onScroll: (node) => setShowFooter(node.scrollTop <= 100),
+  const [showFooter, setShowFooter] = useState(true);
+  useScrollAreaRef({
+    onScroll: (node) => {
+      setShowFooter(node.scrollTop <= 100);
+    },
   });
-  const [showFooter, setShowFooter] = useState(
-    scrollRef?.current ? scrollRef.current.scrollTop <= 100 : true
-  );
 
   return (
     <footer
       ref={footerRef}
-      className="sticky inset-x-0 bottom-0 z-50 transition-transform"
+      className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
       style={!showFooter ? { transform: 'translateY(100%)' } : undefined}
     >
       <FloatingActions showFooter={showFooter} />
@@ -204,7 +204,7 @@ function FloatingActions(props: {
   const { showFooter, assistant = true, scrollToTop = true } = props;
 
   return (
-    <div className="absolute bottom-full right-0 flex gap-2 overflow-hidden pb-2 pr-2">
+    <div className="absolute bottom-full right-0 flex gap-2 overflow-hidden pb-2 pr-2 pt-1">
       {scrollToTop && <ScrollToTop show={!showFooter} />}
       {assistant && <AssistantButton />}
     </div>
@@ -216,12 +216,13 @@ function ScrollToTop({ show }: { show: boolean }) {
 
   return (
     <Button
-      leftIcon={<IconArrowUp size={16} />}
+      // leftIcon={<IconArrowUp size={16} />}
+      px="xs"
       onClick={() => nodeRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
       className={'transition-transform'}
       style={!show ? { transform: 'translateY(150%)' } : undefined}
     >
-      Back to top
+      <IconArrowUp size={20} stroke={2.5} />
     </Button>
   );
 }

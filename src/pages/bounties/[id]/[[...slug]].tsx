@@ -998,8 +998,6 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
 export default Page(BountyDetailsPage, {
   // withScrollArea: false,
   InnerLayout: ({ children }: { children: React.ReactNode }) => (
-    <ImageViewer>
-      <ScrollAreaMain>{children}</ScrollAreaMain>
-    </ImageViewer>
+    <ImageViewer>{children}</ImageViewer>
   ),
 });

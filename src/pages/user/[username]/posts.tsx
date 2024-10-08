@@ -84,4 +84,4 @@ function UserPostsPage() {
   );
 }
 
-export default Page(UserPostsPage, { InnerLayout: UserProfileLayout });
+export default Page(UserPostsPage, { getLayout: UserProfileLayout });

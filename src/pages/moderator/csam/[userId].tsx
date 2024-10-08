@@ -74,5 +74,5 @@ function ReportCsamUserPage() {
 }
 
 export default Page(ReportCsamUserPage, {
-  // withScrollArea: false
+  footer: null,
 });

@@ -7,5 +7,5 @@ export default Page(
   function () {
     return <UserMediaInfinite type="video" />;
   },
-  { InnerLayout: UserProfileLayout }
+  { getLayout: UserProfileLayout }
 );

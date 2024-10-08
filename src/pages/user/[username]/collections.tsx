@@ -80,4 +80,4 @@ function UserCollectionsPage() {
   );
 }
 
-export default Page(UserCollectionsPage, { InnerLayout: UserProfileLayout });
+export default Page(UserCollectionsPage, { getLayout: UserProfileLayout });

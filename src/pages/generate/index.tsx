@@ -2,6 +2,7 @@ import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mant
 import { IconClock, IconClockHour9, IconLayoutList } from '@tabler/icons-react';
 import { IconGridDots, IconLock } from '@tabler/icons-react';
 import React, { useState } from 'react';
+import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { Page } from '~/components/AppLayout/Page';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
@@ -84,7 +85,7 @@ function GeneratePage() {
             <GeneratedImageActions />
           </Group>
         </Tabs.List>
-        <ScrollArea scrollRestore={{ key: view }} py={0}>
+        <ScrollArea scrollRestore={{ key: view }}>
           <Tabs.Panel value="queue">
             <Queue />
           </Tabs.Panel>
@@ -98,7 +99,8 @@ function GeneratePage() {
 }
 
 export default Page(GeneratePage, {
-  // withScrollArea: false
+  scrollable: false,
+  subNav: null,
 });
 
 const useStyles = createStyles((theme) => {

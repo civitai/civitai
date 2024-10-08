@@ -802,4 +802,6 @@ const fillEffect = keyframes({
 
 export default Page(Rater, {
   // withScrollArea: false
+  scrollable: false,
+  subNav: null,
 });

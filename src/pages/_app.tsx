@@ -105,7 +105,13 @@ function MyApp(props: CustomAppProps) {
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
       {Component.getLayout?.(page) ?? (
-        <AppLayout left={Component.left} right={Component.right} subNav={Component.subNav}>
+        <AppLayout
+          left={Component.left}
+          right={Component.right}
+          subNav={Component.subNav}
+          scrollable={Component.scrollable}
+          footer={Component.footer}
+        >
           {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
         </AppLayout>
       )}

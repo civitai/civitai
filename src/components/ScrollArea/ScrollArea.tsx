@@ -21,7 +21,7 @@ export function ScrollArea({
   return (
     <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
       <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
-        <Box ref={scrollRef} className={clsx('scroll-area', className)} {...props}>
+        <Box ref={scrollRef} className={clsx('scroll-area flex-1', className)} {...props}>
           {mobile && <DragLoader />}
           {children}
         </Box>

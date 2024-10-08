@@ -174,4 +174,4 @@ function ContentToggle({
   );
 }
 
-export default Page(UserModelsPage, { InnerLayout: UserProfileLayout });
+export default Page(UserModelsPage, { getLayout: UserProfileLayout });

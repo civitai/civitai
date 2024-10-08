@@ -8,6 +8,9 @@ type PageOptions = {
   subNav?: React.ReactNode | null;
   left?: React.ReactNode;
   right?: React.ReactNode;
+  main?: React.ReactNode;
+  scrollable?: boolean;
+  footer?: React.ReactNode | null;
 };
 
 export type CustomNextPage = NextPage & PageOptions;
@@ -19,6 +22,9 @@ export function Page(Component: CustomNextPage, options?: PageOptions) {
   Component.subNav = options?.subNav;
   Component.left = options?.left;
   Component.right = options?.right;
+  Component.main = options?.main;
+  Component.scrollable = options?.scrollable;
+  Component.footer = options?.footer;
 
   return Component;
 }

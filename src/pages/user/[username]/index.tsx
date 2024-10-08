@@ -105,4 +105,6 @@ function ProfileOverview() {
   );
 }
 
-export default Page(ProfileOverview, { InnerLayout: UserProfileLayout });
+export default Page(ProfileOverview, {
+  getLayout: UserProfileLayout,
+});

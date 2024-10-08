@@ -112,4 +112,4 @@ function UserArticlesPage() {
   );
 }
 
-export default Page(UserArticlesPage, { InnerLayout: UserProfileLayout });
+export default Page(UserArticlesPage, { getLayout: UserProfileLayout });
