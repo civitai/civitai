@@ -133,7 +133,13 @@ const EpochRow = ({
                     },
                   }}
                 />
-                <Textarea autosize minRows={1} maxRows={4} value={prompts[index]} readOnly />
+                <Textarea
+                  autosize
+                  minRows={1}
+                  maxRows={4}
+                  value={prompts[index] || '(no prompt provided)'}
+                  readOnly
+                />
               </Stack>
             ))
           ) : (
