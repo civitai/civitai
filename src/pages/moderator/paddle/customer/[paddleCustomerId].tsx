@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { env } from '~/env/client.mjs';
 import { getUserByPaddleCustomerId } from '~/server/services/user.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -30,7 +31,7 @@ export const getServerSideProps = createServerSideProps({
     if (query?.app === 'retool') {
       return {
         redirect: {
-          destination: `https://civitai.retool.com/apps/a3ef436a-317f-11ee-922f-a38f70fed83e/Production/User%20Lookup?userId=${user.id}`,
+          destination: `${env.NEXT_PUBLIC_USER_LOOKUP_URL}?userId=${user.id}`,
           permanent: false,
         },
       };
