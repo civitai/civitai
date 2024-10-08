@@ -75,6 +75,7 @@ export const discountInfo = {
   amt: 0,
   bannerId: '9-13-24',
   endDate: '2024-09-28 00:00:00',
+  message: 'Flux-Dev Rapid Training',
 };
 
 export const baseModelPretty: {

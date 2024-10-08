@@ -497,12 +497,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       )}
       {discountInfo.amt !== 0 && (
         <DismissibleAlert
-          id={`rapid-training-discount-${discountInfo.bannerId}`}
+          id={`training-discount-${discountInfo.bannerId}`}
           icon={<IconConfetti />}
           color="pink"
           content={
             <Text>
-              Flux-Dev Rapid Training is currently {<b>{discountInfo.amt * 100}%</b>} off! (Ends on{' '}
+              {discountInfo.message} is currently {<b>{discountInfo.amt * 100}%</b>} off! (Ends on{' '}
               {new Date(discountInfo.endDate).toLocaleDateString('en-us', {
                 weekday: 'long',
                 year: 'numeric',
