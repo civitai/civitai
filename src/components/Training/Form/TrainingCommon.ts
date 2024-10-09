@@ -27,7 +27,12 @@ import { isDefined } from '~/utils/type-guards';
 
 export const basePath = '/models/train';
 export const maxSteps = 3;
-export const blockedCustomModels = ['civitai:53761@285757'];
+
+// nb: these should be proper AIRs now
+export const blockedCustomModels = [
+  'civitai:53761@285757',
+  'urn:air:sd1:checkpoint:civitai:53761@285757',
+];
 
 /**
  * Computes the number of decimal points in a given input using magic math
@@ -70,11 +75,6 @@ export const goBack = (modelId: number | undefined, step: number) => {
       shallow: true,
       scroll: true,
     }).then();
-};
-
-export const isTrainingCustomModel = (m: string | null) => {
-  if (!m) return false;
-  return m.startsWith('civitai:');
 };
 
 export const useTrainingSignals = () => {

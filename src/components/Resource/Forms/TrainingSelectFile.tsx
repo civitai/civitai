@@ -20,14 +20,14 @@ import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
-import { EpochSchema } from '~/pages/api/webhooks/resource-training';
+import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { ModelVersionById } from '~/types/router';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { bytesToKB } from '~/utils/number-helpers';
+import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
@@ -52,13 +52,15 @@ const TRANSMITTER_KEY = 'trainer';
 
 const EpochRow = ({
   epoch,
+  prompts,
   selectedFile,
   setSelectedFile,
   onPublishClick,
   loading,
   incomplete,
 }: {
-  epoch: EpochSchema;
+  epoch: TrainingResultsV2['epochs'][number];
+  prompts: TrainingResultsV2['sampleImagesPrompts'];
   selectedFile: string | undefined;
   setSelectedFile: React.Dispatch<React.SetStateAction<string | undefined>>;
   onPublishClick: (modelUrl: string) => void;
@@ -75,32 +77,33 @@ const EpochRow = ({
       withBorder
       className={cx(
         classes.paperRow,
-        selectedFile === epoch.model_url ? classes.selectedRow : undefined
+        selectedFile === epoch.modelUrl ? classes.selectedRow : undefined
       )}
-      onClick={() => setSelectedFile(epoch.model_url)}
+      onClick={() => setSelectedFile(epoch.modelUrl)}
     >
       <Stack>
         <Group position="apart" className={classes.epochRow}>
           <Text fz="md" fw={700}>
-            Epoch #{epoch.epoch_number}
+            Epoch #{epoch.epochNumber}
           </Text>
           <Group spacing={8} noWrap>
             <DownloadButton
               onClick={(e) => e.stopPropagation()}
               component="a"
               canDownload
-              href={epoch.model_url}
+              href={epoch.modelUrl}
               variant="light"
             >
               <Text align="center">
-                {/*{`Download (${formatKBytes(modalData.file?.sizeKB)})`}*/}
-                Download
+                {epoch.modelSize > 0
+                  ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
+                  : 'Download'}
               </Text>
             </DownloadButton>
             <Button
               disabled={incomplete}
               loading={loading}
-              onClick={() => onPublishClick(epoch.model_url)}
+              onClick={() => onPublishClick(epoch.modelUrl)}
             >
               <Group spacing={4} noWrap>
                 <IconSend size={20} />
@@ -113,12 +116,12 @@ const EpochRow = ({
           className={classes.epochRow}
           style={{ justifyContent: 'space-evenly', alignItems: 'flex-start' }}
         >
-          {epoch.sample_images && epoch.sample_images.length > 0 ? (
-            epoch.sample_images.map((imgData, index) => (
+          {epoch.sampleImages && epoch.sampleImages.length > 0 ? (
+            epoch.sampleImages.map((url, index) => (
               <Stack key={index} style={{ justifyContent: 'flex-start' }}>
                 <Image
                   alt={`Sample image #${index}`}
-                  src={imgData.image_url}
+                  src={url}
                   withPlaceholder
                   imageProps={{
                     style: {
@@ -130,7 +133,13 @@ const EpochRow = ({
                     },
                   }}
                 />
-                <Textarea autosize minRows={1} maxRows={4} value={imgData.prompt} readOnly />
+                <Textarea
+                  autosize
+                  minRows={1}
+                  maxRows={4}
+                  value={prompts[index] || '(no prompt provided)'}
+                  readOnly
+                />
               </Stack>
             ))
           ) : (
@@ -160,7 +169,7 @@ export default function TrainingSelectFile({
 
   const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
-  const mfEpochs = modelFile?.metadata?.trainingResults?.epochs || [];
+  const trainingResults = modelFile?.metadata?.trainingResults;
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
@@ -230,9 +239,13 @@ export default function TrainingSelectFile({
 
     setAwaitInvalidate(true);
 
-    const publishImages = mfEpochs
-      .find((e) => e.model_url === fileUrl)
-      ?.sample_images?.map((si) => si.image_url);
+    const publishImages =
+      trainingResults?.version === 2
+        ? (trainingResults?.epochs ?? []).find((e) => e.modelUrl === fileUrl)?.sampleImages
+        : (trainingResults?.epochs ?? [])
+            .find((e) => e.model_url === fileUrl)
+            ?.sample_images?.map((si) => si.image_url);
+
     if (publishImages?.length) {
       orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, publishImages);
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
@@ -278,7 +291,26 @@ export default function TrainingSelectFile({
     return <NotFound />;
   }
 
-  const epochs = [...mfEpochs].sort((a, b) => b.epoch_number - a.epoch_number);
+  let epochs: TrainingResultsV2['epochs'];
+  let samplePrompts: string[];
+
+  if (!trainingResults) {
+    epochs = [];
+    samplePrompts = [];
+  } else if (trainingResults.version === 2) {
+    epochs = trainingResults.epochs ?? [];
+    samplePrompts = trainingResults.sampleImagesPrompts ?? [];
+  } else {
+    epochs =
+      trainingResults.epochs?.map((e) => ({
+        epochNumber: e.epoch_number,
+        modelUrl: e.model_url,
+        modelSize: 0,
+        sampleImages: e.sample_images?.map((s) => s.image_url) ?? [],
+      })) ?? [];
+    samplePrompts = trainingResults.epochs?.[0]?.sample_images?.map((s) => s.prompt) ?? [];
+  }
+  epochs = epochs.toSorted((a, b) => b.epochNumber - a.epochNumber);
 
   const errorMessage =
     modelVersion.trainingStatus === TrainingStatus.Paused
@@ -301,8 +333,8 @@ export default function TrainingSelectFile({
 
     await Promise.all(
       epochs.map(async (epochData) => {
-        const epochBlob = await fetch(epochData.model_url).then((res) => res.blob());
-        saveAs(epochBlob, `${model.name}_epoch_${epochData.epoch_number}.safetensors`);
+        const epochBlob = await fetch(epochData.modelUrl).then((res) => res.blob());
+        saveAs(epochBlob, `${model.name}_epoch_${epochData.epochNumber}.safetensors`);
       })
     );
 
@@ -338,7 +370,7 @@ export default function TrainingSelectFile({
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochs[0]?.epoch_number ?? 0}/${
+                    ? `(${epochs[0]?.epochNumber ?? 0}/${
                         modelVersion.trainingDetails.params.maxTrainEpochs
                       })`
                     : '...'}
@@ -362,6 +394,7 @@ export default function TrainingSelectFile({
           </Center>
           <EpochRow
             epoch={epochs[0]}
+            prompts={samplePrompts}
             selectedFile={selectedFile}
             setSelectedFile={setSelectedFile}
             onPublishClick={handleSubmit}
@@ -379,6 +412,7 @@ export default function TrainingSelectFile({
                 <EpochRow
                   key={idx}
                   epoch={e}
+                  prompts={samplePrompts}
                   selectedFile={selectedFile}
                   setSelectedFile={setSelectedFile}
                   onPublishClick={handleSubmit}

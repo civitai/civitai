@@ -1,4 +1,4 @@
-import { Title, Text, Button, Loader } from '@mantine/core';
+import { Button, Loader, Text, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -10,6 +10,7 @@ import { trpc } from '~/utils/trpc';
 export default Page(
   function () {
     const router = useRouter();
+    // TODO maybe hook into orchestrator and pull Gate
     const { data, isFetching, hasNextPage, fetchNextPage } =
       trpc.moderator.modelVersions.query.useInfiniteQuery(
         {
@@ -30,7 +31,9 @@ export default Page(
           {flatData?.map((item) => (
             <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
               <div className="flex flex-col">
-                <Text lineClamp={1}>{item.name}</Text>
+                <Text lineClamp={1}>
+                  {item.model.name} - {item.name}
+                </Text>
                 <Text color="dimmed" size="xs">
                   Created: {formatDate(item.createdAt)}
                 </Text>

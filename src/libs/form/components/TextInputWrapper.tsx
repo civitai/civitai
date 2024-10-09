@@ -15,6 +15,7 @@ export const TextInputWrapper = forwardRef<HTMLInputElement, ClearableTextInputP
     const closeButton = props.value && props.type !== 'hidden' && (
       <CloseButton
         variant="transparent"
+        tabIndex={-1}
         onClick={() => {
           const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype,

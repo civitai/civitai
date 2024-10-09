@@ -28,7 +28,12 @@ import { formatDate } from '~/utils/date-helpers';
 import { useBuzz, useBuzzTransactions } from '~/components/Buzz/useBuzz';
 import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
+import { formatDate } from '~/utils/date-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
@@ -210,7 +215,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             </Text>
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md">
-                <Stack spacing={8}>
+                <Stack spacing={8} mr={14}>
                   {transactions.map((transaction) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;
