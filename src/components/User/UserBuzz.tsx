@@ -33,12 +33,17 @@ export function UserBuzz({
   theme: textTheme,
   ...textProps
 }: Props) {
-  const { balance } = useBuzz(accountId, accountType);
+  const { balance, balanceLoading } = useBuzz(accountId, accountType);
   const config = CurrencyConfig.BUZZ.themes?.[textTheme ?? ''] ?? CurrencyConfig.BUZZ;
   const Icon = config.icon;
   const theme = useMantineTheme();
 
-  const content = (
+  const content = balanceLoading ? (
+    <Group spacing={4} noWrap>
+      <Icon size={iconSize} color={config.color(theme)} fill={config.color(theme)} />
+      <Loader color={config.color(theme)} variant="dots" size="xs" />
+    </Group>
+  ) : (
     <Text color={config.color(theme)} transform="uppercase" {...textProps}>
       <Group spacing={4} noWrap>
         <Icon size={iconSize} color="currentColor" fill="currentColor" />

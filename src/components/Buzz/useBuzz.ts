@@ -37,6 +37,14 @@ export const useBuzzSignalUpdate = () => {
           return { ...old, balance: updated.balance };
         }
       );
+
+      queryUtils.buzz.getBuzzAccount.setData(
+        { accountId: currentUser.id as number, accountType: null },
+        (old) => {
+          if (!old || !old.balance) return old;
+          return { ...old, balance: (old.balance ?? 0) + updated.delta };
+        }
+      );
     },
     [queryUtils, currentUser]
   );
