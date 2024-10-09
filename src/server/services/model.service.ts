@@ -2325,6 +2325,9 @@ export async function isFeaturedModel(modelId: number) {
 
   return featuredModels.includes(modelId);
 }
+export async function bustFeaturedModelsCache() {
+  await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);
+}
 
 export async function setModelShowcaseCollection({
   id,

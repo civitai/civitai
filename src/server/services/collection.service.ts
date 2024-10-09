@@ -56,10 +56,12 @@ import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import {
+  bustFeaturedModelsCache,
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
@@ -590,6 +592,16 @@ export const saveItemInCollections = async ({
           where: { id: { in: removeAllowedCollectionItemIds } },
         })
       );
+  }
+
+  // Check for updates to featured models
+  if (input.modelId && collections.some((c) => c.userId === -1 && c.name === 'Featured Models')) {
+    await bustFeaturedModelsCache();
+    const versions = await dbWrite.modelVersion.findMany({
+      where: { id: input.modelId },
+      select: { id: true },
+    });
+    await bustOrchestratorModelCache(versions.map((x) => x.id));
   }
 
   await dbWrite.$transaction(transactions);
