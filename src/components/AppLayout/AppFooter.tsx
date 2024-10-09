@@ -43,7 +43,7 @@ export function AppFooter() {
       <FloatingActions showFooter={showFooter} />
       <div
         className={clsx(
-          'relative flex w-full items-center gap-2  bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
+          'relative flex w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
           {
             ['border-t border-gray-3 dark:border-dark-4']: !features.isGreen,
             ['border-green-8 border-t-[3px]']: features.isGreen,
