@@ -59,7 +59,7 @@ export function createBuzzEvent<T>({
       // clickhouse query to determine the awarded amount. For the time being, this won't be
       // done.
       awarded: -1,
-      accountType: buzzEvent.toAccountType ?? 'user',
+      accountType: buzzEvent.toAccountType ?? 'generation',
     };
 
     // Apply multipliers

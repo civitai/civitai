@@ -46,7 +46,7 @@ const transactionTypes = [
 ];
 
 const defaultFilters = {
-  accountType: 'user',
+  accountType: 'user' as const,
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
