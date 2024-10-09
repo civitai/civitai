@@ -1,7 +1,6 @@
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   Center,
-  Chip,
   Grid,
   Group,
   Loader,
@@ -23,17 +22,11 @@ import {
   PointElement,
   Tooltip as ChartTooltip,
 } from 'chart.js';
-import { trpc } from '~/utils/trpc';
 import { formatDate } from '~/utils/date-helpers';
-import { useBuzz, useBuzzTransactions } from '~/components/Buzz/useBuzz';
+import { useBuzzTransactions } from '~/components/Buzz/useBuzz';
 import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { UserBuzz } from '~/components/User/UserBuzz';
-import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
-import { formatDate } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
