@@ -295,3 +295,19 @@ export enum BanReasonCode {
   BuzzCheating = 'BuzzCheating',
   Other = 'Other',
 }
+
+export enum StripeConnectStatus {
+  PendingOnboarding = 'PendingOnboarding',
+  PendingVerification = 'PendingVerification',
+  Approved = 'Approved',
+  Rejected = 'Rejected',
+}
+
+export enum TipaltiStatus {
+  PendingOnboarding = 'PendingOnboarding',
+  Active = 'ACTIVE',
+  Suspended = 'SUSPENDED',
+  Blocked = 'BLOCKED',
+  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  InternalValue = 'INTERNAL_VALUE',
+}

@@ -15,7 +15,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { StripeConnectStatus } from '@prisma/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
@@ -27,7 +26,11 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import {
+  useTipaltiConfigurationUrl,
+  useUserPaymentConfiguration,
+} from '~/components/UserPaymentConfiguration/util';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -205,19 +208,31 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
   }
 };
 
-export function StripeConnectCard() {
-  const features = useFeatureFlags();
-  const { userStripeConnect, isLoading } = useUserStripeConnect();
+const StripeConnectConfigurationCard = () => {
+  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+  if (!userPaymentConfiguration) return null;
 
-  if (!features.creatorsProgram || !userStripeConnect) return null;
-
-  return (
-    <Card withBorder id="stripe">
+  if (userPaymentConfiguration?.stripeAccountId) {
+    // True as of now, we don't support stripe anymore
+    return (
       <Stack>
         <Group position="apart">
-          <Title order={2} id="payment-methods">
-            Stripe Connect
-          </Title>
+          <Title order={3}>Stripe Connect</Title>
+        </Group>
+
+        <Text>
+          We will no longer be supporting Stripe connect for payments. Please setup Tipalti in order
+          to receive payments.
+        </Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <>
+      <Stack>
+        <Group position="apart">
+          <Title order={3}>Stripe Connect</Title>
           <ActionIcon
             onClick={() => {
               dialogStore.trigger({
@@ -240,7 +255,7 @@ export function StripeConnectCard() {
         <Center>
           <Loader />
         </Center>
-      ) : !userStripeConnect ? (
+      ) : !userPaymentConfiguration ? (
         <Stack>
           <Alert color="red">
             It looks like you are not authorized to receive payments or setup your account. Please
@@ -249,9 +264,120 @@ export function StripeConnectCard() {
         </Stack>
       ) : (
         <Stack>
-          <StripeConnectStatusDisplay status={userStripeConnect.status} />
+          <StripeConnectStatusDisplay
+            status={userPaymentConfiguration.stripeAccountStatus as StripeConnectStatus}
+          />
         </Stack>
       )}
+    </>
+  );
+};
+
+const TipaltiConfigurationCard = () => {
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
+  const [setupAccount, setSetupAccount] = useState(false);
+  const { tipaltiConfigurationUrl, isLoading: isLoadingTipaltiConfigurationUrl } =
+    useTipaltiConfigurationUrl(setupAccount);
+
+  if (!userPaymentConfiguration) return null;
+
+  if (!userPaymentConfiguration?.tipaltiAccountId) {
+    // True as of now, we don't support stripe anymore
+    return (
+      <Stack>
+        <Group position="apart">
+          <Title order={3}>Tipalti Account</Title>
+        </Group>
+
+        <Text>
+          Tipalti is the new way to receive payments. We are slowly rolling invitations to Tipalti
+          to all creators. If you have not received an invitation yet, please be patient.
+        </Text>
+        <Text>A notification will be sent to you once you are invited to Tipalti.</Text>
+      </Stack>
+    );
+  }
+
+  return (
+    <>
+      <Stack>
+        <Group position="apart">
+          <Title order={3}>Tipalti Account</Title>
+          <ActionIcon
+            onClick={() => {
+              dialogStore.trigger({
+                component: FeatureIntroductionModal,
+                props: {
+                  feature: 'getting-started',
+                  contentSlug: ['feature-introduction', 'stripe-connect'],
+                },
+              });
+            }}
+          >
+            <IconInfoCircle />
+          </ActionIcon>
+        </Group>
+      </Stack>
+
+      <Divider my="xs" />
+
+      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
+        <>
+          {isLoadingTipaltiConfigurationUrl && setupAccount ? (
+            <Center>
+              <Loader />
+            </Center>
+          ) : (
+            <Stack>
+              <Text>
+                Your account requires setup. Click the button below to start/continue your setup
+                process.
+              </Text>
+            </Stack>
+          )}
+        </>
+      ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
+        <Text>
+          Your account is setup and you should be good to withdraw. You can click the button below
+          if you need to make any adjustments to your account.
+        </Text>
+      ) : (
+        <Text>
+          We are unable to setup your account so that you can withdraw funds. You may contact
+          support if you think this is a mistake to get a better understanding of the issue.
+        </Text>
+      )}
+
+      <Divider my="xs" />
+
+      {setupAccount && tipaltiConfigurationUrl && (
+        <iframe src={tipaltiConfigurationUrl} width="100%" height="800px" />
+      )}
+
+      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
+        (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
+      ) && (
+        <Button onClick={() => setSetupAccount(true)} fullWidth>
+          Setup my Tipalti Account
+        </Button>
+      )}
+    </>
+  );
+};
+
+export function UserPaymentConfigurationCard() {
+  const features = useFeatureFlags();
+  const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
+
+  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+
+  return (
+    <Card withBorder id="payments">
+      {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
+      {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
+        <Divider my="xl" />
+      )}
+      {userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
     </Card>
   );
 }

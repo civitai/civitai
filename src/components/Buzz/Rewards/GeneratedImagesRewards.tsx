@@ -14,12 +14,13 @@ import dayjs from 'dayjs';
 import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo, useState } from 'react';
-import { Currency, StripeConnectStatus } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { Paper, Stack, Title, Text, MultiSelect, Loader, Center } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { maxDate } from '~/utils/date-helpers';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { StripeConnectStatus } from '~/server/common/enums';
 
 ChartJS.register(
   CategoryScale,
@@ -35,11 +36,15 @@ const DEFAULT_TIMEFRAME = 30;
 
 export const GeneratedImagesReward = () => {
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
-  const { userStripeConnect } = useUserStripeConnect();
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
       { timeframe: DEFAULT_TIMEFRAME },
-      { enabled: userStripeConnect?.status === StripeConnectStatus.Approved }
+      {
+        enabled:
+          !!userPaymentConfiguration &&
+          userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
+      }
     );
 
   const { classes, theme } = useBuzzDashboardStyles();
@@ -126,7 +131,7 @@ export const GeneratedImagesReward = () => {
     }));
   }, [modelVersions]);
 
-  if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
+  if (userPaymentConfiguration?.stripeAccountStatus !== StripeConnectStatus.Approved) {
     return null;
   }
 
