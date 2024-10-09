@@ -22,6 +22,7 @@ type Props = BadgeProps & {
   iconProps?: IconProps;
   textColor?: string;
   innerRef?: React.ForwardedRef<HTMLDivElement>;
+  type?: string;
   typeDistrib?: BuzzTypeDistribution;
 };
 
@@ -44,13 +45,14 @@ export function CurrencyBadge({
   iconProps,
   textColor,
   innerRef,
+  type,
   typeDistrib,
   ...badgeProps
 }: Props) {
   const value = formatCurrencyForDisplay(unitAmount, currency);
   const theme = useMantineTheme();
-  const Icon = CurrencyConfig[currency].icon;
-  const config = CurrencyConfig[currency];
+  const config = CurrencyConfig[currency].themes?.[type ?? ''] ?? CurrencyConfig[currency];
+  const Icon = config.icon;
   const colorString = textColor || config.color(theme);
 
   return (

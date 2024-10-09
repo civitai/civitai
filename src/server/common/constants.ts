@@ -778,18 +778,27 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
   [ModelVersionSponsorshipSettingsType.Bidding]: 'Bidding',
 };
 
+type CurrencyTheme = {
+  icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
+  color: (theme: MantineTheme) => string;
+  fill?: (theme: MantineTheme) => string | undefined;
+};
+
 export const CurrencyConfig: Record<
   Currency,
-  {
-    icon: ForwardRefExoticComponent<IconProps & RefAttributes<Icon>>;
-    color: (theme: MantineTheme) => string;
-    fill?: (theme: MantineTheme) => string | string;
-  }
+  CurrencyTheme & { themes?: Record<string, CurrencyTheme> }
 > = {
   [Currency.BUZZ]: {
     icon: IconBolt,
     color: (theme) => theme.colors.yellow[7],
     fill: (theme) => theme.colors.yellow[7],
+    themes: {
+      generation: {
+        icon: IconBolt,
+        color: (theme) => theme.colors.blue[4],
+        fill: (theme) => theme.colors.blue[4],
+      },
+    },
   },
   [Currency.USD]: {
     icon: IconCurrencyDollar,

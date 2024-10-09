@@ -1,6 +1,20 @@
-import { Center, Grid, Group, Loader, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core';
-import { Currency } from '@prisma/client';
-import { IconArrowRight, IconBolt } from '@tabler/icons-react';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import {
+  Center,
+  Chip,
+  Grid,
+  Group,
+  Loader,
+  Paper,
+  ScrollArea,
+  SegmentedControl,
+  Stack,
+  Text,
+  Title,
+} from '@mantine/core';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { Bar } from 'react-chartjs-2';
+import React, { useCallback, useMemo } from 'react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -9,10 +23,10 @@ import {
   PointElement,
   Tooltip as ChartTooltip,
 } from 'chart.js';
-import React, { useMemo } from 'react';
-import { Line } from 'react-chartjs-2';
-import { useBuzz } from '~/components/Buzz/useBuzz';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { trpc } from '~/utils/trpc';
+import { formatDate } from '~/utils/date-helpers';
+import { useBuzz, useBuzzTransactions } from '~/components/Buzz/useBuzz';
+import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
@@ -25,11 +39,8 @@ import { useBuzzDashboardStyles } from '../buzz.styles';
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
 const options = {
-  aspectRatio: 2.5,
+  aspectRatio: 1.4,
   plugins: {
-    legend: {
-      display: false,
-    },
     title: {
       display: false,
     },
@@ -38,53 +49,112 @@ const options = {
 
 const INCLUDE_DESCRIPTION = [TransactionType.Reward, TransactionType.Purchase];
 
-export const BuzzDashboardOverview = ({
-  accountId,
-  accountType = 'user',
-}: {
-  accountId: number;
-  accountType?: BuzzAccountType;
-}) => {
+export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const { classes, theme } = useBuzzDashboardStyles();
-  const { balance, lifetimeBalance, balanceLoading } = useBuzz(accountId, accountType);
-  const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
-    {
-      limit: 200,
-      accountId,
-      accountType,
-    }
+  // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
+  // If this ever changes, that'd be awesome. But for now, we need to do this.
+  const mainBuzzTransactions = useBuzzTransactions(accountId, 'user');
+  const generationBuzzTransactions = useBuzzTransactions(accountId, 'generation');
+  const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
+
+  const transactions = useMemo(() => {
+    return transactionType === 'user'
+      ? mainBuzzTransactions.transactions
+      : generationBuzzTransactions.transactions;
+  }, [transactionType, mainBuzzTransactions.transactions, generationBuzzTransactions.transactions]);
+
+  const { dates, format } = useMemo(() => {
+    const dailyFormat = 'MMM-DD';
+    const daily = [
+      ...new Set(
+        [...mainBuzzTransactions.transactions, ...generationBuzzTransactions.transactions]
+          .sort((a, b) => {
+            return a.date.getTime() - b.date.getTime();
+          })
+          .map((t) => formatDate(t.date, dailyFormat))
+      ),
+    ]
+      .reverse()
+      .slice(0, 10)
+      .reverse();
+    const hourlyFormat = 'MMM-DD h:00';
+    const hourly = [
+      ...new Set(
+        [...mainBuzzTransactions.transactions, ...generationBuzzTransactions.transactions].map(
+          (t) => formatDate(t.date, hourlyFormat)
+        )
+      ),
+    ]
+      .slice(0, 24)
+      .reverse(); // Max 24 hours
+
+    return daily.length > 3
+      ? { dates: daily, format: dailyFormat }
+      : { dates: hourly, format: hourlyFormat };
+  }, [mainBuzzTransactions.transactions, generationBuzzTransactions.transactions]);
+
+  // Last 7 days of data pretty much.
+
+  const getTransactionTotalByDate = useCallback(
+    (data: { date: Date; amount: number }[], date: string, positive = true) => {
+      return data
+        .filter(
+          (t) => formatDate(t.date, format) === date && (positive ? t.amount > 0 : t.amount < 0)
+        )
+        .reduce((acc, t) => acc + t.amount, 0);
+    },
+    [format]
   );
 
-  const transactionsReversed = useMemo(() => [...(transactions ?? [])].reverse(), [transactions]);
+  const datasets = useMemo(
+    () => [
+      {
+        label: 'Yellow Gains',
+        data: dates.map((date) => {
+          return getTransactionTotalByDate(mainBuzzTransactions.transactions, date);
+        }),
+        borderColor: theme.colors.yellow[7],
+        backgroundColor: theme.colors.yellow[7],
+        stack: 'gains',
+      },
+      {
+        label: 'Blue Gains',
+        data: dates.map((date) => {
+          return getTransactionTotalByDate(generationBuzzTransactions.transactions, date);
+        }),
+        borderColor: theme.colors.blue[7],
+        backgroundColor: theme.colors.blue[7],
+        stack: 'gains',
+      },
+      {
+        label: 'Yellow Spent',
+        data: dates.map((date) => {
+          return getTransactionTotalByDate(mainBuzzTransactions.transactions, date, false);
+        }),
+        borderColor: theme.colors.red[7],
+        backgroundColor: theme.colors.red[7],
+        stack: 'spending',
+      },
+      {
+        label: 'Blue Spent',
+        data: dates.map((date) => {
+          return getTransactionTotalByDate(generationBuzzTransactions.transactions, date, false);
+        }),
+        borderColor: theme.colors.violet[7],
+        backgroundColor: theme.colors.violet[7],
+        stack: 'spending',
+      },
+    ],
+    [
+      dates,
+      theme,
+      getTransactionTotalByDate,
+      mainBuzzTransactions.transactions,
+      generationBuzzTransactions.transactions,
+    ]
+  );
 
-  const starterBuzzAmount = (transactions ?? []).reduce((acc, transaction) => {
-    return acc - transaction.amount;
-  }, balance);
-
-  const items: Record<string, number> = useMemo(() => {
-    if (!transactions) return {};
-
-    let start = starterBuzzAmount;
-
-    return transactionsReversed.reduce((acc, transaction) => {
-      const updated = {
-        ...acc,
-        [formatDate(transaction.date, 'MMM-DD')]: start + transaction.amount,
-      };
-
-      start += transaction.amount;
-
-      return updated;
-    }, {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transactions]);
-
-  const dateCount = Object.keys(items).length;
-  // Last 7 days of data pretty much.
-  const labels = Object.keys(items).slice(Math.max(0, dateCount - 7), dateCount);
-  const data = Object.values(items).slice(Math.max(0, dateCount - 7), dateCount);
-
-  if (isLoading) {
+  if (mainBuzzTransactions.transactionsLoading || generationBuzzTransactions.transactionsLoading) {
     return (
       <Center py="xl">
         <Loader />
@@ -94,66 +164,31 @@ export const BuzzDashboardOverview = ({
 
   return (
     <Grid>
-      <Grid.Col xs={12} md={7}>
+      <Grid.Col xs={12} md={7} sm={6}>
         <Stack h="100%">
-          <Paper withBorder p="lg" radius="md" className={classes.tileCard}>
-            <Stack spacing={0}>
-              <Title order={3}>Current Buzz</Title>
-              <UserBuzz
-                accountId={accountId}
-                accountType={accountType}
-                textSize="xl"
-                withAbbreviation={false}
-              />
-            </Stack>
-            <Stack spacing="xs" mt="xl">
-              <Line
+          <Paper withBorder p="lg" radius="md" className={classes.tileCard} h="100%">
+            <Stack spacing="xl" h="100%">
+              <Stack spacing={0} mb="auto">
+                <Title order={3}>Current Buzz</Title>
+                <UserBuzz
+                  accountId={accountId}
+                  accountType={null}
+                  textSize="xl"
+                  withAbbreviation={false}
+                />
+              </Stack>
+              <Bar
                 options={options}
                 data={{
-                  labels,
-                  datasets: [
-                    {
-                      label: 'Buzz Amount',
-                      data,
-                      borderColor: theme.colors.yellow[7],
-                      backgroundColor: theme.colors.yellow[7],
-                    },
-                  ],
+                  labels: dates,
+                  datasets,
                 }}
               />
             </Stack>
           </Paper>
-          <Paper
-            withBorder
-            radius="md"
-            p="xl"
-            className={classes.lifetimeBuzzContainer}
-            style={{ flex: 1, display: 'flex' }}
-          >
-            <Group position="apart" sx={{ flex: 1 }} noWrap>
-              <Title order={3} size={22} color="yellow.8">
-                Lifetime Buzz
-              </Title>
-              <Group className={classes.lifetimeBuzzBadge} spacing={2} noWrap>
-                <CurrencyIcon currency={Currency.BUZZ} size={24} />
-                {balanceLoading ? (
-                  <Loader variant="dots" color="yellow.7" />
-                ) : (
-                  <Text
-                    size="xl"
-                    style={{ fontSize: 32, fontWeight: 700, lineHeight: '24px' }}
-                    color="yellow.7"
-                    className={classes.lifetimeBuzz}
-                  >
-                    {numberWithCommas(lifetimeBalance)}
-                  </Text>
-                )}
-              </Group>
-            </Group>
-          </Paper>
         </Stack>
       </Grid.Col>
-      <Grid.Col xs={12} md={5}>
+      <Grid.Col xs={12} md={5} sm={6}>
         <Paper
           withBorder
           p="lg"
@@ -162,16 +197,22 @@ export const BuzzDashboardOverview = ({
           className={classes.tileCard}
           style={{ flex: 1 }}
         >
-          <Stack spacing={0}>
+          <Stack spacing="xs">
             <Title order={3}>Recent Transactions</Title>
-            {accountType === 'user' && (
-              <Text component="a" variant="link" href={`/user/transactions`} size="xs">
-                <Group spacing={2}>
-                  <IconArrowRight size={18} />
-                  <span>View all</span>
-                </Group>
-              </Text>
-            )}
+            <SegmentedControl
+              value={transactionType}
+              onChange={(v) => setTransactionType(v as 'user' | 'generation')}
+              data={[
+                { label: 'Yellow', value: 'user' },
+                { label: 'Blue', value: 'generation' },
+              ]}
+            />
+            <Text component="a" variant="link" href={`/user/transactions`} size="xs">
+              <Group spacing={2}>
+                <IconArrowRight size={18} />
+                <span>View all</span>
+              </Group>
+            </Text>
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md">
                 <Stack spacing={8} mr={14}>

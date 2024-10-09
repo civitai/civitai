@@ -7,11 +7,11 @@ import { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 
-export const useBuzz = (accountId?: number, accountType?: BuzzAccountType) => {
+export const useBuzz = (accountId?: number, accountType?: BuzzAccountType | null) => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { data, isLoading } = trpc.buzz.getBuzzAccount.useQuery(
-    { accountId: accountId ?? (currentUser?.id as number), accountType: accountType ?? 'user' },
+    { accountId: accountId ?? (currentUser?.id as number), accountType: accountType },
     { enabled: !!currentUser && features.buzz }
   );
 
@@ -37,6 +37,14 @@ export const useBuzzSignalUpdate = () => {
           return { ...old, balance: updated.balance };
         }
       );
+
+      queryUtils.buzz.getBuzzAccount.setData(
+        { accountId: currentUser.id as number, accountType: null },
+        (old) => {
+          if (!old || !old.balance) return old;
+          return { ...old, balance: (old.balance ?? 0) + updated.delta };
+        }
+      );
     },
     [queryUtils, currentUser]
   );
@@ -55,5 +63,29 @@ export const useUserMultipliers = () => {
   return {
     multipliersLoading: isLoading,
     multipliers: data,
+  };
+};
+
+export const useBuzzTransactions = (
+  accountId?: number,
+  accountType?: BuzzAccountType,
+  filters?: {
+    limit: number;
+  }
+) => {
+  const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
+    {
+      limit: filters?.limit ?? 200,
+      accountId: accountId as number,
+      accountType,
+    },
+    {
+      enabled: !!accountId,
+    }
+  );
+
+  return {
+    transactions: transactions ?? [],
+    transactionsLoading: accountId ? isLoading : false,
   };
 };
