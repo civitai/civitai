@@ -771,9 +771,9 @@ export function GenerationFormContent() {
                         }
                       />
                     )}
-                    {featureFlags.experimentalGen && (
+                    {/* {featureFlags.experimentalGen && (
                       <InputSwitch name="experimental" label="Experimental" labelPosition="left" />
-                    )}
+                    )} */}
                   </div>
                 )}
 
