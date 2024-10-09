@@ -39,7 +39,7 @@ type FileRow = {
   hash: string;
 };
 
-const FREE_ADDITIONAL_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
@@ -122,7 +122,7 @@ export default MixedAuthEndpoint(async function handler(
 
   // Check if should charge
   let shouldCharge =
-    !FREE_ADDITIONAL_RESOURCE_TYPES.includes(modelVersion.type) &&
+    !FREE_RESOURCE_TYPES.includes(modelVersion.type) &&
     !(await isFeaturedModel(modelVersion.modelId)) &&
     primaryFile.sizeKB > 10 * 1024;
 
@@ -143,7 +143,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
-    noAddedCharge: !shouldCharge,
+    additionalResourceCharge: shouldCharge,
   };
   res.status(200).json(data);
 });
