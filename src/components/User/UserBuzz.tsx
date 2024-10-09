@@ -30,11 +30,10 @@ export function UserBuzz({
   withAbbreviation = true,
   accountId,
   accountType,
-  theme: textTheme,
   ...textProps
 }: Props) {
   const { balance, balanceLoading } = useBuzz(accountId, accountType);
-  const config = CurrencyConfig.BUZZ.themes?.[textTheme ?? ''] ?? CurrencyConfig.BUZZ;
+  const config = CurrencyConfig.BUZZ.themes?.[accountType ?? ''] ?? CurrencyConfig.BUZZ;
   const Icon = config.icon;
   const theme = useMantineTheme();
 

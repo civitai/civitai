@@ -695,7 +695,6 @@ export function AppHeader({
                 withAbbreviation={withAbbreviation}
                 withTooltip={withAbbreviation}
                 accountType="generation"
-                theme="blue"
               />
             </Group>
             <Button

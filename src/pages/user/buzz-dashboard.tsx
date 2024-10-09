@@ -163,12 +163,12 @@ export default function UserBuzzDashboard() {
                               w={100}
                               currency={Currency.BUZZ}
                               unitAmount={reward.awardAmount}
-                              theme={reward.accountType === 'generation' ? 'blue' : undefined}
+                              type={reward.accountType}
                             />
                             {rewardsMultiplier > 1 && (
                               <Text
                                 size={10}
-                                color={reward.accountType === 'generation' ? 'blue.7' : 'yellow.7'}
+                                color={reward.accountType === 'generation' ? 'blue.4' : 'yellow.7'}
                               >
                                 Originally {Math.floor(reward.awardAmount / rewardsMultiplier)} Buzz
                               </Text>

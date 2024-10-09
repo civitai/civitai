@@ -793,10 +793,10 @@ export const CurrencyConfig: Record<
     color: (theme) => theme.colors.yellow[7],
     fill: (theme) => theme.colors.yellow[7],
     themes: {
-      blue: {
+      generation: {
         icon: IconBolt,
-        color: (theme) => theme.colors.blue[7],
-        fill: (theme) => theme.colors.blue[7],
+        color: (theme) => theme.colors.blue[4],
+        fill: (theme) => theme.colors.blue[4],
       },
     },
   },
