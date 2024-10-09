@@ -63,7 +63,7 @@ export const getUserBuzzTransactionsSchema = z.object({
   cursor: z.date().optional(),
   start: z.date().nullish(),
   end: z.date().nullish(),
-  limit: z.number().min(1).max(200).optional(),
+  limit: z.number().min(1).max(1000).optional(),
   descending: z.boolean().optional(),
   accountType: z.enum(buzzAccountTypes).optional(),
 });

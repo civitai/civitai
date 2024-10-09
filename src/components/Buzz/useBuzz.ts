@@ -75,7 +75,7 @@ export const useBuzzTransactions = (
 ) => {
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
     {
-      limit: filters?.limit ?? 200,
+      limit: filters?.limit ?? 1000,
       accountId: accountId as number,
       accountType,
     },
