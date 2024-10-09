@@ -94,7 +94,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         .filter(
           (t) => formatDate(t.date, format) === date && (positive ? t.amount > 0 : t.amount < 0)
         )
-        .reduce((acc, t) => acc + t.amount, 0);
+        .reduce((acc, t) => acc + Math.abs(t.amount), 0);
     },
     [format]
   );
