@@ -216,8 +216,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
+  // const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  const session = await getSession(appContext.ctx);
   const flags = appContext.ctx?.req
     ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
     : undefined;
