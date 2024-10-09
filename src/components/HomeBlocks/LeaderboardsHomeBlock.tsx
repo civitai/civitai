@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconArrowRight, IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { Fragment, useCallback, useRef } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
@@ -180,7 +180,7 @@ export const LeaderboardsHomeBlockContent = ({ homeBlockId, metadata }: Props) =
                       <Group position="apart" align="center">
                         <Text size="lg">{leaderboard.title}</Text>
                         <Button
-                          component={NextLink}
+                          component={Link}
                           href={`/leaderboard/${leaderboard.id}`}
                           rightIcon={<IconArrowRight size={16} />}
                           variant="subtle"

@@ -71,7 +71,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { ModelType } from '@prisma/client';
 import { getDisplayName } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import { IconLock } from '@tabler/icons-react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -80,7 +79,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 // import {
 //   textToImageParamsSchema,
 //   textToImageResourceSchema,
@@ -392,7 +391,7 @@ import { z } from 'zod';
 //             </Group>
 //             {atLimit && (!currentUser || currentUser.tier === 'free') && (
 //               <Text size="xs">
-//                 <Link href="/pricing" passHref>
+//                 <Link legacyBehavior href="/pricing" passHref>
 //                   <Anchor
 //                     color="yellow"
 //                     rel="nofollow"
@@ -816,11 +815,11 @@ import { z } from 'zod';
 //     <Alert color="yellow" title="Image Generation Terms">
 //       <Text size="xs">
 //         By using the image generator you confirm that you have read and agree to our{' '}
-//         <Text component={NextLink} href="/content/tos" td="underline">
+//         <Text component={Link} href="/content/tos" td="underline">
 //           Terms of Service
 //         </Text>{' '}
 //         presented during onboarding. Failure to abide by{' '}
-//         <Text component={NextLink} href="/content/tos" td="underline">
+//         <Text component={Link} href="/content/tos" td="underline">
 //           our content policies
 //         </Text>{' '}
 //         will result in the loss of your access to the image generator.
@@ -842,7 +841,7 @@ import { z } from 'zod';
 //         <DismissibleAlert id="generator-charge-buzz">
 //           <Text>
 //             Generating images now costs Buzz.{' '}
-//             <Text component={NextLink} href="/articles/4797" td="underline">
+//             <Text component={Link} href="/articles/4797" td="underline">
 //               Learn why
 //             </Text>
 //           </Text>

@@ -1,5 +1,5 @@
 import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
@@ -47,7 +47,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
                         onClick={closeMenu}
-                        component={NextLink}
+                        component={Link}
                         href="/research/rater"
                         compact
                         size="xs"

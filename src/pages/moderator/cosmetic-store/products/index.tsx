@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Currency } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -93,18 +93,14 @@ export default function CosmeticStoreProducts() {
           <Text size="sm" color="dimmed">
             You can add and manage shop products here. A cosmetic must be created before hand for it
             to be created into a shop product. After creating, remember to add it to a section{' '}
-            <Anchor component={NextLink} href="/moderator/cosmetic-store/sections">
+            <Anchor component={Link} href="/moderator/cosmetic-store/sections">
               here.
             </Anchor>
           </Text>
         </Stack>
         <Group position="apart" mb="md">
           <Group align="flex-end">
-            <Button
-              component={NextLink}
-              href="/moderator/cosmetic-store/products/create"
-              radius="xl"
-            >
+            <Button component={Link} href="/moderator/cosmetic-store/products/create" radius="xl">
               <IconPlus />
               Add Product
             </Button>
@@ -195,7 +191,7 @@ export default function CosmeticStoreProducts() {
                       <td>
                         <Group spacing={4} noWrap>
                           <ActionIcon
-                            component={NextLink}
+                            component={Link}
                             href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                           >
                             <IconEdit />

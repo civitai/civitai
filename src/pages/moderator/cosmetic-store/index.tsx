@@ -13,7 +13,7 @@ import {
   Button,
   ActionIcon,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconEdit } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 
@@ -29,11 +29,11 @@ export default function Rewards() {
           </Text>
         </Stack>
         <Group mb="md" grow>
-          <Button component={NextLink} href="/moderator/cosmetic-store/products">
+          <Button component={Link} href="/moderator/cosmetic-store/products">
             <IconEdit />
             Manage Products
           </Button>
-          <Button component={NextLink} href="/moderator/cosmetic-store/sections">
+          <Button component={Link} href="/moderator/cosmetic-store/sections">
             <IconEdit />
             Manage Sections
           </Button>

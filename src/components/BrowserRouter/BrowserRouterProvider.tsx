@@ -1,11 +1,10 @@
 import Router, { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useRef } from 'react';
 import { UrlObject } from 'url';
-import { resolveHref } from 'next/dist/shared/lib/router/router';
+import { resolveHref } from 'next/dist/client/resolve-href';
 import { QS } from '~/utils/qs';
 import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
-import { v4 as uuidv4 } from 'uuid';
 
 type Url = UrlObject | string;
 

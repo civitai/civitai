@@ -38,7 +38,7 @@ import {
   IconTrophy,
   IconX,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';

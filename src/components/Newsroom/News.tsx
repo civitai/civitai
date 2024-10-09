@@ -1,5 +1,5 @@
 import { Button, Card, createStyles, Stack, Text, Title } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -17,7 +17,7 @@ export function News({ articles }: { articles: CivitaiNewsItem[] }) {
 function NewsItem({ article }: { article: CivitaiNewsItem }) {
   const { classes, theme } = useStyles();
   return (
-    <Card component={NextLink} href={`/articles/${article.id}`} className={classes.card} withBorder>
+    <Card component={Link} href={`/articles/${article.id}`} className={classes.card} withBorder>
       <Title order={3} className={classes.title}>
         {article.title}
       </Title>

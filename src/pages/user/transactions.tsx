@@ -28,7 +28,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 const transactionTypes = [
@@ -187,7 +187,7 @@ export default function UserTransactions() {
                         View {label}
                       </RoutedDialogLink>
                     ) : url ? (
-                      <Link href={url} passHref>
+                      <Link legacyBehavior href={url} passHref>
                         <Anchor size="xs">View {label}</Anchor>
                       </Link>
                     ) : null}

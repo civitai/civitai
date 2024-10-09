@@ -3,7 +3,7 @@ import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { cloneElement, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

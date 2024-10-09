@@ -12,8 +12,7 @@ import { useDumbModelFilters, useQueryModels } from '~/components/Model/model.ut
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { Button, Loader, Stack, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
@@ -65,7 +64,7 @@ export const MyModelsSection = ({ user }: ProfileSectionProps) => {
             icon={<IconCategory />}
             action={
               !isRefetching && (
-                <Link href={`/user/${user.username}/models?sort=${ModelSort.Newest}`} passHref>
+                <Link legacyBehavior href={`/user/${user.username}/models?sort=${ModelSort.Newest}`} passHref>
                   <Button
                     h={34}
                     component="a"

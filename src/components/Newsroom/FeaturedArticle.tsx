@@ -8,7 +8,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import type { CivitaiNewsItem } from '~/server/services/article.service';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -38,7 +38,7 @@ export const FeaturedArticle = ({
         <Text className={classes.text}>{article.summary}</Text>
 
         <Button
-          component={NextLink}
+          component={Link}
           href={`/articles/${article.id}`}
           size="lg"
           className={classes.action}

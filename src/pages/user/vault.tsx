@@ -63,7 +63,7 @@ import { VaultItemGetPaged } from '~/types/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VaultItemStatus } from '@prisma/client';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
@@ -381,7 +381,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
         {vaultItem.files.map((f) => (
           <Menu.Item
             key={f.id}
-            component={NextLink}
+            component={Link}
             href={`/api/download/vault/${vaultItem.id}?type=model&fileId=${f.id}`}
           >
             <Stack spacing={0}>
@@ -392,7 +392,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
             </Stack>
           </Menu.Item>
         ))}
-        <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=details`}>
+        <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=details`}>
           <Stack spacing={0}>
             <Text>Details</Text>
             <Text size="xs" color="dimmed">
@@ -400,7 +400,7 @@ const VaultItemDownload = ({ vaultItem }: { vaultItem: VaultItemGetPaged }) => {
             </Text>
           </Stack>
         </Menu.Item>
-        <Menu.Item component={NextLink} href={`/api/download/vault/${vaultItem.id}?type=images`}>
+        <Menu.Item component={Link} href={`/api/download/vault/${vaultItem.id}?type=images`}>
           <Stack>
             <Text>Images</Text>
             <Text size="xs" color="dimmed">
@@ -612,7 +612,7 @@ export default function CivitaiVault() {
                 </Stack>
               )}
               {(progress >= 75 || (vault && vault.storageKb === 0)) && (
-                <Button component={NextLink} href="/pricing" variant="outline" size="sm">
+                <Button component={Link} href="/pricing" variant="outline" size="sm">
                   Upgrade
                 </Button>
               )}

@@ -3,7 +3,7 @@ import { trpc } from '~/utils/trpc';
 import { Button, Center, Divider, Loader, Modal, Stack, Text } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ClubMembershipStatus, ClubTierItem } from '../ClubTierItem';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconClubs } from '@tabler/icons-react';
 
 type Props = {
@@ -72,7 +72,7 @@ export const ManageClubMembershipModal = ({ clubId, clubTierIds }: Props) => {
         label="Would you like more information?"
         labelPosition="center"
       />
-      <Link href={`/clubs/${clubId}`} passHref>
+      <Link legacyBehavior href={`/clubs/${clubId}`} passHref>
         <Button fullWidth onClick={handleClose} leftIcon={<IconClubs size={16} />}>
           Check this club&rsquo;s page
         </Button>

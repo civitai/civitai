@@ -14,7 +14,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -53,7 +53,7 @@ export default function Rewards() {
         <Group position="apart" mb="md">
           <Group>
             <Button
-              component={NextLink}
+              component={Link}
               href="/moderator/rewards/create"
               leftIcon={<IconPlus size={16} />}
               radius="xl"
@@ -122,7 +122,7 @@ export default function Rewards() {
                       </td>
                       <td>
                         <ActionIcon
-                          component={NextLink}
+                          component={Link}
                           href={`/moderator/rewards/update/${purchasableReward.id}`}
                         >
                           <IconEdit />

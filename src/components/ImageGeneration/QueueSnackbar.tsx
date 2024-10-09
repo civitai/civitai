@@ -3,7 +3,7 @@ import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationSt
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { IconHandStop } from '@tabler/icons-react';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { generationPanel } from '~/store/generation.store';
 import { useRouter } from 'next/router';
 import { WorkflowStatus } from '@civitai/client';
@@ -136,7 +136,7 @@ export function QueueSnackbar() {
                     </div>
                   </Text> */}
                   </Text>
-                  <Text component={NextLink} variant="link" href="/articles/7012" target="_blank">
+                  <Text component={Link} variant="link" href="/articles/7012" target="_blank">
                     Learn more
                   </Text>
                 </div>
@@ -210,7 +210,7 @@ export function QueueSnackbar() {
                 You can queue {requestLimit} jobs at once
               </div>
             </Text>
-            <Button compact color="dark" radius="xl" component={NextLink} href="/pricing">
+            <Button compact color="dark" radius="xl" component={Link} href="/pricing">
               <Text color="yellow">Increase</Text>
             </Button>
           </div>

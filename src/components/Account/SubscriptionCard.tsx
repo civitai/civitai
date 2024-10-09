@@ -1,5 +1,5 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -33,7 +33,7 @@ export function SubscriptionCard() {
             radius="xl"
             color="gray"
             rightIcon={<IconSettings size={16} />}
-            component={NextLink}
+            component={Link}
             href="/user/membership"
           >
             Manage

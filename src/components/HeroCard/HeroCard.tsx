@@ -1,6 +1,6 @@
 import { Card, CardProps, Group, Image, Stack, Text, createStyles } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 

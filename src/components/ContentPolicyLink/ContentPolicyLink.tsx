@@ -1,9 +1,9 @@
 import { Anchor, AnchorProps } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ContentPolicyLink(props: Props) {
   return (
-    <Link href="/safety#content-policies" passHref>
+    <Link legacyBehavior href="/safety#content-policies" passHref>
       <Anchor {...props} target="_blank" rel="nofollow" span>
         Content Policies
       </Anchor>

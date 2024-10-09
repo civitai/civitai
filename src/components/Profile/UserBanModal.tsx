@@ -1,5 +1,4 @@
 import { Button, CloseButton, Group, Modal, Select, Stack, Text, Title } from '@mantine/core';
-import { handleWebpackExtenalForEdgeRuntime } from 'next/dist/build/webpack/plugins/middleware-plugin';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';

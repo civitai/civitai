@@ -10,7 +10,7 @@ import {
   Center,
   Loader,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CheckoutEventsData } from '@paddle/paddle-js';
 import { IconCancel, IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -122,7 +122,7 @@ export default function CompletePaddlePaymentTransaction() {
 
               <Group grow>
                 <Button
-                  component={NextLink}
+                  component={Link}
                   href="/models"
                   size="md"
                   leftIcon={<IconLayoutDashboard />}
@@ -131,7 +131,7 @@ export default function CompletePaddlePaymentTransaction() {
                 </Button>
                 <Button
                   variant="light"
-                  component={NextLink}
+                  component={Link}
                   href="/user/account"
                   size="md"
                   rightIcon={<IconRosette />}

@@ -10,7 +10,7 @@ import {
   Title,
   Button,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCircleCheck, IconExclamationMark, IconHome } from '@tabler/icons-react';
 import { GetServerSideProps, InferGetServerSidePropsType } from 'next';
 import { BuiltInProviderType } from 'next-auth/providers';
@@ -85,7 +85,7 @@ export default function LinkRole({ providers, linked }: Props) {
                 >{`We've updated your Discord account with the latest data from Civitai`}</Text>
               </Group>
             </Alert>
-            <Button size="lg" leftIcon={<IconHome />} component={NextLink} href="/">
+            <Button size="lg" leftIcon={<IconHome />} component={Link} href="/">
               Back home!
             </Button>
           </Stack>

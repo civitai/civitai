@@ -1,7 +1,7 @@
 import { Anchor, Button, Group, Stepper, Text, Title } from '@mantine/core';
 import { ModelUploadType, TrainingStatus } from '@prisma/client';
 import { IconArrowLeft } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NextRouter, useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -259,7 +259,7 @@ export function ModelVersionWizard({ data }: Props) {
   return (
     <FilesProvider model={modelData} version={modelVersion}>
       <div className="container max-w-sm pb-4">
-        <Link href={`/models/${modelData?.id}`} passHref>
+        <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
           <Anchor size="xs">
             <Group spacing={4} noWrap>
               <IconArrowLeft size={12} />

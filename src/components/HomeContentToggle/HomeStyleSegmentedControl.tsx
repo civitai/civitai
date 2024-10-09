@@ -10,7 +10,7 @@ import {
   Badge,
 } from '@mantine/core';
 import { IconProps } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -69,7 +69,7 @@ export function HomeStyleSegmentedControl({
 
   const options: SegmentedControlItem[] = Object.entries(data).map(([key, value]) => ({
     label: (
-      <Link href={value.url} passHref>
+      <Link legacyBehavior href={value.url} passHref>
         <Anchor variant="text">
           <Group align="center" spacing={8} noWrap>
             <ThemeIcon

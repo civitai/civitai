@@ -72,7 +72,9 @@ export function ClientHistoryStore() {
     };
   }, [pushKey]);
 
-  const handlePopstate = (e: any) => setKey(e.state.key);
+  const handlePopstate = (e: any) => {
+    if (e.state.key) setKey(e.state.key);
+  };
   useWindowEvent('popstate', handlePopstate);
 
   return null;

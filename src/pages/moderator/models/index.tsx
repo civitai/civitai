@@ -20,7 +20,7 @@ import { ModelStatus } from '@prisma/client';
 import { IconExternalLink } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { FlaggedModelsList } from '~/components/Moderation/FlaggedModelsList';

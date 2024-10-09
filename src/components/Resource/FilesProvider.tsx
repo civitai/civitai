@@ -7,7 +7,7 @@ import { bytesToKB } from '~/utils/number-helpers';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { Stack, Text, Anchor } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ModelStatus, ModelType } from '@prisma/client';
@@ -162,7 +162,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           <Text size="sm" color="dimmed">
             Your version has been published and is now available to the public.
           </Text>
-          <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
+          <Link legacyBehavior href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
             <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
               Go to model
             </Anchor>

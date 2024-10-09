@@ -19,7 +19,7 @@ import {
 import { TagTarget } from '@prisma/client';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -176,7 +176,7 @@ export default function ManageCategories({
                     <IconExclamationMark />
                   </ThemeIcon>
                 )}
-                <Link href={`/models/${model.id}/${slugit(model.name)}`} passHref>
+                <Link legacyBehavior href={`/models/${model.id}/${slugit(model.name)}`} passHref>
                   <Anchor target="_blank" lineClamp={2}>
                     {model.name} <IconExternalLink size={16} stroke={1.5} />
                   </Anchor>

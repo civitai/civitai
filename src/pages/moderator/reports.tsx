@@ -31,7 +31,7 @@ import {
   MRT_PaginationState,
   MRT_SortingState,
 } from 'mantine-react-table';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo, useState } from 'react';
 import { z } from 'zod';
@@ -196,7 +196,7 @@ export default function Reports() {
         header: 'Reported by',
         enableSorting: false,
         Cell: ({ row: { original: report } }) => (
-          <Link href={`/user/${report.user.username}`} passHref>
+          <Link legacyBehavior href={`/user/${report.user.username}`} passHref>
             <Text variant="link" component="a" target="_blank">
               {report.user.username}
             </Text>
@@ -342,7 +342,7 @@ function ReportDrawer({
       {report && (
         <Stack>
           {href && (
-            <Link href={href} passHref>
+            <Link legacyBehavior href={href} passHref>
               <Anchor size="sm" target="_blank">
                 <Group spacing={4}>
                   <Text inherit>View {type}</Text>

@@ -1,4 +1,4 @@
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function UserLink({
   username,
@@ -11,7 +11,7 @@ export function UserLink({
 }) {
   if (deletedAt || !username) return <>{children}</>;
   return (
-    <Link href={`/user/${username}`} passHref>
+    <Link legacyBehavior href={`/user/${username}`} passHref>
       {children}
     </Link>
   );

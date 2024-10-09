@@ -92,6 +92,8 @@ function MyApp(props: CustomAppProps) {
     pageProps: { session, colorScheme, cookies, flags, ...pageProps },
   } = props;
 
+  console.log(props);
+
   if (typeof window !== 'undefined' && !window.authChecked) {
     window.authChecked = true;
     window.isAuthed = !!session;
@@ -204,16 +206,18 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const url = appContext.ctx?.req?.url;
-  const isClient = !url || url?.startsWith('/_next/data');
+  if (!appContext.ctx.req) return initialProps;
+
+  // const url = appContext.ctx?.req?.url;
+  // const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
+  // const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  const session = await getSession(appContext.ctx);
   const flags = appContext.ctx?.req
     ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
     : undefined;
@@ -229,6 +233,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...pageProps,
       colorScheme,
       cookies: parsedCookies,
+      cookieKeys: Object.keys(cookies),
       session,
       flags,
     },

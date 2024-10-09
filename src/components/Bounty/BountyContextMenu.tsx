@@ -1,7 +1,7 @@
 import { ActionIcon, ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { IconDotsVertical, IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
@@ -64,7 +64,7 @@ export function BountyContextMenu({
       key="toggle-searchable-menu-item"
     />,
     isModerator || (!expired && isOwner) ? (
-      <Link key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
+      <Link legacyBehavior key="edit" href={`/bounties/${bounty.id}/edit`} passHref>
         <Menu.Item component="a" icon={<IconEdit size={14} stroke={1.5} />}>
           Edit
         </Menu.Item>

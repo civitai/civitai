@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({

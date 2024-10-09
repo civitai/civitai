@@ -28,7 +28,7 @@ import {
   IconUsers,
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge, IconBadgeProps } from '~/components/IconBadge/IconBadge';
@@ -99,7 +99,7 @@ export function CustomSpotlightAction({
   };
 
   return (
-    <Link href={getHref(action)} passHref>
+    <Link legacyBehavior href={getHref(action)} passHref>
       <a
         className={classes.action}
         onClick={(e) => {

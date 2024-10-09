@@ -23,7 +23,7 @@ import {
   IconPinnedOff,
   IconProps,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';

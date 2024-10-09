@@ -11,7 +11,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ArticlesInfinite({
   filters: filterOverrides = {},
