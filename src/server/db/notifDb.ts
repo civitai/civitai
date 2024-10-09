@@ -19,15 +19,14 @@ export let notifDbWrite: AugmentedPool;
 export let notifDbRead: AugmentedPool;
 const singleClient = env.NOTIFICATION_DB_URL === env.NOTIFICATION_DB_REPLICA_URL;
 if (isProd) {
-  notifDbWrite = getClient({ readonly: false, isNotification: true });
-  notifDbRead = singleClient ? notifDbWrite : getClient({ readonly: true, isNotification: true });
+  notifDbWrite = getClient({ instance: 'notification' });
+  notifDbRead = singleClient ? notifDbWrite : getClient({ instance: 'notificationRead' });
 } else {
-  if (!global.globalNotifWrite)
-    global.globalNotifWrite = getClient({ readonly: false, isNotification: true });
+  if (!global.globalNotifWrite) global.globalNotifWrite = getClient({ instance: 'notification' });
   if (!global.globalNotifRead)
     global.globalNotifRead = singleClient
       ? global.globalNotifWrite
-      : getClient({ readonly: true, isNotification: true });
+      : getClient({ instance: 'notificationRead' });
   notifDbWrite = global.globalNotifWrite;
   notifDbRead = global.globalNotifRead;
 }
