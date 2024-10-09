@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { pgDbWrite } from '~/server/db/pgDb';
+import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
 import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
@@ -34,7 +34,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   });
 
   // Get latest results for date
-  const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
+  // const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
+  const addDays = 1;
   let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(({ id, query }) => async () => {
@@ -91,45 +92,65 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   }
 });
 
+type LegendsBoardResult = {
+  userId: number;
+  leaderboardId: string;
+  score: number;
+  metrics: Record<string, number>;
+  position: number; // 1-1000
+};
 async function updateLegendsBoardResults() {
-  log('Legends Board - Starting');
-  await dbWrite.$transaction([
-    dbWrite.$executeRaw`DROP TABLE IF EXISTS "LegendsBoardResult";`,
-    dbWrite.$executeRaw`
-      CREATE TABLE "LegendsBoardResult" AS
-      WITH scores AS (
-        SELECT
-          "userId",
-          "leaderboardId",
-          SUM(CASE
-            WHEN position <= 1 THEN ${constants.leaderboard.legendScoring.diamond}
-            WHEN position <= 3 THEN ${constants.leaderboard.legendScoring.gold}
-            WHEN position <= 10 THEN ${constants.leaderboard.legendScoring.silver}
-            WHEN position <= 100 THEN ${constants.leaderboard.legendScoring.bronze}
-          END) * 100 score,
-          jsonb_build_object(
-            'diamond', SUM(IIF(position<=1, 1, 0)),
-            'gold', SUM(IIF(position BETWEEN 2 AND 3, 1, 0)),
-            'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
-            'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
-          ) metrics
-        FROM "LeaderboardResult" lr
-        JOIN "User" u ON u.id = lr."userId"
-        WHERE date <= now()
-          AND position < 100
-          AND (
-            NOT u."excludeFromLeaderboards"
-            OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
-          )
-          AND u."deletedAt" IS NULL
-        GROUP BY "userId", "leaderboardId"
-      )
+  log('Legends Board - Fetching');
+  const legendsBoardData = await pgDbReadLong.query<LegendsBoardResult>(`
+    WITH scores AS (
+      SELECT
+        "userId",
+        "leaderboardId",
+        SUM(CASE
+          WHEN position <= 1 THEN ${constants.leaderboard.legendScoring.diamond}
+          WHEN position <= 3 THEN ${constants.leaderboard.legendScoring.gold}
+          WHEN position <= 10 THEN ${constants.leaderboard.legendScoring.silver}
+          WHEN position <= 100 THEN ${constants.leaderboard.legendScoring.bronze}
+        END) * 100 score,
+        jsonb_build_object(
+          'diamond', SUM(IIF(position<=1, 1, 0)),
+          'gold', SUM(IIF(position BETWEEN 2 AND 3, 1, 0)),
+          'silver', SUM(IIF(position BETWEEN 4 AND 10, 1, 0)),
+          'bronze', SUM(IIF(position BETWEEN 11 AND 100, 1, 0))
+        ) metrics
+      FROM "LeaderboardResult" lr
+      JOIN "User" u ON u.id = lr."userId"
+      WHERE date <= now()
+        AND position <= 100
+        AND (
+          NOT u."excludeFromLeaderboards"
+          OR EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = lr."leaderboardId" AND NOT l.public)
+        )
+        AND u."deletedAt" IS NULL
+      GROUP BY "userId", "leaderboardId"
+    ), positions AS (
       SELECT
         *,
         cast(row_number() OVER (PARTITION BY "leaderboardId" ORDER BY score DESC) as int) position
-      FROM scores;
-    `,
-  ]);
+      FROM scores
+    )
+    SELECT
+    *
+    FROM positions
+    WHERE position <= 1000
+  `);
+
+  log('Legends Board - Truncating');
+  await dbWrite.$executeRaw`TRUNCATE "LegendsBoardResult"`;
+  log('Legends Board - Populating');
+  const tasks = chunk(legendsBoardData.rows, 500).map((batch) => async () => {
+    const batchJson = JSON.stringify(batch);
+    await dbWrite.$executeRaw`
+      INSERT INTO "LegendsBoardResult"("userId", "leaderboardId", "score", "metrics", "position")
+      SELECT * FROM jsonb_to_recordset(${batchJson}::jsonb) AS s("userId" int, "leaderboardId" text, score int, metrics jsonb, position int);
+    `;
+  });
+  await limitConcurrency(tasks, 2);
   log('Legends Board - Done');
 }
 
@@ -159,14 +180,19 @@ const updateUserDiscordLeaderboardRoles = createJob(
   }
 );
 
+type LeaderboardResult = {
+  userId: number;
+  score: number;
+  metrics: Record<string, number>;
+  position: number;
+};
 async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
-  const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
+  const leaderboardScoreQuery = await pgDbReadLong.cancellableQuery<LeaderboardResult>(`
     ${ctx.includesCTE ? ctx.query : `WITH scores AS (${ctx.query})`}
-    INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
     SELECT
-      '${ctx.id}' as "leaderboardId",
-      current_date + interval '${ctx.addDays} days' as date,
-      s.*,
+      s."userId",
+      ROUND(s.score)::int as score,
+      s.metrics,
       row_number() OVER (ORDER BY score DESC) as position
     FROM scores s
     JOIN "User" u ON u.id = s."userId"
@@ -177,14 +203,28 @@ async function defaultLeadboardPopulation(ctx: LeaderboardContext) {
     ORDER BY score DESC
     LIMIT 1000
   `);
-  // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
-  await leaderboardUpdateQuery.result();
+
+  const scores = await leaderboardScoreQuery.result();
+  const tasks = chunk(scores, 500).map((batch, i) => async () => {
+    const batchJson = JSON.stringify(batch);
+    log(`Leaderboard ${ctx.id} - Inserting ${i + 1} of ${tasks.length}`);
+    const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
+      INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
+      SELECT
+        '${ctx.id}' as "leaderboardId",
+        current_date + interval '${ctx.addDays} days' as date,
+        s.*
+      FROM jsonb_to_recordset('${batchJson}'::jsonb) AS s("userId" int, score int, metrics jsonb, position int)
+    `);
+    await leaderboardUpdateQuery.result();
+  });
+  await limitConcurrency(tasks, 2);
 }
 
 async function getImageRange() {
   const {
     rows: [{ min, max }],
-  } = await pgDbWrite.query<{ min: number; max: number }>(`
+  } = await pgDbReadLong.query<{ min: number; max: number }>(`
     WITH dates AS (
       SELECT MIN("createdAt") as start, MAX("createdAt") as end FROM "Image" WHERE "createdAt" > now() - interval '30 days'
     )
@@ -246,7 +286,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
       // console.time(key);
-      const batchScores = await pgDbWrite.query<ImageScores>(
+      const batchScores = await pgDbReadLong.query<ImageScores>(
         `${ctx.query} SELECT * FROM image_scores`,
         [startIndex, endIndex]
       );
@@ -308,10 +348,14 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
   // console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
 }
 
+type NsfwLevelRow = {
+  id: number;
+  nsfw: string;
+};
 async function setCoverImageNsfwLevel() {
   log('Setting cover image nsfw level - version');
-  await dbWrite.$executeRaw`
-    -- set version nsfw image level based on post nsfw level
+  const { rows: versionLevels } = await pgDbReadLong.query<NsfwLevelRow>(`
+    -- get version nsfw image level based on post nsfw level
     WITH model_version_nsfw_level AS (
       SELECT DISTINCT ON (mv.id) mv.id, p.metadata->>'imageNsfw' nsfw
       FROM "ModelVersion" mv
@@ -320,16 +364,36 @@ async function setCoverImageNsfwLevel() {
       WHERE mv.status = 'Published'
       ORDER BY mv.id, mv.index, p.id
     )
-    UPDATE "ModelVersion" mv
-    SET
-      meta = jsonb_set(meta, '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+    SELECT level.*
     FROM model_version_nsfw_level level
-    WHERE level.id = mv.id;
-  `;
+    JOIN "ModelVersion" mv ON mv.id = level.id
+    WHERE
+      level.nsfw IS NOT NULL AND (
+        jsonb_typeof(mv.meta) = 'undefined'
+        OR (mv.meta->>'imageNsfw' IS DISTINCT FROM level.nsfw)
+      );
+  `);
+  const tasks = chunk(versionLevels, 500).map((level) => async () => {
+    const levelJson = JSON.stringify(level);
+    log('Setting cover image nsfw level - version');
+    const query = await pgDbWrite.cancellableQuery(`
+      -- set version nsfw image level based on post nsfw level
+      WITH model_version_nsfw_level AS (
+        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw text)
+      )
+      UPDATE "ModelVersion" mv
+      SET
+        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+      FROM model_version_nsfw_level level
+      WHERE level.id = mv.id;
+    `);
+    await query.result();
+  });
+  await limitConcurrency(tasks, 2);
 
   log('Setting cover image nsfw level - model');
-  await dbWrite.$executeRaw`
-    -- set model nsfw image level based on version nsfw level
+  const { rows: modelLevels } = await pgDbReadLong.query<NsfwLevelRow>(`
+    -- get version nsfw image level based on post nsfw level
     WITH model_nsfw_level AS (
       SELECT DISTINCT ON (mv."modelId")
         mv."modelId" as "id",
@@ -337,15 +401,32 @@ async function setCoverImageNsfwLevel() {
       FROM "ModelVersion" mv
       ORDER BY mv."modelId", mv.index
     )
-    UPDATE "Model" m
-    SET
-      meta = CASE
-        WHEN jsonb_typeof(meta) = 'null' THEN jsonb_build_object('imageNsfw', COALESCE(level.nsfw, 'None'))
-        ELSE m.meta || jsonb_build_object('imageNsfw', COALESCE(level.nsfw, 'None'))
-      END
+    SELECT level.*
     FROM model_nsfw_level level
-    WHERE level.id = m.id;
-  `;
+    JOIN "Model" m ON m.id = level.id
+    WHERE
+      level.nsfw IS NOT NULL AND (
+        jsonb_typeof(m.meta) = 'undefined'
+        OR (m.meta->>'imageNsfw' IS DISTINCT FROM level.nsfw)
+      );
+  `);
+  const modelTasks = chunk(modelLevels, 500).map((level) => async () => {
+    const levelJson = JSON.stringify(level);
+    log('Setting cover image nsfw level - model');
+    const query = await pgDbWrite.cancellableQuery(`
+      -- set model nsfw image level based on version nsfw level
+      WITH model_nsfw_level AS (
+        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw text)
+      )
+      UPDATE "Model" m
+      SET
+        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+      FROM model_nsfw_level level
+      WHERE level.id = m.id;
+    `);
+    await query.result();
+  });
+  await limitConcurrency(modelTasks, 2);
 }
 
 type ClickhouseScores = {

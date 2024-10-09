@@ -556,26 +556,35 @@ export default function ModelDetailsV2({
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
                     </Title>
-                    <LoginRedirect reason="favorite-model">
-                      <IconBadge
-                        radius="sm"
-                        color={isFavorite ? 'green' : 'gray'}
-                        size="lg"
-                        icon={
-                          <ThumbsUpIcon
-                            size={18}
-                            color={isFavorite ? 'green' : undefined}
-                            filled={isFavorite}
-                          />
-                        }
-                        sx={{ cursor: 'pointer' }}
-                        onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
-                      >
-                        <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
-                        </Text>
-                      </IconBadge>
-                    </LoginRedirect>
+                    <Tooltip
+                      label={`${(
+                        model.rank?.thumbsUpCountAllTime ?? 0
+                      ).toLocaleString()} unique positive reviews`}
+                      withinPortal
+                    >
+                      <div>
+                        <LoginRedirect reason="favorite-model">
+                          <IconBadge
+                            radius="sm"
+                            color={isFavorite ? 'green' : 'gray'}
+                            size="lg"
+                            icon={
+                              <ThumbsUpIcon
+                                size={18}
+                                color={isFavorite ? 'green' : undefined}
+                                filled={isFavorite}
+                              />
+                            }
+                            sx={{ cursor: 'pointer' }}
+                            onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                          >
+                            <Text className={classes.modelBadgeText}>
+                              {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
+                            </Text>
+                          </IconBadge>
+                        </LoginRedirect>
+                      </div>
+                    </Tooltip>
                     <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}

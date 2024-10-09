@@ -1,27 +1,27 @@
-import { CardProps, Card, Loader, Center } from '@mantine/core';
+import { CardProps, Card, Loader, Center, Text } from '@mantine/core';
 import { CSSProperties } from 'react';
 import { env } from '~/env/client.mjs';
+import { trpc } from '~/utils/trpc';
+import { isProd } from '~/env/other';
 
 export function AssistantChat({
-  token,
   width,
   height,
   ...cardProps
 }: Omit<CardProps, 'children'> & {
-  token: string | null;
   width?: CSSProperties['width'];
   height?: CSSProperties['height'];
 }) {
+  const { data: { token = null } = {} } = trpc.user.getToken.useQuery(undefined, {
+    enabled: isProd,
+  });
+
   return (
     <Card
       shadow="md"
       withBorder
       radius={16}
       sx={{
-        position: 'absolute',
-        bottom: '100%',
-        marginBottom: 4,
-        right: 0,
         width,
         zIndex: 200,
         overflow: 'hidden',
@@ -34,15 +34,15 @@ export function AssistantChat({
         <Center h={height}>
           <Loader />
         </Center>
+      ) : env.NEXT_PUBLIC_GPTT_UUID ? (
+        <iframe
+          src={`https://app.gpt-trainer.com/widget/${env.NEXT_PUBLIC_GPTT_UUID}?token=${token}`}
+          width={typeof width === 'number' ? width + 1 : width}
+          height={height}
+          style={{ margin: -1, background: 'transparent' }}
+        />
       ) : (
-        env.NEXT_PUBLIC_GPTT_UUID && (
-          <iframe
-            src={`https://app.gpt-trainer.com/widget/${env.NEXT_PUBLIC_GPTT_UUID}?token=${token}`}
-            width={typeof width === 'number' ? width + 1 : width}
-            height={height}
-            style={{ margin: -1, background: 'transparent' }}
-          />
-        )
+        <Text>Unable to load assistant</Text>
       )}
     </Card>
   );
