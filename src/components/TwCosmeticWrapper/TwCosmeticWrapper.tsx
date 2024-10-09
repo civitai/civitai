@@ -23,7 +23,7 @@ export const TwCosmeticWrapper = forwardRef<
     if (frameBackground.length > 0)
       styleRef.current = {
         '--bgImage': texture?.url,
-        '--bgGradient': cssFrame,
+        '--bgGradient': cssFrame?.replace(';', ''),
         '--bgSize': texture?.size
           ? `${texture.size.width}px ${texture.size.height}px, cover`
           : undefined,
