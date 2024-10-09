@@ -5,7 +5,7 @@ import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import { createPage } from '~/components/AppLayout/createPage';
+import { Page } from '~/components/AppLayout/Page';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -20,8 +20,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default createPage(
-  function ImagePage() {
+export default Page(
+  function () {
     const router = useBrowserRouter();
     const imageId = router.query.imageId;
     const filters = imagesQueryParamSchema.parse(router.query);
@@ -34,5 +34,5 @@ export default createPage(
       </ImageDetailProvider>
     );
   },
-  { layout: ({ children }) => <main className="size-full">{children}</main> }
+  { getLayout: (page) => <main className="size-full">{page}</main> }
 );

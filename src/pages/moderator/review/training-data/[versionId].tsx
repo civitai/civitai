@@ -2,7 +2,7 @@ import { Button, Loader, Text } from '@mantine/core';
 import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
-import { createPage } from '~/components/AppLayout/createPage';
+import { Page } from '~/components/AppLayout/Page';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useStepper } from '~/hooks/useStepper';
@@ -84,10 +84,15 @@ function ReviewTrainingData() {
   );
 }
 
-export default createPage(ReviewTrainingData, {
-  withScrollArea: false,
+export default Page(ReviewTrainingData, {
+  scrollable: false,
   features: (features) => !!features.reviewTrainingData,
 });
+
+// export default createPage(ReviewTrainingData, {
+//   withScrollArea: false,
+//   features: (features) => !!features.reviewTrainingData,
+// });
 
 function ReviewImages({
   onNext,

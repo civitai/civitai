@@ -1,8 +1,8 @@
 import { Button, Group, Stack, Title } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -13,7 +13,7 @@ import { env } from '~/env/client.mjs';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PeriodMode } from '~/server/schema/base.schema';
 
-export default function ModelsPage() {
+function ModelsPage() {
   const { set, view: queryView, ...queryFilters } = useModelQueryParams();
   const { username, query } = queryFilters;
   const periodMode = query ? ('stats' as PeriodMode) : undefined;
@@ -58,4 +58,4 @@ export default function ModelsPage() {
   );
 }
 
-setPageOptions(ModelsPage, { innerLayout: FeedLayout });
+export default Page(ModelsPage, { InnerLayout: FeedLayout });

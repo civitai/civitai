@@ -19,7 +19,7 @@ import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentTog
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { Page } from '~/components/AppLayout/Page';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -34,7 +34,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function UserArticlesPage() {
+function UserArticlesPage() {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const {
@@ -112,4 +112,4 @@ export default function UserArticlesPage() {
   );
 }
 
-setPageOptions(UserArticlesPage, { innerLayout: UserProfileLayout });
+export default Page(UserArticlesPage, { getLayout: UserProfileLayout });

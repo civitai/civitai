@@ -143,9 +143,8 @@ export const orchestratorRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
-        if (input.params.workflow === 'txt2img')
-          return await createTextToImage({ ...args, experimental: ctx.features.experimentalGen });
-        else return await createComfy({ ...args, experimental: ctx.features.experimentalGen });
+        if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
+        else return await createComfy({ ...args });
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
           await reportProhibitedRequestHandler({

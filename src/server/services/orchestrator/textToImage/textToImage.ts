@@ -82,7 +82,7 @@ export async function createTextToImage(
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
-      experimental,
+      experimental: false,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,
