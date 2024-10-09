@@ -163,12 +163,20 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             <Stack spacing="xl" h="100%">
               <Stack spacing={0} mb="auto">
                 <Title order={3}>Current Buzz</Title>
-                <UserBuzz
-                  accountId={accountId}
-                  accountType={null}
-                  textSize="xl"
-                  withAbbreviation={false}
-                />
+                <Group>
+                  <UserBuzz
+                    accountId={accountId}
+                    accountType="user"
+                    textSize="xl"
+                    withAbbreviation={false}
+                  />
+                  <UserBuzz
+                    accountId={accountId}
+                    accountType="generation"
+                    textSize="xl"
+                    withAbbreviation={false}
+                  />
+                </Group>
               </Stack>
               <Bar
                 options={options}
