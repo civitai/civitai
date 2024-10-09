@@ -2,7 +2,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { Session } from 'next-auth';
-import { isProd } from '~/env/other';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -12,6 +11,7 @@ import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { isFeaturedModel } from '~/server/services/model.service';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -38,6 +38,8 @@ type FileRow = {
   sizeKB: number;
   hash: string;
 };
+
+const FREE_ADDITIONAL_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
@@ -68,9 +70,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."requireAuth",
       (
         (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
-        OR 
+        OR
         (mv."availability" = 'Private')
-      
+
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
@@ -118,6 +120,12 @@ export default MixedAuthEndpoint(async function handler(
     if (isUnavailable) canGenerate = false;
   }
 
+  // Check if should charge
+  let shouldCharge =
+    !FREE_ADDITIONAL_RESOURCE_TYPES.includes(modelVersion.type) &&
+    !(await isFeaturedModel(modelVersion.modelId)) &&
+    primaryFile.sizeKB > 10 * 1024;
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -135,6 +143,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    noAddedCharge: !shouldCharge,
   };
   res.status(200).json(data);
 });
