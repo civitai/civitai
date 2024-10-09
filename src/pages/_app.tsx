@@ -232,7 +232,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     pageProps: {
       ...pageProps,
       colorScheme,
-      cookies: parsedCookies,
+      cookies,
       session,
       flags,
     },
