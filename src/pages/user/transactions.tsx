@@ -7,6 +7,7 @@ import {
   Container,
   Group,
   Loader,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -45,6 +46,7 @@ const transactionTypes = [
 ];
 
 const defaultFilters = {
+  accountType: 'user',
   start: dayjs().subtract(1, 'month').startOf('month').startOf('day').toDate(),
   end: dayjs().endOf('month').endOf('day').toDate(),
 };
@@ -81,6 +83,14 @@ export default function UserTransactions() {
     <Container size="sm">
       <Stack spacing="xl">
         <Title order={1}>Transaction History</Title>
+        <SegmentedControl
+          value={filters.accountType}
+          onChange={(v) => setFilters({ accountType: v as 'user' | 'generation' })}
+          data={[
+            { label: 'Yellow', value: 'user' },
+            { label: 'Blue', value: 'generation' },
+          ]}
+        />
         <Group spacing="sm">
           <DatePicker
             label="From"

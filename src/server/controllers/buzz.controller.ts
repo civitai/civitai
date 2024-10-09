@@ -82,6 +82,8 @@ export async function getBuzzAccountHandler({
       default:
     }
 
+    console.log(accountType);
+
     return getUserBuzzAccount({ ...input });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);

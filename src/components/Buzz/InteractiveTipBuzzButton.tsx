@@ -112,7 +112,7 @@ export function InteractiveTipBuzzButton({
   const { theme, classes, cx } = useStyle();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz();
+  const { balance } = useBuzz(undefined, 'user');
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);
