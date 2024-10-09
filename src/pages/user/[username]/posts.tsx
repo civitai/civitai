@@ -1,6 +1,6 @@
-import { Box, Group, Stack, Tabs } from '@mantine/core';
+import { Box, Group, Stack } from '@mantine/core';
 import { MetricTimeframe } from '@prisma/client';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';
@@ -15,11 +15,10 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { Page } from '~/components/AppLayout/Page';
 
-export default function UserPostsPage() {
+function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
     replace,
@@ -37,7 +36,6 @@ export default function UserPostsPage() {
     selfView ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
-  const features = useFeatureFlags();
 
   if (!query.username) return <NotFound />;
 
@@ -86,4 +84,4 @@ export default function UserPostsPage() {
   );
 }
 
-setPageOptions(UserPostsPage, { innerLayout: UserProfileLayout });
+export default Page(UserPostsPage, { getLayout: UserProfileLayout });

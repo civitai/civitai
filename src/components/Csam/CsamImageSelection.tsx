@@ -61,30 +61,31 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
   if (!images?.length) return <NoContent p="xl" message="No images found for this user" />;
 
   return (
-    <MasonryProvider
-      columnWidth={300}
-      maxColumnCount={7}
-      maxSingleColumnWidth={450}
-      style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
-    >
-      <ScrollArea>
-        <Title align="center" mb="md">
-          CSAM Image Selection
-        </Title>
-        <IsClient>
-          <MasonryContainer>
-            <MasonryColumns
-              data={images}
-              imageDimensions={(data) => {
-                const width = data?.width ?? 450;
-                const height = data?.height ?? 450;
-                return { width, height };
-              }}
-              maxItemHeight={600}
-              render={CsamImageCard}
-              itemId={(data) => data.id}
-            />
-            {/* {hasNextPage && (
+    <div className="relative">
+      <MasonryProvider
+        columnWidth={300}
+        maxColumnCount={7}
+        maxSingleColumnWidth={450}
+        style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
+      >
+        <div className="pb-3">
+          <Title align="center" mb="md">
+            CSAM Image Selection
+          </Title>
+          <IsClient>
+            <MasonryContainer>
+              <MasonryColumns
+                data={images}
+                imageDimensions={(data) => {
+                  const width = data?.width ?? 450;
+                  const height = data?.height ?? 450;
+                  return { width, height };
+                }}
+                maxItemHeight={600}
+                render={CsamImageCard}
+                itemId={(data) => data.id}
+              />
+              {/* {hasNextPage && (
               <InViewLoader
                 loadFn={fetchNextPage}
                 loadCondition={!isRefetching}
@@ -95,23 +96,22 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
                 </Center>
               </InViewLoader>
             )} */}
-          </MasonryContainer>
-        </IsClient>
-      </ScrollArea>
-      <Card p="xs" style={{ zIndex: 30 }}>
-        <MasonryContainer>
-          <Group position="right">
-            {/* <Button variant="default">Cancel</Button> */}
-            <Badge>
-              Selected: <SelectedCount />
-            </Badge>
-            <Button disabled={!hasSelected} onClick={onNext}>
-              Next
-            </Button>
-          </Group>
-        </MasonryContainer>
+            </MasonryContainer>
+          </IsClient>
+        </div>
+      </MasonryProvider>
+      <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none">
+        <Group position="right">
+          {/* <Button variant="default">Cancel</Button> */}
+          <Badge>
+            Selected: <SelectedCount />
+          </Badge>
+          <Button disabled={!hasSelected} onClick={onNext}>
+            Next
+          </Button>
+        </Group>
       </Card>
-    </MasonryProvider>
+    </div>
   );
 }
 

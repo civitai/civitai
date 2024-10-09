@@ -197,24 +197,24 @@ export function ProfileHeader({ username }: { username: string }) {
 
   if (isMobile) {
     return (
-      <Stack spacing={0}>
-        <ProfileNavigation username={username} />
+      <div className="flex flex-col gap-3">
         {renderMessage()}
-        {renderCoverImage()}
-        <div
-          className={cx(classes.profileSection, {
-            [classes.profileSectionWithCoverImage]: !!image,
-          })}
-        >
-          <ProfileSidebar username={username} />
+        <div className="flex flex-col">
+          {renderCoverImage()}
+          <div
+            className={cx(classes.profileSection, {
+              [classes.profileSectionWithCoverImage]: !!image,
+            })}
+          >
+            <ProfileSidebar username={username} />
+          </div>
         </div>
-      </Stack>
+      </div>
     );
   }
 
   return (
     <Stack>
-      <ProfileNavigation username={username} />
       {renderCoverImage()}
       {renderMessage()}
     </Stack>

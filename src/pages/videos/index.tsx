@@ -1,7 +1,7 @@
 import { Stack, Title } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageFilters } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -10,7 +10,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
 
-export default function VideosPage() {
+function VideosPage() {
   const { hidden, ...filters } = useImageFilters('videos');
 
   return (
@@ -40,4 +40,4 @@ export default function VideosPage() {
   );
 }
 
-setPageOptions(VideosPage, { innerLayout: FeedLayout });
+export default Page(VideosPage, { InnerLayout: FeedLayout });

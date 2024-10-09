@@ -1,120 +1,139 @@
-import { Button, Center, createStyles, Stack, Text, ThemeIcon, Title } from '@mantine/core';
-import { IconBan } from '@tabler/icons-react';
-import React from 'react';
+import { ScrollAreaProps } from '@mantine/core';
+import clsx from 'clsx';
+import React, { useEffect, useRef, useState } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
-import { AssistantButton } from '~/components/Assistant/AssistantButton';
-import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { FloatingActionButton2 } from '~/components/FloatingActionButton/FloatingActionButton';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { isDefined } from '~/utils/type-guards';
-
-type AppLayoutProps = {
-  innerLayout?: ({ children }: { children: React.ReactNode }) => React.ReactNode;
-  withScrollArea?: boolean;
-};
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { SubNav2 } from '~/components/AppLayout/SubNav';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
 export function AppLayout({
   children,
   renderSearchComponent,
-  withFooter = true,
+  subNav = <SubNav2 />,
+  left,
+  right,
+  scrollable = true,
+  footer = <AppFooter />,
+  loading,
+  notFound,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
-  withFooter?: boolean;
+  subNav?: React.ReactNode | null;
+  left?: React.ReactNode;
+  right?: React.ReactNode;
+
+  scrollable?: boolean;
+  footer?: React.ReactNode | null;
+  loading?: boolean;
+  notFound?: boolean;
 }) {
-  const { classes } = useStyles();
-  const user = useCurrentUser();
-  const { logout } = useAccountContext();
-  // TODO - move the bannedAt check to _app.tsx
-  const isBanned = !!user?.bannedAt;
-  const flags = useFeatureFlags();
-
-  if (isBanned)
-    return (
-      <Center py="xl">
-        <Stack align="center">
-          <ThemeIcon size={128} radius={100} color="red">
-            <IconBan size={80} />
-          </ThemeIcon>
-          <Title order={1} align="center">
-            You have been banned
-          </Title>
-          <Text size="lg" align="center">
-            This account has been banned and cannot access the site
-          </Text>
-
-          {user?.banDetails?.banReason && (
-            <Stack>
-              <DescriptionTable
-                items={[
-                  { label: 'Reason', value: user?.banDetails?.banReason },
-                  user?.banDetails?.bannedReasonDetails
-                    ? {
-                        label: 'Details',
-                        value: (
-                          <RenderHtml
-                            html={user?.banDetails?.bannedReasonDetails}
-                            style={{
-                              fontSize: '14px',
-                            }}
-                          />
-                        ),
-                      }
-                    : undefined,
-                ].filter(isDefined)}
-                withBorder
-              />
-            </Stack>
-          )}
-          <Button onClick={() => logout()}>Sign out</Button>
-        </Stack>
-      </Center>
-    );
-
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
-      <main className="relative flex size-full flex-1 flex-col overflow-hidden">
-        {children}
-        {/* {flags.assistant && (
-              <div className={classes.assistant}>
-                <AssistantButton />
-              </div>
-            )} */}
-
-        <FloatingActionButton2 mounted={flags.assistant} transition="slide-up">
-          <AssistantButton />
-        </FloatingActionButton2>
-      </main>
-      {withFooter && <AppFooter fixed={false} />}
-      {/* Disabling because this is popping in too frequently */}
-      {/* <NewsletterDialog /> */}
+      {loading ? (
+        <PageLoader />
+      ) : notFound ? (
+        <NotFound />
+      ) : (
+        <div className="flex flex-1 overflow-hidden">
+          {left && (
+            <aside className="scroll-area relative border-r border-gray-3 dark:border-dark-4">
+              {left}
+            </aside>
+          )}
+          <MainContent subNav={subNav} scrollable={scrollable} footer={footer}>
+            {children}
+          </MainContent>
+          {right && (
+            <aside className="scroll-area relative border-l border-gray-3 dark:border-dark-4">
+              {right}
+            </aside>
+          )}
+        </div>
+      )}
     </>
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    display: 'flex',
-    flex: 1,
-    overflow: 'hidden',
-  },
-  assistant: {
-    position: 'absolute',
-    // top: '100%',
-    // left: '100%',
-    bottom: theme.spacing.xs,
-    right: theme.spacing.md,
-    display: 'inline-block',
-    zIndex: 20,
-    width: 42,
-  },
-}));
+export function MainContent({
+  children,
+  subNav = <SubNav2 />,
+  footer = <AppFooter />,
+  scrollable = true,
+  ...props
+}: {
+  children: React.ReactNode;
+  subNav?: React.ReactNode | null;
+  scrollable?: boolean;
+  footer?: React.ReactNode | null;
+} & ScrollAreaProps) {
+  return scrollable ? (
+    <ScrollArea {...props}>
+      <main className="flex-1">
+        {subNav && <SubNav>{subNav}</SubNav>}
+        {children}
+      </main>
+      {footer}
+    </ScrollArea>
+  ) : (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex flex-1 flex-col overflow-hidden">
+        {subNav && <SubNav>{subNav}</SubNav>}
+        {children}
+      </main>
+      {footer}
+    </div>
+  );
+}
 
-export function setPageOptions(Component: (...args: any) => JSX.Element, options?: AppLayoutProps) {
-  (Component as any).options = options;
+export function SubNav({
+  children,
+  className,
+  visible,
+  ...props
+}: { children: React.ReactNode; visible?: boolean } & React.HTMLProps<HTMLDivElement>) {
+  const lastScrollRef = useRef(0);
+  const lastDirectionChangeRef = useRef(0);
+  const lastScrollDirectionRef = useRef('up');
+  const [showNav, setShowNav] = useState(true);
+  useScrollAreaRef({
+    onScroll: (node) => {
+      const diff = node.scrollTop - lastScrollRef.current;
+      const scrollDirection = diff > 0 ? 'down' : 'up';
+      const lastScrollDirection = lastScrollDirectionRef.current;
+      if (scrollDirection !== lastScrollDirection) {
+        lastScrollDirectionRef.current = scrollDirection;
+        lastDirectionChangeRef.current = node.scrollTop;
+      }
+
+      const lastDirectionChangeDiff = node.scrollTop - lastDirectionChangeRef.current;
+
+      if (node.scrollTop < 100) setShowNav(true);
+      else if (lastDirectionChangeDiff > 100) setShowNav(false);
+      else if (lastDirectionChangeDiff < -100) setShowNav(true);
+
+      lastScrollRef.current = node.scrollTop;
+    },
+  });
+
+  useEffect(() => {
+    if (visible) setShowNav(true);
+  }, [visible]);
+
+  return (
+    <div
+      {...props}
+      className={clsx(
+        'sticky inset-x-0 top-0 z-50 mb-3 bg-gray-1 shadow transition-transform dark:bg-dark-6',
+        className
+      )}
+      style={!showNav ? { transform: 'translateY(-200%)' } : undefined}
+    >
+      {children}
+    </div>
+  );
 }

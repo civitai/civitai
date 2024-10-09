@@ -126,7 +126,7 @@ const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
     position: 'sticky',
     margin: '0 auto',
     alignSelf: 'center',
-    zIndex: 11,
+    zIndex: 30,
     boxShadow: theme.shadows.md,
     border: `1px solid ${
       theme.colorScheme === 'dark' ? theme.colors[color][9] : theme.colors[color][2]

@@ -370,12 +370,11 @@ div[data-youtube-video] > iframe {
 }
 
 .scroll-area {
-  height: 100%;
-  width: 100%;
-  flex: 1;
   overflow-x: hidden;
   will-change: transform;
   position: relative;
   scrollbar-width: thin;
   padding-top: 0;
+  display: flex;
+  flex-direction: column;
 }

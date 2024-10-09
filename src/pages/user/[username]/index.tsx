@@ -2,8 +2,8 @@ import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import {
   getAllAvailableProfileSections,
@@ -105,5 +105,6 @@ function ProfileOverview() {
   );
 }
 
-setPageOptions(ProfileOverview, { innerLayout: UserProfileLayout });
-export default ProfileOverview;
+export default Page(ProfileOverview, {
+  getLayout: UserProfileLayout,
+});
