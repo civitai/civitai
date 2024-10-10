@@ -713,6 +713,7 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
   return {
     user: version.model.user,
     workflowId: trainingResults?.workflowId,
+    jobId: trainingResults?.jobId as string | null,
     trainingResults,
   };
 }

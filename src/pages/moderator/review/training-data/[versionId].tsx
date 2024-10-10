@@ -65,6 +65,11 @@ function ReviewTrainingData() {
       value: data?.workflowId ?? 'N/A',
     },
     {
+      label: 'JobID',
+      value: data?.jobId,
+      visible: !data?.workflowId,
+    },
+    {
       label: 'Version',
       value: data?.trainingResults?.version ?? '1',
     },
