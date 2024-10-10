@@ -149,8 +149,11 @@ const moderateTrainingData = async ({
         data: {
           modelVersionId,
           important: true,
+          status: gateResp.status,
+          gateJobId,
         },
       });
+
       if (gateResp.status === 429) {
         throw throwRateLimitError('Could not connect to orchestrator');
       } else {
