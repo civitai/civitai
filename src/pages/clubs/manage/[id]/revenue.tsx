@@ -126,7 +126,8 @@ export default function Revenue({ id }: InferGetServerSidePropsType<typeof getSe
       <Anchor size="sm" target="_blank" href="/content/buzz/terms">
         Buzz Agreement
       </Anchor>
-      <BuzzDashboardOverview accountId={club.id} accountType="club" />
+      {/* TODO: If we ever bring back clubs, do something similar to the buzz dashboard there.  */}
+      {/* <BuzzDashboardOverview accountId={club.id} accountTypes={'club'} /> */}
     </Stack>
   );
 }

@@ -21,7 +21,6 @@ import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-c
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import * as eventEngineJobs from '~/server/jobs/event-engine-work';
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
-import { handleLongTrainings } from '~/server/jobs/handle-long-trainings';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
@@ -84,7 +83,6 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
-  handleLongTrainings,
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
@@ -178,12 +176,12 @@ async function isLocked(name: string, noCheck?: boolean) {
 
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
-  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks');
+  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
   await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
 }
 
 async function unlock(name: string, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
-  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks');
+  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
   await redis?.del(`job:${name}`);
 }

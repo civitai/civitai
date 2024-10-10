@@ -687,6 +687,14 @@ export function AppHeader({
                 textSize={textSize}
                 withAbbreviation={withAbbreviation}
                 withTooltip={withAbbreviation}
+                accountType="user"
+              />
+              <UserBuzz
+                iconSize={16}
+                textSize={textSize}
+                withAbbreviation={withAbbreviation}
+                withTooltip={withAbbreviation}
+                accountType="generation"
               />
             </Group>
             <Button

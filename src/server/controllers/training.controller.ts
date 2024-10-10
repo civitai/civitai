@@ -1,14 +1,19 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { updateRecords } from '~/pages/api/webhooks/resource-training';
-import { Context } from '~/server/createContext';
+import { env } from '~/env/server.mjs';
+import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { refundTransaction } from '~/server/services/buzz.service';
+import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { getModel } from '~/server/services/model.service';
-import { createTrainingRequest } from '~/server/services/training.service';
-import { throwDbError, throwNotFoundError, withRetries } from '~/server/utils/errorHandling';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -63,22 +68,19 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
   }
 };
 
-export async function handleApproveTrainingData({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) {
-  const modelVersionId = input.id;
-
-  const version = await dbWrite.modelVersion.findFirst({
-    where: { id: modelVersionId },
+const getJobIdFromVersion = async (modelVersionId: number) => {
+  const modelFile = await dbWrite.modelFile.findFirst({
+    where: { modelVersionId, type: 'Training Data' },
     select: {
-      trainingStatus: true,
+      metadata: true,
+      modelVersion: {
+        select: {
+          trainingStatus: true,
+        },
+      },
     },
   });
-  if (!version || version.trainingStatus !== TrainingStatus.Paused) {
+  if (!modelFile || modelFile.modelVersion?.trainingStatus !== TrainingStatus.Paused) {
     logWebhook({
       message: 'Could not find modelVersion of type "Paused"',
       data: { modelVersionId, important: true },
@@ -86,13 +88,84 @@ export async function handleApproveTrainingData({
     throw throwNotFoundError('Could not find modelFile');
   }
 
-  logWebhook({ message: 'Approved training dataset', type: 'info', data: { modelVersionId } });
+  const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
+  const trainingResults = (thisMetadata.trainingResults ?? {}) as TrainingResultsV2;
+  const { workflowId } = trainingResults;
+  if (!workflowId) {
+    logWebhook({
+      message: 'Could not find workflowId',
+      data: { modelVersionId, important: true },
+    });
+    throw throwNotFoundError('Could not find workflowId');
+  }
 
+  const workflow = await getWorkflow({
+    token: env.ORCHESTRATOR_ACCESS_TOKEN,
+    path: { workflowId },
+  });
+
+  const step = workflow.steps?.[0] as CustomImageResourceTrainingStep | undefined;
+  // nb: get exactly the second job
+  const gateId = step?.jobs?.[1]?.id;
+  if (!gateId) {
+    logWebhook({
+      message: 'Could not find jobId for gate job',
+      data: { modelVersionId, important: true },
+    });
+    throw throwNotFoundError('Could not find jobId for gate job');
+  }
+
+  return gateId;
+};
+
+const moderateTrainingData = async ({
+  modelVersionId,
+  gateJobId,
+  approve,
+}: {
+  modelVersionId: number;
+  gateJobId: string;
+  approve: boolean;
+}) => {
   try {
-    await createTrainingRequest({ modelVersionId, skipModeration: true });
+    const gateResp = await fetch(
+      `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/ambientjobs/${gateJobId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({
+          approved: approve,
+          // message: ''
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+        },
+      }
+    );
+
+    if (!gateResp.ok) {
+      logWebhook({
+        message: 'Could not connect to orchestrator',
+        data: {
+          modelVersionId,
+          important: true,
+        },
+      });
+      if (gateResp.status === 429) {
+        throw throwRateLimitError('Could not connect to orchestrator');
+      } else {
+        throw throwBadRequestError('Could not connect to orchestrator');
+      }
+    }
+    logWebhook({
+      message: `${approve ? 'Approved' : 'Denied'} training dataset`,
+      type: 'info',
+      data: { modelVersionId },
+    });
+    return 'ok';
   } catch (e) {
     logWebhook({
-      message: 'Failed to resubmit training request',
+      message: 'Failed to moderate training data',
       data: {
         modelVersionId,
         important: true,
@@ -102,97 +175,16 @@ export async function handleApproveTrainingData({
     });
     throw e;
   }
+};
+
+export async function handleApproveTrainingData({ input }: { input: GetByIdInput }) {
+  const modelVersionId = input.id;
+  const gateJobId = await getJobIdFromVersion(modelVersionId);
+  return await moderateTrainingData({ modelVersionId, gateJobId, approve: true });
 }
 
-export async function handleDenyTrainingData({
-  input,
-  ctx,
-}: {
-  input: GetByIdInput;
-  ctx: DeepNonNullable<Context>;
-}) {
+export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;
-
-  const version = await dbWrite.modelVersion.findFirst({
-    where: { id: modelVersionId },
-    select: {
-      trainingStatus: true,
-    },
-  });
-  if (!version || version.trainingStatus !== TrainingStatus.Paused) {
-    logWebhook({
-      message: 'Could not find modelVersion of type "Paused"',
-      data: { modelVersionId, important: true },
-    });
-    throw throwNotFoundError('Could not find modelFile');
-  }
-
-  logWebhook({
-    message: 'Denied training dataset',
-    type: 'info',
-    data: { modelVersionId, important: true },
-  });
-
-  // TODO - get this via a service method
-  const modelFile = await dbWrite.modelFile.findFirst({
-    where: { modelVersionId },
-    select: {
-      id: true,
-      metadata: true,
-    },
-  });
-
-  if (!modelFile) {
-    logWebhook({
-      message: 'Could not find modelFile',
-      data: { modelVersionId, important: true },
-    });
-    throw throwNotFoundError('Could not find modelFile');
-  }
-
-  const metadata = modelFile.metadata as FileMetadata;
-  const jobId = metadata.trainingResults?.jobId ?? '(unk jobId)';
-  const transactionId = metadata.trainingResults?.transactionId;
-
-  if (!transactionId)
-    logWebhook({
-      message: 'Could not refund user, missing transaction ID',
-      data: {
-        important: true,
-        modelVersionId,
-        jobId,
-      },
-    });
-  else {
-    logWebhook({
-      type: 'info',
-      message: `Attempting to refund user`,
-      data: { modelVersionId, jobId },
-    });
-
-    try {
-      await withRetries(() => refundTransaction(transactionId, 'Refund for denied training job.'));
-    } catch (e: unknown) {
-      logWebhook({
-        message: 'Could not refund user',
-        data: {
-          error: (e as Error)?.message,
-          cause: (e as Error)?.cause,
-          jobId,
-          transactionId,
-          important: true,
-        },
-      });
-    }
-  }
-
-  try {
-    await updateRecords({ modelFileId: modelFile.id }, TrainingStatus.Denied, 'Failed', jobId);
-  } catch (e: unknown) {
-    logWebhook({
-      message: 'Failed to update record',
-      data: { error: (e as Error)?.message, cause: (e as Error)?.cause, modelVersionId, jobId },
-    });
-    throw e;
-  }
+  const gateJobId = await getJobIdFromVersion(modelVersionId);
+  return await moderateTrainingData({ modelVersionId, gateJobId, approve: false });
 }

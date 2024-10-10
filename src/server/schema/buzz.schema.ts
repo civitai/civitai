@@ -63,8 +63,9 @@ export const getUserBuzzTransactionsSchema = z.object({
   cursor: z.date().optional(),
   start: z.date().nullish(),
   end: z.date().nullish(),
-  limit: z.number().min(1).max(200).optional(),
+  limit: z.number().min(1).max(1000).optional(),
   descending: z.boolean().optional(),
+  accountType: z.enum(buzzAccountTypes).optional(),
 });
 
 export const buzzTransactionDetails = z
@@ -160,7 +161,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
-  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).default('user')),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;

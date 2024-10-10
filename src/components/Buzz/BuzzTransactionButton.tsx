@@ -4,7 +4,6 @@ import {
   ButtonProps,
   createStyles,
   Group,
-  Loader,
   MantineSize,
   Text,
   Tooltip,
@@ -27,6 +26,7 @@ type Props = ButtonProps & {
   showPurchaseModal?: boolean;
   error?: string;
   transactionType?: 'Generation' | 'Default';
+  showTypePct?: boolean;
 };
 
 const useButtonStyle = createStyles((theme) => ({
@@ -52,17 +52,22 @@ export function BuzzTransactionButton({
   showPurchaseModal = true,
   error,
   transactionType,
+  showTypePct = false,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
   const { classes, cx, theme } = useButtonStyle();
-  const { conditionalPerformTransaction, hasRequiredAmount, hasTypeRequiredAmount } =
-    useBuzzTransaction({
-      message,
-      purchaseSuccessMessage,
-      performTransactionOnPurchase,
-      type: transactionType,
-    });
+  const {
+    conditionalPerformTransaction,
+    hasRequiredAmount,
+    hasTypeRequiredAmount,
+    getTypeDistribution,
+  } = useBuzzTransaction({
+    message,
+    purchaseSuccessMessage,
+    performTransactionOnPurchase,
+    type: transactionType,
+  });
 
   if (!features.buzz) return null;
 
@@ -85,10 +90,16 @@ export function BuzzTransactionButton({
     conditionalPerformTransaction(buzzAmount, onPerformTransaction);
   };
 
+  const blueColor = 'blue.4';
+  const yellowColor = 'yellow.7';
+
   const hasCost = buzzAmount > 0;
   const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
-  const buttonColor =
-    meetsTypeRequiredAmount && transactionType === 'Generation' ? 'blue.4' : 'yellow.7';
+
+  const takesBlue = transactionType === 'Generation';
+  const buttonColor = meetsTypeRequiredAmount && takesBlue ? blueColor : yellowColor;
+
+  const typeDistrib = getTypeDistribution(buzzAmount);
 
   return (
     <Button
@@ -116,16 +127,15 @@ export function BuzzTransactionButton({
             unitAmount={buzzAmount}
             displayCurrency={false}
             radius={buttonProps?.radius ?? 'sm'}
-            py={10}
+            py={12}
             pl={4}
             pr={8}
             loading={loading}
             textColor={
-              meetsTypeRequiredAmount && transactionType === 'Generation'
-                ? theme.colors.blue[4]
-                : theme.colors.yellow[7]
+              meetsTypeRequiredAmount && takesBlue ? theme.colors.blue[4] : theme.colors.yellow[7]
             }
             color={theme.colorScheme === 'dark' ? 'dark.8' : 'gray.9'}
+            typeDistrib={showTypePct ? typeDistrib : undefined}
           >
             {!hasRequiredAmount(buzzAmount) && (
               <Tooltip
@@ -150,9 +160,9 @@ export function BuzzTransactionButton({
             label={error ?? 'There was an error'}
             multiline={true}
             withArrow
-            w={200}
+            maw={200}
             opened={true} // Forcefully open becuse button is disabled
-            style={{ whiteSpace: 'normal' }}
+            // style={{ whiteSpace: 'normal' }}
           >
             <Badge
               color="dark.8"

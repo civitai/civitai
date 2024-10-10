@@ -14,11 +14,11 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
-
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { isAir } from '~/utils/string-helpers';
 import { trainingBaseModelType } from '~/utils/training';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
@@ -49,7 +49,7 @@ export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()
-  .refine((value) => /^civitai:\d+@\d+$/.test(value ?? ''));
+  .refine((value) => /^civitai:\d+@\d+$/.test(value ?? '') || isAir(value ?? ''));
 
 export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
 
