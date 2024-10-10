@@ -930,7 +930,7 @@ export function AppHeader({
                           </Group>
                         </Menu.Item>
                       )}
-                      <BuzzMenuItem withAbbreviation={false} />
+                      <BuzzMenuItem />
                       {userMenuItems}
                       <Divider my={4} />
                       <Menu.Item
