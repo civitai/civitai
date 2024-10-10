@@ -1,6 +1,7 @@
 import { ActionIcon, Text, Tooltip, MantineNumberSize, Button, Checkbox } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useRouter } from 'next/router';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
@@ -39,6 +40,7 @@ export function GeneratedImageActions({
     downloadSelected,
     zipping,
   } = useGeneratedImageActions();
+  const isMobile = useIsMobile();
 
   const imagesCount = selectableImageIds.length;
   const selectedCount = selected.length;
@@ -61,7 +63,7 @@ export function GeneratedImageActions({
   const hasSelected = !!selectedCount;
 
   return (
-    <div className="flex items-center justify-between gap-6">
+    <div className={`flex items-center justify-between ${isMobile ? '' : 'gap-6'}`}>
       <MarkerFiltersDropdown />
 
       <Checkbox
@@ -70,6 +72,8 @@ export function GeneratedImageActions({
         onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
         label={!selectedCount ? 'Select all' : `${selectedCount} selected`}
         labelPosition="left"
+        mr={8}
+        styles={{ label: { paddingLeft: 8, paddingRight: 8, whiteSpace: 'nowrap' } }}
       />
       {hasSelected && (
         <div className="flex gap-2">
@@ -97,6 +101,7 @@ export function GeneratedImageActions({
             <Button
               color="blue"
               size="sm"
+              px={isMobile ? 8 : 18}
               h={34}
               onClick={postSelectedImages}
               loading={isMutating}

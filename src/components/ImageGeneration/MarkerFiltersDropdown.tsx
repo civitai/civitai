@@ -3,7 +3,6 @@ import {
   Chip,
   ChipProps,
   createStyles,
-  Divider,
   Group,
   Indicator,
   Popover,
@@ -13,12 +12,18 @@ import {
   ScrollArea,
   ButtonProps,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter, IconThumbUpFilled, IconThumbDownFilled, IconHeartFilled } from '@tabler/icons-react';
+import { useMediaQuery } from '@mantine/hooks';
+import {
+  IconChevronDown,
+  IconFilter,
+  IconThumbUpFilled,
+  IconThumbDownFilled,
+  IconHeartFilled,
+} from '@tabler/icons-react';
 import { useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { MarkerType } from '~/server/common/enums';
 
 export function MarkerFiltersDropdown(props: Props) {
@@ -27,16 +32,14 @@ export function MarkerFiltersDropdown(props: Props) {
     setFilters: state.setMarkerFilters,
   }));
 
-  return (
-    <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />
-  );
+  return <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
 }
 
 const ICONS = {
   default: IconFilter,
   liked: IconThumbUpFilled,
   disliked: IconThumbDownFilled,
-  favorited: IconHeartFilled
+  favorited: IconHeartFilled,
 };
 
 function getIcon(type: MarkerType | undefined) {
@@ -46,7 +49,6 @@ function getIcon(type: MarkerType | undefined) {
 export function DumbMarkerFiltersDropdown({
   filters,
   setFilters,
-  filterMode = 'local',
   position = 'bottom-end',
   isFeed,
   ...buttonProps
@@ -55,7 +57,7 @@ export function DumbMarkerFiltersDropdown({
   setFilters: (filters: Partial<MarkerFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useMediaQuery('(max-width: 576px)');
 
   const [opened, setOpened] = useState(false);
 
@@ -120,7 +122,8 @@ export function DumbMarkerFiltersDropdown({
                   setMarker(checked ? marker : undefined);
                   setFilters({ marker: checked ? marker : undefined });
                 }}
-                {...chipProps}>
+                {...chipProps}
+              >
                 <Group spacing={4} noWrap>
                   <Icon size={16} /> {marker}
                 </Group>
@@ -129,7 +132,7 @@ export function DumbMarkerFiltersDropdown({
           })}
         </Group>
       </Stack>
-    </Stack >
+    </Stack>
   );
 
   if (mobile)
