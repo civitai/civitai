@@ -41,40 +41,41 @@ export const trainingResultsV1Schema = z.object({
 });
 
 export type TrainingResultsV2 = z.infer<typeof trainingResultsV2Schema>;
-export const trainingResultsV2Schema = z
-  .object({
-    version: z.literal(2),
-    submittedAt: z.string(),
-    startedAt: z.string().nullish(),
-    completedAt: z.string().nullish(),
-    workflowId: z.string(),
-    transactionData: z.array(
-      z.object({
-        id: z.string().nullish(),
-        amount: z.number(),
-        accountType: z.nativeEnum(BuzzClientAccount).nullish(),
-        type: z.nativeEnum(TransactionType),
-      })
-    ),
-    history: z.array(
-      z.object({
-        time: z.string(),
-        status: z.nativeEnum(TrainingStatus),
-      })
-    ),
-    // error_type: z.enum(['user', 'system']).nullish(),
-    // error_message: z.string().nullish()
-    epochs: z.array(
-      z.object({
-        epochNumber: z.number(),
-        modelUrl: z.string(),
-        modelSize: z.number(),
-        sampleImages: z.array(z.string().url()),
-      })
-    ),
-    sampleImagesPrompts: z.array(z.string()),
-  })
-  .passthrough();
+export const trainingResultsV2Schema = z.object({
+  version: z.literal(2),
+  submittedAt: z.string(),
+  startedAt: z.string().nullish(),
+  completedAt: z.string().nullish(),
+  workflowId: z.string(),
+  transactionData: z.array(
+    z.object({
+      id: z.string().nullish(),
+      amount: z.number(),
+      accountType: z.nativeEnum(BuzzClientAccount).nullish(),
+      type: z.nativeEnum(TransactionType),
+    })
+  ),
+  history: z.array(
+    z.object({
+      time: z.string(),
+      status: z.nativeEnum(TrainingStatus),
+    })
+  ),
+  // error_type: z.enum(['user', 'system']).nullish(),
+  // error_message: z.string().nullish()
+  epochs: z.array(
+    z.object({
+      epochNumber: z.number(),
+      modelUrl: z.string(),
+      modelSize: z.number(),
+      sampleImages: z.array(z.string().url()),
+    })
+  ),
+  sampleImagesPrompts: z.array(z.string()),
+
+  // Added to v2 in case we parse an old file. Might be useful.
+  jobId: z.string().optional(),
+});
 
 // // as usual, this doesn't work. probably because version doesn't exist for v1
 // export const trainingResultsSchema = z.discriminatedUnion('version', [
