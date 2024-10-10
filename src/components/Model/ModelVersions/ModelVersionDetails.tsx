@@ -204,7 +204,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     });
   };
   const getDownloadProps = useCallback(
-    (file: { type?: string; metadata?: BasicFileMetadata } | null) => {
+    (file?: { type?: string; metadata?: BasicFileMetadata }) => {
       if (isLoadingAccess) {
         return {};
       }

@@ -21,7 +21,7 @@ import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
@@ -50,7 +50,7 @@ import {
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
-import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -1685,7 +1685,7 @@ export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
     })
   ).map((x) => {
     x.type = 'VAE';
-    return x;
+    return x as ModelFileModel;
   });
 
   return files;
@@ -2306,6 +2306,27 @@ export async function copyGallerySettingsToAllModelsByUser({
 
   await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
   return result;
+}
+
+export async function getFeaturedModels() {
+  let featuredModels = await redis.packed.get<number[]>(REDIS_KEYS.CACHES.FEATURED_MODELS);
+  if (!featuredModels) {
+    const query = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT "modelId"
+      FROM "CollectionItem" ci
+      JOIN "Collection" c ON c.id = ci."collectionId"
+      WHERE c."userId" = -1 AND c."name" = 'Featured Models'
+      ORDER BY ci."updatedAt" DESC
+      LIMIT 50;
+    `;
+    featuredModels = query.map((row) => row.id);
+    await redis.packed.set(REDIS_KEYS.CACHES.FEATURED_MODELS, featuredModels, { EX: CacheTTL.sm });
+  }
+
+  return featuredModels;
+}
+export async function bustFeaturedModelsCache() {
+  await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
 
 export async function setModelShowcaseCollection({
