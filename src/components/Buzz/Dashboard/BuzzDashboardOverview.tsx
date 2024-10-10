@@ -211,6 +211,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                           <List.Item>Generation</List.Item>
                           <List.Item>Training</List.Item>
                           <List.Item>Creator Club</List.Item>
+                          <List.Item>Bounties</List.Item>
                         </List>
                         <Text>
                           <Text component="span" weight="bold" color="blue.4">
@@ -278,7 +279,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               </Group>
             </Text>
             {transactions.length ? (
-              <ScrollArea.Autosize maxHeight={400} mt="md">
+              <ScrollArea.Autosize maxHeight={400} mt="md" key={transactionType}>
                 <Stack spacing={8} mr={14}>
                   {transactions.map((transaction) => {
                     const { amount, date } = transaction;
