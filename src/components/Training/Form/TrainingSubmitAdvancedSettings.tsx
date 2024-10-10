@@ -21,19 +21,18 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { getPrecision, isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
+import { getPrecision } from '~/components/Training/Form/TrainingCommon';
 import {
   optimizerArgMap,
   optimizerArgMapFlux,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
 import { TrainingRun, TrainingRunUpdate, trainingStore } from '~/store/training.store';
-import { isValidDiscount, isValidRapid, rapidEta } from '~/utils/training';
+import { discountInfo, isValidRapid, rapidEta } from '~/utils/training';
 
 export const AdvancedSettings = ({
   selectedRun,
@@ -49,7 +48,6 @@ export const AdvancedSettings = ({
   const { updateRun } = trainingStore;
   const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
-  const { cost } = useTrainingServiceStatus();
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
   const doUpdate = (data: TrainingRunUpdate) => {
@@ -169,13 +167,7 @@ export const AdvancedSettings = ({
               })
             }
           />
-          {/*TODO can remove this after 9-28*/}
-          {new Date() < new Date('2024-09-28') && (
-            <Badge color="green" variant="filled" size="sm">
-              NEW
-            </Badge>
-          )}
-          {isValidDiscount(cost) && (
+          {discountInfo.amt !== 0 && (
             <Badge
               color="pink"
               size="sm"
@@ -313,7 +305,7 @@ export const AdvancedSettings = ({
               <Stack spacing={4}>
                 <Group spacing="sm">
                   <Text>Training Parameters</Text>
-                  {isTrainingCustomModel(selectedRun.base) && (
+                  {!!selectedRun.customModel && (
                     <Tooltip
                       label="Custom models will likely require parameter adjustments. Please carefully check these before submitting."
                       maw={300}

@@ -4,7 +4,8 @@ import { ChatList } from '~/components/Chat/ChatList';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { ExistingChat } from '~/components/Chat/ExistingChat';
 import { NewChat } from '~/components/Chat/NewChat';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const useStyles = createStyles((theme) => ({
   chatList: {
@@ -17,11 +18,20 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function ChatWindow() {
+  return (
+    <ContainerProvider containerName="chat-window" className="size-full card">
+      <ChatWindowContent />
+    </ContainerProvider>
+  );
+}
+
+function ChatWindowContent() {
   const { state } = useChatContext();
   const { classes } = useStyles();
-  const mobile = useIsMobile();
 
-  if (mobile) {
+  const isMobile = useContainerSmallerThan(700);
+
+  if (isMobile) {
     if (!!state.existingChatId) return <ExistingChat />;
     if (state.isCreating) return <NewChat />;
     return <ChatList />;

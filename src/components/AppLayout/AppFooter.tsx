@@ -10,6 +10,7 @@ import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { IconArrowUp } from '@tabler/icons-react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { ChatPortal } from '~/components/Chat/ChatProvider';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
@@ -28,7 +29,7 @@ export function AppFooter() {
   const footerRef = useRef<HTMLElement | null>(null);
 
   const [showFooter, setShowFooter] = useState(true);
-  useScrollAreaRef({
+  const scrollRef = useScrollAreaRef({
     onScroll: (node) => {
       setShowFooter(node.scrollTop <= 100);
     },
@@ -38,17 +39,31 @@ export function AppFooter() {
     <footer
       ref={footerRef}
       className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
-      style={!showFooter ? { transform: 'translateY(100%)' } : undefined}
+      style={!showFooter ? { transform: 'translateY(var(--footer-height))' } : undefined}
     >
-      <FloatingActions showFooter={showFooter} />
+      <ChatPortal showFooter={showFooter} />
+      <div className="absolute bottom-[var(--footer-height)] right-0">
+        <div className="relative mb-2  mr-2 flex gap-2">
+          <Button
+            px="xs"
+            onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            className={'transition-transform'}
+            style={showFooter ? { transform: 'translateY(140%)' } : undefined}
+          >
+            <IconArrowUp size={20} stroke={2.5} />
+          </Button>
+          <AssistantButton />
+        </div>
+      </div>
       <div
         className={clsx(
-          'relative flex w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
+          ' relative flex h-[var(--footer-height)] w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
           {
             ['border-t border-gray-3 dark:border-dark-4']: !features.isGreen,
             ['border-green-8 border-t-[3px]']: features.isGreen,
           }
         )}
+        style={{ scrollbarWidth: 'thin' }}
       >
         <Text
           weight={700}
@@ -196,36 +211,5 @@ export function AppFooter() {
         </Group>
       </div>
     </footer>
-  );
-}
-
-function FloatingActions(props: {
-  showFooter: boolean;
-  assistant?: boolean;
-  scrollToTop?: boolean;
-}) {
-  const { showFooter, assistant = true, scrollToTop = true } = props;
-
-  return (
-    <div className="absolute bottom-full right-0 flex gap-2 overflow-hidden pb-2 pr-2 pt-1">
-      {scrollToTop && <ScrollToTop show={!showFooter} />}
-      {assistant && <AssistantButton />}
-    </div>
-  );
-}
-
-function ScrollToTop({ show }: { show: boolean }) {
-  const nodeRef = useScrollAreaRef();
-
-  return (
-    <Button
-      // leftIcon={<IconArrowUp size={16} />}
-      px="xs"
-      onClick={() => nodeRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
-      className={'transition-transform'}
-      style={!show ? { transform: 'translateY(150%)' } : undefined}
-    >
-      <IconArrowUp size={20} stroke={2.5} />
-    </Button>
   );
 }

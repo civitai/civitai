@@ -2,6 +2,7 @@ import { createBuzzEvent } from '../base.reward';
 
 export const firstDailyFollowReward = createBuzzEvent({
   type: 'firstDailyFollow',
+  toAccountType: 'generation',
   description: 'For first 3 people that you follow each day',
   tooltip: 'If you unfollow and follow the same person, you will not get this reward again.',
   awardAmount: 10,

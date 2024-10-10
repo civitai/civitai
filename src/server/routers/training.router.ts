@@ -27,14 +27,21 @@ import {
 } from '~/server/trpc';
 
 export const trainingRouter = router({
+  /**
+   * @deprecated for orchestrator v2
+   */
   createRequest: guardedProcedure
     .input(createTrainingRequestSchema)
     .use(isFlagProtected('imageTraining'))
     .mutation(({ input, ctx }) => createTrainingRequest({ ...input, userId: ctx.user.id })),
+  /**
+   * @deprecated for orchestrator v2
+   */
   createRequestDryRun: protectedProcedure
     .input(createTrainingRequestDryRunSchema)
     .use(isFlagProtected('imageTraining'))
     .query(({ input }) => createTrainingRequestDryRun({ ...input })),
+
   moveAsset: protectedProcedure
     .input(moveAssetInput)
     .use(isFlagProtected('imageTraining'))
@@ -52,6 +59,9 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getTrainingServiceStatus()),
+  /**
+   * @deprecated for orchestrator v2
+   */
   getJobEstStarts: protectedProcedure
     .use(isFlagProtected('imageTraining'))
     .query(({ ctx }) => getJobEstStartsHandler({ userId: ctx.user.id })),

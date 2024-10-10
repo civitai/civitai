@@ -687,6 +687,14 @@ export function AppHeader({
                 textSize={textSize}
                 withAbbreviation={withAbbreviation}
                 withTooltip={withAbbreviation}
+                accountType="user"
+              />
+              <UserBuzz
+                iconSize={16}
+                textSize={textSize}
+                withAbbreviation={withAbbreviation}
+                withTooltip={withAbbreviation}
+                accountType="generation"
               />
             </Group>
             <Button
@@ -922,7 +930,7 @@ export function AppHeader({
                           </Group>
                         </Menu.Item>
                       )}
-                      <BuzzMenuItem withAbbreviation={false} />
+                      <BuzzMenuItem />
                       {userMenuItems}
                       <Divider my={4} />
                       <Menu.Item

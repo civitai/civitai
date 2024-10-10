@@ -110,6 +110,7 @@ export type TrainingRun = {
   highPriority: boolean;
   staging: boolean;
   buzzCost: number;
+  hasIssue: boolean;
 };
 
 type TrainingDataState = {
@@ -173,6 +174,7 @@ export const defaultRun = {
   staging: false,
   highPriority: false,
   buzzCost: 0,
+  hasIssue: false,
 };
 
 export const defaultTrainingState: TrainingDataState = {
@@ -353,6 +355,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;
           run.buzzCost = data.buzzCost ?? run.buzzCost;
+          run.hasIssue = data.hasIssue ?? run.hasIssue;
           run.params = { ...run.params, ...data.params };
         }
       });

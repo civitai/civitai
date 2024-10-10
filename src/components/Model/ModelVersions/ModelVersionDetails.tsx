@@ -340,7 +340,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               data-activity="create:version-stat"
               disabled={isLoadingAccess}
               generationPrice={
-                !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                !hasGeneratePermissions &&
+                !isLoadingAccess &&
+                earlyAccessConfig?.chargeForGeneration
                   ? earlyAccessConfig?.generationPrice
                   : undefined
               }
@@ -525,7 +527,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     ) : (
       <Menu.Item key={file.id} py={4} icon={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format ?? '' : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     )
@@ -589,7 +591,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const unpublishedMessage =
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${version.meta?.customMessage}.` ?? '';
+      : `Removal reason: ${version.meta?.customMessage}.`;
   const license = baseModelLicenses[version.baseModel];
   const onSite = !!version.trainingStatus;
   const showAddendumLicense =
@@ -676,7 +678,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess}
                       generationPrice={
-                        !hasGeneratePermissions && earlyAccessConfig?.chargeForGeneration
+                        !hasGeneratePermissions &&
+                        !isLoadingAccess &&
+                        earlyAccessConfig?.chargeForGeneration
                           ? earlyAccessConfig?.generationPrice
                           : undefined
                       }
@@ -728,7 +732,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <DownloadButton
                         canDownload={canDownload}
                         downloadPrice={
-                          !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                          !hasDownloadPermissions &&
+                          !isLoadingAccess &&
+                          earlyAccessConfig?.chargeForDownload
                             ? earlyAccessConfig?.downloadPrice
                             : undefined
                         }
@@ -745,7 +751,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                           <DownloadButton
                             canDownload={canDownload}
                             downloadPrice={
-                              !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                              !hasDownloadPermissions &&
+                              !isLoadingAccess &&
+                              earlyAccessConfig?.chargeForDownload
                                 ? earlyAccessConfig?.downloadPrice
                                 : undefined
                             }
@@ -763,7 +771,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       {...getDownloadProps(primaryFile)}
                       canDownload={canDownload}
                       downloadPrice={
-                        !hasDownloadPermissions && earlyAccessConfig?.chargeForDownload
+                        !hasDownloadPermissions &&
+                        !isLoadingAccess &&
+                        earlyAccessConfig?.chargeForDownload
                           ? earlyAccessConfig?.downloadPrice
                           : undefined
                       }

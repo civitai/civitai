@@ -2975,95 +2975,6 @@ export const getEntityCoverImage = async ({
         "entityId" INTEGER,
         "entityType" VARCHAR
       )
-    ), targets AS (
-      SELECT
-        e."entityId",
-        e."entityType",
-        CASE
-        WHEN e."entityType" = 'Model'
-            THEN  (
-                SELECT mi."imageId" FROM (
-                  SELECT
-                    m.id,
-                    i.id as "imageId",
-                    ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-                  FROM "Image" i
-                  JOIN "Post" p ON p.id = i."postId"
-                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-                  JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-                  WHERE m."id" = e."entityId"
-                    AND m.status = 'Published'
-                    AND i."ingestion" = 'Scanned'
-                    AND i."needsReview" IS NULL
-                  ) mi
-                  WHERE mi.rn = 1
-                )
-        WHEN e."entityType" = 'ModelVersion'
-            THEN  (
-                SELECT mi."imageId" FROM (
-                  SELECT
-                    mv.id,
-                    i.id as "imageId"
-                  FROM "Image" i
-                  JOIN "Post" p ON p.id = i."postId"
-                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-                  WHERE mv."id" = e."entityId"
-                    AND mv.status = 'Published'
-                    AND i."ingestion" = 'Scanned'
-                    AND i."needsReview" IS NULL
-                  ORDER BY mv.index, i."postId", i.index
-                  ) mi
-                  LIMIT 1
-                )
-        WHEN e."entityType" = 'Image'
-          THEN (
-            SELECT i.id FROM "Image" i
-            WHERE i.id = e."entityId"
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-          )
-        WHEN e."entityType" = 'Article'
-          THEN (
-            SELECT ai."imageId" FROM (
-              SELECT
-                a.id,
-                i.id as "imageId"
-              FROM "Image" i
-              JOIN "Article" a ON a."coverId" = i.id
-              WHERE a."id" = e."entityId"
-                AND a."publishedAt" IS NOT NULL
-                AND i."ingestion" = 'Scanned'
-                AND i."needsReview" IS NULL
-            ) ai
-            LIMIT 1
-          )
-        WHEN e."entityType" = 'Post'
-          THEN (
-            SELECT pi."imageId" FROM (
-              SELECT
-                p.id,
-                i.id as "imageId"
-              FROM "Image" i
-              JOIN "Post" p ON p.id = i."postId"
-              WHERE p."id" = e."entityId"
-                AND p."publishedAt" IS NOT NULL
-                AND i."ingestion" = 'Scanned'
-                AND i."needsReview" IS NULL
-              ORDER BY i."postId", i.index
-            ) pi
-            LIMIT 1
-          )
-        ELSE (
-            SELECT
-                i.id
-            FROM "Image" i
-            JOIN "ImageConnection" ic ON ic."imageId" = i.id
-              AND ic."entityType" = e."entityType"
-              AND ic."entityId" = e."entityId"
-            LIMIT 1
-        )
-        END as "imageId"
-      FROM entities e
     )
     SELECT
       i.id,
@@ -3086,7 +2997,106 @@ export const getEntityCoverImage = async ({
       i."postId",
       t."entityId",
       t."entityType"
-    FROM targets t
+    FROM (
+       SELECT
+         *
+        FROM
+        (
+          -- MODEL
+          SELECT
+            e."entityId",
+            e."entityType",
+            i.id as "imageId"
+          FROM entities e
+          JOIN "Model" m ON e."entityId" = m.id
+          JOIN "ModelVersion" mv ON m.id = mv."modelId"
+          JOIN "Post" p ON mv.id = p."modelVersionId"
+          JOIN "Image" i ON p.id = i."postId"
+          WHERE e."entityType" = 'Model'
+          AND m.status = 'Published'
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+          ORDER BY mv.index,  p.id, i.index
+          LIMIT 1
+        ) t
+
+        UNION
+
+        -- MODEL VERSION
+        SELECT  * FROM (
+          SELECT
+            e."entityId",
+            e."entityType",
+            i.id as "imageId"
+          FROM entities e
+          JOIN "ModelVersion" mv ON e."entityId" = mv."id"
+          JOIN "Post" p ON mv.id = p."modelVersionId"
+          JOIN "Image" i ON p.id = i."postId"
+          WHERE e."entityType" = 'ModelVersion'
+          AND mv.status = 'Published'
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+          ORDER BY mv.index,  p.id, i.index
+          LIMIT 1
+        ) t
+
+        UNION
+        -- IMAGES
+        SELECT
+            e."entityId",
+            e."entityType",
+            e."entityId" AS "imageId"
+        FROM entities e
+        WHERE e."entityType" = 'Image'
+
+        UNION 
+        -- ARTICLES
+        SELECT * FROM (
+          SELECT
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId"
+          FROM entities e
+          JOIN "Article" a ON a.id = e."entityId"
+          JOIN "Image" i ON a."coverId" = i.id
+          WHERE e."entityType" = 'Article'
+          AND a."publishedAt" IS NOT NULL
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+          LIMIT 1
+        ) t
+
+        UNION 
+        -- POSTS
+        SELECT * FROM  (
+          SELECT
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId"
+          FROM entities e
+          JOIN "Post" p ON p.id = e."entityId"
+          JOIN "Image" i ON i."postId" = p.id
+          WHERE e."entityType" = 'Post'
+            AND p."publishedAt" IS NOT NULL
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+          ORDER BY i."postId", i.index 
+          LIMIT 1
+        ) t
+
+        UNION 
+        -- CONNECTIONS
+        SELECT * FROM (
+          SELECT
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId"
+          FROM entities e
+          JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
+          JOIN "Image" i ON i.id = ic."imageId"
+          LIMIT 1
+        ) t 
+    ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
 

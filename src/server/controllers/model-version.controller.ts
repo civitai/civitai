@@ -56,6 +56,7 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
+import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -686,4 +687,33 @@ export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInp
   });
   if (!version) throw throwNotFoundError();
   return version.model.user;
+}
+
+export async function getModelVersionForTrainingReviewHandler({ input }: { input: GetByIdInput }) {
+  const version = await getVersionById({
+    ...input,
+    select: {
+      model: { select: { user: { select: userWithCosmeticsSelect } } },
+      files: {
+        select: {
+          metadata: true,
+        },
+        where: {
+          type: 'Training Data',
+        },
+      },
+    },
+  });
+  if (!version) throw throwNotFoundError();
+
+  const trainingFile = version.files[0];
+  const trainingResults = (trainingFile?.metadata as FileMetadata)
+    ?.trainingResults as TrainingResultsV2;
+
+  return {
+    user: version.model.user,
+    workflowId: trainingResults?.workflowId,
+    jobId: trainingResults?.jobId as string | null,
+    trainingResults,
+  };
 }

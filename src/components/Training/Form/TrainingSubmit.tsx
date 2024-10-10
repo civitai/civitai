@@ -14,6 +14,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
 import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
@@ -30,7 +31,7 @@ import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -43,7 +44,6 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import {
   blockedCustomModels,
   goBack,
-  isTrainingCustomModel,
   minsToHours,
 } from '~/components/Training/Form/TrainingCommon';
 import {
@@ -61,6 +61,7 @@ import {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
+import { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import {
   defaultRun,
   defaultTrainingState,
@@ -71,10 +72,9 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
-  calcBuzzFromEta,
-  calcEta,
+  discountInfo,
+  getTrainingFields,
   isInvalidRapid,
-  isValidDiscount,
   isValidRapid,
   rapidEta,
 } from '~/utils/training';
@@ -140,9 +140,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
-
-  const [etaMins, setEtaMins] = useState<number | undefined>(undefined);
-  // const [debouncedEtaMins] = useDebouncedValue(etaMins, 2000);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const status = useTrainingServiceStatus();
@@ -177,60 +174,63 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const formBaseModel = selectedRun.base;
   const formBaseModelType = selectedRun.baseType;
 
-  const buzzCost = runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
+  const hasIssue = runs.some((r) => r.hasIssue);
+  const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
 
-  // Calc ETA and Cost
-  useEffect(() => {
-    const eta = calcEta({
-      cost: status.cost,
-      baseModel: formBaseModelType,
-      params: selectedRun.params,
-    });
-    const isCustom = isTrainingCustomModel(formBaseModel);
-    const price = calcBuzzFromEta({
-      cost: status.cost,
-      eta,
-      isCustom,
-      isFlux: selectedRun.baseType === 'flux',
-      isPriority: selectedRun.highPriority ?? false,
-      isRapid: isValidRapid(selectedRun.baseType, selectedRun.params.engine),
-      numImages: thisNumImages ?? 1,
-    });
-    setEtaMins(eta);
-    if (price !== selectedRun.buzzCost) {
-      updateRun(model.id, selectedRun.id, { buzzCost: price });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const whatIfData = useMemo(() => {
+    const retData: ImageTrainingRouterWhatIfSchema = {
+      model: getTrainingFields.getModel(formBaseModel),
+      priority: getTrainingFields.getPriority(selectedRun.highPriority),
+      engine: getTrainingFields.getEngine(selectedRun.params.engine),
+      trainingDataImagesCount: thisNumImages ?? 1,
+      resolution: selectedRun.params.resolution,
+      trainBatchSize: selectedRun.params.trainBatchSize,
+      maxTrainEpochs: selectedRun.params.maxTrainEpochs,
+      numRepeats: selectedRun.params.numRepeats ?? 200,
+    };
+    return retData;
   }, [
-    status.cost,
-    selectedRun.params.targetSteps,
-    selectedRun.params.resolution,
-    selectedRun.params.engine,
-    selectedRun.highPriority,
     formBaseModel,
     formBaseModelType,
+    selectedRun.highPriority,
+    selectedRun.params.engine,
+    thisNumImages,
+    selectedRun.params.resolution,
+    selectedRun.params.trainBatchSize,
+    selectedRun.params.maxTrainEpochs,
+    selectedRun.params.numRepeats,
   ]);
 
-  const { data: dryRunData, isFetching: dryRunLoading } =
-    trpc.training.createRequestDryRun.useQuery(
-      {
-        baseModel: formBaseModel,
-        isPriority: selectedRun.highPriority,
-        // cost: debouncedEtaMins,
-      },
-      {
-        refetchInterval: 1000 * 60,
-        refetchIntervalInBackground: false,
-        refetchOnWindowFocus: true,
-        staleTime: 1000 * 60,
-        enabled: !!formBaseModel,
+  const [debounced] = useDebouncedValue(whatIfData, 100);
+
+  const dryRunResult = trpc.orchestrator.createTrainingWhatif.useQuery(debounced, {
+    enabled: !!debounced,
+  });
+
+  useEffect(() => {
+    if (dryRunResult.isLoading) return;
+    const cost = dryRunResult.data?.cost;
+    if (!isDefined(cost) || cost < 0) {
+      if (!selectedRun.hasIssue) {
+        updateRun(model.id, selectedRun.id, { hasIssue: true, buzzCost: -1 });
+        showErrorNotification({
+          title: 'Error computing cost',
+          error: new Error(
+            'There was an issue computing the cost for these settings. Please change your settings or contact us if this persists.'
+          ),
+          autoClose: false,
+        });
       }
-    );
+    } else if (cost !== selectedRun.buzzCost) {
+      updateRun(model.id, selectedRun.id, { hasIssue: false, buzzCost: cost });
+    }
+  }, [dryRunResult.data?.cost]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation();
   const createFileMutation = trpc.modelFile.create.useMutation();
-  const doTraining = trpc.training.createRequest.useMutation();
+
+  const doTraining = trpc.orchestrator.createTraining.useMutation();
 
   const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
@@ -270,6 +270,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         await deleteVersionMutation.mutateAsync({ id: modelVersionId });
       }
 
+      finishedRuns++;
       if (finishedRuns === runs.length) {
         setAwaitInvalidate(false);
       }
@@ -349,7 +350,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
-                  {(buzzCost ?? 0).toLocaleString()}
+                  {totalBuzzCost.toLocaleString()}
                 </Text>
               </Group>
             </Group>
@@ -360,7 +361,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               <Group spacing={2}>
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
-                  {(balance - (buzzCost ?? 0)).toLocaleString()}
+                  {(balance - totalBuzzCost).toLocaleString()}
                 </Text>
               </Group>
             </Group>
@@ -375,7 +376,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       });
     };
 
-    conditionalPerformTransaction(buzzCost ?? 0, performTransaction);
+    conditionalPerformTransaction(totalBuzzCost, performTransaction);
   };
 
   const handleConfirm = () => {
@@ -483,6 +484,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     finishedRuns = 0;
   };
 
+  // HARD CODED FOR THIS RUN:
+  const discountEndDate = dayjs().month(9).endOf('month');
+
   return (
     <Stack>
       {!status.available && (
@@ -495,16 +499,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           {status.message ?? 'Training is currently disabled.'}
         </AlertWithIcon>
       )}
-      {isValidDiscount(status.cost) && (
+      {/* {discountInfo.amt !== 0 && ( */}
+      {discountEndDate.isAfter(dayjs()) && (
         <DismissibleAlert
-          id="rapid-training-discount-9-13-24"
+          id={`training-discount`}
           icon={<IconConfetti />}
           color="pink"
           content={
             <Text>
-              Flux-Dev Rapid Training is currently{' '}
-              {<b>{(1 - status.cost.rapid.discountFactor) * 100}%</b>} off! (Ends on{' '}
-              {new Date(status.cost.rapid.discountEnd).toLocaleDateString('en-us', {
+              Flux-Dev Rapid is currently <b>25%</b> off! (Ends on{' '}
+              {discountEndDate.toDate().toLocaleDateString('en-us', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'short',
@@ -515,6 +519,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
         />
       )}
+      {/* )} */}
       <Accordion
         variant="separated"
         defaultValue={'model-details'}
@@ -639,7 +644,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <SegmentedControl
           data={runs.map((run, idx) => ({
             label: `Run #${idx + 1} (${
-              isTrainingCustomModel(run.base)
+              !!run.customModel
                 ? 'Custom'
                 : run.base === 'sdxl'
                 ? 'SDXL'
@@ -768,57 +773,58 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Group spacing="sm">
               <Badge>
                 <Group spacing={4} noWrap>
-                  <Text>Est. Wait Time</Text>
+                  <Text>Queue</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long before your job is expected to be picked up</Text>
+                    <Text size="sm">How many jobs are in the queue before you</Text>
                   </InfoPopover>
                 </Group>
               </Badge>
 
-              {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
-                <Text>{dayjs(Date.now()).add(10, 's').fromNow(true)}</Text>
-              ) : dryRunLoading ? (
+              {dryRunResult.isLoading ? (
                 <Loader size="sm" />
               ) : (
-                <Text>
-                  {!!dryRunData ? dayjs(dryRunData).add(10, 's').fromNow(true) : 'Unknown'}
-                </Text>
+                <Text>{dryRunResult.data?.precedingJobs ?? 'Unknown'}</Text>
               )}
+
               <Divider orientation="vertical" />
 
               <Badge>
                 <Group spacing={4} noWrap>
                   <Text>ETA</Text>
                   <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How long in total before your job is done</Text>
+                    <Text size="sm">How long your job is expected to run</Text>
                   </InfoPopover>
                 </Group>
               </Badge>
 
               {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
                 <Text>{minsToHours(rapidEta)}</Text>
-              ) : dryRunLoading ? (
+              ) : dryRunResult.isLoading ? (
                 <Loader size="sm" />
               ) : (
                 <Text>
-                  {!isDefined(etaMins)
+                  {!isDefined(dryRunResult.data?.eta)
                     ? 'Unknown'
-                    : etaMins > 20000
+                    : dryRunResult.data?.eta > 20000
                     ? 'Forever'
-                    : minsToHours(
-                        (!!dryRunData
-                          ? (new Date().getTime() - new Date(dryRunData).getTime()) / 60000
-                          : 10) + etaMins
-                      )}
+                    : minsToHours(dryRunResult.data?.eta)}
                 </Text>
               )}
+
               <Divider orientation="vertical" />
+
               <Badge>Cost</Badge>
-              <CurrencyBadge
-                currency={Currency.BUZZ}
-                unitAmount={selectedRun.buzzCost}
-                displayCurrency={false}
-              />
+              {dryRunResult.isLoading ? (
+                <Loader size="sm" />
+              ) : !isDefined(dryRunResult.data?.cost) || selectedRun.hasIssue ? (
+                <Text>Error</Text>
+              ) : (
+                <CurrencyBadge
+                  currency={Currency.BUZZ}
+                  unitAmount={dryRunResult.data.cost}
+                  displayCurrency={false}
+                />
+              )}
             </Group>
           </Paper>
         </>
@@ -831,13 +837,19 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           Back
         </Button>
         <BuzzTransactionButton
-          loading={awaitInvalidate}
+          loading={awaitInvalidate || dryRunResult.isLoading}
           disabled={
-            blockedModels.includes(formBaseModel ?? '') || !status.available || awaitInvalidate
+            blockedModels.includes(formBaseModel ?? '') ||
+            !status.available ||
+            awaitInvalidate ||
+            dryRunResult.isLoading
           }
           label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
-          buzzAmount={buzzCost ?? 0}
+          buzzAmount={totalBuzzCost}
+          transactionType="Generation"
           onPerformTransaction={handleSubmit}
+          error={hasIssue ? 'Error computing cost' : undefined}
+          showTypePct
         />
       </Group>
     </Stack>
