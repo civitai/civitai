@@ -18,6 +18,7 @@ import { trpc } from '~/utils/trpc';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -39,7 +40,8 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       ?.checkpoint ?? watched.model;
 
   const query = useMemo(() => {
-    const { model, resources, vae, creatorTip, civitaiTip, ...params } = watched;
+    const { model, resources = [], vae, creatorTip, civitaiTip, ...params } = watched;
+    console.log(resources);
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       params.width = size.width;
@@ -54,8 +56,11 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     }
 
     return {
-      resources: [modelId],
-      // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      // resources: [modelId],
+      resources: [
+        modelId,
+        ...[...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      ],
       params: {
         ...params,
         ...whatIfQueryOverrides,
