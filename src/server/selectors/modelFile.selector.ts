@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { ModelFileType } from '~/server/common/constants';
+import { ModelFileMetadata } from '~/shared/types/model-file.types';
 
 export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
   id: true,
@@ -24,4 +26,10 @@ export const modelFileSelect = Prisma.validator<Prisma.ModelFileSelect>()({
 const modelFile = Prisma.validator<Prisma.ModelFileDefaultArgs>()({
   select: modelFileSelect,
 });
-export type ModelFileModel = Prisma.ModelFileGetPayload<typeof modelFile>;
+export type ModelFileModel = Omit<
+  Prisma.ModelFileGetPayload<typeof modelFile>,
+  'metadata' | 'type'
+> & {
+  metadata: ModelFileMetadata;
+  type: ModelFileType;
+};

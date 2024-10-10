@@ -1,7 +1,7 @@
 import {
   createFileHandler,
   deleteFileHandler,
-  getFilesByVersionIdHandler,
+  // getFilesByVersionIdHandler,
   updateFileHandler,
   upsertFileHandler,
 } from '~/server/controllers/model-file.controller';
@@ -14,7 +14,7 @@ import {
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 
 export const modelFileRouter = router({
-  getByVersionId: publicProcedure.input(getByIdSchema).query(getFilesByVersionIdHandler),
+  // getByVersionId: publicProcedure.input(getByIdSchema).query(getFilesByVersionIdHandler),
   create: protectedProcedure.input(modelFileCreateSchema).mutation(createFileHandler),
   update: protectedProcedure.input(modelFileUpdateSchema).mutation(updateFileHandler),
   upsert: protectedProcedure.input(modelFileUpsertSchema).mutation(upsertFileHandler),

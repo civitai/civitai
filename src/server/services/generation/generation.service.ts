@@ -13,7 +13,7 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
+import { ModelType, Prisma } from '@prisma/client';
 
 import { isDefined } from '~/utils/type-guards';
 
@@ -27,7 +27,7 @@ import { getPagedData } from '~/server/utils/pagination-helpers';
 import { modelsSearchIndex } from '~/server/search-index';
 
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { resourceDataCache } from '~/server/redis/caches';
+import { filesForModelVersionCache, resourceDataCache } from '~/server/redis/caches';
 import {
   formatGenerationResources,
   GenerationResource,
@@ -41,6 +41,8 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { getGenerationConfig } from '~/server/common/constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getFeaturedModels } from '~/server/services/model.service';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -209,54 +211,61 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
     case 'image':
       return await getImageGenerationData(props.id);
     case 'modelVersion':
-      return await getResourceGenerationData({ modelVersionId: props.id });
+      return await getResourceGenerationData([props.id]);
     case 'modelVersions':
-      return await getMultipleResourceGenerationData({ versionIds: props.ids });
+      return await getResourceGenerationData(props.ids);
     default:
       throw new Error('unsupported generation data type');
   }
 };
 
-export const getResourceGenerationData = async ({ modelVersionId }: { modelVersionId: number }) => {
-  if (!modelVersionId) throw new Error('modelVersionId required');
-  const resources = await resourceDataCache.fetch([modelVersionId]);
-  if (!resources.length) throw throwNotFoundError();
+async function getCachedResourceGenerationData(modelVersionIds: number[]) {
+  if (!modelVersionIds.length) throw new Error('missing modelVersionIds');
+  const [resources, files] = await Promise.all([
+    resourceDataCache.fetch(modelVersionIds),
+    filesForModelVersionCache.fetch(modelVersionIds),
+  ]);
+  const resourcesWithFiles = resources
+    .map((resource) => {
+      const resourceFiles = files[resource.id]?.files;
+      if (!resourceFiles) return null;
+      const file = getPrimaryFile(resourceFiles);
+      if (!file) return null;
+      return {
+        modelId: resource.model.id,
+        modelType: resource.model.type,
+        fileSizeKB: file.sizeKB,
+      };
+    })
+    .filter(isDefined);
+  const additionalCharges = await getShouldChargeForResources(resourcesWithFiles);
 
-  const [resource] = resources;
-  if (resource.vaeId) {
-    const [vae] = await resourceDataCache.fetch([resource.vaeId]);
-    if (vae) resources.push({ ...vae, vaeId: null });
-  }
+  return resources.map((resource) => {
+    const additionalCharge = additionalCharges[resource.model.id];
+    return { ...resource, additionalCharge };
+  });
+}
 
-  const deduped = uniqBy(formatGenerationResources(resources), 'id');
-
-  return {
-    resources: deduped,
-    params: {
-      baseModel: getBaseModelFromResources(deduped),
-      clipSkip: resource.clipSkip ?? undefined,
-    },
-  };
-};
-
-const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: number[] }) => {
+async function getResourceGenerationData(versionIds: number[]) {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await resourceDataCache.fetch(versionIds);
+  const ids = [...new Set(versionIds)];
+  const resources = await getCachedResourceGenerationData(ids);
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
-    const [vae] = await resourceDataCache.fetch([checkpoint.vaeId]);
+    const [vae] = await getCachedResourceGenerationData([checkpoint.vaeId]);
     if (vae) resources.push({ ...vae, vaeId: null });
   }
 
-  const deduped = uniqBy(formatGenerationResources(resources), 'id');
+  const formatted = formatGenerationResources(resources);
 
   return {
-    resources: deduped,
+    resources: formatted,
     params: {
-      baseModel: getBaseModelFromResources(deduped),
+      baseModel: getBaseModelFromResources(formatted),
+      clipSkip: resources.length === 1 ? resources[0].clipSkip ?? undefined : undefined,
     },
   };
-};
+}
 
 // const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
 const getImageGenerationData = async (id: number) => {
@@ -286,7 +295,7 @@ const getImageGenerationData = async (id: number) => {
   } = imageGenerationSchema.parse(image.meta);
 
   const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
-  const resourceData = await resourceDataCache.fetch(versionIds);
+  const resourceData = await getCachedResourceGenerationData(versionIds);
 
   const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
   if (index > -1 && !resourceData[index].available) {
@@ -301,7 +310,7 @@ const getImageGenerationData = async (id: number) => {
       orderBy: { index: 'asc' },
     });
     if (latestVersion) {
-      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+      const [newCheckpoint] = await getCachedResourceGenerationData([latestVersion.id]);
       if (newCheckpoint) resourceData[index] = newCheckpoint;
     }
   }
@@ -417,4 +426,25 @@ export async function toggleUnavailableResource({
       .catch(handleLogError);
 
   return unavailableResources;
+}
+
+const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+export async function getShouldChargeForResources(
+  args: {
+    modelType: ModelType;
+    modelId: number;
+    fileSizeKB: number;
+  }[]
+) {
+  const featuredModels = await getFeaturedModels();
+  return args.reduce<Record<string, boolean>>(
+    (acc, { modelType, modelId, fileSizeKB }) => ({
+      ...acc,
+      [modelId]:
+        !FREE_RESOURCE_TYPES.includes(modelType) &&
+        !featuredModels.includes(modelId) &&
+        fileSizeKB > 10 * 1024,
+    }),
+    {}
+  );
 }

@@ -44,19 +44,24 @@ export async function bustCacheTag(tag: string | string[]) {
   }
 }
 
-type CachedLookupOptions<T extends object> = {
+type CachedEntity<T extends Record<string, unknown>> = T & { cachedAt: Date };
+type Debounced = { debounce: boolean; cachedAt: Date };
+type NotFound = { notFound: boolean; cachedAt: Date };
+
+type CacheResult<T extends Record<string, unknown>> = CachedEntity<T> | Debounced | NotFound;
+
+type CachedLookupOptions<T extends Record<string, unknown>> = {
   key: string;
-  idKey: keyof T;
+  idKey?: keyof T;
   lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
-  appendFn?: (results: Set<T>) => Promise<void>;
+  appendFn?: (results: Record<string, T>) => Promise<void>;
   ttl?: number;
   debounceTime?: number;
   cacheNotFound?: boolean;
   dontCacheFn?: (data: T) => boolean;
 };
-export function createCachedArray<T extends object>({
+export function createCachedObject<T extends Record<string, unknown>>({
   key,
-  idKey,
   lookupFn,
   appendFn,
   ttl = CacheTTL.xs,
@@ -65,38 +70,40 @@ export function createCachedArray<T extends object>({
   dontCacheFn,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
-    if (!ids.length) return [];
-    const results = new Set<T>();
-    const cacheResults: T[] = [];
-    for (const batch of chunk(ids, 200)) {
-      const batchResults = await redis.packed.mGet<T>(batch.map((id) => `${key}:${id}`));
-      cacheResults.push(...batchResults.filter((x) => x !== null));
+    if (!ids.length) return {} as Record<string, T>;
+    const uniqueIds = [...new Set(ids)];
+    const results: Record<string, T> = {};
+    const cacheResults: [number, CacheResult<T>][] = [];
+    const cacheMisses: number[] = [];
+    for (const batch of chunk(uniqueIds, 200)) {
+      const batchResults = await redis.packed.mGet<CacheResult<T>>(
+        batch.map((id) => `${key}:${id}`)
+      );
+      for (const [index, result] of batchResults.entries()) {
+        const id = batch[index];
+        if (result) cacheResults.push([id, result]);
+        else cacheMisses.push(id);
+      }
     }
-    const cacheArray = cacheResults.filter((x) => x !== null) as T[];
-    const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
     const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
-    const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
-    for (const id of [...new Set(ids)]) {
-      const cached = cache[id];
-      if (cached) {
-        if (cached.notFound) continue;
-        if (cached.debounce) {
-          if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
-          cacheMisses.add(id);
-          continue;
-        }
-        results.add(cached);
-      } else cacheMisses.add(id);
+
+    for (const [id, cached] of cacheResults) {
+      if ('notFound' in cached) continue;
+      else if ('debounce' in cached) {
+        if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
+        cacheMisses.push(id);
+        continue;
+      } else results[id] = cached;
     }
 
     if (dontCache.size > 0)
       log(`${key}: Cache debounce - ${dontCache.size} items: ${[...dontCache].join(', ')}`);
 
     // If we have cache misses, we need to fetch from the DB
-    if (cacheMisses.size > 0) {
-      log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
+    if (cacheMisses.length > 0) {
+      log(`${key}: Cache miss - ${cacheMisses.length} items: ${[...cacheMisses].join(', ')}`);
       const dbResults: Record<string, T> = {};
       const lookupBatches = chunk([...cacheMisses], 10000);
       for (const batch of lookupBatches) {
@@ -105,15 +112,15 @@ export function createCachedArray<T extends object>({
       }
 
       const toCache: Record<string, MixedObject> = {};
-      const toCacheNotFound: Record<string, MixedObject> = {};
+      const toCacheNotFound: Record<string, NotFound> = {};
       const cachedAt = new Date();
       for (const id of cacheMisses) {
         const result = dbResults[id];
         if (!result) {
-          if (cacheNotFound) toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+          if (cacheNotFound) toCacheNotFound[id] = { notFound: true, cachedAt };
           continue;
         }
-        results.add(result as T);
+        results[id] = result;
         if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
       }
 
@@ -139,7 +146,7 @@ export function createCachedArray<T extends object>({
 
     if (appendFn) await appendFn(results);
 
-    return [...results];
+    return results;
   }
 
   async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
@@ -148,9 +155,9 @@ export function createCachedArray<T extends object>({
 
     await Promise.all(
       ids.map((id) =>
-        redis.packed.set(
+        redis.packed.set<Debounced>(
           `${key}:${id}`,
-          { [idKey]: id, debounce: true },
+          { debounce: true, cachedAt: new Date() },
           {
             EX: options.debounceTime ?? debounceTime,
           }
@@ -180,21 +187,25 @@ export function createCachedArray<T extends object>({
 
   return { fetch, bust, refresh };
 }
-export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
+export type CachedArray<T extends Record<string, unknown>> = ReturnType<
+  typeof createCachedArray<T>
+>;
 
-export function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
-  const cachedArray = createCachedArray<T>(lookupOptions);
+export function createCachedArray<T extends Record<string, unknown>>(
+  lookupOptions: CachedLookupOptions<T>
+) {
+  const cachedObject = createCachedObject<T>(lookupOptions);
 
   async function fetch(ids: number[]) {
-    const results = await cachedArray.fetch(ids);
-    return Object.fromEntries(
-      results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])
-    ) as Record<string, T>;
+    const results = await cachedObject.fetch(ids);
+    return Object.values(results);
   }
 
-  return { ...cachedArray, fetch };
+  return { ...cachedObject, fetch };
 }
-export type CachedObject<T extends object> = ReturnType<typeof createCachedObject<T>>;
+export type CachedObject<T extends Record<string, unknown>> = ReturnType<
+  typeof createCachedObject<T>
+>;
 
 export type CachedCounterOptions = {
   ttl?: number;

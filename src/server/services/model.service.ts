@@ -50,7 +50,7 @@ import {
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
-import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -1685,7 +1685,7 @@ export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
     })
   ).map((x) => {
     x.type = 'VAE';
-    return x;
+    return x as ModelFileModel;
   });
 
   return files;
@@ -2308,7 +2308,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   return result;
 }
 
-export async function isFeaturedModel(modelId: number) {
+export async function getFeaturedModels() {
   let featuredModels = await redis.packed.get<number[]>(REDIS_KEYS.CACHES.FEATURED_MODELS);
   if (!featuredModels) {
     const query = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -2323,7 +2323,7 @@ export async function isFeaturedModel(modelId: number) {
     await redis.packed.set(REDIS_KEYS.CACHES.FEATURED_MODELS, featuredModels, { EX: CacheTTL.sm });
   }
 
-  return featuredModels.includes(modelId);
+  return featuredModels;
 }
 export async function bustFeaturedModelsCache() {
   await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);

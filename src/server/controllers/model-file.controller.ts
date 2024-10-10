@@ -9,19 +9,19 @@ import {
 import {
   createFile,
   deleteFile,
-  getFilesForModelVersionCache,
+  // getFilesForModelVersionCache,
   updateFile,
 } from '~/server/services/model-file.service';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
-export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
-  try {
-    const data = await getFilesForModelVersionCache([input.id]);
-    return data[input.id];
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
+// export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
+//   try {
+//     const data = await getFilesForModelVersionCache([input.id]);
+//     return data[input.id];
+//   } catch (error) {
+//     throw throwDbError(error);
+//   }
+// };
 
 export const createFileHandler = async ({
   input,

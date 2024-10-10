@@ -10,8 +10,10 @@ import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
-import { isFeaturedModel } from '~/server/services/model.service';
+import {
+  getShouldChargeForResources,
+  getUnavailableResources,
+} from '~/server/services/generation/generation.service';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -38,8 +40,6 @@ type FileRow = {
   sizeKB: number;
   hash: string;
 };
-
-const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
 
 export default MixedAuthEndpoint(async function handler(
   req: NextApiRequest,
@@ -121,10 +121,13 @@ export default MixedAuthEndpoint(async function handler(
   }
 
   // Check if should charge
-  let shouldCharge =
-    !FREE_RESOURCE_TYPES.includes(modelVersion.type) &&
-    !(await isFeaturedModel(modelVersion.modelId)) &&
-    primaryFile.sizeKB > 10 * 1024;
+  const shouldChargeResult = await getShouldChargeForResources([
+    {
+      modelType: modelVersion.type,
+      modelId: modelVersion.modelId,
+      fileSizeKB: primaryFile.sizeKB,
+    },
+  ]);
 
   const data = {
     air,
@@ -143,7 +146,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
-    additionalResourceCharge: shouldCharge,
+    additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
   };
   res.status(200).json(data);
 });

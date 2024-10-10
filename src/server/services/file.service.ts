@@ -221,7 +221,7 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
-  let file: FileResult | null = null;
+  let file: FileResult | undefined;
   if (type === 'VAE') {
     if (!modelVersion.vaeId) return { status: 'not-found' };
     const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
