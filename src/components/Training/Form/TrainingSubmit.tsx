@@ -28,6 +28,7 @@ import {
 } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
+import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -483,6 +484,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     finishedRuns = 0;
   };
 
+  // HARD CODED FOR THIS RUN:
+  const discountEndDate = dayjs().month(9).endOf('month');
+
   return (
     <Stack>
       {!status.available && (
@@ -495,15 +499,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           {status.message ?? 'Training is currently disabled.'}
         </AlertWithIcon>
       )}
-      {discountInfo.amt !== 0 && (
+      {/* {discountInfo.amt !== 0 && ( */}
+      {discountEndDate.isAfter(dayjs()) && (
         <DismissibleAlert
-          id={`training-discount-${discountInfo.bannerId}`}
+          id={`training-discount`}
           icon={<IconConfetti />}
           color="pink"
           content={
             <Text>
-              {discountInfo.message} is currently {<b>{discountInfo.amt * 100}%</b>} off! (Ends on{' '}
-              {new Date(discountInfo.endDate).toLocaleDateString('en-us', {
+              Flux-Dev Rapid is currently <b>25%</b> off! (Ends on{' '}
+              {discountEndDate.toDate().toLocaleDateString('en-us', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'short',
@@ -514,6 +519,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           }
         />
       )}
+      {/* )} */}
       <Accordion
         variant="separated"
         defaultValue={'model-details'}
