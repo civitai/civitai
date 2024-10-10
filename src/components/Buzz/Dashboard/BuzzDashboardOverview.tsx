@@ -5,11 +5,14 @@ import {
   Group,
   Loader,
   Paper,
+  Popover,
   ScrollArea,
   SegmentedControl,
   Stack,
   Text,
   Title,
+  List,
+  Anchor,
 } from '@mantine/core';
 import { UserBuzz } from '~/components/User/UserBuzz';
 import { Bar } from 'react-chartjs-2';
@@ -24,10 +27,11 @@ import {
 } from 'chart.js';
 import { formatDate } from '~/utils/date-helpers';
 import { useBuzzTransactions } from '~/components/Buzz/useBuzz';
-import { IconArrowRight, IconBolt } from '@tabler/icons-react';
+import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useBuzzDashboardStyles } from '../buzz.styles';
+import { CurrencyConfig } from '~/server/common/constants';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -181,6 +185,61 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     textSize="xl"
                     withAbbreviation={false}
                   />
+
+                  <Popover width={350} withArrow withinPortal shadow="sm">
+                    <Popover.Target>
+                      <IconInfoCircle size={20} style={{ cursor: 'pointer' }} />
+                    </Popover.Target>
+                    <Popover.Dropdown>
+                      <Stack>
+                        <Group noWrap>
+                          <Text>
+                            <Text component="span" weight="bold" color="yellow.7">
+                              <IconBolt
+                                color="yellow.7"
+                                style={{ fill: theme.colors.yellow[7], display: 'inline' }}
+                                size={16}
+                              />
+                              Yellow Buzz:
+                            </Text>{' '}
+                            Either purchased or earned from Creator Compensation systems. Can be
+                            used for:
+                          </Text>
+                        </Group>
+                        <List>
+                          <List.Item>Tips</List.Item>
+                          <List.Item>Generation</List.Item>
+                          <List.Item>Training</List.Item>
+                          <List.Item>Creator Club</List.Item>
+                          <List.Item>Bounties</List.Item>
+                        </List>
+                        <Text>
+                          <Text component="span" weight="bold" color="blue.4">
+                            <IconBolt
+                              color="blue.4"
+                              style={{ fill: theme.colors.blue[4], display: 'inline' }}
+                              size={16}
+                            />
+                            Blue Buzz:
+                          </Text>{' '}
+                          Free buzz earned from viewing adds or completing daily challenges. Can be
+                          used for:
+                        </Text>
+                        <List>
+                          <List.Item>Generation</List.Item>
+                          <List.Item>Training</List.Item>
+                        </List>
+
+                        <Anchor
+                          target="blank"
+                          href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-⚡/#types-of-buzz"
+                          size="xs"
+                        >
+                          Learn more
+                        </Anchor>
+                      </Stack>
+                    </Popover.Dropdown>
+                  </Popover>
                 </Group>
               </Stack>
               <Bar
@@ -220,7 +279,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               </Group>
             </Text>
             {transactions.length ? (
-              <ScrollArea.Autosize maxHeight={400} mt="md">
+              <ScrollArea.Autosize maxHeight={400} mt="md" key={transactionType}>
                 <Stack spacing={8} mr={14}>
                   {transactions.map((transaction) => {
                     const { amount, date } = transaction;

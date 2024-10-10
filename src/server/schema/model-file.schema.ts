@@ -72,6 +72,9 @@ export const trainingResultsV2Schema = z.object({
     })
   ),
   sampleImagesPrompts: z.array(z.string()),
+
+  // Added to v2 in case we parse an old file. Might be useful.
+  jobId: z.string().optional(),
 });
 
 // // as usual, this doesn't work. probably because version doesn't exist for v1

@@ -14,6 +14,7 @@ import {
   modelVersionEarlyAccessPurchaseHandler,
   modelVersionDonationGoalsHandler,
   getModelVersionOwnerHandler,
+  getModelVersionForTrainingReviewHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -123,4 +124,7 @@ export const modelVersionRouter = router({
     .input(modelVersionEarlyAccessPurchase)
     .mutation(modelVersionEarlyAccessPurchaseHandler),
   donationGoals: publicProcedure.input(getByIdSchema).query(modelVersionDonationGoalsHandler),
+  getTrainingDetails: moderatorProcedure
+    .input(getByIdSchema)
+    .query(getModelVersionForTrainingReviewHandler),
 });

@@ -1,9 +1,14 @@
-import { Button, Loader, Text } from '@mantine/core';
+import { Button, Loader, Popover, Text } from '@mantine/core';
+import { IconInfoSquareRounded } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
+import {
+  DescriptionTable,
+  type Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useStepper } from '~/hooks/useStepper';
 import { fetchBlob } from '~/utils/file-utils';
@@ -20,7 +25,12 @@ function ReviewTrainingData() {
   const [currentStep, actions] = useStepper(2);
   const utils = trpc.useUtils();
 
-  const { data: user, isLoading } = trpc.modelVersion.getOwner.useQuery({ id: versionId });
+  const { data, isLoading } = trpc.modelVersion.getTrainingDetails.useQuery({
+    id: versionId,
+  });
+
+  const user = data?.user;
+  const workflowId = data?.workflowId;
 
   useEffect(() => {
     if (requestedRef.current || urls.length > 0) return;
@@ -49,6 +59,34 @@ function ReviewTrainingData() {
     router.back();
   }
 
+  const details: DescriptionTableProps['items'] = [
+    {
+      label: 'Workflow ID',
+      value: data?.workflowId ?? 'N/A',
+    },
+    {
+      label: 'JobID',
+      value: data?.jobId,
+      visible: !data?.workflowId,
+    },
+    {
+      label: 'Version',
+      value: data?.trainingResults?.version ?? '1',
+    },
+    {
+      label: 'Started At',
+      value: data?.trainingResults?.startedAt ?? 'N/A',
+    },
+    {
+      label: 'Submitted At',
+      value: data?.trainingResults?.submittedAt ?? 'N/A',
+    },
+    {
+      label: 'Completed At',
+      value: data?.trainingResults?.completedAt ?? 'N/A',
+    },
+  ];
+
   return loading || isLoading ? (
     <div className="p-3">
       <Loader className="mx-auto" />
@@ -63,6 +101,18 @@ function ReviewTrainingData() {
     </div>
   ) : (
     <>
+      <div className="flex size-full flex-col">
+        <div className="container flex max-w-lg justify-end gap-3 p-3">
+          <Popover width={300} withArrow withinPortal shadow="sm">
+            <Popover.Target>
+              <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
+            </Popover.Target>
+            <Popover.Dropdown>
+              <DescriptionTable items={details} />
+            </Popover.Dropdown>
+          </Popover>
+        </div>
+      </div>
       {currentStep === 1 && (
         <ReviewImages
           onNext={actions.goToNextStep}
