@@ -51,9 +51,14 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
 
   const transactions = useMemo(() => {
-    return transactionType === 'user'
-      ? mainBuzzTransactions.transactions
-      : generationBuzzTransactions.transactions;
+    const transactions =
+      transactionType === 'user'
+        ? mainBuzzTransactions.transactions
+        : generationBuzzTransactions.transactions;
+
+    return [...transactions].sort((a, b) => {
+      return b.date.getTime() - a.date.getTime();
+    });
   }, [transactionType, mainBuzzTransactions.transactions, generationBuzzTransactions.transactions]);
 
   const { dates, format } = useMemo(() => {
