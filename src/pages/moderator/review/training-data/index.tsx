@@ -2,29 +2,36 @@ import { Button, Loader, Text, Title } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import { Page } from '~/components/AppLayout/Page';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { Meta } from '~/components/Meta/Meta';
+import FourOhFour from '~/pages/404';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-export default Page(
-  function () {
-    const router = useRouter();
-    // TODO maybe hook into orchestrator and pull Gate
-    const { data, isFetching, hasNextPage, fetchNextPage } =
-      trpc.moderator.modelVersions.query.useInfiniteQuery(
-        {
-          limit: 20,
-          trainingStatus: 'Paused',
-        },
-        {
-          getNextPageParam: (lastPage) => lastPage.nextCursor,
-        }
-      );
+export default function ReviewTrainingDataPage() {
+  const features = useFeatureFlags();
+  const router = useRouter();
 
-    const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
+  // TODO maybe hook into orchestrator and pull Gate
+  const { data, isFetching, hasNextPage, fetchNextPage } =
+    trpc.moderator.modelVersions.query.useInfiniteQuery(
+      {
+        limit: 20,
+        trainingStatus: 'Paused',
+      },
+      {
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+      }
+    );
 
-    return (
+  const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
+
+  if (!features.reviewTrainingData) return <FourOhFour />;
+
+  return (
+    <>
+      <Meta title="Moderator | Review Training Data" deIndex />
       <div className="container max-w-sm p-3">
         <Title order={1}>Review training data</Title>
         <div className="flex flex-col gap-3">
@@ -52,9 +59,6 @@ export default Page(
           </InViewLoader>
         )}
       </div>
-    );
-  },
-  {
-    features: (features) => !!features.reviewTrainingData,
-  }
-);
+    </>
+  );
+}

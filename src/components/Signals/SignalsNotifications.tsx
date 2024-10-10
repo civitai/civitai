@@ -11,7 +11,7 @@ const notificationConfig: Partial<
 > = {
   generation: (updated) => ({
     color: 'blue.4',
-    title: 'Generation Buzz Update',
+    title: 'User Buzz Update',
     message:
       updated.delta > 0 ? (
         <Text>
