@@ -2998,36 +2998,43 @@ export const getEntityCoverImage = async ({
       t."entityId",
       t."entityType"
     FROM (
+      -- NOTE: Adding "order1/2/3" looks a bit hacky, but it avoids using partitions and makes it far more performant.
+      -- It might may look weird, but it has 0 practical effect other than better performance.
        SELECT
          *
         FROM
         (
           -- MODEL
-          SELECT
+          SELECT DISTINCT ON (e."entityId")
             e."entityId",
             e."entityType",
-            i.id as "imageId"
+            i.id as "imageId",
+            mv.index "order1",
+            p.id "order2", 
+            i.index "order3"
           FROM entities e
           JOIN "Model" m ON e."entityId" = m.id
           JOIN "ModelVersion" mv ON m.id = mv."modelId"
-          JOIN "Post" p ON mv.id = p."modelVersionId"
+          JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
           JOIN "Image" i ON p.id = i."postId"
           WHERE e."entityType" = 'Model'
           AND m.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
-          ORDER BY mv.index,  p.id, i.index
-          LIMIT 1
+          ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
         UNION
 
         -- MODEL VERSION
-        SELECT  * FROM (
-          SELECT
+        SELECT * FROM (
+          SELECT DISTINCT ON (e."entityId")
             e."entityId",
             e."entityType",
-            i.id as "imageId"
+            i.id as "imageId",
+            mv.index "order1",
+            p.id "order2", 
+            i.index "order3"
           FROM entities e
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
           JOIN "Post" p ON mv.id = p."modelVersionId"
@@ -3036,8 +3043,7 @@ export const getEntityCoverImage = async ({
           AND mv.status = 'Published'
           AND i."ingestion" = 'Scanned'
           AND i."needsReview" IS NULL
-          ORDER BY mv.index,  p.id, i.index
-          LIMIT 1
+          ORDER BY e."entityId", mv.index,  p.id, i.index
         ) t
 
         UNION
@@ -3045,17 +3051,23 @@ export const getEntityCoverImage = async ({
         SELECT
             e."entityId",
             e."entityType",
-            e."entityId" AS "imageId"
+            e."entityId" AS "imageId",
+            0 "order1",
+            0 "order2", 
+            0 "order3"
         FROM entities e
         WHERE e."entityType" = 'Image'
 
-        UNION 
+        UNION
         -- ARTICLES
         SELECT * FROM (
-          SELECT
+          SELECT DISTINCT ON (e."entityId")
               e."entityId",
               e."entityType",
-              i.id AS "imageId"
+              i.id AS "imageId",
+              0 "order1",
+	          0 "order2", 
+	          0 "order3"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
           JOIN "Image" i ON a."coverId" = i.id
@@ -3063,16 +3075,18 @@ export const getEntityCoverImage = async ({
           AND a."publishedAt" IS NOT NULL
               AND i."ingestion" = 'Scanned'
               AND i."needsReview" IS NULL
-          LIMIT 1
         ) t
 
-        UNION 
+        UNION
         -- POSTS
         SELECT * FROM  (
-          SELECT
+          SELECT DISTINCT ON(e."entityId")
               e."entityId",
               e."entityType",
-              i.id AS "imageId"
+              i.id AS "imageId",
+              i."postId" "order1",
+	          i.index "order2", 
+	          0 "order3"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
           JOIN "Image" i ON i."postId" = p.id
@@ -3080,22 +3094,23 @@ export const getEntityCoverImage = async ({
             AND p."publishedAt" IS NOT NULL
             AND i."ingestion" = 'Scanned'
             AND i."needsReview" IS NULL
-          ORDER BY i."postId", i.index 
-          LIMIT 1
+          ORDER BY e."entityId", i."postId", i.index
         ) t
 
-        UNION 
+        UNION
         -- CONNECTIONS
         SELECT * FROM (
           SELECT
               e."entityId",
               e."entityType",
-              i.id AS "imageId"
+              i.id AS "imageId",
+              0 "order1",
+	          0 "order2", 
+	          0 "order3"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
           JOIN "Image" i ON i.id = ic."imageId"
-          LIMIT 1
-        ) t 
+        ) t
     ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
