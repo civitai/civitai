@@ -36,7 +36,7 @@ const mapTrainingStatus: { [key in WorkflowStatus]: TrainingStatus } = {
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
     {
-      name: 'resource-training',
+      name: 'resource-training-v2-webhook',
       type: 'error',
       ...data,
     },
@@ -77,7 +77,7 @@ export default WebhookEndpoint(async (req, res) => {
         const err = e as Error | undefined;
         logWebhook({
           message: 'Failed to update record',
-          data: { error: err?.message, cause: err?.cause, workflowId },
+          data: { error: err?.message, cause: err?.cause, stack: err?.stack, status, workflowId },
         });
         return res.status(500).json({ ok: false, error: err?.message, workflowId });
       }

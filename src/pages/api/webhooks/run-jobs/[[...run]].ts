@@ -8,6 +8,7 @@ import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
+import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
@@ -115,6 +116,7 @@ export const jobs: Job[] = [
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
+  checkProcessingResourceTrainingV2,
 ];
 
 const log = createLogger('jobs', 'green');
