@@ -1,3 +1,5 @@
+import { TrainingResults } from '~/server/schema/model-file.schema';
+
 export type LabelTypes = 'tag' | 'caption'; // TODO - remove from training.store.ts
 
 // TODO - remove from global.d.ts
@@ -27,5 +29,5 @@ export type ModelFileMetadata = ModelFileMetadataBasic & {
   numImages?: number;
   numCaptions?: number;
   selectedEpochUrl?: string;
-  trainingResults?: any; // TrainingResults // TODO - should we have validation schemas be shared? If a validation schema type is used on the client while the validation occurs on the backend, then shouldn't it be a shared schema?
+  trainingResults?: TrainingResults; // TrainingResults // TODO - should we have validation schemas be shared? If a validation schema type is used on the client while the validation occurs on the backend, then shouldn't it be a shared schema?
 };
