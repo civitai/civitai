@@ -28,7 +28,9 @@ export const checkProcessingResourceTrainingV2 = createJob(
 
     const processingVersions = await dbRead.modelVersion.findMany({
       where: {
-        trainingStatus: TrainingStatus.Processing,
+        trainingStatus: {
+          in: [TrainingStatus.Processing, TrainingStatus.Paused],
+        },
       },
       select: {
         id: true,

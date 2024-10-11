@@ -7,7 +7,7 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
-  modelVersionId: z.number(),
+  modelVersionId: z.coerce.number(),
 });
 
 const logWebhook = (data: MixedObject) => {
@@ -22,11 +22,11 @@ const logWebhook = (data: MixedObject) => {
 };
 
 export default ModEndpoint(async (req, res) => {
-  const bodyResults = schema.safeParse(req.body);
+  const bodyResults = schema.safeParse(req.query);
   if (!bodyResults.success) {
     logWebhook({
       message: 'Could not parse body',
-      data: { error: bodyResults.error, body: JSON.stringify(req.body) },
+      data: { error: bodyResults.error, body: JSON.stringify(req.query) },
     });
     return res.status(400).json({ ok: false, error: bodyResults.error });
   }
@@ -43,6 +43,7 @@ export default ModEndpoint(async (req, res) => {
       token: env.ORCHESTRATOR_ACCESS_TOKEN,
       path: { workflowId: workflowId as string },
     });
+
     await updateRecords(workflow);
   } catch (e: unknown) {
     const err = e as Error | undefined;
