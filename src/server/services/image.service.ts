@@ -2969,7 +2969,7 @@ export const getEntityCoverImage = async ({
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
-  const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
+  const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
         "entityId" INTEGER,
@@ -3114,6 +3114,15 @@ export const getEntityCoverImage = async ({
     ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+
+  const images = entities
+    .map((e) => {
+      const image = imagesRaw.find(
+        (i) => i.entityId === e.entityId && i.entityType === e.entityType
+      );
+      return image ?? null;
+    })
+    .filter(isDefined);
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
