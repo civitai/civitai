@@ -221,29 +221,33 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
 
 async function getCachedResourceGenerationData(modelVersionIds: number[]) {
   if (!modelVersionIds.length) throw new Error('missing modelVersionIds');
-  const [resources, files] = await Promise.all([
-    resourceDataCache.fetch(modelVersionIds),
-    filesForModelVersionCache.fetch(modelVersionIds),
-  ]);
-  const resourcesWithFiles = resources
-    .map((resource) => {
-      const resourceFiles = files[resource.id]?.files;
-      if (!resourceFiles) return null;
-      const file = getPrimaryFile(resourceFiles);
-      if (!file) return null;
-      return {
-        modelId: resource.model.id,
-        modelType: resource.model.type,
-        fileSizeKB: file.sizeKB,
-      };
-    })
-    .filter(isDefined);
-  const additionalCharges = await getShouldChargeForResources(resourcesWithFiles);
+  return await resourceDataCache.fetch(modelVersionIds);
+  /*
+    Not sure if we'll end up using this or not. Leaving it here in case we need to pull model file information with generation resources
+  */
+  // const [resources, files] = await Promise.all([
+  //   resourceDataCache.fetch(modelVersionIds),
+  //   filesForModelVersionCache.fetch(modelVersionIds),
+  // ]);
+  // const resourcesWithFiles = resources
+  //   .map((resource) => {
+  //     const resourceFiles = files[resource.id]?.files;
+  //     if (!resourceFiles) return null;
+  //     const file = getPrimaryFile(resourceFiles);
+  //     if (!file) return null;
+  //     return {
+  //       modelId: resource.model.id,
+  //       modelType: resource.model.type,
+  //       fileSizeKB: file.sizeKB,
+  //     };
+  //   })
+  //   .filter(isDefined);
+  // const additionalCharges = await getShouldChargeForResources(resourcesWithFiles);
 
-  return resources.map((resource) => {
-    const additionalCharge = additionalCharges[resource.model.id];
-    return { ...resource, additionalCharge };
-  });
+  // return resources.map((resource) => {
+  //   const additionalCharge = additionalCharges[resource.model.id];
+  //   return { ...resource, additionalCharge };
+  // });
 }
 
 async function getResourceGenerationData(versionIds: number[]) {
