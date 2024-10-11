@@ -136,7 +136,8 @@ export const createTrainingWorkflow = async ({
            m."userId",
            mf.url      "trainingUrl",
            mf.id       "fileId",
-           mf.metadata "fileMetadata"
+           mf.metadata "fileMetadata",
+           mv.id       "modelVersionId"
     FROM "ModelVersion" mv
            JOIN "Model" m ON m.id = mv."modelId"
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
@@ -210,7 +211,7 @@ export const createTrainingWorkflow = async ({
       steps: [stepRun],
       callbacks: [
         {
-          url: `${env.WEBHOOK_URL}/resource-training-v2?token=${env.WEBHOOK_TOKEN}`,
+          url: `${env.WEBHOOK_URL}/resource-training-v2/${modelVersion.modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           type: ['workflow:*'],
         },
       ],
