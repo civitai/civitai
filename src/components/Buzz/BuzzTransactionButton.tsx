@@ -62,6 +62,7 @@ export function BuzzTransactionButton({
     hasRequiredAmount,
     hasTypeRequiredAmount,
     getTypeDistribution,
+    isLoadingBalance,
   } = useBuzzTransaction({
     message,
     purchaseSuccessMessage,
@@ -115,7 +116,7 @@ export function BuzzTransactionButton({
       }}
       size={size}
       loading={loading}
-      disabled={buttonProps.disabled || !!error}
+      disabled={buttonProps.disabled || !!error || isLoadingBalance}
     >
       <Group spacing="md" position="apart" noWrap w="100%">
         <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>

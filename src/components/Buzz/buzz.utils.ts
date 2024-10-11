@@ -111,8 +111,11 @@ export const useBuzzTransaction = (opts?: {
   const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
 
   const features = useFeatureFlags();
-  const { balance: userBalance } = useBuzz();
-  const { balance: generationBalance } = useBuzz(undefined, 'generation');
+  const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
+  const { balance: generationBalance, balanceLoading: generationBalanceLoading } = useBuzz(
+    undefined,
+    'generation'
+  );
   const isMobile = useIsMobile();
   const onBuyBuzz = useBuyBuzz();
 
@@ -172,6 +175,8 @@ export const useBuzzTransaction = (opts?: {
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
 
+    if (userBalanceLoading || generationBalanceLoading) return;
+
     const balance = getCurrentBalance();
     const meetsRequirement = hasRequiredAmount(buzzAmount);
     if (!meetsRequirement) {
@@ -201,5 +206,6 @@ export const useBuzzTransaction = (opts?: {
     getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
+    isLoadingBalance: userBalanceLoading || generationBalanceLoading,
   };
 };
