@@ -26,16 +26,10 @@ export const checkProcessingResourceTrainingV2 = createJob(
       return;
     }
 
-    // TODO remove failed after one run
     const processingVersions = await dbRead.modelVersion.findMany({
       where: {
         trainingStatus: {
-          in: [
-            TrainingStatus.Processing,
-            TrainingStatus.Paused,
-            TrainingStatus.Submitted,
-            TrainingStatus.Failed,
-          ],
+          in: [TrainingStatus.Processing, TrainingStatus.Paused, TrainingStatus.Submitted],
         },
       },
       select: {
