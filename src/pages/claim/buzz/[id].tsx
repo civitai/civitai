@@ -80,10 +80,8 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
 
   const { rewardsMultiplier = 1 } = multipliers ?? {};
   const finalAmount = claim.details.useMultiplier
-    ? claim.details.amount * rewardsMultiplier
+    ? Math.ceil(claim.details.amount * rewardsMultiplier)
     : claim.details.amount;
-
-  console.log(rewardsMultiplier);
 
   return (
     <>

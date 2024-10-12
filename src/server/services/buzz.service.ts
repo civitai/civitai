@@ -684,7 +684,7 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
 
   await createBuzzTransaction({
     amount: claimStatus.details.useMultiplier
-      ? claimStatus.details.amount * rewardsMultiplier
+      ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
       : claimStatus.details.amount,
     externalTransactionId: claimStatus.claimId,
     fromAccountId: 0,
