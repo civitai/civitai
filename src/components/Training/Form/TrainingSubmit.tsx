@@ -166,6 +166,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
+    type: 'Generation',
   });
 
   const thisStep = 3;
