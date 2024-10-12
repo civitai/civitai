@@ -99,7 +99,7 @@ export default WebhookEndpoint(async (req, res) => {
 });
 
 export async function updateRecords(workflow: Workflow) {
-  const { status, transactions, steps } = workflow;
+  const { status, transactions, steps, id: workflowId } = workflow;
   const workflowStatus = status!;
 
   const step = steps?.[0] as CustomImageResourceTrainingStep | undefined;
@@ -184,6 +184,9 @@ export async function updateRecords(workflow: Workflow) {
     startedAt: trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null),
     completedAt: completedAt ? new Date(completedAt).toISOString() : null,
     transactionData: transactions?.list ?? trainingResults.transactionData,
+    version: 2,
+    workflowId: trainingResults.workflowId ?? workflowId ?? 'unk',
+    // submittedAt,
   };
 
   const newMetadata: FileMetadata = {

@@ -1,11 +1,11 @@
-import { createJob } from './job';
-import { dbRead } from '~/server/db/client';
 import { TrainingStatus } from '@prisma/client';
-import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { env } from 'process';
 import { updateRecords } from '~/pages/api/webhooks/resource-training-v2';
+import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';
+import { getWorkflow } from '~/server/services/orchestrator/workflows';
+import { createJob } from './job';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -26,10 +26,16 @@ export const checkProcessingResourceTrainingV2 = createJob(
       return;
     }
 
+    // TODO remove failed after one run
     const processingVersions = await dbRead.modelVersion.findMany({
       where: {
         trainingStatus: {
-          in: [TrainingStatus.Processing, TrainingStatus.Paused, TrainingStatus.Submitted],
+          in: [
+            TrainingStatus.Processing,
+            TrainingStatus.Paused,
+            TrainingStatus.Submitted,
+            TrainingStatus.Failed,
+          ],
         },
       },
       select: {

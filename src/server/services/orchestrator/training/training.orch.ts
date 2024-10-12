@@ -236,6 +236,7 @@ export const createTrainingWorkflow = async ({
     })
   );
 
+  // TODO potential race condition here, sometimes this "doesn't work"
   const newTrainingResults: TrainingResultsV2 = {
     version: 2,
     submittedAt,
