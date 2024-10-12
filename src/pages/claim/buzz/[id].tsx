@@ -9,12 +9,16 @@ import {
   Text,
   ThemeIcon,
   Title,
+  useMantineTheme,
 } from '@mantine/core';
+import { Currency } from '@prisma/client';
 import { IconCircleCheck } from '@tabler/icons-react';
 import { z } from 'zod';
+import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { enterFall, jelloVertical } from '~/libs/animations';
+import { CurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -47,10 +51,16 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ClaimBuzzPage({ id }: { id: string }) {
   const queryUtils = trpc.useContext();
-
+  const { multipliers, multipliersLoading } = useUserMultipliers();
   const { data: claim, isLoading: claimLoading } = trpc.buzz.getClaimStatus.useQuery({
     id,
   });
+  const mantineTheme = useMantineTheme();
+  const config = CurrencyConfig[Currency.BUZZ];
+  const theme = config?.themes?.[claim?.details?.accountType ?? ''] ?? config;
+  const color = theme.color(mantineTheme);
+  const Icon = theme.icon;
+  // const color = claim.accountType === 'generation' ? config.
 
   const claimMutation = trpc.buzz.claim.useMutation({
     onSuccess: async (result) => {
@@ -66,7 +76,14 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
 
   const handleClaim = () => claimMutation.mutate({ id });
 
-  if (claimLoading || !claim) return <PageLoader />;
+  if (claimLoading || !claim || multipliersLoading) return <PageLoader />;
+
+  const { rewardsMultiplier = 1 } = multipliers ?? {};
+  const finalAmount = claim.details.useMultiplier
+    ? claim.details.amount * rewardsMultiplier
+    : claim.details.amount;
+
+  console.log(rewardsMultiplier);
 
   return (
     <>
@@ -92,9 +109,27 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
             h={120}
             my="lg"
           >
-            <Text size={64} weight={500} ml={-30}>
-              ⚡{numberWithCommas(claim.details.amount)}
-            </Text>
+            <Stack spacing={0}>
+              <Text size={64} weight={500} ml={-30} color={color} component="span">
+                <Icon
+                  color={color}
+                  fill={color}
+                  style={{ fill: color, display: 'inline' }}
+                  size={52}
+                />
+                {numberWithCommas(finalAmount)}
+              </Text>
+
+              {claim.details.useMultiplier && rewardsMultiplier > 1 && (
+                <Text size="sm" color={color}>
+                  Originally{' '}
+                  <Text component="span" weight="bold">
+                    {numberWithCommas(claim.details.amount)}{' '}
+                  </Text>{' '}
+                  Buzz
+                </Text>
+              )}
+            </Stack>
           </Center>
           <Title order={1} align="center" mb={5}>
             {claim.details.title}

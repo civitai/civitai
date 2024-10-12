@@ -2146,14 +2146,22 @@ model UserCosmeticShopPurchases {
   refunded          Boolean
 }
 
+enum BuzzAccountType {
+  user
+  generation
+  club
+}
+
 model BuzzClaim {
-  key                String    @id
+  key                String          @id
   title              String
   description        String
   transactionIdQuery String
   amount             Int
   availableStart     DateTime?
   availableEnd       DateTime?
+  accountType        BuzzAccountType @default(user)
+  useMultiplier      Boolean         @default(false)
 }
 
 model Article {
