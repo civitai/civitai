@@ -209,7 +209,7 @@ export async function updateRecords(workflow: Workflow) {
   });
 
   // trigger webhook alert
-  if (trainingStatus === TrainingStatus.Paused) {
+  if (last.status !== trainingStatus && trainingStatus === TrainingStatus.Paused) {
     try {
       await queueNewTrainingModerationWebhook(modelVersion.id);
     } catch {}
