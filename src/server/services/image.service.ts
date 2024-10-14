@@ -151,10 +151,13 @@ export async function purgeResizeCache({ url }: { url: string }) {
       bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
       prefix: url,
     });
-    await baseS3Client.deleteManyObjects({
-      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
-      keys: items.map((x) => x.Key).filter(isDefined),
-    });
+    const keys = items.map((x) => x.Key).filter(isDefined);
+    if (keys.length) {
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+        keys,
+      });
+    }
   }
 
   // Purge from new cache bucket
@@ -162,10 +165,13 @@ export async function purgeResizeCache({ url }: { url: string }) {
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     prefix: url,
   });
-  await imageS3Client.deleteManyObjects({
-    bucket: env.S3_IMAGE_CACHE_BUCKET,
-    keys: items.map((x) => x.Key).filter(isDefined),
-  });
+  const keys = items.map((x) => x.Key).filter(isDefined);
+  if (keys.length) {
+    await imageS3Client.deleteManyObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET,
+      keys,
+    });
+  }
 }
 
 async function markImagesDeleted(id: number | number[]) {
@@ -3010,7 +3016,7 @@ export const getEntityCoverImage = async ({
             e."entityType",
             i.id as "imageId",
             mv.index "order1",
-            p.id "order2", 
+            p.id "order2",
             i.index "order3"
           FROM entities e
           JOIN "Model" m ON e."entityId" = m.id
@@ -3033,7 +3039,7 @@ export const getEntityCoverImage = async ({
             e."entityType",
             i.id as "imageId",
             mv.index "order1",
-            p.id "order2", 
+            p.id "order2",
             i.index "order3"
           FROM entities e
           JOIN "ModelVersion" mv ON e."entityId" = mv."id"
@@ -3053,7 +3059,7 @@ export const getEntityCoverImage = async ({
             e."entityType",
             e."entityId" AS "imageId",
             0 "order1",
-            0 "order2", 
+            0 "order2",
             0 "order3"
         FROM entities e
         WHERE e."entityType" = 'Image'
@@ -3066,7 +3072,7 @@ export const getEntityCoverImage = async ({
               e."entityType",
               i.id AS "imageId",
               0 "order1",
-	          0 "order2", 
+	          0 "order2",
 	          0 "order3"
           FROM entities e
           JOIN "Article" a ON a.id = e."entityId"
@@ -3085,7 +3091,7 @@ export const getEntityCoverImage = async ({
               e."entityType",
               i.id AS "imageId",
               i."postId" "order1",
-	          i.index "order2", 
+	          i.index "order2",
 	          0 "order3"
           FROM entities e
           JOIN "Post" p ON p.id = e."entityId"
@@ -3105,7 +3111,7 @@ export const getEntityCoverImage = async ({
               e."entityType",
               i.id AS "imageId",
               0 "order1",
-	          0 "order2", 
+	          0 "order2",
 	          0 "order3"
           FROM entities e
           JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
