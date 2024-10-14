@@ -332,9 +332,9 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const landingPage = req.cookies['ref_landing_page'] as string;
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
+    const tracker = new Tracker(req, res);
     if (context.isNewUser) {
       newUserCounter?.inc();
-      const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
         targetUserId: context.user.id,
@@ -363,6 +363,12 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }).catch();
     } else {
       loginCounter?.inc();
+      await tracker.userActivity({
+        type: 'Login',
+        targetUserId: context.user.id,
+        source,
+        landingPage,
+      });
     }
   };
 

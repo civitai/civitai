@@ -101,17 +101,15 @@ function ReviewTrainingData() {
     </div>
   ) : (
     <>
-      <div className="flex size-full flex-col">
-        <div className="container flex max-w-lg justify-end gap-3 p-3">
-          <Popover width={300} withArrow withinPortal shadow="sm">
-            <Popover.Target>
-              <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
-            </Popover.Target>
-            <Popover.Dropdown>
-              <DescriptionTable items={details} />
-            </Popover.Dropdown>
-          </Popover>
-        </div>
+      <div className="container flex max-w-lg justify-end gap-3 p-3">
+        <Popover width={300} withArrow withinPortal shadow="sm">
+          <Popover.Target>
+            <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
+          </Popover.Target>
+          <Popover.Dropdown>
+            <DescriptionTable items={details} />
+          </Popover.Dropdown>
+        </Popover>
       </div>
       {currentStep === 1 && (
         <ReviewImages

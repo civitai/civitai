@@ -111,6 +111,7 @@ export type EntityType =
 
 export type UserActivityType =
   | 'Registration'
+  | 'Login'
   | 'Account closure'
   | 'Subscribe'
   | 'Cancel'
