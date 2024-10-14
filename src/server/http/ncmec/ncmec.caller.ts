@@ -44,7 +44,7 @@ class NcmecCaller extends HttpCaller {
   }
 
   async initializeReport(data: any) {
-    const builder = new Builder({ cdata: true, renderOpts: { pretty: false } });
+    const builder = new Builder({ renderOpts: { pretty: false } });
     const xmlInput = builder.buildObject(data);
     const response = await this.postRaw('/submit', {
       body: xmlInput,

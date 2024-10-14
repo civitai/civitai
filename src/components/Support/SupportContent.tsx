@@ -75,10 +75,6 @@ export function SupportContent() {
           sx={{
             height: '100%',
             minHeight: 500,
-            position: 'absolute',
-            bottom: '100%',
-            marginBottom: 4,
-            right: 0,
           }}
         />
       </Grid.Col>

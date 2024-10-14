@@ -1,8 +1,10 @@
+import { isDev } from '~/env/other';
 import { Tracker } from '~/server/clickhouse/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default PublicEndpoint(
   async (req, res) => {
+    if (isDev) return res.status(200).end();
     const url = req.headers.referer ? new URL(req.headers.referer) : undefined;
     const host = req.headers.host;
 

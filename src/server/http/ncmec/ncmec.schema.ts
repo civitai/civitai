@@ -26,7 +26,7 @@ export namespace Ncmec {
     }),
   });
 
-  export type FileAnnotationsInput = z.infer<typeof fileAnnotationsSchema>;
+  export type FileAnnotationsSchema = z.infer<typeof fileAnnotationsSchema>;
   export const fileAnnotationsSchema = z.object({
     animeDrawingVirtualHentai: z.boolean().optional(),
     physicalHarm: z.boolean().optional(),
@@ -39,7 +39,7 @@ export namespace Ncmec {
   export type FileDetails = {
     originalFileName?: string;
     locationOfFile?: string;
-    fileAnnotations?: FileAnnotationsInput;
+    fileAnnotations?: FileAnnotationsSchema;
     additionalInfo?: string;
   };
 }
