@@ -51,6 +51,8 @@ export function AnnouncementsProvider({
     [data, dismissed]
   );
 
+  // TODO - welcome announcement
+
   if (!announcements?.length) return null;
 
   return (

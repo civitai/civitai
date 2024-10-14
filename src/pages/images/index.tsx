@@ -1,5 +1,4 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';

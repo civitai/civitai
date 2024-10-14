@@ -1,6 +1,5 @@
 import { createStyles, SegmentedControl, Stack, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
@@ -70,7 +69,6 @@ function BountiesPage() {
       />
 
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           {query.engagement && (
             <Stack spacing="xl" align="flex-start">

@@ -1,5 +1,4 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
@@ -21,7 +20,6 @@ function VideosPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/videos`, rel: 'canonical' }]}
       />
       <MasonryContainer>
-        <Announcements />
         {hidden && <Title>Your Hidden Videos</Title>}
         <Stack spacing="xs">
           <IsClient>

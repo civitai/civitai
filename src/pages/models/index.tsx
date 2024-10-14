@@ -1,6 +1,5 @@
 import { Button, Group, Stack, Title } from '@mantine/core';
 import { IconClock } from '@tabler/icons-react';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -32,7 +31,6 @@ function ModelsPage() {
       />
 
       <MasonryContainer>
-        <Announcements />
         {username && typeof username === 'string' && <Title>Models by {username}</Title>}
         <Stack spacing="xs">
           <IsClient>
