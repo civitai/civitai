@@ -21,7 +21,7 @@ function ReviewTrainingData() {
   const requestedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [urls, setUrls] = useState<string[]>([]);
-  const [error, setError] = useState();
+  const [error, setError] = useState<Error>();
   const [currentStep, actions] = useStepper(2);
   const utils = trpc.useUtils();
 
@@ -87,6 +87,8 @@ function ReviewTrainingData() {
     },
   ];
 
+  useEffect(() => console.log({ currentStep }), [currentStep]);
+
   return loading || isLoading ? (
     <div className="p-3">
       <Loader className="mx-auto" />
@@ -97,7 +99,7 @@ function ReviewTrainingData() {
     </div>
   ) : error ? (
     <div className="p-3">
-      <pre className="mx-auto">{JSON.stringify(error)}</pre>
+      <pre className="mx-auto">{JSON.stringify(error.message)}</pre>
     </div>
   ) : (
     <>
@@ -119,7 +121,7 @@ function ReviewTrainingData() {
           onModerate={handleSuccess}
         />
       )}
-      {currentStep === 2 && (
+      {currentStep !== 1 && (
         <CsamDetailsForm
           onPrevious={actions.goToPrevStep}
           onSuccess={handleSuccess}
