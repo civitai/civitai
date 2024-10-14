@@ -25,7 +25,7 @@ export default Page(
         />
         <ToolBanner />
         <MasonryContainer>
-          <Announcements />
+          {/* <Announcements /> */}
           {hidden && <Title>Your Hidden Images</Title>}
           <Stack spacing="xs">
             <IsClient>

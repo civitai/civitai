@@ -1,6 +1,8 @@
 import { ScrollAreaProps } from '@mantine/core';
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
+import { AnnouncementsProvider } from '~/components/Announcements/AnnouncementsProvider';
+import { Announcement } from '~/components/Announcements/Announcement';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -75,6 +77,7 @@ export function MainContent({
     <ScrollArea {...props}>
       <main className="flex-1">
         {subNav && <SubNav>{subNav}</SubNav>}
+        <Announcements />
         {children}
       </main>
       {footer}
@@ -87,6 +90,18 @@ export function MainContent({
       </main>
       {footer}
     </div>
+  );
+}
+
+function Announcements() {
+  return (
+    <AnnouncementsProvider>
+      {({ announcement }) => (
+        <div className="container">
+          <Announcement announcement={announcement} />
+        </div>
+      )}
+    </AnnouncementsProvider>
   );
 }
 
