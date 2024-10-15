@@ -54,7 +54,7 @@ const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
 const dateOptions = monthsUntilNow.reverse().map((month) => {
-  const date = dayjs(month).startOf('month');
+  const date = dayjs(month).startOf('month').add(15, 'day');
   return {
     value: stripTime(date.toDate()),
     label: date.format('MMMM YYYY'),
