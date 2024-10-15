@@ -222,7 +222,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                             />
                             Blue Buzz:
                           </Text>{' '}
-                          Free buzz earned from viewing adds or completing daily challenges. Can be
+                          Free buzz earned from viewing ads or completing daily challenges. Can be
                           used for:
                         </Text>
                         <List>

@@ -41,7 +41,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
 
   const query = useMemo(() => {
     const { model, resources = [], vae, creatorTip, civitaiTip, ...params } = watched;
-    console.log(resources);
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
       params.width = size.width;
