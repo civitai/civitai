@@ -66,13 +66,16 @@ export default function TagPage({
       >
         <MasonryContainer>
           <Stack spacing="xs">
-            <Group position="apart">
-              <SortFilter type="models" value={sort} onChange={(x) => set({ sort: x as any })} />
-              <Group spacing="xs">
-                <ModelFiltersDropdown />
-              </Group>
+            <Group position="right">
+              <SortFilter
+                type="models"
+                variant="button"
+                value={sort}
+                onChange={(x) => set({ sort: x as any })}
+              />
+              <ModelFiltersDropdown size="sm" compact />
             </Group>
-            <ModelsInfinite filters={{ ...queryFilters, sort, period }} disableStoreFilters />
+            <ModelsInfinite filters={{ ...queryFilters, sort, period }} showEof showAds />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
