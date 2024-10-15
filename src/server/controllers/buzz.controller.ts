@@ -11,6 +11,7 @@ import {
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
+  GetTransactionsReportSchema,
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
@@ -21,6 +22,7 @@ import {
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
+  getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
   upsertBuzzTip,
@@ -421,6 +423,20 @@ export function getDailyCompensationRewardHandler({
 
   try {
     return getDailyCompensationRewardByUser({ userId: ctx.user.id, ...input });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function getTransactionsReportHandler({
+  input,
+  ctx,
+}: {
+  input: GetTransactionsReportSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return getTransactionsReport({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
