@@ -114,6 +114,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
+import { isProd } from '~/env/other';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -174,7 +175,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const hasVisibleFiles = filesVisibleCount > 0;
 
   const displayCivitaiLink =
-    civitaiLinked && !!version.hashes && version.hashes?.length > 0 && hasDownloadPermissions;
+    isProd &&
+    civitaiLinked &&
+    !!version.hashes &&
+    version.hashes?.length > 0 &&
+    hasDownloadPermissions;
   const hasPendingClaimReport = model.reportStats && model.reportStats.ownershipProcessing > 0;
 
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();

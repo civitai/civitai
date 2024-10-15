@@ -1,5 +1,6 @@
 import { Button, Flex, Text, Anchor, createStyles } from '@mantine/core';
 import { NextLink } from '@mantine/next';
+import { isProd } from '~/env/other';
 
 type LinkDownloadButtonProps = {
   text: string;
@@ -15,6 +16,7 @@ export function CivitaiLinkDownloadButton({
   isMember,
 }: LinkDownloadButtonProps) {
   const { classes } = useStyles();
+  if (!isProd) return null;
 
   return (
     <Flex direction="column" justify="space-between" align="center">

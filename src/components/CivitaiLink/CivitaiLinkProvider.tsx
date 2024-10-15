@@ -22,6 +22,7 @@ import {
 } from '~/workers/civitai-link-worker-types';
 import { MantineColor } from '@mantine/styles';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isProd } from '~/env/other';
 
 type CivitaiLinkStatus = (typeof statuses)[number];
 const statuses = [
@@ -291,7 +292,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 export function CivitaiLinkProvider({ children }: { children: React.ReactElement }) {
   const flags = useFeatureFlags();
 
-  return flags.civitaiLink ? (
+  return flags.civitaiLink && isProd ? (
     <Provider>{children}</Provider>
   ) : (
     <CivitaiLinkCtx.Provider
