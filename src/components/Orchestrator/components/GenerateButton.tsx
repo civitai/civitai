@@ -43,6 +43,7 @@ export function GenerateButton({
       error={error}
       transactionType="Generation"
       showPurchaseModal
+      showTypePct
     />
   );
 }

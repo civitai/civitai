@@ -1486,6 +1486,11 @@ export const publishModelById = async ({
         },
         select: {
           id: true,
+          name: true,
+          description: true,
+          poi: true,
+          nsfw: true,
+          minor: true,
           type: true,
           userId: true,
           modelVersions: { select: { id: true, baseModel: true } },

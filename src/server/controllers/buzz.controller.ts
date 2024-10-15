@@ -197,7 +197,7 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('Could not split the amount between users');
     }
     // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId });
+    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId, accountType: 'user' });
     if ((userAccount.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }

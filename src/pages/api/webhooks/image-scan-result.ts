@@ -130,7 +130,7 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
 async function isBlocked(hash: string) {
-  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+  const matches = await dbRead.$queryRaw<{ hash: bigint }[]>`
     SELECT hash
     FROM "BlockedImage"
     WHERE hamming_distance(${hash}::bigint, "hash") < 5

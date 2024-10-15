@@ -1,9 +1,9 @@
+import { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/client.mjs';
+import { isDev } from '~/env/other';
 import { getDisplayName } from '~/utils/string-helpers';
-import { IncomingHttpHeaders } from 'http';
 
 // --------------------------
 // Feature Availability

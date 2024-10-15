@@ -3,11 +3,11 @@ import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
+  patchWorkflow,
   queryWorkflows as clientQueryWorkflows,
+  removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
-  patchWorkflow,
-  removeWorkflowTag,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
@@ -71,9 +71,12 @@ export async function submitWorkflow({
   if (!data) {
     const message = (error as any).errors?.messages?.join('\n');
     if (!isProd) {
-      console.log('----Error Request Body----');
+      console.log('----Workflow Error----');
+      console.log({ token });
+      console.log({ error });
+      console.log('----Workflow Error Request Body----');
       console.dir(JSON.stringify(body));
-      console.log('----End Error Request Body----');
+      console.log('----Workflow End Error Request Body----');
     }
     switch (error.status) {
       case 400:

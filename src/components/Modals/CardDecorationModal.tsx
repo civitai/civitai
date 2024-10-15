@@ -106,6 +106,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
           'This content decoration is being used on another post. Are you sure you want to reassign it?',
         labels: { confirm: 'Continue', cancel: 'No, go back' },
         onConfirm: completeSubmission,
+        zIndex: 310,
       });
     }
 

@@ -1,4 +1,4 @@
-import { isProd } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { createJob } from './job';
 import {
   archiveCsamDataForReport,
@@ -15,12 +15,13 @@ const sendCsamReportsJob = createJob(
   async () => {
     const reports = await getCsamsToReport();
     // wait for each process to finish before going to the next
-    try {
-      for (const report of reports) {
+    for (const report of reports) {
+      try {
         await processCsamReport(report);
+      } catch (e: any) {
+        if (isDev) console.log(e);
+        logToDb('send-csam-reports', { message: e.message, error: e });
       }
-    } catch (e: any) {
-      logToDb('send-csam-reports', { message: e.message, error: e });
     }
   },
   { dedicated: true }
@@ -32,12 +33,12 @@ const archiveCsamReportDataJob = createJob(
   async () => {
     const reports = await getCsamsToArchive();
     // wait for each process to finish before going to the next
-    try {
-      for (const report of reports) {
+    for (const report of reports) {
+      try {
         await archiveCsamDataForReport(report);
+      } catch (e: any) {
+        logToDb('archive-csam-reports', { message: e.message, error: e });
       }
-    } catch (e: any) {
-      logToDb('archive-csam-reports', { message: e.message, error: e });
     }
   },
   { dedicated: true }

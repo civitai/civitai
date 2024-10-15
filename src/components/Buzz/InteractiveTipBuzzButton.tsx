@@ -6,10 +6,8 @@ import {
   Popover,
   Stack,
   Text,
-  TextInput,
   UnstyledButton,
   UnstyledButtonProps,
-  useMantineTheme,
 } from '@mantine/core';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -17,10 +15,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
-import { showConfirmNotification } from '~/utils/notifications';
-import { v4 as uuidv4 } from 'uuid';
-import { hideNotification, showNotification } from '@mantine/notifications';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { showNotification } from '@mantine/notifications';
 import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -32,6 +27,7 @@ import { isTouchDevice } from '~/utils/device-helpers';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { constants } from '~/server/common/constants';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -112,7 +108,7 @@ export function InteractiveTipBuzzButton({
   const { theme, classes, cx } = useStyle();
   const mobile = useContainerSmallerThan('sm');
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz();
+  const { balance } = useBuzz(undefined, 'user');
   const features = useFeatureFlags();
 
   const [buzzCounter, setBuzzCounter] = useState(0);
@@ -134,7 +130,22 @@ export function InteractiveTipBuzzButton({
     defaultValue: false,
   });
 
-  const { tipUserMutation } = useBuzzTransaction();
+  const { tipUserMutation, conditionalPerformTransaction } = useBuzzTransaction({
+    message: (requiredBalance) =>
+      `You don't have enough funds to send a tip. Required Buzz: ${numberWithCommas(
+        requiredBalance
+      )}. Buy or earn more buzz to perform this action.`,
+    performTransactionOnPurchase: false,
+    purchaseSuccessMessage: (purchasedBalance) => (
+      <Stack>
+        <Text>Thank you for your purchase!</Text>
+        <Text>
+          We have added <CurrencyBadge currency={Currency.BUZZ} unitAmount={purchasedBalance} /> to
+          your account. You can now start tipping.
+        </Text>
+      </Stack>
+    ),
+  });
   const { trackAction } = useTrackEvent();
 
   const selfView = toUserId === currentUser?.id;
@@ -155,8 +166,6 @@ export function InteractiveTipBuzzButton({
   const sendTip = (amount?: number) => {
     if (status !== 'confirming') return;
 
-    setStatus('confirmed');
-
     // Stop countdown
     setShowCountDown(false);
     if (confirmTimeoutRef.current) {
@@ -165,31 +174,42 @@ export function InteractiveTipBuzzButton({
     }
 
     amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
-    tipUserMutation.mutate(
-      {
-        toAccountId: toUserId,
-        amount,
-        entityId,
-        entityType,
-        details: {
+
+    const performTransaction = () => {
+      trackAction({
+        type: 'Tip_Confirm',
+        details: { toUserId, entityType, entityId, amount },
+      }).catch(() => undefined);
+
+      return tipUserMutation.mutate(
+        {
+          toAccountId: toUserId,
+          amount,
           entityId,
           entityType,
+          details: {
+            entityId,
+            entityType,
+          },
         },
-      },
-      {
-        onSuccess: (_, { amount }) => {
-          if (entityType && entityId) {
-            onTip({ entityType, entityId, amount });
-          }
-        },
-        onSettled: () => {
-          setTimeout(() => {
-            setStatus('pending');
-            setTimeout(() => reset(), 100);
-          }, 1500);
-        },
-      }
-    );
+        {
+          onSuccess: (_, { amount }) => {
+            setStatus('confirmed');
+            if (entityType && entityId) {
+              onTip({ entityType, entityId, amount });
+            }
+          },
+          onSettled: () => {
+            setTimeout(() => {
+              setStatus('pending');
+              setTimeout(() => reset(), 100);
+            }, 1500);
+          },
+        }
+      );
+    };
+
+    conditionalPerformTransaction(amount, performTransaction);
   };
 
   const processEnteredNumber = (value: string) => {
@@ -381,7 +401,7 @@ export function InteractiveTipBuzzButton({
             <ActionIcon
               variant="transparent"
               color={status === 'confirmed' ? 'green' : 'yellow.5'}
-              onClick={() => sendTip()}
+              onClick={status === 'confirming' ? () => sendTip() : undefined}
               loading={tipUserMutation.isLoading}
             >
               {status === 'confirmed' ? <IconCheck size={20} /> : <IconSend size={20} />}

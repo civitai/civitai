@@ -295,3 +295,14 @@ export enum BanReasonCode {
   BuzzCheating = 'BuzzCheating',
   Other = 'Other',
 }
+
+export enum OrchPriorityTypes {
+  High = 'high',
+  Normal = 'normal',
+  Low = 'low',
+}
+export enum OrchEngineTypes {
+  Kohya = 'kohya',
+  Rapid = 'flux-dev-fast',
+  'X-Flux' = 'x-flux',
+}

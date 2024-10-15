@@ -28,7 +28,6 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { createPage } from '~/components/AppLayout/createPage';
 import { ChoppedLayout, ChoppedErrorBoundary } from '~/components/Chopped/chopped.components';
 
 export default function Chopped() {

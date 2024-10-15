@@ -1,3 +1,8 @@
+:root {
+  --header-height: 70px;
+  --footer-height: 45px;
+}
+
 @layer tailwind {
   @tailwind base;
 }
@@ -294,6 +299,16 @@ iframe {
   }
 }
 
+@keyframes rotate {
+  from {
+    transform: rotate(0);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* Google Recapcha Hiding */
 .grecaptcha-badge {
   visibility: hidden;
@@ -321,7 +336,7 @@ ol {
   }
 
   .card {
-    @apply rounded-md overflow-hidden relative bg-gray-0 shadow-md shadow-gray-4 border-gray-3 flex flex-col;
+    @apply rounded-md overflow-hidden relative bg-gray-0 shadow shadow-gray-6 border-gray-3 flex flex-col;
   }
 
   .absolute-center {
@@ -370,12 +385,11 @@ div[data-youtube-video] > iframe {
 }
 
 .scroll-area {
-  height: 100%;
-  width: 100%;
-  flex: 1;
   overflow-x: hidden;
   will-change: transform;
   position: relative;
   scrollbar-width: thin;
   padding-top: 0;
+  display: flex;
+  flex-direction: column;
 }

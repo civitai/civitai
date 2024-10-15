@@ -5,8 +5,7 @@ import { deleteAssets } from '~/server/services/training.service';
 import { deleteObject, parseKey } from '~/utils/s3-utils';
 import { createJob } from './job';
 
-//  TODO [bw] this is handling two different schemas, new and old, for job.
-//    all the history references can be taken out ~11/26/23
+//  TODO [bw] delete this file and stop the job ~11/15/24
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks').catch();
@@ -14,8 +13,7 @@ const logJob = (data: MixedObject) => {
 
 type OldTrainingRow = {
   mf_id: number;
-  history: NonNullable<FileMetadata['trainingResults']>['history'];
-  job_id: NonNullable<FileMetadata['trainingResults']>['jobId'];
+  job_id: string | null;
   submitted_at: Date;
   visibility: ModelFileVisibility;
   url: string;
@@ -26,14 +24,12 @@ export const deleteOldTrainingData = createJob(
   '5 11 * * *',
   async () => {
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
-      SELECT mf.id                                         as mf_id,
-             mf.metadata -> 'trainingResults' -> 'history' as history,
-             mf.metadata -> 'trainingResults' ->> 'jobId'  as job_id,
-             COALESCE(COALESCE(mf.metadata -> 'trainingResults' ->> 'submittedAt',
-                               mf.metadata -> 'trainingResults' -> 'history' -> 0 ->>
-                               'time')::timestamp,
-                      mv."updatedAt"
-             )                                             as submitted_at,
+      SELECT mf.id                                        as mf_id,
+             mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
+             COALESCE(
+               (mf.metadata -> 'trainingResults' ->> 'submittedAt')::timestamp,
+               mv."updatedAt"
+             )                                            as submitted_at,
              mf.visibility,
              mf.url
       FROM "ModelVersion" mv
@@ -61,7 +57,7 @@ export const deleteOldTrainingData = createJob(
 
     let goodJobs = 0;
     let errorJobs = 0;
-    for (const { mf_id, history, job_id, submitted_at, visibility, url } of oldTraining) {
+    for (const { mf_id, job_id, submitted_at, visibility, url } of oldTraining) {
       let hasError = false;
 
       if (!!job_id) {
@@ -89,42 +85,6 @@ export const deleteOldTrainingData = createJob(
               modelFileId: mf_id,
             },
           });
-        }
-      } else {
-        const seenJobs: string[] = [];
-        if (history) {
-          for (const h of history) {
-            const { jobId: histJobId } = h;
-            if (!histJobId) continue;
-            if (!seenJobs.includes(histJobId)) {
-              try {
-                const result = await deleteAssets(histJobId, submitted_at);
-                if (!result) {
-                  hasError = true;
-                  logJob({
-                    message: `Delete assets result blank`,
-                    data: {
-                      jobId: histJobId,
-                      modelFileId: mf_id,
-                      result: result,
-                    },
-                  });
-                }
-                seenJobs.push(histJobId);
-              } catch (e) {
-                hasError = true;
-                logJob({
-                  message: `Delete assets error`,
-                  data: {
-                    error: (e as Error)?.message,
-                    cause: (e as Error)?.cause,
-                    jobId: histJobId,
-                    modelFileId: mf_id,
-                  },
-                });
-              }
-            }
-          }
         }
       }
 

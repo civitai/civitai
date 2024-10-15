@@ -17,9 +17,14 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
-import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevelLabels,
+  browsingLevels,
+  getBrowsingLevelLabel,
+} from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import clsx from 'clsx'
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
@@ -78,10 +83,11 @@ export default function ImageRatingReview() {
 }
 
 function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['items'][number]) {
-  const maxRating = Math.max(...Object.values(item.votes));
+  // const maxRating = Math.max(...Object.values(item.votes));
   const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
   const previous = usePrevious(nsfwLevel);
   const [updated, setUpdated] = useState(false);
+  const queryUtils = trpc.useUtils()
 
   const { mutate } = trpc.image.updateImageNsfwLevel.useMutation({
     onError: (error) => {
@@ -97,30 +103,21 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   };
 
   return (
-    <div className={`flex flex-col items-stretch card ${updated ? '!border-green-600' : ''}`}>
+    <div className={clsx(`flex flex-col items-stretch card`, {[' opacity-50']: updated})}>
       <NextLink href={`/images/${item.id}`} target="_blank">
         <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
       </NextLink>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
-          {browsingLevels.map((level) => {
+          {[...browsingLevels, 32].map((level) => {
             const votes = item.votes[level];
             const sections: { value: number; label?: string; color: MantineColor }[] = [];
             if (votes > 0) {
-              const count = item.ownerVote === level && item.ownerVote > 0 ? votes - 1 : votes;
-              // const count = votes;
-              const percentage = count / maxRating;
+              const percentage = votes / item.total;
               sections.unshift({
                 value: percentage * 100,
                 label: String(votes),
                 color: 'blue',
-              });
-            }
-            if (item.ownerVote > 0 && item.ownerVote === level) {
-              sections.unshift({
-                value: (1 / maxRating) * 100,
-                label: String(votes),
-                color: 'yellow',
               });
             }
             return (
@@ -137,7 +134,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
                       : 'blue'
                   }
                 >
-                  {browsingLevelLabels[level]}
+                  {getBrowsingLevelLabel(level)}
                 </Button>
                 <Progress size={26} sections={sections} />
               </React.Fragment>

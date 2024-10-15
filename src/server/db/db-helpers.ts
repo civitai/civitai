@@ -19,26 +19,33 @@ export type AugmentedPool = Pool & {
   ) => Promise<CancellableResult<R>>;
 };
 
+type ClientInstanceType =
+  | 'primary'
+  | 'primaryRead'
+  | 'primaryReadLong'
+  | 'notification'
+  | 'notificationRead';
+const instanceUrlMap: Record<ClientInstanceType, string> = {
+  notification: env.NOTIFICATION_DB_URL,
+  notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
+  primary: env.DATABASE_URL,
+  primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
+  primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
+};
+
 export function getClient(
-  { readonly, isNotification }: { readonly: boolean; isNotification?: boolean } = {
-    readonly: false,
-    isNotification: false,
+  { instance }: { instance: ClientInstanceType } = {
+    instance: 'primary',
   }
 ) {
-  log(`Creating ${isNotification ? 'Notif' : 'PG'} client`);
+  log(`Creating ${instance} client`);
 
-  const envUrl = isNotification
-    ? readonly
-      ? env.NOTIFICATION_DB_REPLICA_URL
-      : env.NOTIFICATION_DB_URL
-    : readonly
-    ? env.DATABASE_REPLICA_URL ?? env.DATABASE_URL
-    : env.DATABASE_URL;
-
+  const envUrl = instanceUrlMap[instance];
   const connectionStringUrl = new URL(envUrl);
   connectionStringUrl.searchParams.set('sslmode', 'no-verify');
   const connectionString = connectionStringUrl.toString();
 
+  const isNotification = instance === 'notification' || instance === 'notificationRead';
   const appBaseName = isNotification ? 'notif-pg' : 'node-pg';
 
   const pool = new Pool({
@@ -46,7 +53,10 @@ export function getClient(
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
-    statement_timeout: readonly ? env.DATABASE_READ_TIMEOUT : env.DATABASE_WRITE_TIMEOUT,
+    statement_timeout:
+      instance === 'primaryRead' || instance === 'notificationRead'
+        ? env.DATABASE_READ_TIMEOUT
+        : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
@@ -63,7 +73,7 @@ export function getClient(
     }
 
     // Logging
-    log(readonly ? 'read' : 'write', sql);
+    log(instance, sql);
 
     let done = false;
     const query = connection.query<R>(sql);

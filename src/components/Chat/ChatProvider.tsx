@@ -1,4 +1,3 @@
-import { Card, Portal, createStyles } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import {
   createContext,
@@ -8,9 +7,7 @@ import {
   useContext,
   useState,
 } from 'react';
-import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
 type ChatState = {
@@ -45,56 +42,24 @@ export const ChatContextProvider = ({
 }) => {
   const [state, setState] = useState(value);
 
-  return (
-    <ChatContext.Provider value={{ state, setState }}>
-      {children}
-      <ChatPortal />
-    </ChatContext.Provider>
-  );
+  return <ChatContext.Provider value={{ state, setState }}>{children}</ChatContext.Provider>;
 };
 
-function ChatPortal() {
-  const { classes } = useStyles();
+export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   const { state } = useChatContext();
-  const { dialogs } = useDialogStore();
-  const main = typeof window !== 'undefined' ? document.querySelector('main') : null;
-  const target = !main ? '#main' : dialogs.some((x) => x.target === '#main') ? '#main' : 'main';
 
   if (!state.open) return null;
 
   return (
-    <Portal target={target}>
-      <div className={classes.absolute}>
-        <Card
-          p={0}
-          radius={4}
-          withBorder
-          shadow="md"
-          sx={{
-            width: '100%',
-            height: '100%',
-            overflow: 'hidden',
-          }}
-        >
-          <ChatWindow />
-        </Card>
-      </div>
-    </Portal>
+    <div
+      className="absolute bottom-[var(--footer-height)] left-0 z-10 mb-2 ml-2 h-dvh w-[calc(100%-1rem)] @sm:h-[800px] @sm:w-[70%] @sm:max-w-[700px]"
+      style={{
+        maxHeight: `calc(100dvh - var(--header-height)${
+          showFooter ? ' - var(--footer-height)' : ''
+        } - 1rem)`,
+      }}
+    >
+      <ChatWindow />
+    </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  absolute: {
-    position: 'absolute',
-    display: 'flex',
-    bottom: theme.spacing.xs,
-    left: theme.spacing.md,
-    zIndex: 500,
-    height: 'min(700px, 70%)',
-    width: 'min(800px, 80%)',
-    [containerQuery.smallerThan('sm')]: {
-      height: `calc(100% - ${theme.spacing.xs * 2}px)`,
-      width: `calc(100% - ${theme.spacing.md * 2}px)`,
-    },
-  },
-}));

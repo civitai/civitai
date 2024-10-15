@@ -5,6 +5,8 @@ import { useMemo } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LiveNowIndicator } from '~/components/Social/LiveNow';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import clsx from 'clsx';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const gradients = {
   blue: {
@@ -41,7 +43,6 @@ export function Logo() {
   const { isGreen, isRed } = useFeatureFlags();
   const { classes, cx } = useStyles({ color: isGreen ? 'green' : isRed ? 'red' : 'blue' });
   const [showHoliday] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
-  const isMobile = useContainerSmallerThan('sm');
   const holiday = useMemo(() => {
     if (!showHoliday) return null;
 
@@ -49,7 +50,7 @@ export function Logo() {
     const day = new Date().getDate();
 
     // Halloween
-    if (new Date().getMonth() === 9) return 'halloween';
+    if (month === 9) return 'halloween';
 
     // Christmas
     if ((month === 10 && day >= 22) || (month === 11 && day <= 25)) return 'christmas';
@@ -83,34 +84,13 @@ export function Logo() {
           </div>
         </>
       )}
+      {/* mobile svg */}
       <svg
-        className={classes.svg}
+        className={clsx(classes.svg, '@sm:hidden')}
         xmlns="http://www.w3.org/2000/svg"
-        viewBox={`0 0 ${isMobile ? 22.7 : 107} 22.7`}
+        viewBox="-1 0 22.7 22.7"
       >
-        <defs>
-          <linearGradient id="prideGradient" gradientTransform="rotate(45)">
-            {generatePrideGradient(gradients.pride.outer)}
-          </linearGradient>
-        </defs>
-        <g className={classes.text}>
-          <path
-            className={classes.c}
-            d="M20.8,1.7H3.7L1.5,4.1v15l2.3,2.3h17.1v-5.2H6.7V7h14.1V1.7z"
-          />
-          <path
-            className={classes.ivit}
-            d="M76.1,1.7H56.6V7h7.2v14.3H69V7h7C76,7,76.1,1.7,76.1,1.7z M23.2,1.8v19.5h5.2V1.8C28.4,1.8,23.2,1.8,23.2,1.8z M30.8,1.8
-      v19.5h7.6l8.3-8.3V1.8h-5.2v8.3l-5.4,6V1.8C36.1,1.8,30.8,1.8,30.8,1.8z M49.1,1.8v19.5h5.2V1.8C54.3,1.8,49.1,1.8,49.1,1.8z"
-          />
-          <path
-            className={classes.ai}
-            d="M100.3,1.8v19.5h5.2V1.8H100.3z M95.6,1.8H80.8l-2.3,2.3v17.2h5.2v-7.1h8.9v7.1h5.2V4.1C97.8,4.1,95.6,1.8,95.6,1.8z
-      M92.7,8.9h-8.9V7h8.9V8.9z"
-          />
-          <path className={classes.accent} d="M46.7,16.2v5.1h-5.1" />
-        </g>
-        <g className={classes.badge}>
+        <g>
           {holiday === 'pride' ? (
             <>
               <linearGradient id="innerGradient" gradientTransform="rotate(45)">
@@ -163,6 +143,36 @@ export function Logo() {
           />
         </g>
       </svg>
+
+      {/* desktop svg */}
+      <svg
+        className={clsx(classes.svg, '@max-sm:hidden')}
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 107 22.7"
+      >
+        <defs>
+          <linearGradient id="prideGradient" gradientTransform="rotate(45)">
+            {generatePrideGradient(gradients.pride.outer)}
+          </linearGradient>
+        </defs>
+        <g>
+          <path
+            className={classes.c}
+            d="M20.8,1.7H3.7L1.5,4.1v15l2.3,2.3h17.1v-5.2H6.7V7h14.1V1.7z"
+          />
+          <path
+            className={classes.ivit}
+            d="M76.1,1.7H56.6V7h7.2v14.3H69V7h7C76,7,76.1,1.7,76.1,1.7z M23.2,1.8v19.5h5.2V1.8C28.4,1.8,23.2,1.8,23.2,1.8z M30.8,1.8
+      v19.5h7.6l8.3-8.3V1.8h-5.2v8.3l-5.4,6V1.8C36.1,1.8,30.8,1.8,30.8,1.8z M49.1,1.8v19.5h5.2V1.8C54.3,1.8,49.1,1.8,49.1,1.8z"
+          />
+          <path
+            className={classes.ai}
+            d="M100.3,1.8v19.5h5.2V1.8H100.3z M95.6,1.8H80.8l-2.3,2.3v17.2h5.2v-7.1h8.9v7.1h5.2V4.1C97.8,4.1,95.6,1.8,95.6,1.8z
+      M92.7,8.9h-8.9V7h8.9V8.9z"
+          />
+          <path className={classes.accent} d="M46.7,16.2v5.1h-5.1" />
+        </g>
+      </svg>
       <LiveNowIndicator className={classes.liveNow} />
     </div>
   );
@@ -176,7 +186,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
   root: {
     height: 30,
     position: 'relative',
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       height: 45,
       width: 45,
     },
@@ -184,7 +194,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
   svg: {
     ref: getRef('svg'),
     height: 30,
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       height: 45,
     },
   },
@@ -208,19 +218,6 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
     fill: theme.colors[color][8],
   },
 
-  text: {
-    [theme.fn.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
-  badge: {
-    ref: getRef('badge'),
-    [theme.fn.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-
   liveNow: {
     position: 'absolute',
     bottom: -13,
@@ -228,7 +225,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
     transform: 'translateX(-50%)',
     zIndex: 3,
     background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[1],
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       bottom: -7,
     },
   },
@@ -237,7 +234,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
     ref: getRef('flyOver'),
     position: 'absolute',
     height: 45,
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       height: 40,
     },
   },
@@ -264,7 +261,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
       },
     },
 
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       height: 40,
       width: 40,
     },
@@ -277,7 +274,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
     top: 0,
     transform: 'rotate(-20deg) translate(-14%, -75%)',
     zIndex: 3,
-    [theme.fn.smallerThan('sm')]: {
+    [containerQuery.smallerThan('sm')]: {
       display: 'none',
     },
   },
@@ -297,7 +294,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
       zIndex: 3,
       animation: `${flyOver} 8s 4s ease`,
       opacity: 0,
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         transform: 'rotate(20deg)',
         animation: `${peekOut} 5s ease infinite alternate`,
         zIndex: 1,
@@ -320,7 +317,7 @@ const useStyles = createStyles((theme, { color }: { color: 'green' | 'blue' | 'r
       zIndex: 3,
       animation: `${prance} 3s 4s linear`,
       opacity: 0,
-      [theme.fn.smallerThan('sm')]: {
+      [containerQuery.smallerThan('sm')]: {
         transform: 'rotate(-20deg)',
         animation: `${peekOutDeer} 5s ease infinite alternate`,
         zIndex: 1,

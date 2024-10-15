@@ -17,10 +17,7 @@ import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import {
-  blockedCustomModels,
-  isTrainingCustomModel,
-} from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { baseModelDescriptions } from '~/components/Training/Form/TrainingSubmit';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
@@ -41,6 +38,7 @@ import {
   TrainingRunUpdate,
   trainingStore,
 } from '~/store/training.store';
+import { stringifyAIR } from '~/utils/string-helpers';
 import { TrainingBaseModelType } from '~/utils/training';
 
 const useStyles = createStyles((theme) => ({
@@ -151,20 +149,21 @@ const ModelSelector = ({
                   customModel: null,
                 });
               } else {
-                const mId = gVal.modelId;
-                const mvId = gVal.id;
+                const { baseModel, modelType, modelId, id: mvId } = gVal;
+
                 const castBase = (
                   [
                     ...baseModelSets.SDXL,
                     ...baseModelSets.SDXLDistilled,
                     ...baseModelSets.Pony,
                   ] as string[]
-                ).includes(gVal.baseModel)
+                ).includes(baseModel)
                   ? 'sdxl'
-                  : ([...baseModelSets.Flux1] as string[]).includes(gVal.baseModel)
+                  : ([...baseModelSets.Flux1] as string[]).includes(baseModel)
                   ? 'flux'
                   : 'sd15';
-                const cLink = `civitai:${mId}@${mvId}`;
+
+                const cLink = stringifyAIR({ baseModel, type: modelType, modelId, id: mvId });
 
                 makeDefaultParams({
                   base: cLink,
@@ -218,6 +217,7 @@ export const ModelSelect = ({
   };
 
   const formBaseModel = selectedRun.base;
+  const isCustomModel = !!selectedRun.customModel;
 
   const baseModel15 =
     !!formBaseModel &&
@@ -304,7 +304,7 @@ export const ModelSelect = ({
             <Card.Section inheritPadding py="sm">
               <Stack>
                 <Text size="sm">
-                  {isTrainingCustomModel(formBaseModel)
+                  {isCustomModel
                     ? 'Custom model selected.'
                     : baseModelDescriptions[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
@@ -323,7 +323,7 @@ export const ModelSelect = ({
                       model.
                     </Text>
                   </AlertWithIcon>
-                ) : isTrainingCustomModel(formBaseModel) ? (
+                ) : isCustomModel ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: custom models may see a higher failure rate than normal, and cost more
                     Buzz.

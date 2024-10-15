@@ -1,6 +1,11 @@
 import fs from 'fs';
 import matter from 'gray-matter';
-import { GetStaticPaths, GetStaticProps, InferGetStaticPropsType } from 'next';
+import {
+  GetStaticPaths,
+  GetStaticProps,
+  InferGetServerSidePropsType,
+  InferGetStaticPropsType,
+} from 'next';
 import { Container, Title, TypographyStylesProvider } from '@mantine/core';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -10,48 +15,67 @@ import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
 import { env } from '~/env/client.mjs';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 const contentRoot = 'src/static-content';
-export const getStaticPaths: GetStaticPaths = async () => {
-  const files = await getFilesWithExtension(contentRoot, ['.md']);
+// export const getStaticPaths: GetStaticPaths = async () => {
+//   const files = await getFilesWithExtension(contentRoot, ['.md']);
 
-  const paths = files.map((fileName) => ({
-    params: {
-      slug: fileName
-        .replace(contentRoot + '/', '')
-        .replace('.md', '')
-        .split('/'),
-    },
-  }));
+//   const paths = files.map((fileName) => ({
+//     params: {
+//       slug: fileName
+//         .replace(contentRoot + '/', '')
+//         .replace('.md', '')
+//         .split('/'),
+//     },
+//   }));
 
-  return {
-    paths,
-    fallback: false,
-  };
-};
+//   return {
+//     paths,
+//     fallback: false,
+//   };
+// };
 
-export const getStaticProps: GetStaticProps<{
-  frontmatter: MixedObject;
-  content: string;
-}> = async ({ params }) => {
-  let { slug } = params ?? {};
-  if (!slug) return { notFound: true };
-  if (!Array.isArray(slug)) slug = [slug];
+// export const getStaticProps: GetStaticProps<{
+//   frontmatter: MixedObject;
+//   content: string;
+// }> = async ({ params }) => {
+//   let { slug } = params ?? {};
+//   if (!slug) return { notFound: true };
+//   if (!Array.isArray(slug)) slug = [slug];
 
-  const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
-  const { data: frontmatter, content } = matter(fileName);
-  return {
-    props: {
-      frontmatter,
-      content,
-    },
-  };
-};
+//   const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
+//   const { data: frontmatter, content } = matter(fileName);
+//   return {
+//     props: {
+//       frontmatter,
+//       content,
+//     },
+//   };
+// };
+
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx }) => {
+    let { slug } = ctx.params ?? {};
+    if (!slug) return { notFound: true };
+    if (!Array.isArray(slug)) slug = [slug];
+
+    const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
+    const { data: frontmatter, content } = matter(fileName);
+    return {
+      props: {
+        frontmatter,
+        content,
+      },
+    };
+  },
+});
 
 export default function ContentPage({
   frontmatter: { title, description },
   content,
-}: InferGetStaticPropsType<typeof getStaticProps>) {
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   return (
     <>
       <Meta

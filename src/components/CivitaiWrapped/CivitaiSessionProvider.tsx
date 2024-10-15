@@ -14,6 +14,7 @@ import {
 import { Flags } from '~/shared/utils';
 import { useCookies } from '~/providers/CookiesProvider';
 import { deleteCookie } from 'cookies-next';
+const UserBanned = dynamic(() => import('~/components/User/UserBanned'), { ssr: false });
 const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
   ssr: false,
 });
@@ -80,8 +81,12 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     }
   }, [data?.user?.onboarding]);
 
+  const isBanned = sessionUser.type === 'authed' ? !!sessionUser.bannedAt : false;
+
   return (
-    <CivitaiSessionContext.Provider value={sessionUser}>{children}</CivitaiSessionContext.Provider>
+    <CivitaiSessionContext.Provider value={sessionUser}>
+      {isBanned ? <UserBanned /> : children}
+    </CivitaiSessionContext.Provider>
   );
 }
 

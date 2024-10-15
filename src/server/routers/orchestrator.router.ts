@@ -1,42 +1,49 @@
-import { z } from 'zod';
-import {
-  workflowQuerySchema,
-  workflowIdSchema,
-  patchSchema,
-} from './../schema/orchestrator/workflows.schema';
+import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
+import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
+import { env } from '~/env/server.mjs';
+import { CacheTTL } from '~/server/common/constants';
+import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
+import { logToAxiom } from '~/server/logging/client';
+import { edgeCacheIt } from '~/server/middleware.trpc';
+import { generatorFeedbackReward } from '~/server/rewards';
 import {
   generateImageSchema,
   generateImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
+  imageTrainingRouterInputSchema,
+  imageTrainingRouterWhatIfSchema,
+} from '~/server/schema/orchestrator/training.schema';
+import {
+  patchSchema,
+  workflowIdSchema,
+  workflowQuerySchema,
+} from '~/server/schema/orchestrator/workflows.schema';
+import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
+import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
+import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import {
   createTextToImage,
   createTextToImageStep,
 } from '~/server/services/orchestrator/textToImage/textToImage';
 import {
+  createTrainingWhatIfWorkflow,
+  createTrainingWorkflow,
+} from '~/server/services/orchestrator/training/training.orch';
+import {
   cancelWorkflow,
   deleteManyWorkflows,
   deleteWorkflow,
-  patchWorkflowTags,
   patchWorkflows,
+  patchWorkflowTags,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import { guardedProcedure, middleware, protectedProcedure, router } from '~/server/trpc';
-import { edgeCacheIt } from '~/server/middleware.trpc';
-import { CacheTTL } from '~/server/common/constants';
-import { TRPCError } from '@trpc/server';
-import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
-import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
-import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
-import dayjs from 'dayjs';
-import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
-import { generatorFeedbackReward } from '~/server/rewards';
-import { logToAxiom } from '~/server/logging/client';
-import { env } from '~/env/server.mjs';
-import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -136,9 +143,8 @@ export const orchestratorRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
-        if (input.params.workflow === 'txt2img')
-          return await createTextToImage({ ...args, experimental: ctx.features.experimentalGen });
-        else return await createComfy({ ...args, experimental: ctx.features.experimentalGen });
+        if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
+        else return await createComfy({ ...args });
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
           await reportProhibitedRequestHandler({
@@ -205,13 +211,29 @@ export const orchestratorRouter = router({
           position,
         };
       } catch (e) {
-        logToAxiom({ name: 'generate-image-what-if', type: 'error', payload: input, error: e });
+        logToAxiom({
+          name: 'generate-image-what-if',
+          type: 'error',
+          payload: input,
+          error: e,
+        }).catch();
         throw e;
       }
     }),
   // #endregion
 
   // #region [image training]
-
+  createTraining: orchestratorGuardedProcedure
+    .input(imageTrainingRouterInputSchema)
+    .mutation(async ({ ctx, input }) => {
+      const args = { ...input, token: ctx.token, user: ctx.user };
+      return await createTrainingWorkflow(args);
+    }),
+  createTrainingWhatif: orchestratorProcedure
+    .input(imageTrainingRouterWhatIfSchema)
+    .query(async ({ ctx, input }) => {
+      const args = { ...input, token: ctx.token };
+      return await createTrainingWhatIfWorkflow(args);
+    }),
   // #endregion
 });

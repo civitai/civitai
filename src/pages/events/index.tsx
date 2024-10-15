@@ -1,7 +1,7 @@
 import { Center, Loader, Stack } from '@mantine/core';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
@@ -18,7 +18,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function EventsPage() {
+function EventsPage() {
   const { data, isLoading } = trpc.article.getEvents.useQuery(undefined, {
     trpc: { context: { skipBatch: true } },
   });
@@ -54,4 +54,4 @@ export default function EventsPage() {
   );
 }
 
-setPageOptions(EventsPage, { innerLayout: FeedLayout });
+export default Page(EventsPage, { InnerLayout: FeedLayout });

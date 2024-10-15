@@ -1,8 +1,8 @@
 import { createStyles, SegmentedControl, Stack, Title } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { BountiesInfinite } from '~/components/Bounty/Infinite/BountiesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -49,7 +49,7 @@ const useStyles = createStyles((theme) => ({
   control: { border: 'none !important' },
 }));
 
-export default function BountiesPage() {
+function BountiesPage() {
   const { classes } = useStyles();
   const router = useRouter();
   const query = router.query;
@@ -93,4 +93,4 @@ export default function BountiesPage() {
   );
 }
 
-setPageOptions(BountiesPage, { innerLayout: FeedLayout });
+export default Page(BountiesPage, { InnerLayout: FeedLayout });

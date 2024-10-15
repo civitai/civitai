@@ -62,15 +62,7 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-between gap-6">
-      <MarkerFiltersDropdown />
-
-      <Checkbox
-        checked={allChecked}
-        indeterminate={indeterminate}
-        onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
-        label={!selectedCount ? 'Select all' : `${selectedCount} selected`}
-        labelPosition="left"
-      />
+      {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">
           <Tooltip label="Download selected">
@@ -114,6 +106,13 @@ export function GeneratedImageActions({
           </Tooltip>
         </div>
       )}
+      <Checkbox
+        checked={allChecked}
+        indeterminate={indeterminate}
+        onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
+        label={!selectedCount ? 'Select all' : `${selectedCount} selected`}
+        labelPosition="left"
+      />
     </div>
   );
 }

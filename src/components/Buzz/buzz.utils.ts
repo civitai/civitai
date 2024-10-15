@@ -2,16 +2,15 @@ import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
+import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
-import { env } from '~/env/client.mjs';
-import { QS } from '~/utils/qs';
-import { ModalProps } from '@mantine/core';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -98,6 +97,11 @@ export const useBuyBuzz = (): ((...args: OpenBuyBuzzModalProps) => void) => {
   }
 };
 
+export type BuzzTypeDistribution = {
+  pct: { blue: number; yellow: number };
+  amt: { blue: number; yellow: number };
+};
+
 export const useBuzzTransaction = (opts?: {
   message?: string | ((requiredBalance: number) => string);
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
@@ -107,8 +111,11 @@ export const useBuzzTransaction = (opts?: {
   const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
 
   const features = useFeatureFlags();
-  const { balance: userBalance } = useBuzz();
-  const { balance: generationBalance } = useBuzz(undefined, 'generation');
+  const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
+  const { balance: generationBalance, balanceLoading: generationBalanceLoading } = useBuzz(
+    undefined,
+    'generation'
+  );
   const isMobile = useIsMobile();
   const onBuyBuzz = useBuyBuzz();
 
@@ -141,9 +148,34 @@ export const useBuzzTransaction = (opts?: {
         return userBalance >= buzzAmount;
     }
   };
+  const getTypeDistribution = (buzzAmount: number): BuzzTypeDistribution => {
+    switch (type) {
+      case 'Generation':
+        if (generationBalance >= buzzAmount)
+          return { amt: { blue: buzzAmount, yellow: 0 }, pct: { blue: 1, yellow: 0 } };
+
+        const blueAmt = Math.max(0, generationBalance);
+        const yellowAmt = buzzAmount - blueAmt;
+
+        return {
+          amt: {
+            blue: blueAmt,
+            yellow: yellowAmt,
+          },
+          pct: {
+            blue: blueAmt / buzzAmount,
+            yellow: yellowAmt / buzzAmount,
+          },
+        };
+      default:
+        return { amt: { blue: 0, yellow: buzzAmount }, pct: { blue: 0, yellow: 1 } };
+    }
+  };
 
   const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
     if (!features.buzz) return onPerformTransaction();
+
+    if (userBalanceLoading || generationBalanceLoading) return;
 
     const balance = getCurrentBalance();
     const meetsRequirement = hasRequiredAmount(buzzAmount);
@@ -171,7 +203,9 @@ export const useBuzzTransaction = (opts?: {
   return {
     hasRequiredAmount,
     hasTypeRequiredAmount,
+    getTypeDistribution,
     conditionalPerformTransaction,
     tipUserMutation,
+    isLoadingBalance: userBalanceLoading || generationBalanceLoading,
   };
 };

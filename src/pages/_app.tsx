@@ -20,7 +20,7 @@ import React, { ReactElement } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { CustomNextPage } from '~/components/AppLayout/createPage';
+import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
@@ -33,7 +33,6 @@ import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/Hidden
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
@@ -72,11 +71,6 @@ registerCustomProtocol('civitai', true);
 // TODO fix this from initializing again in dev
 linkifyInit();
 
-// type CustomNextPage = NextPage & {
-//   getLayout?: (page: ReactElement) => ReactNode;
-//   options?: InnerLayoutOptions;
-// };
-
 type CustomAppProps = {
   Component: CustomNextPage;
 } & AppProps<{
@@ -97,28 +91,32 @@ function MyApp(props: CustomAppProps) {
     window.isAuthed = !!session;
   }
 
-  const getLayout =
-    Component.getLayout ??
-    ((page: ReactElement) => {
-      const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-      const withScrollArea = Component.options?.withScrollArea ?? true;
-      return (
-        <FeatureLayout conditional={Component.options?.features}>
-          <AppLayout withFooter={Component.options?.withFooter}>
-            {/* <InnerLayout>
-            {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
-          </InnerLayout> */}
-            {InnerLayout ? (
-              <InnerLayout>{page}</InnerLayout>
-            ) : withScrollArea ? (
-              <ScrollAreaMain>{page}</ScrollAreaMain>
-            ) : (
-              page
-            )}
-          </AppLayout>
-        </FeatureLayout>
-      );
-    });
+  // const getLayout =
+  //   Component.getLayout ??
+  //   ((page: ReactElement) => {
+  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
+  //     return (
+  //       <FeatureLayout conditional={Component.options?.features}>
+  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
+  //       </FeatureLayout>
+  //     );
+  //   });
+
+  const getLayout = (page: ReactElement) => (
+    <FeatureLayout conditional={Component?.features}>
+      {Component.getLayout?.(page) ?? (
+        <AppLayout
+          left={Component.left}
+          right={Component.right}
+          subNav={Component.subNav}
+          scrollable={Component.scrollable}
+          footer={Component.footer}
+        >
+          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+        </AppLayout>
+      )}
+    </FeatureLayout>
+  );
 
   return (
     <>
