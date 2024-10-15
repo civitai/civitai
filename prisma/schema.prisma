@@ -273,6 +273,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  ratingRequests             ImageRatingRequest[]
 }
 
 model CustomerSubscription {
@@ -1288,6 +1289,7 @@ model Image {
   techniques          ImageTechnique[]
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
+  ratingRequests      ImageRatingRequest[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1379,10 +1381,13 @@ model ImageMetric {
 
 model ImageRatingRequest {
   userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   imageId   Int
+  image     Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
   createdAt DateTime     @default(now())
   nsfwLevel Int
   status    ReportStatus @default(Pending)
+  weight    Int          @default(1)
 
   @@id([imageId, userId])
 }

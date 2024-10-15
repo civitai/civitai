@@ -281,12 +281,12 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md" key={transactionType}>
                 <Stack spacing={8} mr={14}>
-                  {transactions.map((transaction) => {
+                  {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;
 
                     return (
-                      <Stack key={date.toISOString()} spacing={4}>
+                      <Stack key={index + '@' + date.toISOString()} spacing={4}>
                         <Group position="apart" noWrap align="flex-start">
                           <Stack spacing={0}>
                             <Text size="sm" weight="500" lh={1.2}>
