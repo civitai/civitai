@@ -1387,6 +1387,7 @@ model ImageRatingRequest {
   createdAt DateTime     @default(now())
   nsfwLevel Int
   status    ReportStatus @default(Pending)
+  weight    Int          @default(1)
 
   @@id([imageId, userId])
 }

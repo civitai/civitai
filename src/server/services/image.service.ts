@@ -3700,18 +3700,13 @@ export async function updateImageNsfwLevel({
       activity: 'setNsfwLevel',
     });
   } else {
-    await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: user.id } },
-      create: { nsfwLevel, imageId: id, userId: user.id },
-      update: { nsfwLevel },
-    });
-
     // Track potential content leaking
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
     const current = await dbWrite.image.findFirst({
       where: { id },
       select: { nsfwLevel: true, userId: true },
     });
+    if (!current) return;
     if (
       current?.nsfwLevel === NsfwLevel.PG &&
       nsfwLevel >= NsfwLevel.R &&
@@ -3719,6 +3714,17 @@ export async function updateImageNsfwLevel({
     ) {
       leakingContentCounter.inc();
     }
+
+    await dbWrite.imageRatingRequest.upsert({
+      where: { imageId_userId: { imageId: id, userId: user.id } },
+      create: {
+        nsfwLevel,
+        imageId: id,
+        userId: user.id,
+        weight: current.userId === user.id ? 3 : 1,
+      },
+      update: { nsfwLevel },
+    });
   }
 }
 
@@ -3732,7 +3738,6 @@ type ImageRatingRequestResponse = {
   height: number | null;
   type: MediaType;
   total: number;
-  ownerVote: number;
   createdAt: Date;
 };
 
@@ -3781,55 +3786,92 @@ export async function getImageRatingRequests({
   //   LIMIT ${limit + 1}
   // `;
 
+  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  // WITH image_rating_requests AS (
+  //     SELECT
+  //       irr.*,
+  //       i."userId"  "imageUserId",
+  //       i."nsfwLevel"  "imageNsfwLevel"
+  //     FROM "ImageRatingRequest" irr
+  //     JOIN "Image" i ON i.id = irr."imageId"
+  //     WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //     AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
+  //     ORDER BY irr."createdAt"
+  //   ),
+  //   requests AS (
+  //     SELECT
+  //       "imageId" id,
+  //       MIN("createdAt") as "createdAt",
+  //       COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
+  //       COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
+  //       jsonb_build_object(
+  //           ${NsfwLevel.PG}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
+  //           ${NsfwLevel.PG13}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
+  //           ${NsfwLevel.R}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
+  //           ${NsfwLevel.X}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
+  //           ${NsfwLevel.XXX}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
+  //         ) "votes"
+  //     FROM image_rating_requests
+  //     GROUP BY "imageId"
+  //   )
+  //   SELECT
+  //     i.url,
+  //     i."nsfwLevel",
+  //     i."nsfwLevelLocked",
+  //     i."userId",
+  //     i.type,
+  //     i.width,
+  //     i.height,
+  //     r.*
+  //   FROM requests r
+  //   JOIN "Image" i ON i.id = r."id"
+  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
+  //   AND i."blockedFor" IS NULL
+  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+  //   ORDER BY r."createdAt"
+  //   LIMIT ${limit + 1}
+  // `;
+
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-  WITH image_rating_requests AS (
+      WITH image_rating_requests AS MATERIALIZED (
+        SELECT
+          "imageId",
+          COALESCE(SUM(weight),0) total,
+          MIN("createdAt") "createdAt",
+          jsonb_build_object(
+                  1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
+                  2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
+                  4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
+                  8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
+                  16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
+                ) "votes"
+        FROM "ImageRatingRequest"
+        WHERE status = 'Pending'
+        GROUP BY "imageId"
+      )
       SELECT
-        irr.*,
-        i."userId"  "imageUserId",
-        i."nsfwLevel"  "imageNsfwLevel"
-      FROM "ImageRatingRequest" irr
+        i.id,
+        irr.votes,
+        irr.total::int,
+        i.url,
+        i."nsfwLevel",
+        i."nsfwLevelLocked",
+        i.width,
+        i.height,
+        i.type,
+        i."createdAt"
+      FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
-      WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-      AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
+      WHERE irr.total >= 3
+      AND i."blockedFor" IS NULL
+      ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
-    ),
-    requests AS (
-      SELECT
-        "imageId" id,
-        MIN("createdAt") as "createdAt",
-        COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
-        COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
-        jsonb_build_object(
-            ${NsfwLevel.PG}, count("nsfwLevel")
-              FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
-            ${NsfwLevel.PG13}, count("nsfwLevel")
-              FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
-            ${NsfwLevel.R}, count("nsfwLevel")
-              FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
-            ${NsfwLevel.X}, count("nsfwLevel")
-              FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
-            ${NsfwLevel.XXX}, count("nsfwLevel")
-              FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
-          ) "votes"
-      FROM image_rating_requests
-      GROUP BY "imageId"
-    )
-    SELECT
-      i.url,
-      i."nsfwLevel",
-      i."nsfwLevelLocked",
-      i."userId",
-      i.type,
-      i.width,
-      i.height,
-      r.*
-    FROM requests r
-    JOIN "Image" i ON i.id = r."id"
-    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
-    AND i."blockedFor" IS NULL
-    ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-    ORDER BY r."createdAt"
-    LIMIT ${limit + 1}
+      LIMIT ${limit + 1}
   `;
 
   let nextCursor: string | undefined;
