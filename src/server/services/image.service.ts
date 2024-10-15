@@ -3838,7 +3838,7 @@ export async function getImageRatingRequests({
   // `;
 
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-      WITH image_rating_requests AS MATERIALIZED (
+      WITH image_rating_requests AS (
         SELECT
           "imageId",
           COALESCE(SUM(weight),0) total,
