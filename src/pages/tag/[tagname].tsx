@@ -75,7 +75,7 @@ export default function TagPage({
               />
               <ModelFiltersDropdown size="sm" compact />
             </Group>
-            <ModelsInfinite filters={{ ...queryFilters, sort, period }} showEof showAds />
+            <ModelsInfinite filters={{ ...queryFilters, sort }} showEof showAds />
           </Stack>
         </MasonryContainer>
       </MasonryProvider>
