@@ -10,7 +10,7 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { getAnnouncements } from '~/server/services/announcement.service';
+import { getAnnouncementsCached } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -124,7 +124,7 @@ export const getHomeBlockById = async ({
 };
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
-type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
+type GetAnnouncements = AsyncReturnType<typeof getAnnouncementsCached>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
 };
@@ -224,35 +224,35 @@ export const getHomeBlockData = async ({
         }),
       };
     }
-    case HomeBlockType.Announcement: {
-      if (!metadata.announcements) {
-        return null;
-      }
+    // case HomeBlockType.Announcement: {
+    //   if (!metadata.announcements) {
+    //     return null;
+    //   }
 
-      const announcementIds = metadata.announcements.ids;
-      const announcements = await getAnnouncements({
-        ids: announcementIds,
-        dismissed: input.dismissed,
-        limit: metadata.announcements.limit,
-        user,
-      });
+    //   const announcementIds = metadata.announcements.ids;
+    //   const announcements = await getAnnouncements({
+    //     ids: announcementIds,
+    //     dismissed: input.dismissed,
+    //     limit: metadata.announcements.limit,
+    //     user,
+    //   });
 
-      if (!announcements.length) {
-        // If the user cleared all announcements in home block, do not display this block.
-        return null;
-      }
+    //   if (!announcements.length) {
+    //     // If the user cleared all announcements in home block, do not display this block.
+    //     return null;
+    //   }
 
-      return {
-        ...homeBlock,
-        metadata,
-        announcements: announcements.sort((a, b) => {
-          const aIndex = a.metadata?.index ?? 999;
-          const bIndex = b.metadata?.index ?? 999;
+    //   return {
+    //     ...homeBlock,
+    //     metadata,
+    //     announcements: announcements.sort((a, b) => {
+    //       const aIndex = a.metadata?.index ?? 999;
+    //       const bIndex = b.metadata?.index ?? 999;
 
-          return aIndex - bIndex;
-        }),
-      };
-    }
+    //       return aIndex - bIndex;
+    //     }),
+    //   };
+    // }
     case HomeBlockType.CosmeticShop: {
       if (!metadata.cosmeticShopSection) {
         return null;

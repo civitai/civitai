@@ -50,7 +50,7 @@ export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
         id: announcement.id,
         type: 'announcement',
         category: 'announcement' as any,
-        createdAt: announcement.startsAt ?? announcement.createdAt,
+        createdAt: announcement.startsAt,
         read: !!dismissed.find((id) => id === announcement.id),
         details: {
           url: announcement.metadata?.actions?.[0]?.link,

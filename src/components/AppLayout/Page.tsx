@@ -11,6 +11,7 @@ type PageOptions = {
   main?: React.ReactNode;
   scrollable?: boolean;
   footer?: React.ReactNode | null;
+  announcements?: boolean;
 };
 
 export type CustomNextPage = NextPage & PageOptions;
@@ -25,6 +26,7 @@ export function Page(Component: CustomNextPage, options?: PageOptions) {
   Component.main = options?.main;
   Component.scrollable = options?.scrollable;
   Component.footer = options?.footer;
+  Component.announcements = options?.announcements;
 
   return Component;
 }

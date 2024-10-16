@@ -3,6 +3,7 @@ import React, { Key, createContext, useContext, useEffect, useRef, useState } fr
 import { TypeOf, ZodAny, ZodArray, ZodEffects, ZodObject, ZodString, ZodTypeAny, z } from 'zod';
 import { StoreApi, createStore } from 'zustand';
 import { Announcement } from '~/components/Announcements/Announcement';
+import { AnnouncementForm } from '~/components/Announcements/AnnouncementForm';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { IsClient } from '~/components/IsClient/IsClient';
 import OnboardingWizard from '~/components/Onboarding/OnboardingWizard';
@@ -16,5 +17,9 @@ import { trpc } from '~/utils/trpc';
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
 export default function Test() {
-  return <div className="container"></div>;
+  return (
+    <div className="container">
+      <AnnouncementForm />
+    </div>
+  );
 }
