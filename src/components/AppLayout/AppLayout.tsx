@@ -99,7 +99,7 @@ function Announcements() {
   const { data } = useGetAnnouncements();
   if (!data.length || router.asPath.startsWith('/user/notifications')) return null;
   return (
-    <div className="-mt-3 mb-3 bg-gray-1 py-3 dark:bg-dark-9">
+    <div className="mb-3 ">
       <div className="container">
         <Announcement announcement={data[0]} />
       </div>
