@@ -11,7 +11,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
-import { NotificationsRaw } from '~/server/services/notification.service';
 import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -39,12 +38,10 @@ export const useQueryNotifications = (
     [data?.pages]
   );
 
-  console.log(notifications);
-
   return { data, notifications, ...rest };
 };
 
-function useGetAnnouncementsAsNotifications(): NotificationsRaw[] {
+export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
   const { data } = useGetAnnouncements();
   const { dismissed } = useAnnouncementsContext();
   return useMemo(
@@ -54,11 +51,13 @@ function useGetAnnouncementsAsNotifications(): NotificationsRaw[] {
         type: 'announcement',
         category: 'announcement' as any,
         createdAt: announcement.startsAt ?? announcement.createdAt,
-        read: !dismissed.find((id) => id === announcement.id),
+        read: !!dismissed.find((id) => id === announcement.id),
         details: {
           url: announcement.metadata?.actions?.[0]?.link,
           target: '_blank',
           message: announcement.title,
+          actor: undefined,
+          content: undefined,
         },
       })),
     [data]
