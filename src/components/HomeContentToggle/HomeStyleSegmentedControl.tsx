@@ -8,6 +8,7 @@ import {
   ThemeIcon,
   createStyles,
   Badge,
+  Loader,
 } from '@mantine/core';
 import { IconProps } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -62,6 +63,7 @@ export function HomeStyleSegmentedControl({
   onChange,
   size,
   sx,
+  loading,
   ...props
 }: Props) {
   const { classes, theme } = useStyles();
@@ -88,7 +90,11 @@ export function HomeStyleSegmentedControl({
               {value.label ?? key}
             </Text>
             {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
-            {canViewNsfw && value.count && <Badge>{value.count}</Badge>}
+            {canViewNsfw && value.count != null && (
+              <Badge>
+                {loading ? <Loader size="xs" variant="dots" /> : value.count.toLocaleString()}
+              </Badge>
+            )}
           </Group>
         </Anchor>
       </Link>
@@ -117,12 +123,13 @@ export type DataItem = {
   url: string;
   icon: (props?: IconProps) => React.ReactNode;
   disabled?: boolean;
-  count?: number | string;
+  count?: number;
   label?: string;
 };
 type Props = {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   value: string;
   onChange?: (item: DataItem) => void;
+  loading?: boolean;
   data: Record<string, DataItem>;
 } & Omit<SegmentedControlProps, 'data' | 'value' | 'onChange'>;
