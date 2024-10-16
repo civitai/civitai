@@ -100,7 +100,7 @@ declare global {
     fp?: ModelFileFp;
   };
 
-  // TODO do we need this type? we already have ModelFileMetadata
+  // TODO should find a way to merge this with ModelFileMetadata
   type FileMetadata = BasicFileMetadata & {
     labelType?: LabelTypes;
     ownRights?: boolean;

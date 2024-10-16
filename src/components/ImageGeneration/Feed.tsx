@@ -90,11 +90,7 @@ export function Feed() {
     );
 
   return (
-    <ScrollArea
-      scrollRestore={{ key: 'feed' }}
-      className="flex flex-col gap-2 px-3"
-      id="feed-queue"
-    >
+    <div className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid}>
         {steps.map((step) =>
@@ -126,7 +122,7 @@ export function Feed() {
           </Center>
         </InViewLoader>
       )}
-    </ScrollArea>
+    </div>
   );
 }
 

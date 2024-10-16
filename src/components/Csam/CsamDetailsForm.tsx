@@ -26,7 +26,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { Form, InputCheckboxGroup, InputRadioGroup, useForm } from '~/libs/form';
 import { withController } from '~/libs/form/hoc/withController';
 import {
-  CsamReportDetails,
+  CsamReportFormInput,
   csamCapabilitiesDictionary,
   csamContentsDictionary,
   csamReportDetails,
@@ -47,7 +47,7 @@ export function CsamDetailsForm({
   onSuccess?: () => void;
   userId: number;
   type: CsamReportType;
-  defaultValues?: CsamReportDetails;
+  defaultValues?: CsamReportFormInput;
 }) {
   const form = useForm({
     schema,

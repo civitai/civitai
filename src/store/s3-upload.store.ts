@@ -183,6 +183,7 @@ export const useS3UploadStore = create<StoreProps>()(
           body: JSON.stringify(body),
         });
 
+        // TODO handle a non-json response (like a 403)
         const data = (await res.json()) as ApiUploadResponse;
 
         if ('error' in data) {

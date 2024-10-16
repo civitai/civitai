@@ -311,3 +311,14 @@ export enum TipaltiStatus {
   BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
   InternalValue = 'INTERNAL_VALUE',
 }
+
+export enum OrchPriorityTypes {
+  High = 'high',
+  Normal = 'normal',
+  Low = 'low',
+}
+export enum OrchEngineTypes {
+  Kohya = 'kohya',
+  Rapid = 'flux-dev-fast',
+  'X-Flux' = 'x-flux',
+}

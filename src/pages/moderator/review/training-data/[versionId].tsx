@@ -1,9 +1,14 @@
-import { Button, Loader, Text } from '@mantine/core';
+import { Button, Loader, Popover, Text } from '@mantine/core';
+import { IconInfoSquareRounded } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
-import { createPage } from '~/components/AppLayout/createPage';
+import { Page } from '~/components/AppLayout/Page';
 import { CsamDetailsForm } from '~/components/Csam/CsamDetailsForm';
+import {
+  DescriptionTable,
+  type Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useStepper } from '~/hooks/useStepper';
 import { fetchBlob } from '~/utils/file-utils';
@@ -16,11 +21,16 @@ function ReviewTrainingData() {
   const requestedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [urls, setUrls] = useState<string[]>([]);
-  const [error, setError] = useState();
+  const [error, setError] = useState<Error>();
   const [currentStep, actions] = useStepper(2);
   const utils = trpc.useUtils();
 
-  const { data: user, isLoading } = trpc.modelVersion.getOwner.useQuery({ id: versionId });
+  const { data, isLoading } = trpc.modelVersion.getTrainingDetails.useQuery({
+    id: versionId,
+  });
+
+  const user = data?.user;
+  const workflowId = data?.workflowId;
 
   useEffect(() => {
     if (requestedRef.current || urls.length > 0) return;
@@ -49,6 +59,36 @@ function ReviewTrainingData() {
     router.back();
   }
 
+  const details: DescriptionTableProps['items'] = [
+    {
+      label: 'Workflow ID',
+      value: data?.workflowId ?? 'N/A',
+    },
+    {
+      label: 'JobID',
+      value: data?.jobId,
+      visible: !data?.workflowId,
+    },
+    {
+      label: 'Version',
+      value: data?.trainingResults?.version ?? '1',
+    },
+    {
+      label: 'Started At',
+      value: data?.trainingResults?.startedAt ?? 'N/A',
+    },
+    {
+      label: 'Submitted At',
+      value: data?.trainingResults?.submittedAt ?? 'N/A',
+    },
+    {
+      label: 'Completed At',
+      value: data?.trainingResults?.completedAt ?? 'N/A',
+    },
+  ];
+
+  useEffect(() => console.log({ currentStep }), [currentStep]);
+
   return loading || isLoading ? (
     <div className="p-3">
       <Loader className="mx-auto" />
@@ -59,10 +99,20 @@ function ReviewTrainingData() {
     </div>
   ) : error ? (
     <div className="p-3">
-      <pre className="mx-auto">{error}</pre>
+      <pre className="mx-auto">{JSON.stringify(error.message)}</pre>
     </div>
   ) : (
     <>
+      <div className="container flex max-w-lg justify-end gap-3 p-3">
+        <Popover width={300} withArrow withinPortal shadow="sm">
+          <Popover.Target>
+            <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
+          </Popover.Target>
+          <Popover.Dropdown>
+            <DescriptionTable items={details} />
+          </Popover.Dropdown>
+        </Popover>
+      </div>
       {currentStep === 1 && (
         <ReviewImages
           onNext={actions.goToNextStep}
@@ -71,7 +121,7 @@ function ReviewTrainingData() {
           onModerate={handleSuccess}
         />
       )}
-      {currentStep === 2 && (
+      {currentStep !== 1 && (
         <CsamDetailsForm
           onPrevious={actions.goToPrevStep}
           onSuccess={handleSuccess}
@@ -84,10 +134,15 @@ function ReviewTrainingData() {
   );
 }
 
-export default createPage(ReviewTrainingData, {
-  withScrollArea: false,
+export default Page(ReviewTrainingData, {
+  scrollable: false,
   features: (features) => !!features.reviewTrainingData,
 });
+
+// export default createPage(ReviewTrainingData, {
+//   withScrollArea: false,
+//   features: (features) => !!features.reviewTrainingData,
+// });
 
 function ReviewImages({
   onNext,
@@ -132,7 +187,7 @@ function ReviewImages({
       <ScrollArea className="size-auto pt-0">
         <div className="container max-w-lg">
           <div className="grid grid-cols-4 gap-4">
-            {[...urls, ...urls, ...urls, ...urls, ...urls, ...urls].map((url, index) => (
+            {urls.map((url, index) => (
               <div key={index} className="flex items-center justify-center card">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={url} alt="" className="max-w-full" loading="lazy" />

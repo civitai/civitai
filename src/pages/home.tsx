@@ -66,6 +66,7 @@ export default function Home() {
         )}
 
         <Box
+          className="-mt-3"
           sx={(theme) => ({
             '& > *:nth-of-type(even)': {
               background:

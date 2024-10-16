@@ -17,7 +17,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 // We should not be using /types/router here, but it's a bit too much to refactor right now.
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
-export const maxChats = 200;
+export const maxChats = 1000;
 export const maxChatsPerDay = 10;
 export const maxUsersPerChat = 10;
 

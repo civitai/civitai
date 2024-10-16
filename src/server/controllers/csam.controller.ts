@@ -1,7 +1,7 @@
 import { ReportStatus } from '@prisma/client';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import { Context } from '~/server/createContext';
-import { CsamReportSchema } from '~/server/schema/csam.schema';
+import { CreateCsamReportSchema } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
@@ -10,7 +10,7 @@ export async function createCsamReportHandler({
   input,
   ctx,
 }: {
-  input: CsamReportSchema;
+  input: CreateCsamReportSchema;
   ctx: DeepNonNullable<Context>;
 }) {
   const { userId, imageIds = [], details, type } = input;
@@ -30,7 +30,7 @@ export async function createCsamReportHandler({
   const modelVersionIds = details?.modelVersionIds ?? [];
   if (type === 'TrainingData' && !!modelVersionIds.length) {
     const modelVersionId = modelVersionIds[0];
-    await handleDenyTrainingData({ input: { id: modelVersionId }, ctx });
+    await handleDenyTrainingData({ input: { id: modelVersionId } });
   }
 
   if (userId !== -1) {

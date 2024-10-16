@@ -610,6 +610,8 @@ type BuzzClaimDetails = {
   title: string;
   description: string;
   amount: number;
+  accountType: BuzzAccountType;
+  useMultiplier?: boolean;
 };
 export type BuzzClaimResult =
   | {
@@ -629,6 +631,8 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     title: claimable?.title ?? 'Unknown',
     description: claimable?.description ?? 'Unknown',
     amount: claimable?.amount ?? 0,
+    accountType: claimable?.accountType ?? 'user',
+    useMultiplier: claimable?.useMultiplier ?? false,
   } as BuzzClaimDetails;
 
   function unavailable(reason: string) {
@@ -676,13 +680,22 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
   const claimStatus = await getClaimStatus({ id, userId });
   if (claimStatus.status !== 'available') return claimStatus;
 
+  const { rewardsMultiplier } = await getMultipliersForUser(userId);
+
   await createBuzzTransaction({
-    amount: claimStatus.details.amount,
+    amount: claimStatus.details.useMultiplier
+      ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
+      : claimStatus.details.amount,
     externalTransactionId: claimStatus.claimId,
     fromAccountId: 0,
     toAccountId: userId,
     type: TransactionType.Reward,
-    description: `Claimed reward: ${claimStatus.details.title}`,
+    description: `Claimed reward: ${claimStatus.details.title}. ${
+      claimStatus.details.useMultiplier
+        ? `Original amount: ${claimStatus.details.amount}. Multiplier: ${rewardsMultiplier}x`
+        : ''
+    }`,
+    toAccountType: claimStatus.details.accountType ?? 'user',
   });
 
   return {

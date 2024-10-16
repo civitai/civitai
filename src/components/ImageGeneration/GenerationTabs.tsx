@@ -17,6 +17,7 @@ import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -124,11 +125,27 @@ const tabs: Tabs = {
   queue: {
     Icon: IconClockHour9,
     label: 'Queue',
-    Component: Queue,
+    Component: ScrollableQueue,
   },
   feed: {
     Icon: IconGridDots,
     label: 'Feed',
-    Component: Feed,
+    Component: ScrollableFeed,
   },
 };
+
+function ScrollableQueue() {
+  return (
+    <ScrollArea scrollRestore={{ key: 'queue' }}>
+      <Queue />
+    </ScrollArea>
+  );
+}
+
+function ScrollableFeed() {
+  return (
+    <ScrollArea scrollRestore={{ key: 'feed' }}>
+      <Feed />
+    </ScrollArea>
+  );
+}

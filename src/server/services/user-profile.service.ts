@@ -63,6 +63,7 @@ export const getUserWithProfile = async ({
         id,
         username,
         deletedAt: null,
+        bannedAt: isModerator ? undefined : null,
       },
       select: { ...userWithProfileSelect, bannedAt: true, meta: true, publicSettings: true },
     });

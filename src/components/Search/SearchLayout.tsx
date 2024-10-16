@@ -204,17 +204,16 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
 const maxColumnCount = 7;
 SearchLayout.Content = function Content({ children }: { children: React.ReactNode }) {
   return (
-    <ScrollArea className="!py-4">
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={maxColumnCount}
-        maxSingleColumnWidth={450}
-      >
-        <MasonryContainer p={0}>
-          <Stack>{children}</Stack>
-        </MasonryContainer>
-      </MasonryProvider>
-    </ScrollArea>
+    <MasonryProvider
+      columnWidth={constants.cardSizes.model}
+      maxColumnCount={maxColumnCount}
+      maxSingleColumnWidth={450}
+      className="flex-1"
+    >
+      <MasonryContainer p={0}>
+        <Stack>{children}</Stack>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 };
 

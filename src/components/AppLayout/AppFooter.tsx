@@ -1,21 +1,16 @@
-import {
-  Anchor,
-  Button,
-  ButtonProps,
-  Code,
-  createStyles,
-  Footer,
-  Group,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Anchor, Button, ButtonProps, Code, Group, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import clsx from 'clsx';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { IconArrowUp } from '@tabler/icons-react';
+import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { ChatPortal } from '~/components/Chat/ChatProvider';
 
 const buttonProps: ButtonProps = {
   size: 'xs',
@@ -26,20 +21,50 @@ const buttonProps: ButtonProps = {
 
 const hash = env.NEXT_PUBLIC_GIT_HASH;
 
-export function AppFooter({ fixed = true }: { fixed?: boolean }) {
-  const { classes, cx } = useStyles({ fixed });
+export function AppFooter() {
+  // const { classes, cx } = useStyles({ fixed });
   const [showHash, setShowHash] = useState(false);
   const mobile = useContainerSmallerThan('sm');
   const features = useFeatureFlags();
+  const footerRef = useRef<HTMLElement | null>(null);
+
+  const [showFooter, setShowFooter] = useState(true);
+  const scrollRef = useScrollAreaRef({
+    onScroll: (node) => {
+      setShowFooter(node.scrollTop <= 100);
+    },
+  });
 
   return (
-    <Footer
-      className={cx(classes.root, { ['border-green-8 border-t-[3px]']: features.isGreen })}
-      height="auto"
-      p="sm"
-      py={4}
+    <footer
+      ref={footerRef}
+      className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
+      style={!showFooter ? { transform: 'translateY(var(--footer-height))' } : undefined}
     >
-      <Group spacing={mobile ? 'sm' : 'lg'} sx={{ flexWrap: 'nowrap' }}>
+      <ChatPortal showFooter={showFooter} />
+      <div className="absolute bottom-[var(--footer-height)] right-0">
+        <div className="relative mb-2  mr-2 flex gap-2">
+          <Button
+            px="xs"
+            onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}
+            className={'transition-transform'}
+            style={showFooter ? { transform: 'translateY(140%)' } : undefined}
+          >
+            <IconArrowUp size={20} stroke={2.5} />
+          </Button>
+          <AssistantButton />
+        </div>
+      </div>
+      <div
+        className={clsx(
+          ' relative flex h-[var(--footer-height)] w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
+          {
+            ['border-t border-gray-3 dark:border-dark-4']: !features.isGreen,
+            ['border-green-8 border-t-[3px]']: features.isGreen,
+          }
+        )}
+        style={{ scrollbarWidth: 'thin' }}
+      >
         <Text
           weight={700}
           sx={{ whiteSpace: 'nowrap', userSelect: 'none' }}
@@ -179,42 +204,12 @@ export function AppFooter({ fixed = true }: { fixed?: boolean }) {
         </Group>
         <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
           <RoutedDialogLink name="support" state={{}} passHref>
-            <Button
-              component="a"
-              pl={4}
-              pr="xs"
-              color="yellow"
-              variant="light"
-              size={!fixed ? 'xs' : undefined}
-            >
+            <Button component="a" pl={4} pr="xs" color="yellow" variant="light" size="xs">
               🛟 Support
             </Button>
           </RoutedDialogLink>
         </Group>
-      </Group>
-    </Footer>
+      </div>
+    </footer>
   );
 }
-
-const useStyles = createStyles((theme, args: { fixed: boolean }) => ({
-  root: {
-    position: args.fixed ? 'fixed' : undefined,
-    bottom: 0,
-    right: 0,
-    left: 0,
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    // boxShadow: '0 -1px 3px rgba(0, 0, 0, 0.05), 0 -1px 2px rgba(0, 0, 0, 0.1)',
-    transitionProperty: 'transform',
-    transitionDuration: '0.3s',
-    transitionTimingFunction: 'linear',
-    overflowX: 'auto',
-    // transform: 'translateY(0)',
-    zIndex: 199,
-  },
-  down: {
-    transform: 'translateY(200%)',
-    // bottom: '-60',
-  },
-}));

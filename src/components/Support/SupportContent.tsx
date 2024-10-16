@@ -41,8 +41,6 @@ const SUPPORT_OPTIONS = [
 ];
 
 export function SupportContent() {
-  const { data: { token = null } = {} } = trpc.user.getToken.useQuery();
-
   return (
     <Grid gutter="xl">
       <Grid.Col xs={12} md={6}>
@@ -72,10 +70,12 @@ export function SupportContent() {
       </Grid.Col>
       <Grid.Col xs={12} md={6}>
         <AssistantChat
-          token={token}
           width="100%"
           height="100%"
-          sx={{ height: '100%', minHeight: 500 }}
+          sx={{
+            height: '100%',
+            minHeight: 500,
+          }}
         />
       </Grid.Col>
       <Grid.Col>

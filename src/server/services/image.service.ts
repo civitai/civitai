@@ -151,10 +151,13 @@ export async function purgeResizeCache({ url }: { url: string }) {
       bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
       prefix: url,
     });
-    await baseS3Client.deleteManyObjects({
-      bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
-      keys: items.map((x) => x.Key).filter(isDefined),
-    });
+    const keys = items.map((x) => x.Key).filter(isDefined);
+    if (keys.length) {
+      await baseS3Client.deleteManyObjects({
+        bucket: env.S3_IMAGE_CACHE_BUCKET_OLD,
+        keys,
+      });
+    }
   }
 
   // Purge from new cache bucket
@@ -162,10 +165,13 @@ export async function purgeResizeCache({ url }: { url: string }) {
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     prefix: url,
   });
-  await imageS3Client.deleteManyObjects({
-    bucket: env.S3_IMAGE_CACHE_BUCKET,
-    keys: items.map((x) => x.Key).filter(isDefined),
-  });
+  const keys = items.map((x) => x.Key).filter(isDefined);
+  if (keys.length) {
+    await imageS3Client.deleteManyObjects({
+      bucket: env.S3_IMAGE_CACHE_BUCKET,
+      keys,
+    });
+  }
 }
 
 async function markImagesDeleted(id: number | number[]) {
@@ -2969,101 +2975,12 @@ export const getEntityCoverImage = async ({
 
   // Returns 1 cover image for:
   // Models, Images, Bounties, BountyEntries, Article and Post.
-  const images = await dbRead.$queryRaw<GetEntityImageRaw[]>`
+  const imagesRaw = await dbRead.$queryRaw<GetEntityImageRaw[]>`
     WITH entities AS (
       SELECT * FROM jsonb_to_recordset(${JSON.stringify(entities)}::jsonb) AS v(
         "entityId" INTEGER,
         "entityType" VARCHAR
       )
-    ), targets AS (
-      SELECT
-        e."entityId",
-        e."entityType",
-        CASE
-        WHEN e."entityType" = 'Model'
-            THEN  (
-                SELECT mi."imageId" FROM (
-                  SELECT
-                    m.id,
-                    i.id as "imageId",
-                    ROW_NUMBER() OVER (PARTITION BY m.id ORDER BY mv.index, i."postId", i.index) rn
-                  FROM "Image" i
-                  JOIN "Post" p ON p.id = i."postId"
-                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-                  JOIN "Model" m ON mv."modelId" = m.id AND m."userId" = p."userId"
-                  WHERE m."id" = e."entityId"
-                    AND m.status = 'Published'
-                    AND i."ingestion" = 'Scanned'
-                    AND i."needsReview" IS NULL
-                  ) mi
-                  WHERE mi.rn = 1
-                )
-        WHEN e."entityType" = 'ModelVersion'
-            THEN  (
-                SELECT mi."imageId" FROM (
-                  SELECT
-                    mv.id,
-                    i.id as "imageId"
-                  FROM "Image" i
-                  JOIN "Post" p ON p.id = i."postId"
-                  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-                  WHERE mv."id" = e."entityId"
-                    AND mv.status = 'Published'
-                    AND i."ingestion" = 'Scanned'
-                    AND i."needsReview" IS NULL
-                  ORDER BY mv.index, i."postId", i.index
-                  ) mi
-                  LIMIT 1
-                )
-        WHEN e."entityType" = 'Image'
-          THEN (
-            SELECT i.id FROM "Image" i
-            WHERE i.id = e."entityId"
-              AND i."ingestion" = 'Scanned'
-              AND i."needsReview" IS NULL
-          )
-        WHEN e."entityType" = 'Article'
-          THEN (
-            SELECT ai."imageId" FROM (
-              SELECT
-                a.id,
-                i.id as "imageId"
-              FROM "Image" i
-              JOIN "Article" a ON a."coverId" = i.id
-              WHERE a."id" = e."entityId"
-                AND a."publishedAt" IS NOT NULL
-                AND i."ingestion" = 'Scanned'
-                AND i."needsReview" IS NULL
-            ) ai
-            LIMIT 1
-          )
-        WHEN e."entityType" = 'Post'
-          THEN (
-            SELECT pi."imageId" FROM (
-              SELECT
-                p.id,
-                i.id as "imageId"
-              FROM "Image" i
-              JOIN "Post" p ON p.id = i."postId"
-              WHERE p."id" = e."entityId"
-                AND p."publishedAt" IS NOT NULL
-                AND i."ingestion" = 'Scanned'
-                AND i."needsReview" IS NULL
-              ORDER BY i."postId", i.index
-            ) pi
-            LIMIT 1
-          )
-        ELSE (
-            SELECT
-                i.id
-            FROM "Image" i
-            JOIN "ImageConnection" ic ON ic."imageId" = i.id
-              AND ic."entityType" = e."entityType"
-              AND ic."entityId" = e."entityId"
-            LIMIT 1
-        )
-        END as "imageId"
-      FROM entities e
     )
     SELECT
       i.id,
@@ -3086,9 +3003,132 @@ export const getEntityCoverImage = async ({
       i."postId",
       t."entityId",
       t."entityType"
-    FROM targets t
+    FROM (
+      -- NOTE: Adding "order1/2/3" looks a bit hacky, but it avoids using partitions and makes it far more performant.
+      -- It might may look weird, but it has 0 practical effect other than better performance.
+       SELECT
+         *
+        FROM
+        (
+          -- MODEL
+          SELECT DISTINCT ON (e."entityId")
+            e."entityId",
+            e."entityType",
+            i.id as "imageId",
+            mv.index "order1",
+            p.id "order2",
+            i.index "order3"
+          FROM entities e
+          JOIN "Model" m ON e."entityId" = m.id
+          JOIN "ModelVersion" mv ON m.id = mv."modelId"
+          JOIN "Post" p ON mv.id = p."modelVersionId" AND p."userId" = m."userId"
+          JOIN "Image" i ON p.id = i."postId"
+          WHERE e."entityType" = 'Model'
+          AND m.status = 'Published'
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+          ORDER BY e."entityId", mv.index,  p.id, i.index
+        ) t
+
+        UNION
+
+        -- MODEL VERSION
+        SELECT * FROM (
+          SELECT DISTINCT ON (e."entityId")
+            e."entityId",
+            e."entityType",
+            i.id as "imageId",
+            mv.index "order1",
+            p.id "order2",
+            i.index "order3"
+          FROM entities e
+          JOIN "ModelVersion" mv ON e."entityId" = mv."id"
+          JOIN "Post" p ON mv.id = p."modelVersionId"
+          JOIN "Image" i ON p.id = i."postId"
+          WHERE e."entityType" = 'ModelVersion'
+          AND mv.status = 'Published'
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+          ORDER BY e."entityId", mv.index,  p.id, i.index
+        ) t
+
+        UNION
+        -- IMAGES
+        SELECT
+            e."entityId",
+            e."entityType",
+            e."entityId" AS "imageId",
+            0 "order1",
+            0 "order2",
+            0 "order3"
+        FROM entities e
+        WHERE e."entityType" = 'Image'
+
+        UNION
+        -- ARTICLES
+        SELECT * FROM (
+          SELECT DISTINCT ON (e."entityId")
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId",
+              0 "order1",
+	          0 "order2",
+	          0 "order3"
+          FROM entities e
+          JOIN "Article" a ON a.id = e."entityId"
+          JOIN "Image" i ON a."coverId" = i.id
+          WHERE e."entityType" = 'Article'
+          AND a."publishedAt" IS NOT NULL
+              AND i."ingestion" = 'Scanned'
+              AND i."needsReview" IS NULL
+        ) t
+
+        UNION
+        -- POSTS
+        SELECT * FROM  (
+          SELECT DISTINCT ON(e."entityId")
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId",
+              i."postId" "order1",
+	          i.index "order2",
+	          0 "order3"
+          FROM entities e
+          JOIN "Post" p ON p.id = e."entityId"
+          JOIN "Image" i ON i."postId" = p.id
+          WHERE e."entityType" = 'Post'
+            AND p."publishedAt" IS NOT NULL
+            AND i."ingestion" = 'Scanned'
+            AND i."needsReview" IS NULL
+          ORDER BY e."entityId", i."postId", i.index
+        ) t
+
+        UNION
+        -- CONNECTIONS
+        SELECT * FROM (
+          SELECT
+              e."entityId",
+              e."entityType",
+              i.id AS "imageId",
+              0 "order1",
+	          0 "order2",
+	          0 "order3"
+          FROM entities e
+          JOIN "ImageConnection" ic ON ic."entityId" = e."entityId" AND ic."entityType" = e."entityType"
+          JOIN "Image" i ON i.id = ic."imageId"
+        ) t
+    ) t
     JOIN "Image" i ON i.id = t."imageId"
     WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL`;
+
+  const images = entities
+    .map((e) => {
+      const image = imagesRaw.find(
+        (i) => i.entityId === e.entityId && i.entityType === e.entityType
+      );
+      return image ?? null;
+    })
+    .filter(isDefined);
 
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined = [];
   if (include && include.includes('tags')) {
@@ -3660,18 +3700,13 @@ export async function updateImageNsfwLevel({
       activity: 'setNsfwLevel',
     });
   } else {
-    await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: user.id } },
-      create: { nsfwLevel, imageId: id, userId: user.id },
-      update: { nsfwLevel },
-    });
-
     // Track potential content leaking
     // If the image is currently PG and the new level is R or higher, and the image isn't from the original user, increment the counter
     const current = await dbWrite.image.findFirst({
       where: { id },
       select: { nsfwLevel: true, userId: true },
     });
+    if (!current) return;
     if (
       current?.nsfwLevel === NsfwLevel.PG &&
       nsfwLevel >= NsfwLevel.R &&
@@ -3679,18 +3714,23 @@ export async function updateImageNsfwLevel({
     ) {
       leakingContentCounter.inc();
     }
+
+    await dbWrite.imageRatingRequest.upsert({
+      where: { imageId_userId: { imageId: id, userId: user.id } },
+      create: {
+        nsfwLevel,
+        imageId: id,
+        userId: user.id,
+        weight: current.userId === user.id ? 3 : 1,
+      },
+      update: { nsfwLevel },
+    });
   }
 }
 
 type ImageRatingRequestResponse = {
   id: number;
-  votes: {
-    [NsfwLevel.PG]: NsfwLevel.PG;
-    [NsfwLevel.PG13]: NsfwLevel.PG13;
-    [NsfwLevel.R]: NsfwLevel.R;
-    [NsfwLevel.X]: NsfwLevel.X;
-    [NsfwLevel.XXX]: NsfwLevel.XXX;
-  };
+  votes: Record<number, number>;
   url: string;
   nsfwLevel: number;
   nsfwLevelLocked: boolean;
@@ -3698,7 +3738,6 @@ type ImageRatingRequestResponse = {
   height: number | null;
   type: MediaType;
   total: number;
-  ownerVote: number;
   createdAt: Date;
 };
 
@@ -3707,44 +3746,132 @@ export async function getImageRatingRequests({
   limit,
   user,
 }: ImageRatingReviewOutput & { user: SessionUser }) {
+  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  //   WITH CTE_Requests AS (
+  //     SELECT
+  //       DISTINCT ON (irr."imageId") irr."imageId" as id,
+  //       MIN(irr."createdAt") as "createdAt",
+  //       COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
+  //       SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
+  //       i.url,
+  //       i."nsfwLevel",
+  //       i."nsfwLevelLocked",
+  //       i.type,
+  //       i.height,
+  //       i.width,
+  //       jsonb_build_object(
+  //         ${NsfwLevel.PG}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
+  //         ${NsfwLevel.PG13}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
+  //         ${NsfwLevel.R}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
+  //         ${NsfwLevel.X}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
+  //         ${NsfwLevel.XXX}, count(irr."nsfwLevel")
+  //           FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
+  //       ) "votes"
+  //       FROM "ImageRatingRequest" irr
+  //       JOIN "Image" i on i.id = irr."imageId"
+  //       WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //         AND i."nsfwLevel" != ${NsfwLevel.Blocked}
+  //       GROUP BY irr."imageId", i.id
+  //   )
+  //   SELECT
+  //     r.*
+  //   FROM CTE_Requests r
+  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
+  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+  //   ORDER BY r."createdAt"
+  //   LIMIT ${limit + 1}
+  // `;
+
+  // const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
+  // WITH image_rating_requests AS (
+  //     SELECT
+  //       irr.*,
+  //       i."userId"  "imageUserId",
+  //       i."nsfwLevel"  "imageNsfwLevel"
+  //     FROM "ImageRatingRequest" irr
+  //     JOIN "Image" i ON i.id = irr."imageId"
+  //     WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
+  //     AND irr."nsfwLevel" != ${NsfwLevel.Blocked}
+  //     ORDER BY irr."createdAt"
+  //   ),
+  //   requests AS (
+  //     SELECT
+  //       "imageId" id,
+  //       MIN("createdAt") as "createdAt",
+  //       COUNT(CASE WHEN "nsfwLevel" != "imageNsfwLevel" THEN "imageId" END)::INT "total",
+  //       COALESCE(bit_or(CASE WHEN "userId" = "imageUserId" THEN "nsfwLevel" ELSE 0 END))::INT "ownerVote",
+  //       jsonb_build_object(
+  //           ${NsfwLevel.PG}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG}),
+  //           ${NsfwLevel.PG13}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.PG13}),
+  //           ${NsfwLevel.R}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.R}),
+  //           ${NsfwLevel.X}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.X}),
+  //           ${NsfwLevel.XXX}, count("nsfwLevel")
+  //             FILTER (where "nsfwLevel" = ${NsfwLevel.XXX})
+  //         ) "votes"
+  //     FROM image_rating_requests
+  //     GROUP BY "imageId"
+  //   )
+  //   SELECT
+  //     i.url,
+  //     i."nsfwLevel",
+  //     i."nsfwLevelLocked",
+  //     i."userId",
+  //     i.type,
+  //     i.width,
+  //     i.height,
+  //     r.*
+  //   FROM requests r
+  //   JOIN "Image" i ON i.id = r."id"
+  //   WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != i."nsfwLevel"))
+  //   AND i."blockedFor" IS NULL
+  //   ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+  //   ORDER BY r."createdAt"
+  //   LIMIT ${limit + 1}
+  // `;
+
   const results = await dbRead.$queryRaw<ImageRatingRequestResponse[]>`
-    WITH CTE_Requests AS (
+      WITH image_rating_requests AS (
+        SELECT
+          "imageId",
+          COALESCE(SUM(weight),0) total,
+          MIN("createdAt") "createdAt",
+          jsonb_build_object(
+                  1, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 1),0),
+                  2, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 2),0),
+                  4, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 4),0),
+                  8, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 8),0),
+                  16, COALESCE(SUM(weight) FILTER (where "nsfwLevel" = 16),0)
+                ) "votes"
+        FROM "ImageRatingRequest"
+        WHERE status = 'Pending'
+        GROUP BY "imageId"
+      )
       SELECT
-        DISTINCT ON (irr."imageId") irr."imageId" as id,
-        MIN(irr."createdAt") as "createdAt",
-        COUNT(CASE WHEN i."nsfwLevel" != irr."nsfwLevel" THEN i.id END)::INT "total",
-        SUM(CASE WHEN irr."userId" = i."userId" THEN irr."nsfwLevel" ELSE 0 END)::INT "ownerVote",
+        i.id,
+        irr.votes,
+        irr.total::int,
         i.url,
         i."nsfwLevel",
         i."nsfwLevelLocked",
-        i.type,
-        i.height,
         i.width,
-        jsonb_build_object(
-          ${NsfwLevel.PG}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG}),
-          ${NsfwLevel.PG13}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.PG13}),
-          ${NsfwLevel.R}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.R}),
-          ${NsfwLevel.X}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.X}),
-          ${NsfwLevel.XXX}, count(irr."nsfwLevel")
-            FILTER (where irr."nsfwLevel" = ${NsfwLevel.XXX})
-        ) "votes"
-        FROM "ImageRatingRequest" irr
-        JOIN "Image" i on i.id = irr."imageId"
-        WHERE irr.status = ${ReportStatus.Pending}::"ReportStatus"
-          AND i."nsfwLevel" != ${NsfwLevel.Blocked}
-        GROUP BY irr."imageId", i.id
-    )
-    SELECT
-      r.*
-    FROM CTE_Requests r
-    WHERE (r.total >= 3 OR (r."ownerVote" != 0 AND r."ownerVote" != r."nsfwLevel"))
-    ${!!cursor ? Prisma.sql` AND r."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
-    ORDER BY r."createdAt"
-    LIMIT ${limit + 1}
+        i.height,
+        i.type,
+        i."createdAt"
+      FROM image_rating_requests irr
+      JOIN "Image" i ON i.id = irr."imageId"
+      WHERE irr.total >= 3
+      AND i."blockedFor" IS NULL
+      ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+      ORDER BY irr."createdAt"
+      LIMIT ${limit + 1}
   `;
 
   let nextCursor: string | undefined;
@@ -3758,7 +3885,13 @@ export async function getImageRatingRequests({
     ids: imageIds,
     user,
     type: 'image',
-    nsfwLevel: Flags.arrayToInstance([NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX]),
+    nsfwLevel: Flags.arrayToInstance([
+      NsfwLevel.PG13,
+      NsfwLevel.R,
+      NsfwLevel.X,
+      NsfwLevel.XXX,
+      NsfwLevel.Blocked,
+    ]),
   });
 
   return {

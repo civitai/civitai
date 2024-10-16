@@ -12,7 +12,6 @@ import utc from 'dayjs/plugin/utc';
 import { init as linkifyInit, registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
-import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -20,7 +19,7 @@ import React, { ReactElement } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { CustomNextPage } from '~/components/AppLayout/createPage';
+import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
@@ -33,7 +32,6 @@ import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/Hidden
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
@@ -72,11 +70,6 @@ registerCustomProtocol('civitai', true);
 // TODO fix this from initializing again in dev
 linkifyInit();
 
-// type CustomNextPage = NextPage & {
-//   getLayout?: (page: ReactElement) => ReactNode;
-//   options?: InnerLayoutOptions;
-// };
-
 type CustomAppProps = {
   Component: CustomNextPage;
 } & AppProps<{
@@ -97,28 +90,32 @@ function MyApp(props: CustomAppProps) {
     window.isAuthed = !!session;
   }
 
-  const getLayout =
-    Component.getLayout ??
-    ((page: ReactElement) => {
-      const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-      const withScrollArea = Component.options?.withScrollArea ?? true;
-      return (
-        <FeatureLayout conditional={Component.options?.features}>
-          <AppLayout withFooter={Component.options?.withFooter}>
-            {/* <InnerLayout>
-            {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
-          </InnerLayout> */}
-            {InnerLayout ? (
-              <InnerLayout>{page}</InnerLayout>
-            ) : withScrollArea ? (
-              <ScrollAreaMain>{page}</ScrollAreaMain>
-            ) : (
-              page
-            )}
-          </AppLayout>
-        </FeatureLayout>
-      );
-    });
+  // const getLayout =
+  //   Component.getLayout ??
+  //   ((page: ReactElement) => {
+  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
+  //     return (
+  //       <FeatureLayout conditional={Component.options?.features}>
+  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
+  //       </FeatureLayout>
+  //     );
+  //   });
+
+  const getLayout = (page: ReactElement) => (
+    <FeatureLayout conditional={Component?.features}>
+      {Component.getLayout?.(page) ?? (
+        <AppLayout
+          left={Component.left}
+          right={Component.right}
+          subNav={Component.subNav}
+          scrollable={Component.scrollable}
+          footer={Component.footer}
+        >
+          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+        </AppLayout>
+      )}
+    </FeatureLayout>
+  );
 
   return (
     <>
@@ -127,73 +124,67 @@ function MyApp(props: CustomAppProps) {
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <PlausibleProvider
-          domain="civitai.com"
-          customDomain="https://analytics.civitai.com"
-          selfHosted
-        >
-          <IsClientProvider>
-            <ClientHistoryStore />
-            <RegisterCatchNavigation />
-            <RouterTransition />
-            <UpdateRequiredWatcher />
-            <ChadGPT isAuthed={!!session} />
-            <SessionProvider
-              session={session}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
-              <FeatureFlagsProvider flags={flags}>
-                <CookiesProvider value={cookies}>
-                  <AccountProvider>
-                    <CivitaiSessionProvider>
-                      <BrowserSettingsProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaddleProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <GenerationProvider>
-                                              <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  <TrackPageView />
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </IntersectionObserverProvider>
-                                            </GenerationProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaddleProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </BrowserSettingsProvider>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </CookiesProvider>
-              </FeatureFlagsProvider>
-            </SessionProvider>
-          </IsClientProvider>
-        </PlausibleProvider>
+        <IsClientProvider>
+          <ClientHistoryStore />
+          <RegisterCatchNavigation />
+          <RouterTransition />
+          <UpdateRequiredWatcher />
+          <ChadGPT isAuthed={!!session} />
+          <SessionProvider
+            session={session}
+            refetchOnWindowFocus={false}
+            refetchWhenOffline={false}
+          >
+            <FeatureFlagsProvider flags={flags}>
+              <CookiesProvider value={cookies}>
+                <AccountProvider>
+                  <CivitaiSessionProvider>
+                    <BrowserSettingsProvider>
+                      <SignalProvider>
+                        <ActivityReportingProvider>
+                          <ReferralsProvider>
+                            <FiltersProvider>
+                              <AdsProvider>
+                                <PaddleProvider>
+                                  <HiddenPreferencesProvider>
+                                    <CivitaiLinkProvider>
+                                      <NotificationsProvider
+                                        className="notifications-container"
+                                        zIndex={9999}
+                                      >
+                                        <BrowserRouterProvider>
+                                          <GenerationProvider>
+                                            <IntersectionObserverProvider>
+                                              <BaseLayout>
+                                                <TrackPageView />
+                                                <ChatContextProvider>
+                                                  <CustomModalsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    {/* <StripeSetupSuccessProvider /> */}
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </ChatContextProvider>
+                                              </BaseLayout>
+                                            </IntersectionObserverProvider>
+                                          </GenerationProvider>
+                                        </BrowserRouterProvider>
+                                      </NotificationsProvider>
+                                    </CivitaiLinkProvider>
+                                  </HiddenPreferencesProvider>
+                                </PaddleProvider>
+                              </AdsProvider>
+                            </FiltersProvider>
+                          </ReferralsProvider>
+                        </ActivityReportingProvider>
+                      </SignalProvider>
+                    </BrowserSettingsProvider>
+                  </CivitaiSessionProvider>
+                </AccountProvider>
+              </CookiesProvider>
+            </FeatureFlagsProvider>
+          </SessionProvider>
+        </IsClientProvider>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 

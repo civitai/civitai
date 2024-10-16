@@ -1,68 +1,27 @@
 import { TrainingStatus } from '@prisma/client';
-import { TRPCError } from '@trpc/server';
-import { isTrainingCustomModel } from '~/components/Training/Form/TrainingCommon';
-import { trainingSettings } from '~/components/Training/Form/TrainingParams';
-import { env } from '~/env/server.mjs';
-import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import {
-  TrainingDetailsBaseModelList,
-  TrainingDetailsObj,
-} from '~/server/schema/model-version.schema';
+import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   AutoCaptionInput,
   AutoTagInput,
-  CreateTrainingRequestDryRunInput,
-  CreateTrainingRequestInput,
   MoveAssetInput,
   TrainingServiceStatus,
   trainingServiceStatusSchema,
 } from '~/server/schema/training.schema';
-import {
-  createBuzzTransaction,
-  getUserBuzzAccount,
-  refundTransaction,
-} from '~/server/services/buzz.service';
-import {
-  throwBadRequestError,
-  throwDbError,
-  throwInsufficientFundsError,
-  throwRateLimitError,
-  withRetries,
-} from '~/server/utils/errorHandling';
+import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
-import {
-  calcBuzzFromEta,
-  calcEta,
-  isInvalidRapid,
-  isValidRapid,
-  orchRapidEngine,
-} from '~/utils/training';
-import { isDefined } from '~/utils/type-guards';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
 
-const modelMap: { [key in TrainingDetailsBaseModelList]: string } = {
-  sd_1_5: 'SD_1_5',
-  anime: 'civitai:84586@89927',
-  semi: 'civitai:4384@128713',
-  realistic: 'civitai:81458@132760',
-  //
-  sdxl: 'civitai:101055@128078',
-  pony: 'civitai:257749@290640',
-  //
-  flux_dev: 'civitai:618692@691639',
-};
-
-type TrainingRequest = {
+export type TrainingRequest = {
   trainingDetails: TrainingDetailsObj;
   modelName: string;
   trainingUrl: string;
   fileId: number;
   userId: number;
   fileMetadata: FileMetadata | null;
+  modelVersionId: number;
 };
 
 async function getSubmittedAt(modelVersionId: number, userId: number) {
@@ -89,23 +48,8 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
   return modelFile.updatedAt;
 }
 
-async function isSafeTensor(modelVersionId: number) {
-  // it's possible we need to modify this if a model somehow has pickle and safetensor
-  const [data] = await dbWrite.$queryRaw<{ fmt: string }[]>`
-    SELECT mf.metadata ->> 'format' as fmt
-    FROM "ModelVersion" mv
-           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Model'
-           JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId}
-    LIMIT 1
-  `;
-
-  return data?.fmt === 'SafeTensor';
-}
-
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
-const modelAIRRegex = /^civitai:(?<custModelId>\d+)@(?<custModelVersionId>\d+)$/i;
 
 type MoveAssetRow = {
   metadata: FileMetadata | null;
@@ -186,260 +130,18 @@ export async function getTrainingServiceStatus() {
   return result.data as TrainingServiceStatus;
 }
 
-export const createTrainingRequest = async ({
-  userId,
-  modelVersionId,
-  isModerator,
-  skipModeration,
-}: CreateTrainingRequestInput & {
-  userId?: number;
-  isModerator?: boolean;
-  skipModeration?: boolean;
-}) => {
-  const status = await getTrainingServiceStatus();
-  if (!status.available && !isModerator)
-    throw throwBadRequestError(status.message ?? 'Training is currently disabled');
-
-  const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
-    SELECT mv."trainingDetails",
-           m.name      "modelName",
-           m."userId",
-           mf.url      "trainingUrl",
-           mf.id       "fileId",
-           mf.metadata "fileMetadata"
-    FROM "ModelVersion" mv
-           JOIN "Model" m ON m.id = mv."modelId"
-           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-    WHERE mv.id = ${modelVersionId}
-      AND m."deletedAt" is null
-  `;
-
-  if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
-  const modelVersion = modelVersions[0];
-
-  // Don't allow a user to queue anything but their own training
-  if (userId && userId != modelVersion.userId) throw throwBadRequestError('Invalid user');
-
-  const trainingParams = modelVersion.trainingDetails.params;
-  if (!trainingParams) throw throwBadRequestError('Missing training params');
-  const baseModel = modelVersion.trainingDetails.baseModel;
-  if (!baseModel) throw throwBadRequestError('Missing base model');
-  if ((status.blockedModels ?? []).includes(baseModel))
-    throw throwBadRequestError(
-      'This model has been blocked from training - please try another one.'
-    );
-
-  const samplePrompts = modelVersion.trainingDetails.samplePrompts;
-  const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
-  const isPriority = modelVersion.trainingDetails.highPriority ?? false;
-  const fileMetadata = modelVersion.fileMetadata ?? {};
-
-  if (isInvalidRapid(baseModelType, trainingParams.engine))
-    throw throwBadRequestError('Cannot use Rapid Training with a non-flux base model.');
-
-  for (const [key, value] of Object.entries(trainingParams)) {
-    const setting = trainingSettings.find((ts) => ts.name === key);
-    if (!setting) continue;
-
-    // TODO [bw] we should be doing more checking here (like validating this through zod), but this will handle the bad cases for now
-    if (setting.type === 'int' || setting.type === 'number') {
-      const baseOverride = setting.overrides?.[baseModel];
-      const override = baseOverride?.all ?? baseOverride?.[trainingParams.engine];
-      const overrideSetting = override ?? setting;
-
-      if (
-        (isDefined(overrideSetting.min) && (value as number) < overrideSetting.min) ||
-        (isDefined(overrideSetting.max) && (value as number) > overrideSetting.max)
-      ) {
-        throw throwBadRequestError(
-          `Invalid settings for training: "${key}" is outside allowed min/max.`
-        );
-      }
-    }
-  }
-
-  const eta = calcEta({
-    cost: status.cost,
-    baseModel: baseModelType,
-    params: trainingParams,
-  });
-
-  // Determine if we still need to charge them for this training
-  let transactionId = fileMetadata.trainingResults?.transactionId;
-  if (!transactionId && !skipModeration) {
-    // And if so, charge them
-    if (eta === undefined) {
-      throw throwBadRequestError(
-        'Could not compute Buzz price for training - please check your parameters.'
-      );
-    }
-
-    const isCustom = isTrainingCustomModel(baseModel);
-    const price = calcBuzzFromEta({
-      cost: status.cost,
-      eta,
-      isCustom,
-      isFlux: baseModelType === 'flux',
-      isPriority,
-      isRapid: isValidRapid(baseModelType, trainingParams.engine),
-      numImages: fileMetadata.numImages ?? 1,
-    });
-
-    if (!price || price < status.cost.baseBuzz) {
-      throw throwBadRequestError(
-        'Could not compute Buzz price for training - please check your parameters.'
-      );
-    }
-
-    const account = await getUserBuzzAccount({ accountId: modelVersion.userId });
-    if ((account.balance ?? 0) < price) {
-      throw throwInsufficientFundsError(
-        `You don't have enough Buzz to perform this action (required: ${price})`
-      );
-    }
-
-    if (!(baseModel in modelMap)) {
-      const mMatch = baseModel.match(modelAIRRegex);
-      if (!mMatch || !mMatch.groups)
-        throw throwBadRequestError('Invalid structure for custom model');
-      const { custModelVersionId } = mMatch.groups;
-      const isST = await isSafeTensor(Number(custModelVersionId));
-      if (!isST) {
-        throw throwBadRequestError(
-          'Custom model does not have a SafeTensor file. Please choose another model.'
-        );
-      }
-    }
-
-    // nb: going to hold off on externalTransactionId for now
-    //     if we fail it, they'll never be able to proceed
-    //     if we catch it, we have to match on a very changeable error message rather than code
-    //        also, we will not have a transactionId, which means we can't refund them later in the process
-    const { transactionId: newTransactionId } = await createBuzzTransaction({
-      fromAccountId: modelVersion.userId,
-      toAccountId: 0,
-      amount: price,
-      type: TransactionType.Training,
-      // externalTransactionId: `training|mvId:${modelVersionId}`,
-    });
-    transactionId = newTransactionId;
-  }
-
-  const { url: trainingUrl } = await getGetUrl(modelVersion.trainingUrl);
-  const generationRequest: Orchestrator.Training.ImageResourceTrainingJobPayload = {
-    priority: isPriority ? 'high' : 'normal',
-    // interruptible: !isPriority,
-    callbackUrl: `${env.WEBHOOK_URL}/resource-training?token=${env.WEBHOOK_TOKEN}`,
-    properties: { userId, transactionId, skipModeration, modelFileId: modelVersion.fileId },
-    model: baseModel in modelMap ? modelMap[baseModel as keyof typeof modelMap] : baseModel,
-    trainingData: trainingUrl,
-    cost: Math.round((eta ?? 0) * 100) / 100,
-    retries: constants.maxTrainingRetries,
-    engine: trainingParams.engine === 'rapid' ? orchRapidEngine : trainingParams.engine,
-    params: {
-      ...trainingParams,
-      samplePrompts: samplePrompts ?? ['', '', ''],
-      modelFileId: modelVersion.fileId,
-      loraName: modelVersion.modelName,
-      engine: trainingParams.engine === 'rapid' ? orchRapidEngine : trainingParams.engine,
-    },
-  };
-
-  const orchCaller = getOrchestratorCaller(
-    new Date(),
-    modelVersion.trainingDetails.staging === true
-  );
-
-  const response = await orchCaller.imageResourceTraining({
-    payload: generationRequest,
-  });
-  if (!response.ok && transactionId) {
-    await withRetries(async () =>
-      refundTransaction(
-        transactionId as string,
-        'Refund due to an error submitting the training job.'
-      )
-    );
-  }
-
-  if (response.status === 429) {
-    throw throwRateLimitError();
-  }
-
-  if (!response.ok) {
-    throw throwBadRequestError(
-      'We are not able to process your request at this time. Please try again later'
-    );
-  }
-
-  const data = response.data;
-  const jobId = data?.jobs?.[0]?.jobId;
-
-  await withRetries(() =>
-    dbWrite.modelVersion.update({
-      where: { id: modelVersionId },
-      data: {
-        trainingStatus: TrainingStatus.Submitted,
-      },
-    })
-  );
-
-  await withRetries(() =>
-    dbWrite.modelFile.update({
-      where: { id: modelVersion.fileId },
-      data: {
-        metadata: {
-          ...fileMetadata,
-          trainingResults: {
-            ...(fileMetadata.trainingResults || {}),
-            submittedAt: new Date().toISOString(),
-            jobId,
-            transactionId,
-            history: (fileMetadata.trainingResults?.history || []).concat([
-              {
-                time: new Date().toISOString(),
-                status: TrainingStatus.Submitted,
-                jobId,
-              },
-            ]),
-          },
-        },
-      },
-    })
-  );
-
-  // const [formatted] = await formatGenerationRequests([data]);
-  return data;
+/**
+ * @deprecated for orchestrator v2
+ */
+export const createTrainingRequest = async ({}) => {
+  throw throwBadRequestError('This function has been deprecated - please refresh your browser.');
 };
 
-export const createTrainingRequestDryRun = async ({
-  baseModel,
-  isPriority,
-}: CreateTrainingRequestDryRunInput) => {
-  if (!baseModel) return null;
-
-  const generationRequest: Orchestrator.Training.ImageResourceTrainingJobDryRunPayload = {
-    priority: isPriority ? 'high' : 'normal',
-    // interruptible: !isPriority,
-    model: baseModel in modelMap ? modelMap[baseModel as keyof typeof modelMap] : baseModel,
-    // cost: Math.round((cost ?? 0) * 100) / 100,
-    cost: 0,
-    trainingData: '',
-    params: {},
-  };
-
-  const response = await getOrchestratorCaller(new Date()).imageResourceTrainingDryRun({
-    payload: generationRequest,
-  });
-
-  if (!response.ok) {
-    return null;
-  }
-
-  return (
-    response.data?.jobs?.[0]?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate ??
-    null
-  );
+/**
+ * @deprecated for orchestrator v2
+ */
+export const createTrainingRequestDryRun = async ({}) => {
+  return null;
 };
 
 export type TagDataResponse = {
@@ -546,35 +248,9 @@ export const autoCaptionHandler = async ({
   return response.data;
 };
 
+/**
+ * @deprecated for orchestrator v2
+ */
 export const getJobEstStartsHandler = async ({ userId }: { userId: number }) => {
-  try {
-    const modelData = await dbWrite.$queryRaw<{ id: number; job_id: string | null }[]>`
-      SELECT mv.id,
-             mf.metadata -> 'trainingResults' ->> 'jobId' as job_id
-      FROM "ModelVersion" mv
-             JOIN "Model" m ON m.id = mv."modelId"
-             JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-      WHERE m."userId" = ${userId}
-        AND m."uploadType" = 'Trained'
-        AND m.status not in ('Published', 'Deleted')
-        AND mv."trainingStatus" = 'Submitted'
-    `;
-
-    const returnData: { [key: number]: Date | undefined } = {};
-    for (const md of modelData) {
-      const { id: mvId, job_id: jobId } = md;
-      if (!jobId) continue;
-
-      const res = await getOrchestratorCaller(new Date()).getJobById({ id: jobId });
-      if (!res.ok) continue;
-      const { data } = res;
-
-      returnData[mvId] = data?.serviceProviders?.['RunPods']?.queuePosition?.estimatedStartDate;
-    }
-
-    return returnData;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    throw throwDbError(error);
-  }
+  throw throwBadRequestError('This function has been deprecated - please refresh your browser.');
 };

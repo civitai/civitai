@@ -126,9 +126,11 @@ export default WebhookEndpoint(async function imageTags(req, res) {
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
 // @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
+// 1-10:  The images are visually almost identical
+// 11-20: The images are visually similar
+// 21-30: The images are visually somewhat similar
 async function isBlocked(hash: string) {
-  return false;
-  const matches = await dbWrite.$queryRaw<{ hash: bigint }[]>`
+  const matches = await dbRead.$queryRaw<{ hash: bigint }[]>`
     SELECT hash
     FROM "BlockedImage"
     WHERE hamming_distance(${hash}::bigint, "hash") < 5

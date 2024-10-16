@@ -2,14 +2,15 @@ import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import {
   getAllAvailableProfileSections,
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -33,12 +34,16 @@ export const getServerSideProps = createServerSideProps({
 function ProfileOverview() {
   const router = useRouter();
   const { username } = router.query as { username: string };
+
+  const { canViewNsfw } = useFeatureFlags();
+
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
-  const { isLoading: isLoadingOverview, data: userOverview } = trpc.userProfile.overview.useQuery({
-    username,
-  });
+  const { data: userOverview } = trpc.userProfile.overview.useQuery(
+    { username },
+    { enabled: canViewNsfw }
+  );
 
   const sections = useMemo(
     () =>
@@ -50,7 +55,7 @@ function ProfileOverview() {
     [user]
   );
 
-  if (isLoading || isLoadingOverview) {
+  if (isLoading) {
     return (
       <Center mt="md">
         <Loader />
@@ -58,7 +63,7 @@ function ProfileOverview() {
     );
   }
 
-  if (!user || !user.username || !userOverview) {
+  if (!isLoading && !user) {
     return <NotFound />;
   }
 
@@ -105,5 +110,6 @@ function ProfileOverview() {
   );
 }
 
-setPageOptions(ProfileOverview, { innerLayout: UserProfileLayout });
-export default ProfileOverview;
+export default Page(ProfileOverview, {
+  getLayout: UserProfileLayout,
+});

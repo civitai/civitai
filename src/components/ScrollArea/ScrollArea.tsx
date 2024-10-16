@@ -6,6 +6,7 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { ScrollAreaContext, useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
+import clsx from 'clsx';
 
 export function ScrollArea({
   children,
@@ -22,9 +23,7 @@ export function ScrollArea({
       <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
         <Box
           ref={scrollRef}
-          className={`scroll-area ${className ? className : ''}`}
-          pt="md"
-          pb="md"
+          className={clsx('scroll-area flex-1 @container', className)}
           {...props}
         >
           {mobile && <DragLoader />}

@@ -21,8 +21,8 @@ import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
@@ -44,7 +44,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -88,9 +87,7 @@ export const getServerSideProps = createServerSideProps({
 
 const MAX_WIDTH = 1320;
 
-export default function ArticleDetailsPage({
-  id,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
@@ -333,13 +330,9 @@ export default function ArticleDetailsPage({
   );
 }
 
-setPageOptions(ArticleDetailsPage, {
-  innerLayout({ children }) {
-    return (
-      <ImageViewer>
-        <ScrollAreaMain>{children}</ScrollAreaMain>
-      </ImageViewer>
-    );
+export default Page(ArticleDetailsPage, {
+  InnerLayout: ({ children }) => {
+    return <ImageViewer>{children}</ImageViewer>;
   },
 });
 

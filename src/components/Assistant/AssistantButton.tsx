@@ -1,35 +1,31 @@
 import { Button, ButtonProps } from '@mantine/core';
 import { IconMessageChatbot, IconX } from '@tabler/icons-react';
-import { useState } from 'react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 import { env } from '~/env/client.mjs';
-import { isDev } from '~/env/other';
-import { trpc } from '~/utils/trpc';
+import { isProd } from '~/env/other';
+import { useState } from 'react';
 
 const WIDTH = 320;
 const HEIGHT = 500;
 export function AssistantButton({ ...props }: ButtonProps) {
-  const [opened, setOpened] = useState(false);
-  const { data: { token = null } = {} } = trpc.user.getToken.useQuery(undefined, {
-    enabled: opened,
-  });
-  if (!env.NEXT_PUBLIC_GPTT_UUID && isDev) return null;
+  const [open, setOpen] = useState(false);
+  if (!env.NEXT_PUBLIC_GPTT_UUID && isProd) return null;
 
   return (
     <>
-      <AssistantChat
-        token={token}
-        width={WIDTH}
-        height={HEIGHT}
-        style={{ display: opened ? 'block' : 'none' }}
-      />
+      {open && (
+        <div className="absolute bottom-full right-0 mb-1">
+          <AssistantChat width={WIDTH} height={HEIGHT} />
+        </div>
+      )}
       <Button
+        component="span"
         px="xs"
         {...props}
-        onClick={() => setOpened((x) => !x)}
-        color={opened ? 'gray' : 'blue'}
+        color={open ? 'gray' : 'blue'}
+        onClick={() => setOpen((o) => !o)}
       >
-        {opened ? <IconX size={20} stroke={2.5} /> : <IconMessageChatbot size={20} stroke={2.5} />}
+        {open ? <IconX size={20} stroke={2.5} /> : <IconMessageChatbot size={20} stroke={2.5} />}
       </Button>
     </>
   );
