@@ -42,7 +42,7 @@ export const useQueryNotifications = (
 };
 
 export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
-  const { data } = useGetAnnouncements();
+  const { data } = useGetAnnouncements({ showHidden: true });
   const { dismissed } = useAnnouncementsContext();
   return useMemo(
     () =>
