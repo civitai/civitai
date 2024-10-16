@@ -9,7 +9,6 @@ import {
 } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
-import { numberWithCommas } from '~/utils/number-helpers';
 import {
   DataItem,
   HomeStyleSegmentedControl,
@@ -25,12 +24,15 @@ const overviewPath = '[username]';
 
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
-  const { data: userOverview } = trpc.userProfile.overview.useQuery({
-    username,
-  });
-  const { articles } = useFeatureFlags();
-  const activePath = router.pathname.split('/').pop() || overviewPath;
+  const { articles, canViewNsfw } = useFeatureFlags();
 
+  const {
+    data: userOverview,
+    isInitialLoading,
+    isRefetching,
+  } = trpc.userProfile.overview.useQuery({ username }, { enabled: canViewNsfw });
+
+  const activePath = router.pathname.split('/').pop() || overviewPath;
   const baseUrl = `/user/${username}`;
 
   const opts: Record<string, DataItem> = {
@@ -42,35 +44,41 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     models: {
       url: `${baseUrl}/models`,
       icon: (props) => <IconCategory {...props} />,
-      count: numberWithCommas(userOverview?.modelCount),
+      count: userOverview?.modelCount ?? 0,
     },
     posts: {
       url: `${baseUrl}/posts`,
       icon: (props) => <IconLayoutList {...props} />,
-      count: numberWithCommas(userOverview?.postCount),
+      count: userOverview?.postCount ?? 0,
     },
     images: {
       url: `${baseUrl}/images`,
       icon: (props) => <IconPhoto {...props} />,
-      count: numberWithCommas(userOverview?.imageCount),
+      count: userOverview?.imageCount ?? 0,
     },
     videos: {
       url: `${baseUrl}/videos`,
       icon: (props) => <IconVideo {...props} />,
-      count: numberWithCommas(userOverview?.videoCount),
+      count: userOverview?.videoCount ?? 0,
     },
     articles: {
       url: `${baseUrl}/articles`,
       icon: (props) => <IconPencilMinus {...props} />,
-      count: numberWithCommas(userOverview?.articleCount),
+      count: userOverview?.articleCount ?? 0,
       disabled: !articles,
     },
     collections: {
       url: `${baseUrl}/collections`,
       icon: (props) => <IconBookmark {...props} />,
-      count: numberWithCommas(userOverview?.collectionCount),
+      count: userOverview?.collectionCount ?? 0,
     },
   };
 
-  return <HomeStyleSegmentedControl data={opts} value={activePath} />;
+  return (
+    <HomeStyleSegmentedControl
+      data={opts}
+      value={activePath}
+      loading={isInitialLoading || isRefetching}
+    />
+  );
 };

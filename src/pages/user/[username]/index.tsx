@@ -10,6 +10,7 @@ import {
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -33,12 +34,16 @@ export const getServerSideProps = createServerSideProps({
 function ProfileOverview() {
   const router = useRouter();
   const { username } = router.query as { username: string };
+
+  const { canViewNsfw } = useFeatureFlags();
+
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
-  const { isLoading: isLoadingOverview, data: userOverview } = trpc.userProfile.overview.useQuery({
-    username,
-  });
+  const { data: userOverview } = trpc.userProfile.overview.useQuery(
+    { username },
+    { enabled: canViewNsfw }
+  );
 
   const sections = useMemo(
     () =>
@@ -50,7 +55,7 @@ function ProfileOverview() {
     [user]
   );
 
-  if (isLoading || isLoadingOverview) {
+  if (isLoading) {
     return (
       <Center mt="md">
         <Loader />
@@ -58,7 +63,7 @@ function ProfileOverview() {
     );
   }
 
-  if (!user || !user.username || !userOverview) {
+  if (!isLoading && !user) {
     return <NotFound />;
   }
 
