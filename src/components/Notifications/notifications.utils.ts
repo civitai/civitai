@@ -2,11 +2,16 @@ import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
+import {
+  useGetAnnouncements,
+  useAnnouncementsContext,
+} from '~/components/Announcements/AnnouncementsProvider';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
 import { notificationCategoryTypes } from '~/server/notifications/utils.notifications';
 import { GetUserNotificationsSchema } from '~/server/schema/notification.schema';
+import { NotificationsRaw } from '~/server/services/notification.service';
 import { NotificationGetAll, NotificationGetAllItem } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -18,8 +23,8 @@ const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Bounty]: 'Bounties',
   [NotificationCategory.Other]: 'Others',
 };
-export const getCategoryDisplayName = (category: NotificationCategory) =>
-  categoryNameMap[category] ?? getDisplayName(category);
+export const getCategoryDisplayName = (category: string) =>
+  categoryNameMap[category as NotificationCategory] ?? getDisplayName(category);
 
 export const useQueryNotifications = (
   filters?: Partial<GetUserNotificationsSchema>,
@@ -34,8 +39,31 @@ export const useQueryNotifications = (
     [data?.pages]
   );
 
+  console.log(notifications);
+
   return { data, notifications, ...rest };
 };
+
+function useGetAnnouncementsAsNotifications(): NotificationsRaw[] {
+  const { data } = useGetAnnouncements();
+  const { dismissed } = useAnnouncementsContext();
+  return useMemo(
+    () =>
+      data?.map((announcement) => ({
+        id: announcement.id,
+        type: 'announcement',
+        category: 'announcement' as any,
+        createdAt: announcement.startsAt ?? announcement.createdAt,
+        read: !dismissed.find((id) => id === announcement.id),
+        details: {
+          url: announcement.metadata?.actions?.[0]?.link,
+          target: '_blank',
+          message: announcement.title,
+        },
+      })),
+    [data]
+  );
+}
 
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
@@ -45,9 +73,21 @@ export const useQueryNotificationsCount = () => {
     staleTime: Infinity,
   });
 
-  return isLoading || !data
-    ? { all: 0, comment: 0, milestone: 0, update: 0, bounty: 0, other: 0 }
-    : { ...data };
+  const { data: announcements, isLoading: announcementsLoading } = useGetAnnouncements();
+
+  return isLoading || announcementsLoading || !data || !announcements
+    ? {
+        all: 0,
+        comment: 0,
+        milestone: 0,
+        update: 0,
+        bounty: 0,
+        other: 0,
+        system: 0,
+        buzz: 0,
+        announcements: 0,
+      }
+    : { ...data, all: data.all + announcements.length, announcements: announcements.length };
 };
 
 export const useMarkReadNotification = () => {

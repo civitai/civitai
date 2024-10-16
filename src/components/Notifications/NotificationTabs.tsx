@@ -4,10 +4,12 @@ import {
   useNotificationSettings,
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
+import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 import { NotificationCategory } from '~/server/common/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
-const tabs = ['all', ...Object.values(NotificationCategory)];
+const categoryTabs: string[] = Object.values(NotificationCategory);
+const tabs = ['all', ...categoryTabs, 'announcements'];
 
 const useStyles = createStyles(() => ({
   tab: {
@@ -26,20 +28,26 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
 
   if (isLoading) return null;
 
+  const allTabs = tabs.filter(
+    (tab) => tab === 'all' || tab === 'announcements' || hasCategory[tab]
+  );
+  // const tabsWithNotifications = allTabs.filter(
+  //   (tab) => count[tab.toLowerCase() as keyof typeof count] > 0
+  // );
+
   return (
-    <Tabs
-      classNames={classes}
-      variant="pills"
-      radius="xl"
-      color="gray"
-      defaultValue="all"
-      onTabChange={handleTabChange}
-      {...tabsProps}
-    >
-      <Tabs.List sx={{ flexWrap: 'nowrap', overflow: 'auto hidden' }}>
-        {tabs
-          .filter((tab) => tab === 'all' || hasCategory[tab])
-          .map((tab) => {
+    <TwScrollX>
+      <Tabs
+        classNames={classes}
+        variant="pills"
+        radius="xl"
+        color="gray"
+        defaultValue="all"
+        onTabChange={handleTabChange}
+        {...tabsProps}
+      >
+        <Tabs.List sx={{ flexWrap: 'nowrap' }}>
+          {allTabs.map((tab) => {
             const countValue = count[tab.toLowerCase() as keyof typeof count];
 
             return (
@@ -60,8 +68,9 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
               </Tabs.Tab>
             );
           })}
-      </Tabs.List>
-    </Tabs>
+        </Tabs.List>
+      </Tabs>
+    </TwScrollX>
   );
 }
 

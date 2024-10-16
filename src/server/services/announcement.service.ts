@@ -73,6 +73,8 @@ export const getAnnouncements = async ({
     },
     orderBy: { id: 'desc' },
     select: {
+      createdAt: true,
+      startsAt: true,
       endsAt: true,
       id: true,
       title: true,

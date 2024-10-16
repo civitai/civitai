@@ -59,6 +59,7 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
+import { AnnouncementsProvider } from '~/components/Announcements/AnnouncementsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -127,6 +128,7 @@ function MyApp(props: CustomAppProps) {
         {/* <ErrorBoundary> */}
         <PlausibleProvider
           domain="civitai.com"
+          // domain={typeof window !== undefined ? location.host : 'civitai.com'}
           customDomain="https://analytics.civitai.com"
           selfHosted
         >
@@ -165,10 +167,12 @@ function MyApp(props: CustomAppProps) {
                                                   <TrackPageView />
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
+                                                      <AnnouncementsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </AnnouncementsProvider>
                                                     </CustomModalsProvider>
                                                   </ChatContextProvider>
                                                 </BaseLayout>

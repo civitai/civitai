@@ -1,7 +1,7 @@
 import { ScrollAreaProps } from '@mantine/core';
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
-import { AnnouncementsProvider } from '~/components/Announcements/AnnouncementsProvider';
+import { useGetAnnouncements } from '~/components/Announcements/AnnouncementsProvider';
 import { Announcement } from '~/components/Announcements/Announcement';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
@@ -10,6 +10,7 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { useRouter } from 'next/router';
 
 export function AppLayout({
   children,
@@ -94,14 +95,15 @@ export function MainContent({
 }
 
 function Announcements() {
+  const router = useRouter();
+  const { data } = useGetAnnouncements();
+  if (!data.length || router.asPath.startsWith('/user/notifications')) return null;
   return (
-    <AnnouncementsProvider>
-      {({ announcement }) => (
-        <div className="container">
-          <Announcement announcement={announcement} />
-        </div>
-      )}
-    </AnnouncementsProvider>
+    <div className="-mt-3 mb-3 bg-gray-1 py-3 dark:bg-dark-9">
+      <div className="container">
+        <Announcement announcement={data[0]} />
+      </div>
+    </div>
   );
 }
 

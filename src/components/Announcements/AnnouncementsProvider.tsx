@@ -1,21 +1,20 @@
 import React, { createContext, useContext, useEffect, useMemo } from 'react';
-import { GetAnnouncement } from '~/server/services/announcement.service';
 import { trpc } from '~/utils/trpc';
 import { useLocalStorage } from '@mantine/hooks';
 
-const Context = createContext<{ dismiss: (id: number) => void } | null>(null);
+const Context = createContext<{
+  dismiss: (id: number) => void;
+  dismissAll: () => void;
+  dismissed: number[];
+} | null>(null);
 export function useAnnouncementsContext() {
   const context = useContext(Context);
   if (!context) throw new Error('missing AnnouncementsProvider in tree');
   return context;
 }
 
-const KEY = 'dismissed';
-export function AnnouncementsProvider({
-  children,
-}: {
-  children: (args: { announcement: GetAnnouncement }) => React.ReactNode;
-}) {
+const KEY = 'dismissed-announcements';
+export function AnnouncementsProvider({ children }: { children: React.ReactNode }) {
   const { data } = trpc.announcement.getAnnouncements.useQuery();
   const [dismissed, setDismissed] = useLocalStorage<number[]>({
     key: KEY,
@@ -24,6 +23,10 @@ export function AnnouncementsProvider({
 
   function dismiss(id: number) {
     setDismissed((dismissed) => [...dismissed, id]);
+  }
+
+  function dismissAll() {
+    setDismissed(data?.map((x) => x.id) ?? []);
   }
 
   useEffect(() => {
@@ -42,22 +45,26 @@ export function AnnouncementsProvider({
 
     // remove old announcementIds from storage
     if (announcementIds.some((id) => dismissed.includes(id))) {
-      setDismissed((ids) => ids.filter((id) => announcementIds.includes(id)));
+      setDismissed(dismissed.filter((id) => announcementIds.includes(id)));
     }
   }, [data]); // eslint-disable-line
 
+  // TODO - handle welcome announcement
+
+  return <Context.Provider value={{ dismiss, dismissed, dismissAll }}>{children}</Context.Provider>;
+}
+
+export function useGetAnnouncements(args?: { showHidden: boolean }) {
+  const { showHidden } = args ?? {};
+  const { dismissed } = useAnnouncementsContext();
+  const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery();
+
   const announcements = useMemo(
-    () => data?.filter((announcement) => !dismissed.includes(announcement.id)),
-    [data, dismissed]
+    () =>
+      (showHidden ? data : data?.filter((announcement) => !dismissed.includes(announcement.id))) ??
+      [],
+    [data, dismissed, showHidden]
   );
 
-  // TODO - welcome announcement
-
-  if (!announcements?.length) return null;
-
-  return (
-    <Context.Provider value={{ dismiss }}>
-      {children({ announcement: announcements[0] })}
-    </Context.Provider>
-  );
+  return { data: announcements, ...rest };
 }

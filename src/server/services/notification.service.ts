@@ -17,7 +17,7 @@ import {
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
-type NotificationsRaw = {
+export type NotificationsRaw = {
   id: number;
   type: string;
   category: NotificationCategory;
