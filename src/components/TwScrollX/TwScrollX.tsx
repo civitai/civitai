@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActionIcon } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -9,6 +9,8 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
   const [position, setPosition] = useState<'start' | 'end' | null>(null);
 
   useEffect(() => {
+    if (!node) return;
+
     function scroll() {
       if (!node) return;
       if (node.scrollLeft === 0) setPosition('start');
@@ -17,8 +19,12 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
     }
     scroll();
 
+    const observer = new MutationObserver(scroll);
+
+    observer.observe(node, { subtree: true, childList: true });
     node?.addEventListener('scroll', scroll, { passive: true });
     return () => {
+      observer.disconnect();
       node?.removeEventListener('scroll', scroll);
     };
   }, [node]);
