@@ -29,6 +29,11 @@ export function ModerationNav() {
           href: '/moderator/paddle/adjustments',
           hidden: !features.paddleAdjustments,
         },
+        {
+          label: 'Announcements',
+          href: '/moderator/announcements',
+          hidden: !features.announcements,
+        },
       ]
         .filter((i) => !i.hidden)
         .map((link) => (
