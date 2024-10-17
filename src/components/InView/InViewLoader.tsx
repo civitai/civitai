@@ -20,6 +20,7 @@ export function InViewLoader({
   inViewOptions?: IntersectionOptions;
 }) {
   const { ref, inView } = useInView({ rootMargin: '1200px 0px', ...inViewOptions });
+  console.log({ inView });
   const [initialCanLoad, setInitialCanLoad] = useState(false);
   const [canLoad, setCanLoad] = useState(true);
 
