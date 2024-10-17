@@ -50,7 +50,6 @@ import {
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
-import { isProd } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -59,9 +58,6 @@ import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 
 export function CivitaiLinkPopover() {
-  // only show the popover in production for now
-  if (!isProd) return null;
-
   return (
     <Popover
       position="bottom-end"

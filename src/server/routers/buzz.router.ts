@@ -11,7 +11,6 @@ import {
   getUserTransactionsHandler,
   withdrawClubFundsHandler,
 } from '~/server/controllers/buzz.controller';
-import { prodOnly } from '~/server/middleware.trpc';
 import { getByIdStringSchema } from '~/server/schema/base.schema';
 import {
   completeStripeBuzzPurchaseTransactionInput,
@@ -32,7 +31,7 @@ import {
 } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
-const buzzProcedure = protectedProcedure.use(prodOnly).use(isFlagProtected('buzz'));
+const buzzProcedure = protectedProcedure.use(isFlagProtected('buzz'));
 
 export const buzzRouter = router({
   getUserAccount: buzzProcedure.query(getUserAccountHandler),
