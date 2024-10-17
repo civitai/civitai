@@ -42,7 +42,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       metadata: true,
       emoji: true,
     },
-    orderBy: { endsAt: 'desc' },
+    orderBy: { id: 'desc' },
   });
 
   const count = await dbRead.announcement.count();

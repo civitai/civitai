@@ -25,7 +25,7 @@ export function Announcements() {
     }
 
     // remove old announcementIds from storage
-    if (announcementIds.some((id) => dismissed.includes(id))) {
+    if (dismissed.some((id) => !announcementIds.includes(id))) {
       dismissAnnouncements(dismissed.filter((id) => announcementIds.includes(id)));
     }
   }, [data]); // eslint-disable-line

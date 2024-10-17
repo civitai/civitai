@@ -10,12 +10,14 @@ export const useAnnouncementsStore = create<{
     (set) => ({
       dismissed: [],
     }),
-    { name: 'announcements' }
+    { name: 'announcements', version: 1 }
   )
 );
 
 export function dismissAnnouncements(ids: number | number[]) {
-  useAnnouncementsStore.setState((state) => ({ dismissed: state.dismissed.concat(ids) }));
+  useAnnouncementsStore.setState((state) => ({
+    dismissed: [...new Set(state.dismissed.concat(ids))],
+  }));
 }
 
 export function useGetAnnouncements(args?: { showHidden: boolean }) {
