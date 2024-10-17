@@ -5,7 +5,6 @@ import {
   Group,
   Loader,
   Paper,
-  ScrollArea,
   Stack,
   Switch,
   Text,
@@ -28,6 +27,7 @@ import {
   useQueryNotifications,
 } from '~/components/Notifications/notifications.utils';
 import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
+import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { NotificationCategory } from '~/server/common/enums';
 
 export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () => void }>(
@@ -56,7 +56,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
       { keepPreviousData: false }
     );
 
-    const announcements = useGetAnnouncementsAsNotifications();
+    const announcements = useGetAnnouncementsAsNotifications({ hideRead });
     const notifications = useMemo(() => {
       return !selectedTab
         ? [...announcements, ...data].sort(
@@ -79,71 +79,79 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     }
 
     return (
-      <Stack spacing="xl" ref={ref}>
-        <Group position="apart">
-          <Title order={1}>Notifications</Title>
-          <Group spacing={8}>
-            <Switch
-              label="Hide Read"
-              labelPosition="left"
-              checked={hideRead}
-              onChange={(e) => setHideRead(e.currentTarget.checked)}
-            />
-            <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
-              <ActionIcon size="lg" onClick={handleMarkAsRead}>
-                <IconListCheck />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Notification settings" position="bottom">
-              <ActionIcon component={NextLink} size="lg" href="/user/account#notification-settings">
-                <IconSettings />
-              </ActionIcon>
-            </Tooltip>
-            {onClose && <CloseButton size="lg" onClick={onClose} />}
+      <>
+        <div className="flex flex-col gap-4 p-4">
+          <Group position="apart">
+            <Title order={1}>Notifications</Title>
+            <Group spacing={8}>
+              <Switch
+                label="Hide Read"
+                labelPosition="left"
+                checked={hideRead}
+                onChange={(e) => setHideRead(e.currentTarget.checked)}
+              />
+              <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
+                <ActionIcon size="lg" onClick={handleMarkAsRead}>
+                  <IconListCheck />
+                </ActionIcon>
+              </Tooltip>
+              <Tooltip label="Notification settings" position="bottom">
+                <ActionIcon
+                  component={NextLink}
+                  size="lg"
+                  href="/user/account#notification-settings"
+                >
+                  <IconSettings />
+                </ActionIcon>
+              </Tooltip>
+              {onClose && <CloseButton size="lg" onClick={onClose} />}
+            </Group>
           </Group>
-        </Group>
-        <NotificationTabs
-          onTabChange={(value: NotificationCategory | null) => setSelectedTab(value)}
-        />
-        {selectedTab === 'announcements' ? (
-          <AnnouncementsList />
-        ) : (
-          <>
-            {loadingNotifications ? (
-              <Center p="sm">
-                <Loader />
-              </Center>
-            ) : notifications && notifications.length > 0 ? (
-              <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
-                <NotificationList
-                  items={notifications}
-                  onItemClick={(notification, keepOpened) => {
-                    if (notification.type === 'announcement' && !notification.read) {
-                      dismissAnnouncements(notification.id);
-                    } else if (!notification.read)
-                      readNotificationMutation.mutate({
-                        id: notification.id,
-                        category: notification.category,
-                      });
-                    if (!keepOpened && notification.details.url) onClose?.();
-                  }}
-                />
-                {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
-                      <Loader />
-                    </Center>
-                  </InViewLoader>
-                )}
-              </Paper>
-            ) : (
-              <Center p="sm">
-                <Text>All caught up! Nothing to see here</Text>
-              </Center>
-            )}
-          </>
-        )}
-      </Stack>
+          <NotificationTabs
+            onTabChange={(value: NotificationCategory | null) => setSelectedTab(value)}
+          />
+        </div>
+        <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
+          {selectedTab === 'announcements' ? (
+            <AnnouncementsList />
+          ) : (
+            <>
+              {loadingNotifications ? (
+                <Center p="sm">
+                  <Loader />
+                </Center>
+              ) : notifications && notifications.length > 0 ? (
+                <Paper radius="md" withBorder>
+                  <NotificationList
+                    items={notifications}
+                    onItemClick={(notification, keepOpened) => {
+                      if (notification.type === 'announcement' && !notification.read) {
+                        dismissAnnouncements(notification.id);
+                      } else if (!notification.read)
+                        readNotificationMutation.mutate({
+                          id: notification.id,
+                          category: notification.category,
+                        });
+                      if (!keepOpened && notification.details.url) onClose?.();
+                    }}
+                  />
+                  {hasNextPage && (
+                    <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
+                      <Center p="xl" sx={{ height: 36 }} mt="md">
+                        <Loader />
+                      </Center>
+                    </InViewLoader>
+                  )}
+                </Paper>
+              ) : (
+                <Center p="sm">
+                  <Text>All caught up! Nothing to see here</Text>
+                </Center>
+              )}
+            </>
+          )}
+        </ScrollArea>
+      </>
     );
   }
 );

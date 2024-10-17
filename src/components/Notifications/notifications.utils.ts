@@ -38,25 +38,31 @@ export const useQueryNotifications = (
   return { data, notifications, ...rest };
 };
 
-export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
+export function useGetAnnouncementsAsNotifications({
+  hideRead,
+}: {
+  hideRead?: boolean;
+}): NotificationGetAllItem[] {
   const { data } = useGetAnnouncements();
   return useMemo(
     () =>
-      data?.map((announcement) => ({
-        id: announcement.id,
-        type: 'announcement',
-        category: 'announcement' as any,
-        createdAt: announcement.startsAt,
-        read: announcement.dismissed,
-        details: {
-          url: announcement.metadata?.actions?.[0]?.link,
-          target: '_blank',
-          message: announcement.title,
-          actor: undefined,
-          content: undefined,
-        },
-      })),
-    [data]
+      data
+        ?.map((announcement) => ({
+          id: announcement.id,
+          type: 'announcement',
+          category: 'announcement' as any,
+          createdAt: announcement.startsAt,
+          read: announcement.dismissed,
+          details: {
+            url: announcement.metadata?.actions?.[0]?.link,
+            target: '_blank',
+            message: announcement.title,
+            actor: undefined,
+            content: undefined,
+          },
+        }))
+        .filter((x) => (hideRead ? !x.read : true)),
+    [data, hideRead]
   );
 }
 
