@@ -11,11 +11,13 @@ class TipaltiCaller extends HttpCaller {
   private static instance: TipaltiCaller;
 
   protected constructor(baseUrl?: string, token?: string) {
-    baseUrl ??= env.TIPALTI_URL;
-    token ??= env.TIPALTI_TOKEN;
+    baseUrl ??= env.TIPALTI_API_URL;
+    token ??= env.TIPALTI_API_KEY;
 
-    if (!baseUrl) throw new Error('Missing TIPALTI_TOKEN env');
-    if (!token) throw new Error('Missing TIPALTI_URL env');
+    if (!baseUrl) throw new Error('Missing TIPALTI_API_KEY env');
+    if (!token) throw new Error('Missing TIPALTI_API_URL env');
+
+    console.log('TipaltiCaller baseUrl:', baseUrl, 'token:', token);
 
     super(baseUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -31,12 +33,24 @@ class TipaltiCaller extends HttpCaller {
   }
 
   async createPayee(payee: Tipalti.CreatePayeeInput) {
-    const response = await this.postRaw('/payees', {
-      body: JSON.stringify(payee),
-      headers: { 'Content-Type': 'application/json' },
-    });
-    const data = await response.json();
-    return Tipalti.createPayeeResponseSchema.parse(data);
+    try {
+      const response = await this.postRaw('/payees', {
+        body: JSON.stringify(payee),
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      });
+
+      console.log(payee);
+
+      if (!response.ok) {
+        throw new Error(`Failed to create payee: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      return Tipalti.createPayeeResponseSchema.parse(data);
+    } catch (error) {
+      console.error('Error creating payee', error);
+      throw error;
+    }
   }
 
   async createPayeeInvitation(payeeId: string) {
@@ -56,7 +70,7 @@ class TipaltiCaller extends HttpCaller {
   ) {
     if (!env.TIPALTI_PAYEE_DASHBOARD_URL)
       throw new Error('Missing TIPALTI_PAYEE_DASHBOARD_URL env');
-    if (!env.TIPALTI_MASTER_KEY) throw new Error('Missing TIPALTI_MASTER_KEY env');
+    if (!env.TIPALTI_API_KEY) throw new Error('Missing TIPALTI_API_KEY env');
 
     const baseUrl = env.TIPALTI_PAYEE_DASHBOARD_URL;
     const dashboard =
@@ -69,7 +83,7 @@ class TipaltiCaller extends HttpCaller {
     };
 
     const qs = QS.stringify(params);
-    const hashkey = createHmac('sha256', Buffer.from(env.TIPALTI_MASTER_KEY, 'utf-8'))
+    const hashkey = createHmac('sha256', Buffer.from(env.TIPALTI_API_KEY, 'utf-8'))
       .update(qs)
       .digest('hex');
     const url = `${baseUrl}${dashboard}?${qs}&hashkey=${hashkey}`;

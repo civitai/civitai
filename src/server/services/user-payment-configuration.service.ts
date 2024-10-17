@@ -12,7 +12,7 @@ import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'stripe-connect', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'user-payment-configuration', type: 'error', ...data }).catch();
 };
 
 export async function getUserPaymentConfiguration({ userId }: { userId: number }) {
