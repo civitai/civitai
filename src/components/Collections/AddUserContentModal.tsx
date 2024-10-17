@@ -39,6 +39,7 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
+import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
 
 export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
   const currentUser = useCurrentUser();
@@ -158,18 +159,18 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
         </Button>
 
         <Divider label="or select from your library" labelPosition="center" />
-        <MasonryProvider
-          columnWidth={constants.cardSizes.image}
-          maxColumnCount={4}
-          maxSingleColumnWidth={450}
-        >
-          <MasonryContainer m={0} p={0}>
-            <ScrollArea.Autosize maxHeight="500px">
-              {currentUser && (
+        <ScrollAreaProvider>
+          <ScrollArea.Autosize maxHeight="500px">
+            <MasonryProvider
+              columnWidth={constants.cardSizes.image}
+              maxColumnCount={4}
+              maxSingleColumnWidth={450}
+            >
+              <MasonryContainer m={0} p={0} px={0}>
                 <ImagesInfinite
                   filters={{
                     collectionId: undefined,
-                    userId: currentUser.id,
+                    userId: currentUser?.id,
                     period: 'AllTime',
                     sort: ImageSort.Newest,
                     hidden: undefined,
@@ -179,12 +180,11 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
                     fromPlatform: undefined,
                   }}
                   renderItem={SelectableImageCard}
-                  nextPageLoaderOptions={{ root: undefined }}
                 />
-              )}
-            </ScrollArea.Autosize>
-          </MasonryContainer>
-        </MasonryProvider>
+              </MasonryContainer>
+            </MasonryProvider>
+          </ScrollArea.Autosize>
+        </ScrollAreaProvider>
         {(collection?.tags?.length ?? 0) > 0 && (
           <Select
             label="Please select what category of the contest you are participating in."
