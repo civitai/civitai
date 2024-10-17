@@ -89,6 +89,7 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
   html = useMemo(
     () =>
       sanitizeHtml(html, {
+        throwOnBlockedDomain: false,
         parseStyleAttributes: true,
         allowedAttributes: {
           ...DEFAULT_ALLOWED_ATTRIBUTES,
