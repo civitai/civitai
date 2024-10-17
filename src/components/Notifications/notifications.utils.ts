@@ -47,20 +47,23 @@ export function useGetAnnouncementsAsNotifications({
   return useMemo(
     () =>
       data
-        ?.map((announcement) => ({
-          id: announcement.id,
-          type: 'announcement',
-          category: 'announcement' as any,
-          createdAt: announcement.startsAt,
-          read: announcement.dismissed,
-          details: {
-            url: announcement.metadata?.actions?.[0]?.link,
-            target: '_blank',
-            message: announcement.title,
-            actor: undefined,
-            content: undefined,
-          },
-        }))
+        ?.map(
+          (announcement) =>
+            ({
+              id: announcement.id,
+              type: 'announcement',
+              category: 'announcement' as any,
+              createdAt: announcement.startsAt,
+              read: announcement.dismissed,
+              details: {
+                url: announcement.metadata?.actions?.[0]?.link,
+                target: '_blank',
+                message: announcement.title,
+                actor: undefined,
+                content: undefined,
+              },
+            } as NotificationGetAllItem)
+        )
         .filter((x) => (hideRead ? !x.read : true)),
     [data, hideRead]
   );
