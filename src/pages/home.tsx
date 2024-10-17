@@ -84,9 +84,9 @@ export default function Home() {
                   {homeBlock.type === HomeBlockType.Collection && (
                     <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
                   )}
-                  {homeBlock.type === HomeBlockType.Announcement && (
+                  {/* {homeBlock.type === HomeBlockType.Announcement && (
                     <AnnouncementHomeBlock homeBlockId={homeBlock.id} />
-                  )}
+                  )} */}
                   {homeBlock.type === HomeBlockType.Leaderboard && (
                     <LeaderboardsHomeBlock
                       homeBlockId={homeBlock.id}

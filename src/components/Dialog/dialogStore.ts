@@ -1,6 +1,5 @@
 import React, { useRef } from 'react';
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 
 interface DialogSettings<TProps extends Record<string, unknown> = any> {
@@ -15,53 +14,58 @@ interface DialogSettings<TProps extends Record<string, unknown> = any> {
   };
 }
 
-export interface Dialog extends DialogSettings {
+export interface Dialog<TProps extends Record<string, unknown> = any>
+  extends DialogSettings<TProps> {
   id: string | number | symbol;
 }
 
 type DialogStore = {
   dialogs: Dialog[];
   trigger: <TProps extends Record<string, unknown>>(args: DialogSettings<TProps>) => void;
+  toggle: <TProps extends Record<string, unknown>>(args: Dialog<TProps>) => void;
   closeById: (id: string | number | symbol) => void;
   closeLatest: () => void;
   closeAll: () => void;
 };
 
 export const useDialogStore = create<DialogStore>()(
-  devtools(
-    immer((set, get) => ({
-      dialogs: [],
-      trigger: (args) => {
-        const dialog: Dialog = {
-          component: args.component,
-          props: args.props,
-          options: args.options,
-          id: args.id ?? Date.now(),
-          type: args.type ?? 'dialog',
-          target: args.target,
-        };
-        set((state) => {
-          const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
-          if (!exists) {
-            state.dialogs.push(dialog);
-          }
-        });
-      },
-      closeById: (id) =>
-        set((state) => {
-          state.dialogs = state.dialogs.filter((x) => x.id !== id);
-        }),
-      closeLatest: () =>
-        set((state) => {
-          state.dialogs.pop();
-        }),
-      closeAll: () =>
-        set((state) => {
-          state.dialogs = [];
-        }),
-    })),
-    { name: 'dialog-store' }
-  )
+  immer((set, get) => ({
+    dialogs: [],
+    trigger: (args) => {
+      const dialog: Dialog = {
+        component: args.component,
+        props: args.props,
+        options: args.options,
+        id: args.id ?? Date.now(),
+        type: args.type ?? 'dialog',
+        target: args.target,
+      };
+      set((state) => {
+        const exists = state.dialogs.findIndex((x) => x.id === dialog.id) > -1;
+        if (!exists) {
+          state.dialogs.push(dialog);
+        }
+      });
+    },
+    toggle: (args) => {
+      const { trigger, dialogs, closeById } = get();
+      const exists = dialogs.findIndex((x) => x.id === args.id) > -1;
+      if (!exists) trigger(args);
+      else closeById(args.id);
+    },
+    closeById: (id) =>
+      set((state) => {
+        state.dialogs = state.dialogs.filter((x) => x.id !== id);
+      }),
+    closeLatest: () =>
+      set((state) => {
+        state.dialogs.pop();
+      }),
+    closeAll: () =>
+      set((state) => {
+        state.dialogs = [];
+      }),
+  }))
 );
 
 export function useIsLevelFocused() {

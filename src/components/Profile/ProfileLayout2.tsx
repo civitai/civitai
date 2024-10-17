@@ -57,6 +57,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           </div>
         }
         subNav={<ProfileNavigation username={username} />}
+        announcements={false}
       >
         <div className="px-3">
           {isBlocked ? (

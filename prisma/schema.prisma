@@ -2029,6 +2029,7 @@ model Announcement {
   startsAt  DateTime?
   endsAt    DateTime?
   metadata  Json?
+  disabled  Boolean   @default(false)
 }
 
 enum CosmeticType {

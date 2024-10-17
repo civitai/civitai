@@ -110,6 +110,7 @@ function MyApp(props: CustomAppProps) {
           subNav={Component.subNav}
           scrollable={Component.scrollable}
           footer={Component.footer}
+          announcements={Component.announcements}
         >
           {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
         </AppLayout>

@@ -2,6 +2,7 @@ import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
+import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
@@ -18,8 +19,8 @@ const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Bounty]: 'Bounties',
   [NotificationCategory.Other]: 'Others',
 };
-export const getCategoryDisplayName = (category: NotificationCategory) =>
-  categoryNameMap[category] ?? getDisplayName(category);
+export const getCategoryDisplayName = (category: string) =>
+  categoryNameMap[category as NotificationCategory] ?? getDisplayName(category);
 
 export const useQueryNotifications = (
   filters?: Partial<GetUserNotificationsSchema>,
@@ -37,6 +38,37 @@ export const useQueryNotifications = (
   return { data, notifications, ...rest };
 };
 
+export function useGetAnnouncementsAsNotifications({
+  hideRead,
+}: {
+  hideRead?: boolean;
+}): NotificationGetAllItem[] {
+  const { data } = useGetAnnouncements();
+  return useMemo(
+    () =>
+      data
+        ?.map(
+          (announcement) =>
+            ({
+              id: announcement.id,
+              type: 'announcement',
+              category: 'announcement' as any,
+              createdAt: announcement.startsAt,
+              read: announcement.dismissed,
+              details: {
+                url: announcement.metadata?.actions?.[0]?.link,
+                target: '_blank',
+                message: announcement.title,
+                actor: undefined,
+                content: undefined,
+              },
+            } as NotificationGetAllItem)
+        )
+        .filter((x) => (hideRead ? !x.read : true)),
+    [data, hideRead]
+  );
+}
+
 export const useQueryNotificationsCount = () => {
   const currentUser = useCurrentUser();
   const { data, isLoading } = trpc.user.checkNotifications.useQuery(undefined, {
@@ -45,9 +77,22 @@ export const useQueryNotificationsCount = () => {
     staleTime: Infinity,
   });
 
-  return isLoading || !data
-    ? { all: 0, comment: 0, milestone: 0, update: 0, bounty: 0, other: 0 }
-    : { ...data };
+  const { data: allAnnouncements, isLoading: announcementsLoading } = useGetAnnouncements();
+  const announcements = allAnnouncements.filter((x) => !x.dismissed);
+
+  return isLoading || announcementsLoading || !data || !announcements
+    ? {
+        all: 0,
+        comment: 0,
+        milestone: 0,
+        update: 0,
+        bounty: 0,
+        other: 0,
+        system: 0,
+        buzz: 0,
+        announcements: 0,
+      }
+    : { ...data, all: data.all + announcements.length, announcements: announcements.length };
 };
 
 export const useMarkReadNotification = () => {

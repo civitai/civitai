@@ -10,12 +10,14 @@ import {
   notificationCache,
   NotificationCategoryCount,
 } from '~/server/notifications/notification-cache';
+import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type NotificationsRaw = {
   id: number;
@@ -115,9 +117,20 @@ export async function getUserNotifications({
     ORDER BY un."createdAt" DESC
     LIMIT ${limit}
   `);
-  const items = await query.result();
+  const result = await query.result();
 
-  await populateNotificationDetails(items);
+  await populateNotificationDetails(result);
+
+  const items = result
+    .map((item) => {
+      const details = getNotificationMessage({ type: item.type, details: item.details });
+      if (!details) return null;
+      return {
+        ...item,
+        details: { ...details, actor: item.details.actor, content: item.details.content },
+      };
+    })
+    .filter(isDefined);
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
