@@ -10,7 +10,6 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { getAnnouncementsCached } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -25,6 +24,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getSectionById, getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
+import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -124,7 +124,7 @@ export const getHomeBlockById = async ({
 };
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
-type GetAnnouncements = AsyncReturnType<typeof getAnnouncementsCached>;
+type GetAnnouncements = AsyncReturnType<typeof getCurrentAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
 };
@@ -224,35 +224,35 @@ export const getHomeBlockData = async ({
         }),
       };
     }
-    // case HomeBlockType.Announcement: {
-    //   if (!metadata.announcements) {
-    //     return null;
-    //   }
+    case HomeBlockType.Announcement: {
+      if (!metadata.announcements) {
+        return null;
+      }
 
-    //   const announcementIds = metadata.announcements.ids;
-    //   const announcements = await getAnnouncements({
-    //     ids: announcementIds,
-    //     dismissed: input.dismissed,
-    //     limit: metadata.announcements.limit,
-    //     user,
-    //   });
+      const announcementIds = metadata.announcements.ids;
+      const announcements = await getCurrentAnnouncements({
+        ids: announcementIds,
+        dismissed: input.dismissed,
+        limit: metadata.announcements.limit,
+        userId: user?.id,
+      });
 
-    //   if (!announcements.length) {
-    //     // If the user cleared all announcements in home block, do not display this block.
-    //     return null;
-    //   }
+      if (!announcements.length) {
+        // If the user cleared all announcements in home block, do not display this block.
+        return null;
+      }
 
-    //   return {
-    //     ...homeBlock,
-    //     metadata,
-    //     announcements: announcements.sort((a, b) => {
-    //       const aIndex = a.metadata?.index ?? 999;
-    //       const bIndex = b.metadata?.index ?? 999;
+      return {
+        ...homeBlock,
+        metadata,
+        announcements: announcements.sort((a, b) => {
+          const aIndex = a.metadata?.index ?? 999;
+          const bIndex = b.metadata?.index ?? 999;
 
-    //       return aIndex - bIndex;
-    //     }),
-    //   };
-    // }
+          return aIndex - bIndex;
+        }),
+      };
+    }
     case HomeBlockType.CosmeticShop: {
       if (!metadata.cosmeticShopSection) {
         return null;
