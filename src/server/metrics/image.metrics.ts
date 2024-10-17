@@ -133,13 +133,14 @@ export const imageMetrics = createMetricProcessor({
     }
   },
   async clearDay(ctx) {
+    // Disabled - We aren't currently using day metrics so it's ok that they aren't cleared and this was taking too long to process.
     // Clear day of things updated in the last day
-    await executeRefresh(ctx)`
-      UPDATE "ImageMetric"
-        SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
+    // await executeRefresh(ctx)`
+    //   UPDATE "ImageMetric"
+    //     SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0, "tippedCount" = 0, "tippedAmountCount" = 0
+    //   WHERE timeframe = 'Day'
+    //     AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+    // `;
   },
   lockTime: 5 * 60,
   updateInterval: 30 * 60,

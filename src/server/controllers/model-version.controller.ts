@@ -155,9 +155,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
       trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-      files: version.files as unknown as Array<
-        Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
-      >,
+      files: (version.files ?? []) as unknown as Array<ModelFileModel>,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
         id: resource.id,

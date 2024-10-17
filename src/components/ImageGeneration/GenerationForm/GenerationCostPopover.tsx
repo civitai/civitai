@@ -108,6 +108,17 @@ export function GenerationCostPopover({
       className: classes.tableCell,
     },
     {
+      label: 'Additional Resource Usage',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {workflowCost.fixed?.additionalNetworks}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.additionalNetworks,
+      className: classes.tableCell,
+    },
+    {
       label: <div className="font-bold">Base Cost</div>,
       value: (
         <Group spacing={4} position="right" className="font-bold" noWrap>

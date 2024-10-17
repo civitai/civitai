@@ -24,8 +24,3 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
     },
   },
 });
-
-const generationResource = Prisma.validator<Prisma.ModelVersionArgs>()({
-  select: generationResourceSelect,
-});
-export type GenerationResourceSelect = Prisma.ModelVersionGetPayload<typeof generationResource>;

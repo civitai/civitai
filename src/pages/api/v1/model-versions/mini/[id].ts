@@ -2,7 +2,6 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { Session } from 'next-auth';
-import { isProd } from '~/env/other';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -11,7 +10,10 @@ import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
 import { Availability, ModelType, Prisma } from '@prisma/client';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import {
+  getShouldChargeForResources,
+  getUnavailableResources,
+} from '~/server/services/generation/generation.service';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -68,9 +70,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."requireAuth",
       (
         (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
-        OR 
+        OR
         (mv."availability" = 'Private')
-      
+
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
@@ -118,6 +120,15 @@ export default MixedAuthEndpoint(async function handler(
     if (isUnavailable) canGenerate = false;
   }
 
+  // Check if should charge
+  const shouldChargeResult = await getShouldChargeForResources([
+    {
+      modelType: modelVersion.type,
+      modelId: modelVersion.modelId,
+      fileSizeKB: primaryFile.sizeKB,
+    },
+  ]);
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -135,6 +146,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
   };
   res.status(200).json(data);
 });

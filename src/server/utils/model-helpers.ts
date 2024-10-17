@@ -24,7 +24,7 @@ export function getPrimaryFile<T extends FileFormatType>(
   files: Array<T>,
   preferences: Partial<FileFormatType> = defaultFilePreferences
 ) {
-  if (!files.length) return null;
+  if (!files.length) return;
 
   const preferredMetadata = { ...defaultFilePreferences.metadata, ...preferences.metadata };
 
