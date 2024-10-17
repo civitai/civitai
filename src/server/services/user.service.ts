@@ -160,7 +160,11 @@ export const getUserCreator = async ({
   });
   if (!user) return null;
 
-  const modelCount = dbRead.model.count({
+  /**
+   * TODO: seems to be deprecated, we are getting model count from the stats
+   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
+   */
+  const modelCount = await dbRead.model.count({
     where: {
       userId: user?.id,
       status: 'Published',
@@ -169,10 +173,7 @@ export const getUserCreator = async ({
 
   return {
     ...user,
-
-    _count: {
-      models: Number(modelCount),
-    },
+    _count: { models: modelCount },
   };
 };
 

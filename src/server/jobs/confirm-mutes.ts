@@ -2,6 +2,7 @@ import { dbWrite } from '~/server/db/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { createJob, getJobDate } from './job';
+import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
 
 export const confirmMutes = createJob('confirm-mutes', '0 1 * * *', async () => {
   // Get all recently confirmed mutes
@@ -16,6 +17,7 @@ export const confirmMutes = createJob('confirm-mutes', '0 1 * * *', async () => 
   for (const { id } of confirmedMutes) {
     try {
       await cancelSubscription({ userId: id });
+      await cancelSubscriptionPlan({ userId: id });
       await invalidateSession(id);
     } catch (e) {
       console.error(`Error cancelling subscription for user ${id}:`, e);

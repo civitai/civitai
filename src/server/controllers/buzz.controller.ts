@@ -186,6 +186,18 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('You cannot send buzz to the same account');
     }
 
+    if (targetUserIds.length > 0) {
+      // Confirm none of the target users are banned:
+      const bannedUsers = await dbRead.user.findMany({
+        where: { id: { in: targetUserIds }, bannedAt: { not: null } },
+        select: { id: true },
+      });
+
+      if (bannedUsers.length > 0) {
+        throw throwBadRequestError('One or more target users are banned');
+      }
+    }
+
     const amount = Math.floor(input.amount / targetUserIds.length);
     const finalAmount = amount * targetUserIds.length;
 
