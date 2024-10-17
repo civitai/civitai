@@ -407,11 +407,12 @@ export const getPagedResourceReviews = async ({
       u.username,
       u."deletedAt",
       u.image as "userImage",
-      (
-        SELECT "imageCount"::int
-        FROM "ResourceReviewHelper" rrh
-        WHERE rrh."resourceReviewId" = rr.id
-      ) "imageCount",
+      -- TODO: This is a temporary fix until we can figure out a more performant way to get the count
+      -- (
+      --   SELECT "imageCount"::int
+      --   FROM "ResourceReviewHelper" rrh
+      --   WHERE rrh."resourceReviewId" = rr.id
+      -- ) "imageCount",
       (
         SELECT COUNT(*)::int
         FROM "Thread" t
@@ -430,12 +431,13 @@ export const getPagedResourceReviews = async ({
   const userCosmetics = await getCosmeticsForUsers(userIds);
   const profilePictures = await getProfilePicturesForUsers(userIds);
   const items = itemsRaw
-    .map(({ userId, username, userImage, deletedAt, ...item }) => {
+    .map(({ userId, username, userImage, deletedAt, imageCount = 0, ...item }) => {
       let quality = 0;
       if (item.details && item.details.length > 0) quality++;
-      if (item.imageCount > 0) quality++;
+      if (imageCount > 0) quality++;
       return {
         ...item,
+        imageCount,
         quality,
         user: {
           id: userId,
