@@ -13,7 +13,7 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ page: z.coerce.number().default(1) });
 
-export default function AnnouncementsPage() {
+export function AnnouncementsPage() {
   const router = useRouter();
   const { page } = schema.parse(router.query);
   const queryUtils = trpc.useUtils();
@@ -73,7 +73,10 @@ export default function AnnouncementsPage() {
                   <ActionIcon onClick={() => openEdit(announcement)}>
                     <IconPencil />
                   </ActionIcon>
-                  <PopConfirm onConfirm={() => deleteMutation.mutate({ id: announcement.id })}>
+                  <PopConfirm
+                    onConfirm={() => deleteMutation.mutate({ id: announcement.id })}
+                    withinPortal={false}
+                  >
                     <ActionIcon loading={deleteMutation.isLoading} color="red">
                       <IconTrash />
                     </ActionIcon>
@@ -92,3 +95,5 @@ export default function AnnouncementsPage() {
     </div>
   );
 }
+
+export default Page(AnnouncementsPage, { features: (features) => features.announcements });
