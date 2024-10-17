@@ -161,12 +161,12 @@ function MyApp(props: CustomAppProps) {
                                                 <TrackPageView />
                                                 <ChatContextProvider>
                                                   <CustomModalsProvider>
-                                                  <AnnouncementsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </AnnouncementsProvider>
+                                                    <AnnouncementsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </AnnouncementsProvider>
                                                   </CustomModalsProvider>
                                                 </ChatContextProvider>
                                               </BaseLayout>
