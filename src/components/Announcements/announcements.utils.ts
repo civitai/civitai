@@ -20,16 +20,17 @@ export function dismissAnnouncements(ids: number | number[]) {
   }));
 }
 
-export function useGetAnnouncements(args?: { showHidden: boolean }) {
-  const { showHidden } = args ?? {};
+export function useGetAnnouncements() {
   const dismissed = useAnnouncementsStore((state) => state.dismissed);
   const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery();
 
   const announcements = useMemo(
     () =>
-      (showHidden ? data : data?.filter((announcement) => !dismissed.includes(announcement.id))) ??
-      [],
-    [data, dismissed, showHidden]
+      data?.map((announcement) => ({
+        ...announcement,
+        dismissed: dismissed.includes(announcement.id),
+      })) ?? [],
+    [data, dismissed]
   );
 
   return { data: announcements, ...rest };

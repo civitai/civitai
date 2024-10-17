@@ -71,7 +71,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     function handleMarkAsRead() {
       if (!selectedTab || selectedTab === 'announcements')
         dismissAnnouncements(announcements.map((x) => x.id));
-      if (selecteTab !== 'announcements')
+      if (selectedTab !== 'announcements')
         readNotificationMutation.mutate({
           all: true,
           category: selectedCategory,

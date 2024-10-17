@@ -8,16 +8,20 @@ import {
   dismissAnnouncements,
   useAnnouncementsStore,
 } from '~/components/Announcements/announcements.utils';
+import clsx from 'clsx';
 
 export function Announcement({
   announcement,
   dismissible,
   moderatorActions,
+  className,
+  style,
+  ...props
 }: {
   announcement: AnnouncementDTO;
   dismissible?: boolean;
   moderatorActions?: React.ReactNode;
-}) {
+} & React.HTMLAttributes<HTMLDivElement>) {
   const dismissed = useAnnouncementsStore((state) => state.dismissed);
   const { actions, image } = announcement.metadata || {};
   const theme = useMantineTheme();
@@ -25,10 +29,15 @@ export function Announcement({
     ? false
     : dismissible ?? announcement.metadata.dismissible ?? true;
 
+  function handleDismiss() {
+    dismissAnnouncements(announcement.id);
+  }
+
   return (
     <div
-      className="relative flex border card"
-      style={{ borderColor: theme.colors[announcement.color][4] }}
+      className={clsx('relative flex border card', className)}
+      style={{ borderColor: theme.colors[announcement.color][4], ...style }}
+      {...props}
     >
       <div className="flex items-stretch">
         {canDismiss && (
@@ -36,7 +45,7 @@ export function Announcement({
             variant="subtle"
             radius="xl"
             color="red"
-            onClick={() => dismissAnnouncements(announcement.id)}
+            onClick={handleDismiss}
             className="absolute right-2 top-2"
           >
             <IconX size={20} />
@@ -69,6 +78,12 @@ export function Announcement({
                     component="a"
                     variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
                     color={action.color ?? announcement.color}
+                    // onClick={handleDismiss}
+                    // onMouseUp={(e) => {
+                    //   if (e.button === 1) {
+                    //     handleDismiss();
+                    //   }
+                    // }}
                   >
                     {action.linkText}
                   </Button>

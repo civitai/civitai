@@ -2,10 +2,7 @@ import { InfiniteData, useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
-import {
-  useAnnouncementsStore,
-  useGetAnnouncements,
-} from '~/components/Announcements/announcements.utils';
+import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
@@ -42,8 +39,7 @@ export const useQueryNotifications = (
 };
 
 export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
-  const { data } = useGetAnnouncements({ showHidden: true });
-  const dismissed = useAnnouncementsStore((state) => state.dismissed);
+  const { data } = useGetAnnouncements();
   return useMemo(
     () =>
       data?.map((announcement) => ({
@@ -51,7 +47,7 @@ export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
         type: 'announcement',
         category: 'announcement' as any,
         createdAt: announcement.startsAt,
-        read: !!dismissed.find((id) => id === announcement.id),
+        read: announcement.dismissed,
         details: {
           url: announcement.metadata?.actions?.[0]?.link,
           target: '_blank',
@@ -72,7 +68,8 @@ export const useQueryNotificationsCount = () => {
     staleTime: Infinity,
   });
 
-  const { data: announcements, isLoading: announcementsLoading } = useGetAnnouncements();
+  const { data: allAnnouncements, isLoading: announcementsLoading } = useGetAnnouncements();
+  const announcements = allAnnouncements.filter((x) => !x.dismissed);
 
   return isLoading || announcementsLoading || !data || !announcements
     ? {
