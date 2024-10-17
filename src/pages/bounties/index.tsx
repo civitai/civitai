@@ -91,4 +91,4 @@ function BountiesPage() {
   );
 }
 
-export default Page(BountiesPage, { InnerLayout: FeedLayout });
+export default Page(BountiesPage, { InnerLayout: FeedLayout, announcements: true });

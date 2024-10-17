@@ -1,8 +1,6 @@
 import { ScrollAreaProps } from '@mantine/core';
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
-import { useGetAnnouncements } from '~/components/Announcements/AnnouncementsProvider';
-import { Announcement } from '~/components/Announcements/Announcement';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
 import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -10,7 +8,7 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { useRouter } from 'next/router';
+import { Announcements } from '~/components/Announcements/Announcements';
 
 export function AppLayout({
   children,
@@ -74,7 +72,7 @@ export function MainContent({
   subNav = <SubNav2 />,
   footer = <AppFooter />,
   scrollable = true,
-  announcements = true,
+  announcements,
   ...props
 }: {
   children: React.ReactNode;
@@ -99,19 +97,6 @@ export function MainContent({
         {children}
       </main>
       {footer}
-    </div>
-  );
-}
-
-function Announcements() {
-  const router = useRouter();
-  const { data } = useGetAnnouncements();
-  if (!data.length || router.asPath.startsWith('/user/notifications')) return null;
-  return (
-    <div className="mb-3 ">
-      <div className="container">
-        <Announcement announcement={data[0]} />
-      </div>
     </div>
   );
 }

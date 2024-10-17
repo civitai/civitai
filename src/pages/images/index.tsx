@@ -36,5 +36,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: FeedLayout }
+  { InnerLayout: FeedLayout, announcements: true }
 );

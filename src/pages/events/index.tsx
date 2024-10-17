@@ -52,4 +52,4 @@ function EventsPage() {
   );
 }
 
-export default Page(EventsPage, { InnerLayout: FeedLayout });
+export default Page(EventsPage, { InnerLayout: FeedLayout, announcements: true });

@@ -58,7 +58,6 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
-import { AnnouncementsProvider } from '~/components/Announcements/AnnouncementsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -161,12 +160,10 @@ function MyApp(props: CustomAppProps) {
                                                 <TrackPageView />
                                                 <ChatContextProvider>
                                                   <CustomModalsProvider>
-                                                    <AnnouncementsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </AnnouncementsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    {/* <StripeSetupSuccessProvider /> */}
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
                                                   </CustomModalsProvider>
                                                 </ChatContextProvider>
                                               </BaseLayout>

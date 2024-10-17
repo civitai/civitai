@@ -44,4 +44,4 @@ function ArticlesPage() {
   );
 }
 
-export default Page(ArticlesPage, { InnerLayout: FeedLayout });
+export default Page(ArticlesPage, { InnerLayout: FeedLayout, announcements: true });

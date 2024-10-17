@@ -3,9 +3,9 @@ import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { useCallback, useMemo } from 'react';
 import {
+  useAnnouncementsStore,
   useGetAnnouncements,
-  useAnnouncementsContext,
-} from '~/components/Announcements/AnnouncementsProvider';
+} from '~/components/Announcements/announcements.utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotificationCategory, SignalMessages } from '~/server/common/enums';
@@ -43,7 +43,7 @@ export const useQueryNotifications = (
 
 export function useGetAnnouncementsAsNotifications(): NotificationGetAllItem[] {
   const { data } = useGetAnnouncements({ showHidden: true });
-  const { dismissed } = useAnnouncementsContext();
+  const dismissed = useAnnouncementsStore((state) => state.dismissed);
   return useMemo(
     () =>
       data?.map((announcement) => ({

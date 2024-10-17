@@ -37,7 +37,7 @@ export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDi
       withinPortal
       {...dialog}
     >
-      <div ref={setDrawer} className="size-full p-3">
+      <div ref={setDrawer} className="size-full p-4">
         <NotificationsComposed onClose={dialog.onClose} />
       </div>
     </Drawer>

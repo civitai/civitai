@@ -32,6 +32,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
     take,
     select: {
       id: true,
+      createdAt: true,
       startsAt: true,
       endsAt: true,
       title: true,
@@ -123,6 +124,7 @@ async function getAnnouncements() {
 
   return announcements.map(({ createdAt, metadata, startsAt, ...x }) => ({
     ...x,
+    createdAt,
     startsAt: startsAt ?? createdAt,
     metadata: (metadata ?? {}) as AnnouncementMetaSchema,
   }));

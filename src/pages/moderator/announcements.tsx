@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Pagination } from '@mantine/core';
+import { ActionIcon, Badge, Button, Pagination } from '@mantine/core';
 import { IconCopy, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
@@ -13,7 +13,7 @@ import { trpc } from '~/utils/trpc';
 
 const schema = z.object({ page: z.coerce.number().default(1) });
 
-function AnnouncementsPage() {
+export default function AnnouncementsPage() {
   const router = useRouter();
   const { page } = schema.parse(router.query);
   const queryUtils = trpc.useUtils();
@@ -25,7 +25,7 @@ function AnnouncementsPage() {
     },
   });
 
-  function openEdit(announcement: Partial<UpsertAnnouncementSchema>) {
+  function openEdit(announcement?: Partial<UpsertAnnouncementSchema>) {
     dialogStore.trigger({
       component: AnnouncementEditModal,
       props: { announcement },
@@ -42,6 +42,9 @@ function AnnouncementsPage() {
 
   return (
     <div className="container flex flex-col gap-2">
+      <div className="flex justify-end">
+        <Button onClick={() => openEdit()}>Create New Announcement</Button>
+      </div>
       {data?.items.map((announcement) => {
         const startsAt = (announcement.startsAt ?? now).getTime();
         const endsAt = (announcement.endsAt ?? new Date('2100-12-31')).getTime();
@@ -54,7 +57,11 @@ function AnnouncementsPage() {
               dismissible={false}
               moderatorActions={
                 <div className="flex items-center gap-1">
-                  {active && <Badge>Active</Badge>}
+                  {announcement.disabled ? (
+                    <Badge color="red">Disabled</Badge>
+                  ) : active ? (
+                    <Badge>Active</Badge>
+                  ) : null}
                   <ActionIcon
                     onClick={() => {
                       const { id, startsAt, endsAt, ...rest } = announcement;
@@ -85,5 +92,3 @@ function AnnouncementsPage() {
     </div>
   );
 }
-
-export default Page(AnnouncementsPage, { announcements: false });

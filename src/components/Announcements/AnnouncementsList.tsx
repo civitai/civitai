@@ -1,6 +1,6 @@
 import { Center, Loader, Text } from '@mantine/core';
 import { Announcement } from '~/components/Announcements/Announcement';
-import { useGetAnnouncements } from '~/components/Announcements/AnnouncementsProvider';
+import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 
 export function AnnouncementsList() {
   const { data, isLoading } = useGetAnnouncements({ showHidden: true });

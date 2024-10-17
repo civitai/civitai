@@ -14,7 +14,7 @@ type PageOptions = {
   announcements?: boolean;
 };
 
-export type CustomNextPage = NextPage & PageOptions;
+export type CustomNextPage = NextPage<any> & PageOptions;
 
 export function Page(Component: CustomNextPage, options?: PageOptions) {
   Component.getLayout = options?.getLayout;

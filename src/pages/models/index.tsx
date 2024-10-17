@@ -56,4 +56,4 @@ function ModelsPage() {
   );
 }
 
-export default Page(ModelsPage, { InnerLayout: FeedLayout });
+export default Page(ModelsPage, { InnerLayout: FeedLayout, announcements: true });

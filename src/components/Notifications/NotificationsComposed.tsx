@@ -16,8 +16,8 @@ import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { forwardRef, useMemo, useState } from 'react';
+import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
 import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
-import { useAnnouncementsContext } from '~/components/Announcements/AnnouncementsProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
@@ -37,7 +37,6 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
       key: 'notifications-hide-read',
       defaultValue: false,
     });
-    const { dismissAll, dismiss } = useAnnouncementsContext();
     const selectedCategory = Object.values(NotificationCategory).find(
       (category) => category === selectedTab
     );
@@ -60,7 +59,9 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     const announcements = useGetAnnouncementsAsNotifications();
     const notifications = useMemo(() => {
       return !selectedTab
-        ? [...announcements, ...data].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        ? [...announcements, ...data].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+          )
         : data;
     }, [data, selectedTab, announcements]);
 
@@ -68,7 +69,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     const categoryName = !selectedTab ? 'all' : getCategoryDisplayName(selectedTab);
 
     function handleMarkAsRead() {
-      if (selectedTab === 'announcements') dismissAll();
+      if (selectedTab === 'announcements') dismissAnnouncements(announcements.map((x) => x.id));
       else
         readNotificationMutation.mutate({
           all: true,
@@ -117,7 +118,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                   items={notifications}
                   onItemClick={(notification, keepOpened) => {
                     if (notification.type === 'announcement' && !notification.read) {
-                      dismiss(notification.id);
+                      dismissAnnouncements(notification.id);
                     } else if (!notification.read)
                       readNotificationMutation.mutate({
                         id: notification.id,

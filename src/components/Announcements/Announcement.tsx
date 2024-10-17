@@ -1,11 +1,13 @@
 import { ActionIcon, Button, ButtonVariant, Title, useMantineTheme } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useAnnouncementsContext } from '~/components/Announcements/AnnouncementsProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { AnnouncementDTO } from '~/server/services/announcement.service';
-import clsx from 'clsx';
+import {
+  dismissAnnouncements,
+  useAnnouncementsStore,
+} from '~/components/Announcements/announcements.utils';
 
 export function Announcement({
   announcement,
@@ -16,13 +18,12 @@ export function Announcement({
   dismissible?: boolean;
   moderatorActions?: React.ReactNode;
 }) {
-  const { dismissed } = useAnnouncementsContext();
+  const dismissed = useAnnouncementsStore((state) => state.dismissed);
   const { actions, image } = announcement.metadata || {};
   const theme = useMantineTheme();
   const canDismiss = dismissed.includes(announcement.id)
     ? false
-    : dismissible ?? announcement.metadata.dismissible;
-  const { dismiss } = useAnnouncementsContext();
+    : dismissible ?? announcement.metadata.dismissible ?? true;
 
   return (
     <div
@@ -35,7 +36,7 @@ export function Announcement({
             variant="subtle"
             radius="xl"
             color="red"
-            onClick={() => dismiss(announcement.id)}
+            onClick={() => dismissAnnouncements(announcement.id)}
             className="absolute right-2 top-2"
           >
             <IconX size={20} />

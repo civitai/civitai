@@ -38,4 +38,4 @@ function VideosPage() {
   );
 }
 
-export default Page(VideosPage, { InnerLayout: FeedLayout });
+export default Page(VideosPage, { InnerLayout: FeedLayout, announcements: true });

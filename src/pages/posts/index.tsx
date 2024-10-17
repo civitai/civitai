@@ -35,4 +35,4 @@ function PostsPage() {
   );
 }
 
-export default Page(PostsPage, { InnerLayout: FeedLayout });
+export default Page(PostsPage, { InnerLayout: FeedLayout, announcements: true });
