@@ -5,7 +5,11 @@ import {
   protectedProcedure,
   isFlagProtected,
 } from '~/server/trpc';
-import { getInfiniteArticlesSchema, upsertArticleInput } from '~/server/schema/article.schema';
+import {
+  getInfiniteArticlesSchema,
+  upsertArticleInput,
+  articleRateLimits,
+} from '~/server/schema/article.schema';
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
@@ -17,7 +21,7 @@ import {
   getDraftArticlesByUserId,
 } from '~/server/services/article.service';
 import { upsertArticleHandler } from '~/server/controllers/article.controller';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 
 export const articleRouter = router({
@@ -44,6 +48,7 @@ export const articleRouter = router({
   upsert: guardedProcedure
     .input(upsertArticleInput)
     .use(isFlagProtected('articleCreate'))
+    .use(rateLimit(articleRateLimits))
     .mutation(upsertArticleHandler),
   delete: protectedProcedure
     .input(getByIdSchema)
