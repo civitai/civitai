@@ -7,6 +7,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
+import { ExtendedUser } from '~/types/next-auth';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
 
 export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
@@ -93,31 +94,51 @@ export function cacheIt<TInput extends object>({
 }
 
 export type RateLimit = {
-  limit?: number;
-  period?: number; // seconds
+  limit: number;
+  period: number; // seconds
+  userReq?: (user: ExtendedUser) => boolean;
 };
-export function rateLimit({ limit, period }: RateLimit) {
-  limit ??= 10;
-  period ??= CacheTTL.md;
+export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
+  if (!rateLimits) rateLimits = { limit: 10, period: CacheTTL.md };
+  if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
   return middleware(async ({ ctx, next, path }) => {
-    const cacheKey = `trpc:limit:${path.replace('.', ':')}`;
+    // Get valid limits
+    let validLimits: RateLimit[] = [];
+    for (const rateLimit of rateLimits) {
+      const matchedPeriod = validLimits.find((x) => x.period === rateLimit.period);
+      if (matchedPeriod?.limit && matchedPeriod.limit > rateLimit.limit) continue;
+      if (!rateLimit.userReq || (ctx.user && rateLimit.userReq(ctx.user))) {
+        validLimits.push(rateLimit);
+      }
+    }
+
+    // Get user's attempts
+    const cacheKey = `packed:trpc:limit:${path.replace('.', ':')}`;
     const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
-    const attempts = JSON.parse((await redis.hGet(cacheKey, hashKey)) ?? '[]').map(
-      Number
-    ) as number[];
-    const cutoff = Date.now() - period! * 1000;
-    const relevantAttempts = attempts.filter((x) => x > cutoff);
-    if (relevantAttempts.length >= limit!) {
+    const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
+
+    // Check if user can proceed
+    const canProceed = validLimits.every(({ limit, period }) => {
+      const cutoff = Date.now() - period! * 1000;
+      let relevantAttempts = attempts.filter((x) => x > cutoff).length;
+      return relevantAttempts <= limit!;
+    });
+
+    // Throw if rate limit exceeded
+    if (!canProceed) {
       throw new TRPCError({
         code: 'TOO_MANY_REQUESTS',
-        message: 'Rate limit exceeded',
+        message: `You're doing that too much...`,
       });
     }
 
-    relevantAttempts.push(Date.now());
-    await redis.hSet(cacheKey, hashKey, JSON.stringify(relevantAttempts));
-    await redis.sAdd('trpc:limit:keys', cacheKey);
+    // Update user's attempts
+    attempts.push(Date.now());
+    const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
+    const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
+    await redis.packed.hSet(cacheKey, hashKey, updatedAttempts);
+    await redis.sAdd('packed:trpc:limit:keys', cacheKey);
     return await next();
   });
 }
