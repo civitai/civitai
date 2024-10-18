@@ -15,6 +15,7 @@ import { MouseEvent } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 
@@ -25,7 +26,15 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
   return (
     <SimpleGrid cols={1} spacing={0}>
       {items.map((notification) => {
-        const details = notification.details;
+        const notificationDetails = notification.details as MixedObject;
+        const details =
+          notificationDetails.type !== 'announcement'
+            ? getNotificationMessage({
+                type: notification.type,
+                details: notificationDetails,
+              })
+            : notificationDetails;
+        if (!details) return null;
 
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
@@ -78,8 +87,8 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
                   <ThemeIcon variant="light" size="xl" radius="xl" color="green">
                     <IconAward stroke={1.5} />
                   </ThemeIcon>
-                ) : details.actor ? (
-                  <UserAvatar user={details.actor} size="md" />
+                ) : notificationDetails?.actor ? (
+                  <UserAvatar user={notificationDetails.actor} size="md" />
                 ) : (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="yellow">
                     <IconBell stroke={1.5} />
@@ -90,10 +99,10 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
                     {details.message}
                   </Text>
                   <Group spacing={2} noWrap>
-                    {details?.content && (
+                    {notificationDetails?.content && (
                       <>
                         <Text size="xs" color="dimmed" lineClamp={1}>
-                          {details.content}
+                          {notificationDetails.content}
                         </Text>
                         ・
                       </>

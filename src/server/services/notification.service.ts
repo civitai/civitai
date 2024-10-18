@@ -117,20 +117,9 @@ export async function getUserNotifications({
     ORDER BY un."createdAt" DESC
     LIMIT ${limit}
   `);
-  const result = await query.result();
+  const items = await query.result();
 
-  await populateNotificationDetails(result);
-
-  const items = result
-    .map((item) => {
-      const details = getNotificationMessage({ type: item.type, details: item.details });
-      if (!details) return null;
-      return {
-        ...item,
-        details: { ...details, actor: item.details.actor, content: item.details.content },
-      };
-    })
-    .filter(isDefined);
+  await populateNotificationDetails(items);
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 

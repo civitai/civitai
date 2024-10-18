@@ -61,6 +61,7 @@ export function useGetAnnouncementsAsNotifications({
                 message: announcement.title,
                 actor: undefined,
                 content: undefined,
+                type: 'announcement',
               },
             } as NotificationGetAllItem)
         )
