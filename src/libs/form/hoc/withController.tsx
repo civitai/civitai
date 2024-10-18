@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import {
   Controller,
   ControllerFieldState,
@@ -28,50 +29,55 @@ export function withController<
     props: TComponentProps;
   }) => Partial<TComponentProps>
 ) {
-  function ControlledInput({ name, ...props }: TComponentProps & { name: TName }) {
-    const { control, ...form } = useFormContext<TFieldValues>();
-    return (
-      <Controller
-        control={control}
-        name={name}
-        render={({ field, fieldState, formState }) => {
+  const ControlledInput = forwardRef<HTMLElement, TComponentProps & { name: TName }>(
+    ({ name, ...props }, ref) => {
+      const { control, ...form } = useFormContext<TFieldValues>();
+      return (
+        <Controller
+          control={control}
+          name={name}
+          render={({ field, fieldState, formState }) => {
           const mappedProps = mapper?.({ field, fieldState, formState, props: props as any }); //eslint-disable-line
 
           const handleChange = (...values: any) => { //eslint-disable-line
-            props.onChange?.(...values);
-            // @ts-ignore
-            field.onChange(...values);
-          };
+              props.onChange?.(...values);
+              // @ts-ignore
+              field.onChange(...values);
+            };
 
-          const handleBlur = () => {
-            props.onBlur?.();
-            field.onBlur();
-          };
+            const handleBlur = () => {
+              props.onBlur?.();
+              field.onBlur();
+            };
 
-          const mapped = {
-            onChange: handleChange,
-            error:
-              (fieldState.error && Array.isArray(fieldState.error)
-                ? fieldState.error[0]?.message
-                : fieldState.error?.message) ?? props.error,
-            value: field.value ?? '',
-            onBlur: handleBlur,
-            placeholder:
-              props.placeholder ?? (typeof props.label === 'string' ? props.label : undefined),
-            ...mappedProps,
-          };
+            const mapped = {
+              onChange: handleChange,
+              error:
+                (fieldState.error && Array.isArray(fieldState.error)
+                  ? fieldState.error[0]?.message
+                  : fieldState.error?.message) ?? props.error,
+              value: field.value ?? '',
+              onBlur: handleBlur,
+              placeholder:
+                props.placeholder ?? (typeof props.label === 'string' ? props.label : undefined),
+              ...mappedProps,
+            };
 
-          // TODO - instead of passing reset prop, find a way to pass an onReset handler
-          return (
-            <BaseComponent
-              {...(props as TComponentProps & { name: TName })}
-              {...mapped}
-              reset={(form as any).resetCount}
-            />
-          );
-        }}
-      />
-    );
-  }
+            // TODO - instead of passing reset prop, find a way to pass an onReset handler
+            return (
+              <BaseComponent
+                ref={ref}
+                {...(props as TComponentProps & { name: TName })}
+                {...mapped}
+                reset={(form as any).resetCount}
+              />
+            );
+          }}
+        />
+      );
+    }
+  );
+
+  ControlledInput.displayName = 'ControlledInput';
   return ControlledInput;
 }
