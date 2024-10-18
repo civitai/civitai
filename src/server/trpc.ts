@@ -1,5 +1,4 @@
 import { initTRPC, TRPCError } from '@trpc/server';
-import { SessionUser } from 'next-auth';
 import superjson from 'superjson';
 import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import type { Context } from './createContext';

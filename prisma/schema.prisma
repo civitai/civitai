@@ -3207,6 +3207,14 @@ model Donation {
   createdAt         DateTime     @default(now())
 }
 
+model Blocklist {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  type      String
+  data      String[]
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

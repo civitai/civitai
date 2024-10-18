@@ -306,3 +306,8 @@ export enum OrchEngineTypes {
   Rapid = 'flux-dev-fast',
   'X-Flux' = 'x-flux',
 }
+
+export enum BlocklistType {
+  EmailDomain = 'EmailDomain',
+  Link = 'Link',
+}

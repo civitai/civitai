@@ -654,6 +654,7 @@ const blockedDomains = [
   'zzb.bz',
   'tusi.art',
   'nogpu-webui.com',
+  'rb.gy',
 ];
 
 export function getIsBlockedDomain(value: string) {

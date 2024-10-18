@@ -1,5 +1,5 @@
 import { useDidUpdate } from '@mantine/hooks';
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, forwardRef } from 'react';
 import { DeepPartial, FieldValues, UnpackNestedValue, useFormContext } from 'react-hook-form';
 
 type WatcherBaseProps = {
@@ -13,14 +13,19 @@ export function withWatcher<
     | React.ForwardRefExoticComponent<TComponentProps>
     | ((props: TComponentProps) => JSX.Element)
 ) {
-  function WatchWrapper({ visible, ...props }: TComponentProps & WatcherBaseProps) {
-    if (!visible) return <BaseComponent {...(props as TComponentProps)} />;
-    return (
-      <Watcher visible={visible}>
-        <BaseComponent {...(props as TComponentProps)} />
-      </Watcher>
-    );
-  }
+  const WatchWrapper = forwardRef<HTMLElement, TComponentProps & WatcherBaseProps>(
+    ({ visible, ...props }, ref) => {
+      if (!visible) return <BaseComponent ref={ref} {...(props as TComponentProps)} />;
+      return (
+        <Watcher visible={visible}>
+          <BaseComponent ref={ref} {...(props as TComponentProps)} />
+        </Watcher>
+      );
+    }
+  );
+
+  WatchWrapper.displayName = 'WatchWrapper';
+
   return WatchWrapper;
 }
 
@@ -28,10 +33,10 @@ type Props = WatcherBaseProps & {
   children: JSX.Element;
 };
 
-export function WatchWrapper({ visible, children }: Props) {
-  if (!visible) return children;
-  return <Watcher visible={visible}>{children}</Watcher>;
-}
+// export function WatchWrapper({ visible, children }: Props) {
+//   if (!visible) return children;
+//   return <Watcher visible={visible}>{children}</Watcher>;
+// }
 
 export function Watcher({ visible, children }: Required<Props>) {
   const { watch, getValues } = useFormContext<FieldValues>() ?? {};
