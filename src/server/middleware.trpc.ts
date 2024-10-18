@@ -1,5 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import superjson from 'superjson';
 import { isProd } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -184,3 +183,8 @@ export function noEdgeCache() {
     return next();
   });
 }
+
+export const prodOnly = middleware(({ next }) => {
+  if (!isProd) throw new TRPCError({ code: 'FORBIDDEN', message: 'Not available in development' });
+  return next();
+});
