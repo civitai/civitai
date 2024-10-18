@@ -193,9 +193,9 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
-  NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
-  NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
+  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().optional(),
+  NEXT_PUBLIC_IMAGE_LOCATION: z.string().optional(),
+  NEXT_PUBLIC_CIVITAI_LINK: z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: z.string().optional(),
   NEXT_PUBLIC_CANNY_BUG_BOARD: z.string().optional(),
@@ -217,7 +217,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
-  NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
+  NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),

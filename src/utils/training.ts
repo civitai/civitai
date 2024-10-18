@@ -12,6 +12,7 @@ import { isDefined } from '~/utils/type-guards';
 export const trainingBaseModelType = ['sd15', 'sdxl', 'flux'] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
+// nb: adjust orchestrator when modifying or adding models here
 export const modelMap: { [key in TrainingDetailsBaseModelList]: string } = {
   sd_1_5: 'urn:air:sd1:checkpoint:civitai:127227@139180',
   anime: 'urn:air:sd1:checkpoint:civitai:84586@89927',

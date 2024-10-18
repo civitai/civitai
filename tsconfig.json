@@ -38,6 +38,7 @@
     // "**/*.tsx",
     // "**/*.cjs",
     "**/*.mjs",
+    "scripts",
     "src"
   ],
   "exclude": [
