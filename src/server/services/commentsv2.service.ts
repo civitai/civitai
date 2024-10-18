@@ -179,7 +179,10 @@ export const getCommentsThreadDetails = async ({
           rootThreadId: true,
           comments: {
             orderBy: { createdAt: 'asc' },
-            where: { hidden },
+            where: {
+              hidden,
+              userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+            },
             select: commentV2Select,
           },
         },
