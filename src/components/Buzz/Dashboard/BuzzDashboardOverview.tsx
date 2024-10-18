@@ -56,9 +56,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
     window: 'day',
     accountType: ['User', 'Generation'],
   });
-  const { report, isLoading, isFetching } = useTransactionsReport(reportFilters, {
-    enabled: true,
-  });
+  const { report, isLoading, isFetching } = useTransactionsReport(reportFilters);
 
   const isLoadingReport = isLoading || isFetching;
 
