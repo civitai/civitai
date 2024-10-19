@@ -9,12 +9,13 @@ import { BlocklistDTO } from '~/server/services/blocklist.service';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
+import { Page } from '~/components/AppLayout/Page';
 
 const schema = z.object({
   blocklist: z.string(),
 });
 
-export default function BlocklistsPage() {
+function BlocklistsPage() {
   const tabs = Object.values(BlocklistType).sort();
   const [tab, setTab] = useState(tabs[0]);
   const [state, setState] = useState<string>('add');
@@ -148,3 +149,5 @@ const AddOrRemoveItems = forwardRef<
 });
 
 AddOrRemoveItems.displayName = 'AddOrRemoveItems';
+
+export default Page(BlocklistsPage, { features: (features) => features.admin });
