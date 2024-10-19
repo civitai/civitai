@@ -96,4 +96,4 @@ export function AnnouncementsPage() {
   );
 }
 
-export default Page(AnnouncementsPage, { features: (features) => features.announcements });
+export default Page(AnnouncementsPage, { features: (features) => features.admin });

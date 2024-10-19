@@ -32,7 +32,12 @@ export function ModerationNav() {
         {
           label: 'Announcements',
           href: '/moderator/announcements',
-          hidden: !features.announcements,
+          hidden: !features.admin,
+        },
+        {
+          label: 'Blocklists',
+          href: '/moderator/blocklists',
+          hidden: !features.admin,
         },
       ]
         .filter((i) => !i.hidden)
