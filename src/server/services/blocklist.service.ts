@@ -88,3 +88,29 @@ export async function removeBlocklistItems({ id, items }: RemoveBlocklistItemSch
 
   await setCache({ type: updateResult.type, data: updateResult });
 }
+
+// #region [blocked links]
+export async function throwOnBlockedLinkDomain(value: string) {
+  const blockedDomains = await getBlocklistData(BlocklistType.LinkDomain);
+  const matches = value
+    .toLowerCase()
+    .match(
+      /(http|ftp|https):\/\/([\w_-]+(?:(?:\.[\w_-]+)+))([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])/gim
+    );
+  const blockedFor: string[] = [];
+  if (matches) {
+    for (const match of matches) {
+      const url = new URL(match);
+      if (blockedDomains.some((x) => x === url.host)) blockedFor.push(match);
+    }
+  }
+
+  if (blockedFor.length) throw new Error(`invalid urls: ${blockedFor.join(', ')}`);
+}
+// #endregion
+
+// #region [blocked emails]
+export async function getBlockedEmailDomains() {
+  return await getBlocklistData(BlocklistType.EmailDomain);
+}
+// #endregion

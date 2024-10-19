@@ -1,4 +1,4 @@
-import { Button, SegmentedControl, Tabs, Text } from '@mantine/core';
+import { Button, SegmentedControl, Tabs, Text, Title } from '@mantine/core';
 import { forwardRef, useRef, useState } from 'react';
 import { z } from 'zod';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -42,6 +42,7 @@ export default function BlocklistsPage() {
 
   return (
     <div className="container flex max-w-sm flex-col gap-3">
+      <Title>Blocklists</Title>
       <Tabs variant="pills" value={tab} onTabChange={(value) => setTab(value as BlocklistType)}>
         <Tabs.List>
           {tabs.map((tab) => (
