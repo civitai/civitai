@@ -174,7 +174,7 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    if (hasFeature(key, ctx)) acc[key] = true;
+    acc[key] = hasFeature(key, ctx);
     return acc;
   }, {} as FeatureAccess);
 };
