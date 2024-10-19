@@ -110,6 +110,7 @@ const featureFlags = createFeatureFlags({
   adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
   announcements: ['granted'],
+  blocklists: ['granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -174,7 +175,7 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
 export const getFeatureFlags = (ctx: FeatureAccessContext) => {
   const keys = Object.keys(featureFlags) as FeatureFlagKey[];
   return keys.reduce<FeatureAccess>((acc, key) => {
-    acc[key] = hasFeature(key, ctx);
+    if (hasFeature(key, ctx)) acc[key] = true;
     return acc;
   }, {} as FeatureAccess);
 };
