@@ -309,5 +309,5 @@ export enum OrchEngineTypes {
 
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
-  Link = 'Link',
+  LinkDomain = 'LinkDomain',
 }
