@@ -38,6 +38,7 @@ import { updateEntityFiles } from './file.service';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { BountyUpsertForm } from '~/components/Bounty/BountyUpsertForm';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getAllBounties = <TSelect extends Prisma.BountySelect>({
   input: {
@@ -369,6 +370,7 @@ export const upsertBounty = async ({
   isModerator,
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
+  await throwOnBlockedLinkDomain(data.description);
   if (id) {
     if (!isModerator) {
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];

@@ -65,6 +65,7 @@ import {
 } from './../schema/post.schema';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { userContentOverviewCache } from '~/server/redis/caches';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 type GetAllPostsRaw = {
   id: number;
@@ -608,6 +609,8 @@ export const updatePost = async ({
   user,
   ...data
 }: PostUpdateInput & { user: SessionUser }) => {
+  if (data.title) await throwOnBlockedLinkDomain(data.title);
+  if (data.detail) await throwOnBlockedLinkDomain(data.detail);
   const post = await dbWrite.post.update({
     where: { id, userId: !user.isModerator ? user.id : undefined },
     data: {

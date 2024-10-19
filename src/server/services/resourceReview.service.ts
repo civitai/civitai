@@ -33,6 +33,7 @@ import {
   GetUserResourceReviewInput,
   UpdateResourceReviewInput,
 } from './../schema/resourceReview.schema';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export type ResourceReviewDetailModel = AsyncReturnType<typeof getResourceReview>;
 export const getResourceReview = async ({
@@ -302,6 +303,7 @@ export const upsertResourceReview = async ({
   userId,
   ...data
 }: UpsertResourceReviewInput & { userId: number }) => {
+  if (data.details) await throwOnBlockedLinkDomain(data.details);
   if (!data.id) {
     const ret = await dbWrite.resourceReview.create({
       data: { ...data, userId, thread: { create: {} } },

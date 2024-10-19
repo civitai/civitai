@@ -103,6 +103,7 @@ import {
 import { upsertModelFlag } from '~/server/services/model-flag.service';
 import { modelMetrics } from '~/server/metrics';
 import { isProd } from '~/env/other';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1298,6 +1299,7 @@ export const upsertModel = async (
     gallerySettings?: Partial<ModelGallerySettingsSchema>;
   }
 ) => {
+  if (input.description) await throwOnBlockedLinkDomain(input.description);
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
