@@ -25,10 +25,12 @@ type TipaltiWebhookEvent = {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
-    const sig = req.headers['Tipalti-Signature'];
+    const sig = req.headers['tipalti-signature'];
     const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
     const buf = await buffer(req);
     let event: TipaltiWebhookEvent;
+
+    console.log(req.headers, sig);
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
@@ -37,8 +39,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      const isValid = tipaltiCaller.validateWebhookEvent(sig as string, buf.toString());
+      const client = await tipaltiCaller();
+
+      const isValid = client.validateWebhookEvent(sig as string, JSON.stringify(req.body));
       if (!isValid) {
+        console.log('❌ Invalid signature');
         return res.status(400).send({
           error: 'Invalid Request',
         });
@@ -50,7 +55,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         case 'payeeDetailsChanged':
           // Handle payee details changed event
           await updateByTipaltiAccount({
-            tipaltiAccountId: event.eventData.payeeId,
+            // In this webhook, the payeeId is the refCode which is our userId, not the actual payeeId.
+            userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: event.eventData.status,
             tipaltiPaymentsEnabled: event.eventData.isPayable,
           });

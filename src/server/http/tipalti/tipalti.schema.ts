@@ -20,12 +20,13 @@ export namespace Tipalti {
       .optional(),
   });
 
+  export type Payee = z.infer<typeof createPayeeResponseSchema>;
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
     status: z.nativeEnum(TipaltiStatus),
-    statusChangeDateTimeUTC: z.string().optional(),
-    statusReason: z.string().optional(),
+    statusChangeDateTimeUTC: z.string().nullish(),
+    statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),
     isPayable: z.boolean().optional(),
     lastChangeDateTimeUTC: z.string().optional(),
@@ -45,12 +46,14 @@ export namespace Tipalti {
       amount: z.number(),
     }),
     refCode: z.string(),
-    customFieldValues: z.array(
-      z.object({
-        customFieldId: z.string(),
-        value: z.string(),
-      })
-    ),
+    customFieldValues: z
+      .array(
+        z.object({
+          customFieldId: z.string(),
+          value: z.string(),
+        })
+      )
+      .optional(),
   });
 
   export const createPaymentBatchResponseSchema = z.object({

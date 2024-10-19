@@ -275,9 +275,6 @@ const StripeConnectConfigurationCard = () => {
 
 const TipaltiConfigurationCard = () => {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
-  const [setupAccount, setSetupAccount] = useState(false);
-  const { tipaltiConfigurationUrl, isLoading: isLoadingTipaltiConfigurationUrl } =
-    useTipaltiConfigurationUrl(setupAccount);
 
   if (!userPaymentConfiguration) return null;
 
@@ -323,18 +320,12 @@ const TipaltiConfigurationCard = () => {
 
       {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
         <>
-          {isLoadingTipaltiConfigurationUrl && setupAccount ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : (
-            <Stack>
-              <Text>
-                Your account requires setup. Click the button below to start/continue your setup
-                process.
-              </Text>
-            </Stack>
-          )}
+          <Stack>
+            <Text>
+              Your account requires setup. Click the button below to start/continue your setup
+              process.
+            </Text>
+          </Stack>
         </>
       ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
         <Text>
@@ -350,14 +341,16 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {setupAccount && tipaltiConfigurationUrl && (
-        <iframe src={tipaltiConfigurationUrl} width="100%" height="800px" />
-      )}
-
       {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
         (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
       ) && (
-        <Button onClick={() => setSetupAccount(true)} fullWidth>
+        <Button
+          component="a"
+          href="/tipalti/setup"
+          target="_blank"
+          rel="nofollow noreferrer"
+          fullWidth
+        >
           Setup my Tipalti Account
         </Button>
       )}

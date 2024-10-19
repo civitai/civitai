@@ -225,9 +225,12 @@ export const revertStripeConnectTransfer = async ({ transferId }: { transferId: 
 };
 
 export async function createTipaltiPayee({ userId }: { userId: number }) {
-  if (!tipaltiCaller) {
+  const client = await tipaltiCaller();
+  if (!client) {
     throw throwBadRequestError('Tipalti not available');
   }
+
+  console.log(client);
 
   const user = await dbRead.user.findUnique({ where: { id: userId } });
 
@@ -242,7 +245,7 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
   }
 
   try {
-    const tipaltiPayee = await tipaltiCaller.createPayee({
+    const tipaltiPayee = await client.createPayee({
       refCode: user.id.toString(),
       entityType: 'INDIVIDUAL',
       contactInformation: {
@@ -252,7 +255,7 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
 
     // Send invite right away:
     // TODO: store some info on the meta object.
-    const invitation = await tipaltiCaller.createPayeeInvitation(tipaltiPayee.id);
+    const invitation = await client.createPayeeInvitation(tipaltiPayee.id);
 
     const updatedPaymentConfiguration = await dbWrite.userPaymentConfiguration.upsert({
       create: {
@@ -278,16 +281,18 @@ export async function updateByTipaltiAccount({
   tipaltiAccountId,
   tipaltiAccountStatus,
   tipaltiPaymentsEnabled,
+  userId,
 }: {
-  tipaltiAccountId: string;
+  tipaltiAccountId?: string;
   tipaltiAccountStatus: TipaltiStatus;
   tipaltiPaymentsEnabled: boolean;
+  userId?: number;
 }) {
   const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
-    where: { tipaltiAccountId },
+    where: { tipaltiAccountId, userId },
   });
 
-  if (!userPaymentConfig) throw throwBadRequestError('User stripe connect account not found');
+  if (!userPaymentConfig) throw throwBadRequestError('User tipalti account not found');
 
   let updated: UserPaymentConfiguration = userPaymentConfig;
 
@@ -297,7 +302,7 @@ export async function updateByTipaltiAccount({
   };
 
   updated = await dbWrite.userPaymentConfiguration.update({
-    where: { tipaltiAccountId },
+    where: { tipaltiAccountId, userId },
     data: {
       ...data,
     },
@@ -340,10 +345,8 @@ export async function getTipaltiOnboardingUrl({ userId }: { userId: number }) {
 
   if (!stripe) throw throwBadRequestError('Stripe not available');
 
-  const accountLink = await tipaltiCaller.getPaymentDashboardUrl(
-    userPaymentConfig.tipaltiAccountId,
-    'setup'
-  );
+  const client = await tipaltiCaller();
+  const accountLink = await client.getPaymentDashboardUrl(userId.toString(), 'setup');
 
   return accountLink;
 }
@@ -354,7 +357,9 @@ export const payToTipaltiAccount = async ({
   amount,
   description,
   metadata,
+  requestId,
 }: {
+  requestId: string;
   byUserId: number;
   toUserId: number;
   amount: number;
@@ -369,34 +374,29 @@ export const payToTipaltiAccount = async ({
     throw throwBadRequestError('User tipalti account not enabled for payments');
 
   metadata ??= {};
+  const client = await tipaltiCaller();
+  const key = `${requestId.slice(0, 16)}`;
 
   try {
-    const paymentBatch = await tipaltiCaller.createPaymentBatch([
+    const paymentBatch = await client.createPaymentBatch([
       {
         payeeId: toUserPaymentConfig.tipaltiAccountId,
         amountSubmitted: {
           currency: 'USD',
           amount,
         },
-        refCode: description,
-        customFieldValues: [
-          {
-            customFieldId: 'description',
-            value: description,
-          },
-          {
-            customFieldId: 'byUserId',
-            value: byUserId.toString(),
-          },
-          {
-            customFieldId: 'toUserId',
-            value: toUserId.toString(),
-          },
-          ...Object.keys(metadata).map((key) => ({
-            customFieldId: key,
-            value: metadata[key].toString(),
-          })),
-        ],
+        refCode: key,
+        // customFieldValues: [
+        //   {
+        //     customFieldId: 'TODO',
+        //     value: JSON.stringify({
+        //       description,
+        //       byUserId,
+        //       toUserId,
+        //       ...metadata,
+        //     }),
+        //   },
+        // ],
       },
     ]);
 

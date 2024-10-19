@@ -296,7 +296,8 @@ export const updateBuzzWithdrawalRequest = async ({
   }
 
   // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
-  const metadata: BuzzWithdrawalRequestHistoryMetadataSchema = {};
+  const metadata: BuzzWithdrawalRequestHistoryMetadataSchema = (request.metadata ??
+    {}) as BuzzWithdrawalRequestHistoryMetadataSchema;
 
   if (
     status === BuzzWithdrawalRequestStatus.Rejected ||
@@ -305,7 +306,7 @@ export const updateBuzzWithdrawalRequest = async ({
     const transaction = await createBuzzTransaction({
       fromAccountId: 0, // bank
       toAccountId: userId,
-      amount: request.requestedBuzzAmount,
+      amount: request.requestedBuzzAmount / 100, // Tipalti is dumb and doesn't use cents =.=.
       type: TransactionType.Refund,
       description: 'Refund due to rejection or cancellation of withdrawal request',
       externalTransactionId: request.buzzWithdrawalTransactionId,
@@ -361,12 +362,12 @@ export const updateBuzzWithdrawalRequest = async ({
 
     if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti) {
       const transfer = await payToTipaltiAccount({
+        requestId,
         toUserId: request.userId as number, // Ofcs, user should exist for one.
         amount: payoutAmount,
         description: `Payment for withdrawal request ${requestId}`,
         byUserId: userId,
         metadata: {
-          requestId,
           platformFee,
           paymentBy: userId,
           platformFeeRate: request.platformFeeRate,
@@ -441,6 +442,7 @@ export const updateBuzzWithdrawalRequest = async ({
         data: {
           transferId: metadata.stripeTransferId,
           transferredAmount: payoutAmount,
+          metadata,
         },
       });
     }

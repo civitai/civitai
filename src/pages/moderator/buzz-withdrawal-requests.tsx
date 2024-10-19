@@ -239,9 +239,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
       </Tooltip>
     ) : null;
 
-  const transferBtn = (requestId: string) =>
-    features.buzzWithdrawalTransfer ? (
-      <Tooltip label="Send requested money through stripe" key="transfer-btn" {...tooltipProps}>
+  const transferBtn = (requestId: string) => {
+    const request = requests.find((r) => r.id === requestId);
+    return features.buzzWithdrawalTransfer ? (
+      <Tooltip
+        label={`Send requested money through ${request?.requestedToProvider ?? 'stripe'}`}
+        key="transfer-btn"
+        {...tooltipProps}
+      >
         <ActionIcon
           onClick={() => {
             handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
@@ -252,6 +257,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
         </ActionIcon>
       </Tooltip>
     ) : null;
+  };
 
   const externallyResolvedBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (

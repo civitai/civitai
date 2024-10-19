@@ -305,11 +305,11 @@ export enum StripeConnectStatus {
 
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
-  InternalValue = 'INTERNAL_VALUE',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByTipalti = 'Blocked_By_Tipalti',
+  InternalValue = 'Internal_Value',
 }
 
 export enum OrchPriorityTypes {

@@ -7,39 +7,101 @@ import { createHmac } from 'crypto';
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
 
+type TipaltiAccessToken = {
+  accessToken: string;
+  expiresIn: number;
+  createdAt: number;
+};
+
 class TipaltiCaller extends HttpCaller {
   private static instance: TipaltiCaller;
+  private static acessToken: TipaltiAccessToken;
 
-  protected constructor(baseUrl?: string, token?: string) {
+  protected constructor(baseUrl?: string, token?: TipaltiAccessToken) {
     baseUrl ??= env.TIPALTI_API_URL;
-    token ??= env.TIPALTI_API_KEY;
 
     if (!baseUrl) throw new Error('Missing TIPALTI_API_KEY env');
-    if (!token) throw new Error('Missing TIPALTI_API_URL env');
-
-    console.log('TipaltiCaller baseUrl:', baseUrl, 'token:', token);
+    if (!token) throw new Error('Missing Tipalti access token');
 
     super(baseUrl, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token?.accessToken}` },
     });
   }
 
-  static getInstance(): TipaltiCaller {
-    if (!TipaltiCaller.instance) {
-      TipaltiCaller.instance = new TipaltiCaller();
+  private static async getAccessToken() {
+    if (!env.TIPALTI_API_CLIENT_ID) throw new Error('Missing TIPALTI_API_CLIENT_ID env');
+    if (!env.TIPALTI_API_SECRET) throw new Error('Missing TIPALTI_API_SECRET env');
+    if (!env.TIPALTI_API_REFRESH_TOKEN) throw new Error('Missing TIPALTI_API_REFRESH_TOKEN env');
+    if (!env.TIPALTI_API_CODE_VERIFIER) throw new Error('Missing TIPALTI_API_CODE_VERIFIER env');
+    if (!env.TIPALTI_API_TOKEN_URL) throw new Error('Missing TIPALTI_API_TOKEN_URL env');
+
+    if (
+      TipaltiCaller.acessToken &&
+      Date.now() - TipaltiCaller.acessToken.createdAt < TipaltiCaller.acessToken.expiresIn
+    ) {
+      return TipaltiCaller.acessToken;
     }
 
-    return TipaltiCaller.instance;
+    const response = await fetch(env.TIPALTI_API_TOKEN_URL, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        client_id: env.TIPALTI_API_CLIENT_ID,
+        client_secret: env.TIPALTI_API_SECRET,
+        grant_type: 'refresh_token',
+        refresh_token: env.TIPALTI_API_REFRESH_TOKEN,
+        code_verifier: env.TIPALTI_API_CODE_VERIFIER,
+      }),
+      method: 'POST',
+    });
+
+    const data = await response.json();
+
+    if (!data.access_token) throw new Error('Failed to get Tipalti access token');
+
+    TipaltiCaller.acessToken = {
+      accessToken: data.access_token,
+      expiresIn: data.expires_in,
+      createdAt: Date.now(),
+    };
+
+    return TipaltiCaller.acessToken;
+  }
+
+  static async getInstance(): Promise<TipaltiCaller> {
+    const token = await TipaltiCaller.getAccessToken();
+    return new TipaltiCaller(undefined, token);
+  }
+
+  async getPayeeByRefCode(refCode: string) {
+    const response = await this.getRaw(`/payees`, {
+      queryParams: { filter: `refCode=="${refCode}"` },
+    });
+    if (response.status === 404) return null;
+
+    const data = (await response.json()) as {
+      items: Tipalti.Payee[];
+      totalCount: number;
+    };
+
+    if (!data.items.length) return null;
+    return data.items[0];
   }
 
   async createPayee(payee: Tipalti.CreatePayeeInput) {
     try {
+      // First, check if it exists:
+      const existingPayee = await this.getPayeeByRefCode(payee.refCode);
+
+      if (existingPayee) {
+        return existingPayee;
+      }
+
       const response = await this.postRaw('/payees', {
         body: JSON.stringify(payee),
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       });
-
-      console.log(payee);
 
       if (!response.ok) {
         throw new Error(`Failed to create payee: ${response.statusText}`);
@@ -65,47 +127,49 @@ class TipaltiCaller extends HttpCaller {
   }
 
   async getPaymentDashboardUrl(
-    payeeId: string,
+    refCode: string,
     type: 'setup' | 'invoiceHistory' | 'paymentHistory'
   ) {
     if (!env.TIPALTI_PAYEE_DASHBOARD_URL)
       throw new Error('Missing TIPALTI_PAYEE_DASHBOARD_URL env');
-    if (!env.TIPALTI_API_KEY) throw new Error('Missing TIPALTI_API_KEY env');
+    if (!env.TIPALTI_IFRAME_KEY) throw new Error('Missing TIPALTI_IFRAME_KEY env');
+    if (!env.TIPALTI_PAYER_NAME) throw new Error('Missing TIPALTI_PAYER_NAME env');
 
     const baseUrl = env.TIPALTI_PAYEE_DASHBOARD_URL;
     const dashboard =
       type === 'setup' ? '/home' : type === 'invoiceHistory' ? '/invoices' : '/paymentshistory';
 
     const params = {
-      payer: 'civitai',
-      idap: payeeId,
-      ts: Date.now(),
+      payer: env.TIPALTI_PAYER_NAME,
+      idap: refCode,
+      ts: Date.now() / 1000,
     };
 
     const qs = QS.stringify(params);
-    const hashkey = createHmac('sha256', Buffer.from(env.TIPALTI_API_KEY, 'utf-8'))
-      .update(qs)
-      .digest('hex');
+    console.log(qs);
+    const hashkey = createHmac('sha256', env.TIPALTI_IFRAME_KEY).update(qs).digest('hex');
     const url = `${baseUrl}${dashboard}?${qs}&hashkey=${hashkey}`;
     return url;
   }
 
-  async validateWebhookEvent(signature: string, payload: string) {
+  validateWebhookEvent(signature: string, payload: string) {
     if (!env.TIPALTI_WEBTOKEN_SECRET) throw new Error('Missing TIPALTI_WEBTOKEN_SECRET env');
 
-    const [t, v] = signature.split(':');
+    const [t, v] = signature.split(',');
     const tValue = t.split('=')[1];
     const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-    const isTooOld = new Date(Number.parseInt(tValue)).getTime() < fiveMinAgo;
+    const isTooOld = new Date(Number.parseInt(tValue) * 1000).getTime() < fiveMinAgo;
 
     if (isTooOld) throw new Error('Signature is too old');
 
-    const stringToSign = `${t}:${payload}`;
-    const hash = createHmac('sha256', Buffer.from(env.TIPALTI_WEBTOKEN_SECRET, 'utf-8'))
-      .update(Buffer.from(stringToSign, 'utf-8'))
+    const stringToSign = `${tValue}-${payload}`;
+    const hash = createHmac('sha256', env.TIPALTI_WEBTOKEN_SECRET)
+      .update(stringToSign)
       .digest('hex');
 
-    return hash.toLowerCase() === v;
+    const vValue = v.split('=')[1];
+
+    return hash.toString().toLowerCase() === vValue;
   }
 
   async createPaymentBatch(payments: Tipalti.PaymentInput[]) {
@@ -115,8 +179,12 @@ class TipaltiCaller extends HttpCaller {
     });
 
     const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`Failed to create payment batch: ${response.statusText}`);
+    }
+
     return Tipalti.createPaymentBatchResponseSchema.parse(data);
   }
 }
 
-export default TipaltiCaller.getInstance();
+export default TipaltiCaller.getInstance;
