@@ -26,8 +26,8 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import dynamic from 'next/dynamic';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -204,6 +204,10 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
       );
   }
 };
+
+const FeatureIntroductionModal = dynamic(
+  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
+);
 
 export function StripeConnectCard() {
   const features = useFeatureFlags();

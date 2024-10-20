@@ -2,27 +2,31 @@ import React, { useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
-interface DialogSettings<TProps extends Record<string, unknown> = any> {
+type DialogProps<TProps> = TProps extends Record<string, never>
+  ? { props?: TProps }
+  : TProps extends unknown
+  ? { props?: TProps }
+  : { props: TProps };
+
+type DialogSettings<TProps = any> = {
   id?: string | number | symbol;
   component: React.ComponentType<TProps>;
-  props?: TProps;
   type?: 'dialog' | 'routed-dialog';
   target?: string | HTMLElement;
   options?: {
     transitionDuration?: number;
     onClose?: () => void;
   };
-}
+} & DialogProps<TProps>;
 
-export interface Dialog<TProps extends Record<string, unknown> = any>
-  extends DialogSettings<TProps> {
+export type Dialog<TProps = any> = DialogSettings<TProps> & {
   id: string | number | symbol;
-}
+};
 
 type DialogStore = {
   dialogs: Dialog[];
-  trigger: <TProps extends Record<string, unknown>>(args: DialogSettings<TProps>) => void;
-  toggle: <TProps extends Record<string, unknown>>(args: Dialog<TProps>) => void;
+  trigger: <TProps>(args: DialogSettings<TProps>) => void;
+  toggle: <TProps>(args: Dialog<TProps>) => void;
   closeById: (id: string | number | symbol) => void;
   closeLatest: () => void;
   closeAll: () => void;
@@ -50,7 +54,7 @@ export const useDialogStore = create<DialogStore>()(
     toggle: (args) => {
       const { trigger, dialogs, closeById } = get();
       const exists = dialogs.findIndex((x) => x.id === args.id) > -1;
-      if (!exists) trigger(args);
+      if (!exists) trigger(args as Dialog);
       else closeById(args.id);
     },
     closeById: (id) =>

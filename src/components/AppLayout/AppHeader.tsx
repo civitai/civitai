@@ -99,10 +99,8 @@ import dynamic from 'next/dynamic';
 import clsx from 'clsx';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
-const FeatureIntroductionModal = dynamic(() =>
-  import('~/components/FeatureIntroduction/FeatureIntroduction').then(
-    (m) => m.FeatureIntroductionModal
-  )
+const FeatureIntroductionModal = dynamic(
+  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
 );
 
 const HEADER_HEIGHT = 70;

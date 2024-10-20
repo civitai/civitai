@@ -140,7 +140,7 @@ export const DowngradeFeedbackModal = ({
 
 const cancelReasons = ['Too expensive', 'I found another service', 'I no longer need it', 'Others'];
 
-export const CancelMembershipFeedbackModal = () => {
+export function CancelMembershipFeedbackModal() {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
@@ -200,7 +200,7 @@ export const CancelMembershipFeedbackModal = () => {
       )}
     </Modal>
   );
-};
+}
 
 export const StripeCancelMembershipButton = ({
   onClose,
