@@ -33,5 +33,6 @@ export const buzzWithdrawalRequestModerationDetails =
           select: userWithCosmeticsSelect,
         },
       },
+      orderBy: { createdAt: 'desc' },
     },
   });

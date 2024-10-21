@@ -3,6 +3,9 @@ import { env } from '~/env/server.mjs';
 import { Readable } from 'node:stream';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { dbRead } from '~/server/db/client';
+import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 
 async function buffer(readable: Readable) {
   const chunks = [];
@@ -51,6 +54,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       event = req.body as TipaltiWebhookEvent;
 
+      console.log(event.type);
+
       switch (event.type) {
         case 'payeeDetailsChanged':
           // Handle payee details changed event
@@ -61,6 +66,101 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             tipaltiPaymentsEnabled: event.eventData.isPayable,
           });
           break;
+        case 'paymentGroupApproved':
+        case 'paymentGroupDeclined': {
+          const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
+          const request = await dbRead.buzzWithdrawalRequest.findFirst({
+            where: {
+              transferId: payment.refCode,
+            },
+          });
+
+          if (!request) {
+            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+            return res
+              .status(400)
+              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
+          }
+
+          // Update the status of the withdrawal request:
+          const status =
+            event.type === 'paymentGroupApproved'
+              ? BuzzWithdrawalRequestStatus.Approved
+              : BuzzWithdrawalRequestStatus.Rejected;
+          const metadata = {
+            ...((request.metadata as MixedObject) ?? {}),
+            paymentStatus: payment.paymentStatus,
+            approvalDate: event.eventData.approvalDate,
+          };
+          const note = `Payment group ${
+            event.type === 'paymentGroupApproved' ? 'approved' : 'declined'
+          }. Payment status: ${payment.paymentStatus}`;
+
+          await updateBuzzWithdrawalRequest({
+            requestId: request.id,
+            status,
+            metadata,
+            note,
+            userId: -1, // Done by Webhook
+          });
+
+          break;
+        }
+        case 'paymentCompleted':
+        case 'paymentError':
+        case 'paymentDeferred':
+        case 'paymentCanceled': {
+          const payment = event.eventData as { refCode: string; paymentStatus: string };
+          const request = await dbRead.buzzWithdrawalRequest.findFirst({
+            where: {
+              transferId: payment.refCode,
+            },
+          });
+
+          if (!request) {
+            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+            return res
+              .status(400)
+              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
+          }
+
+          // Update the status of the withdrawal request:
+          const status =
+            event.type === 'paymentCompleted'
+              ? BuzzWithdrawalRequestStatus.Transferred
+              : event.type === 'paymentError' || event.type === 'paymentDeferred'
+              ? BuzzWithdrawalRequestStatus.Approved
+              : BuzzWithdrawalRequestStatus.Rejected;
+
+          const metadata = {
+            ...((request.metadata as MixedObject) ?? {}),
+            cancelledDate: event.eventData.cancelledDate,
+            errorDescription: event.eventData.errorDescription,
+            errorCode: event.eventData.errorCode,
+            errorDate: event.eventData.errorDate,
+            deferredReasons: event.eventData.deferredReasons,
+          };
+          const note =
+            event.type === 'paymentCompleted'
+              ? 'Payment completed'
+              : event.type === 'paymentError'
+              ? `Payment error: ${event.eventData.errorDescription}`
+              : event.type === 'paymentDeferred'
+              ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
+                  .map((r) => r.reasonDescription)
+                  .join(', ')}`
+              : 'Payment canceled';
+
+          await updateBuzzWithdrawalRequest({
+            requestId: request.id,
+            status,
+            metadata,
+            note,
+            userId: -1, // Done by Webhook
+          });
+
+          break;
+        }
         default:
           throw new Error('Unhandled relevant event!');
           break;

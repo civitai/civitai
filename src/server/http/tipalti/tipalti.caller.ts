@@ -79,6 +79,10 @@ class TipaltiCaller extends HttpCaller {
       queryParams: { filter: `refCode=="${refCode}"` },
     });
     if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get payee by refCode', response.statusText);
+      return null;
+    }
 
     const data = (await response.json()) as {
       items: Tipalti.Payee[];
@@ -184,6 +188,26 @@ class TipaltiCaller extends HttpCaller {
     }
 
     return Tipalti.createPaymentBatchResponseSchema.parse(data);
+  }
+
+  async getPaymentByRefCode(refCode: string) {
+    const response = await this.getRaw(`/payments`, {
+      queryParams: { filter: `refCode=="${refCode}"` },
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get payment by refCode', response.statusText);
+      return null;
+    }
+
+    const data = (await response.json()) as {
+      items: Tipalti.Payment[];
+      totalCount: number;
+    };
+
+    if (!data.items.length) return null;
+    return data.items[0];
   }
 }
 

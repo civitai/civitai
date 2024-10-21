@@ -22,8 +22,18 @@ import {
   TextInput,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
-import { IconCashBanknote, IconExternalLink } from '@tabler/icons-react';
+import {
+  BuzzWithdrawalRequestStatus,
+  Currency,
+  UserPaymentConfigurationProvider,
+} from '@prisma/client';
+import {
+  IconCashBanknote,
+  IconExternalLink,
+  IconInfoCircle,
+  IconInfoTriangle,
+  IconInfoTriangleFilled,
+} from '@tabler/icons-react';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -195,34 +205,38 @@ export default function ModeratorBuzzWithdrawalRequests() {
     });
   };
 
-  const approveBtn = (requestId: string) => (
-    <Tooltip
-      label="Approve withdrawal request. Money will not be sent by performing this action."
-      key="approve-btn"
-      {...tooltipProps}
-    >
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
-        }}
-        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
+  const approveBtn = (requestId: string) => {
+    return (
+      <Tooltip
+        label="Approve withdrawal request. Money will not be sent by performing this action."
+        key="approve-btn"
+        {...tooltipProps}
       >
-        <IconCheck />
-      </ActionIcon>
-    </Tooltip>
-  );
-  const rejectBtn = (requestId: string) => (
-    <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
-        }}
-        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
-      >
-        <IconX />
-      </ActionIcon>
-    </Tooltip>
-  );
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
+          }}
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
+        >
+          <IconCheck />
+        </ActionIcon>
+      </Tooltip>
+    );
+  };
+  const rejectBtn = (requestId: string) => {
+    return (
+      <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
+          }}
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
+        >
+          <IconX />
+        </ActionIcon>
+      </Tooltip>
+    );
+  };
 
   const revertBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
@@ -320,6 +334,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 <th>Dollar Amount Total</th>
                 <th>Application Fee</th>
                 <th>Transfer amount</th>
+                <th>Provider</th>
 
                 <th>Status</th>
                 <th>&nbsp;</th>
@@ -329,20 +344,25 @@ export default function ModeratorBuzzWithdrawalRequests() {
               {requests.map((request) => {
                 const buttons = (
                   request.status === BuzzWithdrawalRequestStatus.Requested
-                    ? [
-                        approveBtn(request.id),
-                        rejectBtn(request.id),
-                        transferBtn(request.id),
-                        externallyResolvedBtn(request.id),
-                      ]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? [
+                          approveBtn(request.id),
+                          rejectBtn(request.id),
+                          externallyResolvedBtn(request.id),
+                        ]
+                      : [approveBtn(request.id), rejectBtn(request.id), transferBtn(request.id)]
                     : request.status === BuzzWithdrawalRequestStatus.Approved
-                    ? [
-                        rejectBtn(request.id),
-                        transferBtn(request.id),
-                        externallyResolvedBtn(request.id),
-                      ]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? [externallyResolvedBtn(request.id)]
+                      : [
+                          rejectBtn(request.id),
+                          transferBtn(request.id),
+                          externallyResolvedBtn(request.id),
+                        ]
                     : request.status === BuzzWithdrawalRequestStatus.Transferred
-                    ? [revertBtn(request.id)]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? []
+                      : [revertBtn(request.id)]
                     : // Reverted,
                       // Rejected,
                       // Canceled,
@@ -386,6 +406,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                         )}
                       </Text>
                     </td>
+                    <td>{request.requestedToProvider}</td>
                     <td>
                       <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
                         {getDisplayName(request.status)}
@@ -395,6 +416,20 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       <Group noWrap>
                         {buttons.map((btn) => btn)}
                         <RequestHistory request={request} />
+                        {request.requestedToProvider ===
+                          UserPaymentConfigurationProvider.Tipalti && (
+                          <Tooltip
+                            maw={300}
+                            multiline
+                            withArrow
+                            withinPortal
+                            label="Once approved, Tipalti items must be resolved in the Tipalti dashboard. Resolving them there will update the status here automatically."
+                          >
+                            <ActionIcon color="blue">
+                              <IconInfoTriangleFilled size={20} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
                       </Group>
                     </td>
                   </tr>

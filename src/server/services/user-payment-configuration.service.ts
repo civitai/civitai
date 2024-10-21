@@ -356,7 +356,6 @@ export const payToTipaltiAccount = async ({
   toUserId,
   amount,
   description,
-  metadata,
   requestId,
 }: {
   requestId: string;
@@ -364,7 +363,6 @@ export const payToTipaltiAccount = async ({
   toUserId: number;
   amount: number;
   description: string;
-  metadata?: MixedObject;
 }) => {
   const toUserPaymentConfig = await getUserPaymentConfiguration({ userId: toUserId });
   if (!toUserPaymentConfig || !toUserPaymentConfig.tipaltiAccountId)
@@ -373,7 +371,6 @@ export const payToTipaltiAccount = async ({
   if (!toUserPaymentConfig.tipaltiPaymentsEnabled)
     throw throwBadRequestError('User tipalti account not enabled for payments');
 
-  metadata ??= {};
   const client = await tipaltiCaller();
   const key = `${requestId.slice(0, 16)}`;
 
@@ -386,21 +383,13 @@ export const payToTipaltiAccount = async ({
           amount,
         },
         refCode: key,
-        // customFieldValues: [
-        //   {
-        //     customFieldId: 'TODO',
-        //     value: JSON.stringify({
-        //       description,
-        //       byUserId,
-        //       toUserId,
-        //       ...metadata,
-        //     }),
-        //   },
-        // ],
       },
     ]);
 
-    return paymentBatch;
+    return {
+      paymentBatchId: paymentBatch.id,
+      paymentRefCode: key,
+    };
   } catch (error) {
     log({ method: 'payToStripeConnectAccount', error, byUserId, toUserId, amount, description });
     throw error;

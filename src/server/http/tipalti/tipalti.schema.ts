@@ -2,6 +2,20 @@ import { z } from 'zod';
 import { TipaltiStatus } from '~/server/common/enums';
 
 export namespace Tipalti {
+  const paymentStatus = [
+    'PAID',
+    'REJECTED',
+    'SCHEDULED',
+    'SUBMITTED',
+    'DEFERRED',
+    'DEFERRED_INTERNAL',
+    'CANCELED',
+    'CLEARED',
+    'FRAUD_REVIEW',
+    'PENDING_PAYER_FUNDS',
+    'INTERNAL_VALUE',
+  ] as const;
+  export type PaymentStatus = (typeof paymentStatus)[number];
   export type CreatePayeeInput = z.infer<typeof createPayeeInput>;
   export const createPayeeInput = z.object({
     refCode: z.string(),
@@ -58,5 +72,32 @@ export namespace Tipalti {
 
   export const createPaymentBatchResponseSchema = z.object({
     id: z.string(),
+  });
+
+  export const getPaymentBatchInstructionsResponseSchema = z.object({
+    totalCount: z.number(),
+    items: z.array(
+      z.object({
+        id: z.string(),
+        refCode: z.string(),
+        payeeId: z.string(),
+        instructionStatus: z.string(),
+        alerts: z.array(
+          z.object({
+            code: z.string(),
+            message: z.string(),
+            type: z.string(),
+          })
+        ),
+      })
+    ),
+  });
+
+  export type Payment = z.infer<typeof createPayeeResponseSchema>;
+  export const PaymentResponse = z.object({
+    id: z.string(),
+    batchId: z.string().nullish(),
+    refCode: z.string().nullish(),
+    status: z.enum(paymentStatus),
   });
 }
