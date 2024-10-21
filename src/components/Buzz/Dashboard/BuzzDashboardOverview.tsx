@@ -57,11 +57,11 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
     window: 'day',
     accountType: ['User', 'Generation'],
   });
-  const { report, isLoading, isFetching } = useTransactionsReport(reportFilters, {
+  const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
     enabled: true,
   });
 
-  const isLoadingReport = isLoading || isFetching;
+  const isLoadingReport = isLoading || isRefetching;
 
   const labels = useMemo(() => {
     return report.map((d) => formatDate(d.date, 'MMM-DD'));
