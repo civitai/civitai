@@ -2,6 +2,7 @@
 import { faker } from '@faker-js/faker';
 import {
   Availability,
+  CollectionType,
   ImageGenerationProcess,
   ModelFileVisibility,
   ModelModifier,
@@ -130,6 +131,9 @@ const randw = faker.helpers.weightedArrayElement;
 const rand = faker.helpers.arrayElement;
 const fbool = faker.datatype.boolean;
 
+/**
+ * User
+ */
 const genUsers = (num: number, includeCiv = false) => {
   const ret = [];
 
@@ -272,6 +276,9 @@ const genUsers = (num: number, includeCiv = false) => {
   return ret;
 };
 
+/**
+ * Model
+ */
 const genModels = (num: number, userIds: number[]) => {
   const ret = [];
 
@@ -285,7 +292,7 @@ const genModels = (num: number, userIds: number[]) => {
 
     const row = [
       `${capitalize(faker.word.adjective())}${capitalize(faker.word.noun())}`, // name
-      rand([null, `<p>${faker.lorem.paragraph()}</p>`]), // description
+      rand([null, `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`]), // description
       isCheckpoint
         ? 'Checkpoint'
         : isLora
@@ -353,6 +360,9 @@ const genModels = (num: number, userIds: number[]) => {
   return ret;
 };
 
+/**
+ * ModelVersion
+ */
 const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[]) => {
   const ret = [];
 
@@ -418,6 +428,9 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
   return ret;
 };
 
+/**
+ * ModelFile
+ */
 const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[]) => {
   const ret = [];
 
@@ -547,6 +560,44 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
   return ret;
 };
 
+/**
+ * ResourceReview
+ */
+const genReviews = (num: number, userIds: number[], mvData: { id: number; modelId: number }[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+    const mv = rand(mvData);
+    const isGood = fbool();
+
+    const row = [
+      step, // id
+      mv.id, // modelVersionId
+      isGood ? 5 : 1, // rating
+      randw([
+        { value: null, weight: 10 },
+        { value: faker.lorem.sentence(), weight: 1 },
+      ]), // details
+      rand(userIds), // userId
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      fbool(0.01), // exclude
+      null, // metadata // TODO do we need things like "reviewIds" and "migrated"?
+      mv.modelId, // modelId
+      fbool(0.03), // nsfw
+      fbool(0.01), // tosViolation
+      isGood, // recommended
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * Tool
+ */
 const genTools = (num: number) => {
   const ret = [];
 
@@ -576,7 +627,7 @@ const genTools = (num: number) => {
       ]), // domain
       randw([
         { value: null, weight: 1 },
-        { value: faker.lorem.paragraph(), weight: 5 },
+        { value: faker.lorem.paragraph({ min: 1, max: 4 }), weight: 5 },
       ]), // description
       randw([
         { value: null, weight: 1 },
@@ -592,6 +643,9 @@ const genTools = (num: number) => {
   return ret;
 };
 
+/**
+ * Technique
+ */
 const genTechniques = () => {
   return [
     [1, 'txt2img', '2024-05-20 22:00:06.478', true, 'Image'],
@@ -605,6 +659,105 @@ const genTechniques = () => {
   ];
 };
 
+/**
+ * Collection
+ */
+const genCollections = (num: number, userIds: number[], imageIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      `${rand(['My', 'Some'])} ${faker.word.adjective()} ${faker.word.noun()}s`, // name
+      rand([null, '', faker.lorem.sentence()]), // description
+      rand(userIds), // userId
+      fbool(0.95) ? 'Private' : rand(['Public', 'Review']), // write
+      fbool(0.05) ? 'Unlisted' : rand(['Public', 'Private']), // read
+      rand(Object.values(CollectionType).filter((ct) => ct !== 'Post')), // type // TODO add back post
+      randw([
+        { value: null, weight: 1000 },
+        { value: rand(imageIds), weight: 1 },
+      ]), // imageId
+      fbool(0.4), // nsfw
+      // randw([
+      //   // { value: 'Bookmark', weight: 1000 }, // no need for this
+      //   { value: null, weight: 100 },
+      //   { value: 'Contest', weight: 1 },
+      // ]), // mode
+      null, // mode
+      '{}', // metadata
+      randw([
+        { value: 'Public', weight: 10 },
+        { value: 'Unsearchable', weight: 1 },
+      ]), // availability
+      randw([
+        { value: 0, weight: 10 },
+        { value: 31, weight: 4 },
+        { value: 28, weight: 3 },
+        { value: 1, weight: 2 },
+        { value: 15, weight: 1 },
+      ]), // nsfwLevel // TODO why are there values above 31?
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * CollectionItem
+ */
+const genCollectionItems = (
+  num: number,
+  collectionData: { id: number; type: CollectionType }[],
+  articleIds: number[],
+  postIds: number[],
+  imageIds: number[],
+  modelIds: number[],
+  userIds: number[]
+) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+    const collection = rand(collectionData);
+    const status = randw([
+      { value: 'ACCEPTED', weight: 10000 },
+      { value: 'REJECTED', weight: 10 },
+      { value: 'REVIEW', weight: 1 },
+    ]);
+    const isReviewed = fbool(0.001);
+
+    const row = [
+      step, // id
+      created, // createdAt
+      rand([null, created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      collection.id, // collectionId
+      collection.type === 'Article' ? rand(articleIds) : null, // articleId
+      collection.type === 'Post' ? rand(postIds) : null, // postId
+      collection.type === 'Image' ? rand(imageIds) : null, // imageId
+      collection.type === 'Model' ? rand(modelIds) : null, // modelId
+      rand([null, rand(userIds)]), // addedById
+      null, // note
+      status, // status
+      null, // randomId
+      isReviewed ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // reviewedAt
+      isReviewed ? rand(userIds) : null, // reviewedById
+      null, // tagId
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * Post
+ */
 const genPosts = (num: number, userIds: number[], mvIds: number[]) => {
   const ret = [];
 
@@ -619,7 +772,7 @@ const genPosts = (num: number, userIds: number[], mvIds: number[]) => {
       rand([null, `${faker.word.adjective()} ${faker.word.adjective()} ${faker.word.noun()}`]), // title
       rand([null, `<p>${faker.lorem.sentence()}</p>`]), // detail
       rand(userIds), // userId
-      mvId, // modelVersionId
+      mvId, // modelVersionId // TODO nullable
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       !isPublished ? null : faker.date.between({ from: created, to: Date.now() }).toISOString(), // publishedAt
@@ -650,6 +803,9 @@ const genPosts = (num: number, userIds: number[], mvIds: number[]) => {
   return ret;
 };
 
+/**
+ * Image
+ */
 const genImages = (num: number, userIds: number[], postIds: number[]) => {
   const ret = [];
 
@@ -754,6 +910,9 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
   return ret;
 };
 
+/**
+ * Article
+ */
 const genArticles = (num: number, userIds: number[], imageIds: number[]) => {
   const ret = [];
 
@@ -808,6 +967,9 @@ const genArticles = (num: number, userIds: number[], imageIds: number[]) => {
   return ret;
 };
 
+/**
+ * ImageTool
+ */
 const genImageTools = (num: number, imageIds: number[], toolIds: number[]) => {
   const ret = [];
 
@@ -828,6 +990,9 @@ const genImageTools = (num: number, imageIds: number[], toolIds: number[]) => {
   return ret;
 };
 
+/**
+ * ImageTechnique
+ */
 const genImageTechniques = (num: number, imageIds: number[], techniqueIds: number[]) => {
   const ret = [];
 
@@ -1284,6 +1449,9 @@ const genTags = (num: number) => {
 
 // TODO these tags should probably be looking at the "target"
 
+/**
+ * TagsOnArticle
+ */
 const genTagsOnArticles = (num: number, tagIds: number[], articleIds: number[]) => {
   const ret = [];
 
@@ -1301,6 +1469,9 @@ const genTagsOnArticles = (num: number, tagIds: number[], articleIds: number[]) 
   return ret;
 };
 
+/**
+ * TagsOnPost
+ */
 const genTagsOnPosts = (num: number, tagIds: number[], postIds: number[]) => {
   const ret = [];
 
@@ -1321,6 +1492,9 @@ const genTagsOnPosts = (num: number, tagIds: number[], postIds: number[]) => {
   return ret;
 };
 
+/**
+ * TagsOnImage
+ */
 const genTagsOnImages = (num: number, tagIds: number[], imageIds: number[]) => {
   const ret = [];
 
@@ -1349,6 +1523,9 @@ const genTagsOnImages = (num: number, tagIds: number[], imageIds: number[]) => {
   return ret;
 };
 
+/**
+ * TagsOnModel
+ */
 const genTagsOnModels = (num: number, tagIds: number[], modelIds: number[]) => {
   const ret = [];
 
@@ -1359,6 +1536,150 @@ const genTagsOnModels = (num: number, tagIds: number[], modelIds: number[]) => {
       rand(modelIds), // modelId
       rand(tagIds), // tagId
       created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * Comment
+ */
+const genCommentsModel = (
+  num: number,
+  userIds: number[],
+  modelIds: number[],
+  parentIds: number[],
+  doThread = false
+) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`, // content
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      fbool(0.01), // nsfw
+      fbool(0.01), // tosViolation
+      doThread ? rand(parentIds) : null, // parentId
+      rand(userIds), // userId
+      rand(modelIds), // modelId
+      fbool(0.01), // locked
+      fbool(0.01), // hidden
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * Thread
+ */
+const genThreads = (
+  num: number,
+  imageIds: number[],
+  postIds: number[],
+  reviewIds: number[],
+  articleIds: number[],
+  commentIds: number[],
+  parentIds: number[],
+  doThread = false
+) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const type = rand(['image', 'post', 'review', 'article']); // TODO bounty, bountyEntry
+    const parentIdx = faker.number.int(parentIds.length);
+    const parentId = doThread ? parentIds[parentIdx] : null;
+
+    const row = [
+      step, // id
+      fbool(0.01), // locked
+      null, // questionId
+      null, // answerId
+      type === 'image' && !doThread ? rand(imageIds) : null, // imageId
+      type === 'post' && !doThread ? rand(postIds) : null, // postId
+      type === 'review' && !doThread ? rand(reviewIds) : null, // reviewId
+      '{}', // metadata // TODO do we need "reviewIds" here?
+      null, // modelId
+      doThread ? commentIds[parentIdx] : null, // commentId
+      type === 'article' && !doThread ? rand(articleIds) : null, // articleId
+      null, // bountyEntryId // TODO
+      null, // bountyId // TODO
+      null, // clubPostId
+      parentId, // parentThreadId
+      parentId, // rootThreadId
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * CommentV2
+ */
+const genCommentsV2 = (num: number, userIds: number[], threadIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      `<p>${faker.lorem.paragraph({ min: 1, max: 8 })}</p>`, // content
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+      fbool(0.01), // nsfw
+      fbool(0.01), // tosViolation
+      rand(userIds), // userId
+      rand(threadIds), // threadId
+      null, // metadata // TODO need "oldId"?
+      fbool(0.005), // hidden
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ImageResource
+ */
+const genImageResources = (num: number, mvIds: number[], imageIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const isModel = fbool(0.9);
+
+    const row = [
+      step, // id
+      isModel ? rand(mvIds) : null, // modelVersionId
+      isModel
+        ? rand(['lora', 'checkpoint', 'embed', null])
+        : `${faker.word.adjective()}_${faker.word.noun()}`, // name
+      rand(imageIds), // imageId
+      fbool(0.95), // detected
+      randw([
+        { value: null, weight: 9 },
+        {
+          value: faker.string.hexadecimal({
+            length: 12,
+            casing: 'lower',
+            prefix: '',
+          }),
+          weight: 1,
+        },
+      ]), // hash
+      randw([
+        { value: null, weight: 1 },
+        { value: faker.number.int(100), weight: 12 },
+      ]), // strength
     ];
 
     ret.push(row);
@@ -1377,16 +1698,17 @@ const genRows = async () => {
   const mvs = genMvs(10, modelData);
   const mvData = mvs.map((mv) => ({
     id: mv[6] as number,
+    modelId: mv[7] as number,
     type: mv[mv.length - 1] as ModelUploadType,
   }));
+  const mvIds = mvData.map((mv) => mv.id);
 
   const mFiles = genMFiles(10, mvData);
 
-  const posts = genPosts(
-    10,
-    userIds,
-    mvData.map((mv) => mv.id)
-  );
+  const reviews = genReviews(10, userIds, mvData);
+  const reviewIds = reviews.map((r) => r[0] as number);
+
+  const posts = genPosts(10, userIds, mvIds);
   const postIds = posts.map((p) => p[0] as number);
 
   const images = genImages(10, userIds, postIds);
@@ -1397,6 +1719,21 @@ const genRows = async () => {
 
   const tools = genTools(10);
   const techniques = genTechniques();
+
+  const collections = genCollections(10, userIds, imageIds);
+  const collectionData = collections.map((c) => ({
+    id: c[0] as number,
+    type: c[8] as CollectionType,
+  }));
+  const collectionItems = genCollectionItems(
+    10,
+    collectionData,
+    articleIds,
+    postIds,
+    imageIds,
+    modelIds,
+    userIds
+  );
 
   const imageTools = genImageTools(
     10,
@@ -1420,73 +1757,106 @@ const genRows = async () => {
   // TagsOnImageVote
   // TagsOnModelsVote
 
+  const modelComments = genCommentsModel(10, userIds, modelIds, [], false);
+  const modelCommentsThread = genCommentsModel(
+    10,
+    userIds,
+    modelIds,
+    modelComments.map((mc) => mc[0] as number),
+    true
+  );
+
+  const threads = genThreads(10, imageIds, postIds, reviewIds, articleIds, [], [], false);
+  const commentsv2 = genCommentsV2(
+    10,
+    userIds,
+    threads.map((t) => t[0] as number)
+  );
+  const threadsNest = genThreads(
+    10,
+    [],
+    [],
+    [],
+    [],
+    commentsv2.map((c) => c[0] as number),
+    commentsv2.map((c) => c[7] as number),
+    true
+  );
+  const commentsv2Nest = genCommentsV2(
+    10,
+    userIds,
+    threadsNest.map((t) => t[0] as number)
+  );
+
+  const resources = genImageResources(10, mvIds, imageIds);
+
   /*
   Account
   Announcement
   ❌ Answer
-  ❌ AnswerMetric
-  ❌ AnswerReaction
-  ❌ AnswerVote
+    ❌ AnswerMetric
+    ❌ AnswerReaction
+    ❌ AnswerVote
   ApiKey
   ✔️ Article
-  ArticleEngagement
-  ArticleMetric
-  ArticleRank
-  ArticleReaction
-  ArticleReport
+    ArticleEngagement
+    ArticleMetric
+    ArticleRank
+    ArticleReaction
+    ArticleReport
   BlockedImage
   Bounty
-  BountyBenefactor
-  BountyEngagement
-  BountyEntry
-  BountyEntryMetric
-  BountyEntryRank
-  BountyEntryReaction
-  BountyEntryReport
-  BountyMetric
-  BountyRank
-  BountyReport
+    BountyBenefactor
+    BountyEngagement
+    BountyEntry
+    BountyEntryMetric
+    BountyEntryRank
+    BountyEntryReaction
+    BountyEntryReport
+    BountyMetric
+    BountyRank
+    BountyReport
   BuildGuide
   BuzzClaim
   BuzzTip
   BuzzWithdrawalRequest
   BuzzWithdrawalRequestHistory
   ❌ Chat
-  ❌ ChatMember
-  ❌ ChatMessage
-  ❌ ChatReport
+    ❌ ChatMember
+    ❌ ChatMessage
+    ❌ ChatReport
   ❌ Club
-  ❌ ClubAdmin
-  ❌ ClubAdminInvite
-  ❌ ClubMembership
-  ❌ ClubMembershipCharge
-  ❌ ClubMetric
-  ❌ ClubPost
-  ❌ ClubPostMetric
-  ❌ ClubPostReaction
-  ❌ ClubRank
-  ❌ ClubTier
-  Collection
-  CollectionContributor
-  CollectionItem
-  CollectionMetric
-  CollectionRank
-  CollectionReport
-  Comment
-  CommentReaction
-  CommentReport
-  CommentV2
-  CommentV2Reaction
-  CommentV2Report
+    ❌ ClubAdmin
+    ❌ ClubAdminInvite
+    ❌ ClubMembership
+    ❌ ClubMembershipCharge
+    ❌ ClubMetric
+    ❌ ClubPost
+    ❌ ClubPostMetric
+    ❌ ClubPostReaction
+    ❌ ClubRank
+    ❌ ClubTier
+  ✔️ Collection
+    CollectionContributor
+    ✔️ CollectionItem
+    CollectionMetric
+    CollectionRank
+    CollectionReport
+  ✔️ Comment
+    CommentReaction
+    CommentReport
+  ✔️ CommentV2
+    CommentV2Reaction
+    CommentV2Report
   Cosmetic
-  CosmeticShopItem
-  CosmeticShopSection
-  CosmeticShopSectionItem
+    CosmeticShopItem
+    CosmeticShopSection
+    CosmeticShopSectionItem
   CoveredCheckpoint
   CsamReport
   CustomerSubscription
   Donation
-  DonationGoal
+    DonationGoal
   DownloadHistory
   EntityAccess
   EntityCollaborator
@@ -1495,18 +1865,18 @@ const genRows = async () => {
   GenerationServiceProvider
   HomeBlock
   ✔️ Image
-  ImageConnection
-  ImageEngagement
-  ImageFlag
-  ImageMetric
-  ImageRank
-  ImageRatingRequest
-  ImageReaction
-  ImageReport
-  ImageResource
-  ✔️ ImageTechnique
-  ✔️ ImageTool
-  ImagesOnModels
+    ImageConnection
+    ImageEngagement
+    ImageFlag
+    ImageMetric
+    ImageRank
+    ImageRatingRequest
+    ImageReaction
+    ImageReport
+    ImageResource
+    ✔️ ImageTechnique
+    ✔️ ImageTool
+    ImagesOnModels
   Import
   JobQueue
   KeyValue
@@ -1519,31 +1889,31 @@ const genRows = async () => {
   MetricUpdateQueue
   ModActivity
   ✔️ Model
-  ModelAssociations
-  ModelEngagement
+    ModelAssociations
+    ModelEngagement
   ✔️ ModelFile
-  ModelFileHash
-  ModelFlag
+    ModelFileHash
+    ModelFlag
   ModelInterest
   ModelMetric
   ModelMetricDaily
   ModelRank_New
   ModelReport
   ✔️ ModelVersion
-  ModelVersionEngagement
-  ModelVersionExploration
-  ModelVersionMetric
-  ModelVersionMonetization
-  ModelVersionRank
-  ModelVersionSponsorshipSettings
+    ModelVersionEngagement
+    ModelVersionExploration
+    ModelVersionMetric
+    ModelVersionMonetization
+    ModelVersionRank
+    ModelVersionSponsorshipSettings
   OauthClient
   OauthToken
   Partner
   ✔️ Post
-  PostMetric
-  PostRank
-  PostReaction
-  PostReport
+    PostMetric
+    PostRank
+    PostReaction
+    PostReport
   PressMention
   Price
   Product
@@ -1553,12 +1923,12 @@ const genRows = async () => {
   QueryParamsLog
   QuerySqlLog
   ❌ Question
-  ❌ QuestionMetric
-  ❌ QuestionReaction
+    ❌ QuestionMetric
+    ❌ QuestionReaction
   RecommendedResource
   RedeemableCode
   Report
-  ResourceReview
+  ✔️ ResourceReview
   ResourceReviewReaction
   ResourceReviewReport
   RunStrategy
@@ -1567,40 +1937,40 @@ const genRows = async () => {
   Session
   SessionInvalidation
   ✔️ Tag
-  TagEngagement
-  TagMetric
-  TagRank
-  ✔️ TagsOnArticle
-  TagsOnBounty
-  TagsOnCollection
-  TagsOnImage
-  TagsOnImageVote
-  TagsOnModels
-  TagsOnModelsVote
-  ✔️ TagsOnPost
-  ❌ TagsOnPostVote
-  TagsOnQuestions
-  TagsOnTags
+    TagEngagement
+    TagMetric
+    TagRank
+    ✔️ TagsOnArticle
+    TagsOnBounty
+    TagsOnCollection
+    ✔️ TagsOnImage
+    TagsOnImageVote
+    ✔️ TagsOnModels
+    TagsOnModelsVote
+    ✔️ TagsOnPost
+    ❌ TagsOnPostVote
+    ❌ TagsOnQuestions
+    TagsOnTags
   ✔️ Technique
-  Thread
+  ✔️ Thread
   TipConnection
   ✔️ Tool
   ✔️ User
-  UserCosmetic
-  UserCosmeticShopPurchases
-  UserEngagement
-  UserLink
-  UserMetric
-  UserNotificationSettings
-  UserPaymentConfiguration
-  UserProfile
-  UserPurchasedRewards
-  UserRank
-  UserReferral
-  UserReferralCode
-  UserReport
+    UserCosmetic
+    UserCosmeticShopPurchases
+    UserEngagement
+    UserLink
+    UserMetric
+    UserNotificationSettings
+    UserPaymentConfiguration
+    UserProfile
+    UserPurchasedRewards
+    UserRank
+    UserReferral
+    UserReferralCode
+    UserReport
   Vault
-  VaultItem
+    VaultItem
   VerificationToken
   Webhook
   _LicenseToModel
