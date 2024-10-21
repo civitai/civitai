@@ -1,19 +1,26 @@
 // import { pgDbRead } from '~/server/db/pgDb';
 import { faker } from '@faker-js/faker';
 import {
+  ArticleEngagementType,
   Availability,
   CollectionType,
+  ImageEngagementType,
   ImageGenerationProcess,
+  ModelEngagementType,
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
   ModelUploadType,
+  ModelVersionEngagementType,
   NsfwLevel,
+  ReviewReactions,
   ScanResultCode,
+  TagEngagementType,
   TagSource,
   TagType,
   ToolType,
   TrainingStatus,
+  UserEngagementType,
 } from '@prisma/client';
 import { capitalize } from 'lodash-es';
 import { constants } from '~/server/common/constants';
@@ -1687,6 +1694,260 @@ const genImageResources = (num: number, mvIds: number[], imageIds: number[]) => 
   return ret;
 };
 
+/**
+ * ArticleEngagement
+ */
+const genArticleEngagements = (num: number, userIds: number[], articleIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(articleIds), // articleId
+      rand(Object.values(ArticleEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ImageEngagement
+ */
+const genImageEngagements = (num: number, userIds: number[], imageIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(imageIds), // imageId
+      rand(Object.values(ImageEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ModelEngagement
+ */
+const genModelEngagements = (num: number, userIds: number[], modelIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(modelIds), // modelId
+      rand(Object.values(ModelEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ModelVersionEngagement
+ */
+const genModelVersionEngagements = (num: number, userIds: number[], mvIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(mvIds), // modelVersionId
+      rand(Object.values(ModelVersionEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * TagEngagement
+ */
+const genTagEngagements = (num: number, userIds: number[], tagIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(tagIds), // tagId
+      rand(Object.values(TagEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * UserEngagement
+ */
+const genUserEngagements = (num: number, userIds: number[], targetUserIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      rand(userIds), // userId
+      rand(targetUserIds), // targetUserId
+      rand(Object.values(UserEngagementType)), // type
+      created, // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+const reactions = Object.values(ReviewReactions).filter((r) => r !== 'Dislike');
+
+/**
+ * ArticleReaction
+ */
+const genArticleReactions = (num: number, userIds: number[], articleIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(articleIds), // articleId
+      rand(userIds), // userId
+      rand(reactions), // reaction
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * CommentReaction
+ */
+const genCommentReactions = (num: number, userIds: number[], commentIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(commentIds), // commentId
+      rand(userIds), // userId
+      rand(reactions), // reaction
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * CommentV2Reaction
+ */
+const genCommentV2Reactions = (num: number, userIds: number[], commentIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(commentIds), // commentId
+      rand(userIds), // userId
+      rand(reactions), // reaction
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * ImageReaction
+ */
+const genImageReactions = (num: number, userIds: number[], imageIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(imageIds), // imageId
+      rand(userIds), // userId
+      rand(reactions), // reaction
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * PostReaction
+ */
+const genPostReactions = (num: number, userIds: number[], postIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // nb not quite right, would need created of entity, but being lazy here
+    const created = faker.date.past({ years: 3 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(postIds), // postId
+      rand(userIds), // userId
+      rand(reactions), // reaction
+      created, // createdAt
+      rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
 const genRows = async () => {
   const users = genUsers(10, true);
   const userIds = users.map((u) => u[4] as number);
@@ -1754,41 +2015,52 @@ const genRows = async () => {
   const tagsOnImages = genTagsOnImages(10, tagIds, imageIds);
   const tagsOnModels = genTagsOnModels(10, tagIds, modelIds);
 
-  // TagsOnImageVote
-  // TagsOnModelsVote
+  // TODO TagsOnImageVote
+  // TODO TagsOnModelsVote
 
-  const modelComments = genCommentsModel(10, userIds, modelIds, [], false);
-  const modelCommentsThread = genCommentsModel(
-    10,
-    userIds,
-    modelIds,
-    modelComments.map((mc) => mc[0] as number),
-    true
-  );
+  const commentsV1 = genCommentsModel(10, userIds, modelIds, [], false);
+  const commentsV1Ids = commentsV1.map((mc) => mc[0] as number);
+  const commentsV1Thread = genCommentsModel(10, userIds, modelIds, commentsV1Ids, true);
+  const commentsV1AllIds = commentsV1Ids.concat(commentsV1Thread.map((mc) => mc[0] as number));
 
   const threads = genThreads(10, imageIds, postIds, reviewIds, articleIds, [], [], false);
-  const commentsv2 = genCommentsV2(
+  const commentsV2 = genCommentsV2(
     10,
     userIds,
     threads.map((t) => t[0] as number)
   );
+  const commentsV2Ids = commentsV2.map((mc) => mc[0] as number);
   const threadsNest = genThreads(
     10,
     [],
     [],
     [],
     [],
-    commentsv2.map((c) => c[0] as number),
-    commentsv2.map((c) => c[7] as number),
+    commentsV2Ids,
+    commentsV2.map((c) => c[7] as number),
     true
   );
-  const commentsv2Nest = genCommentsV2(
+  const commentsV2Nest = genCommentsV2(
     10,
     userIds,
     threadsNest.map((t) => t[0] as number)
   );
+  const commentsV2AllIds = commentsV2Ids.concat(commentsV2Nest.map((mc) => mc[0] as number));
 
   const resources = genImageResources(10, mvIds, imageIds);
+
+  const articleEngage = genArticleEngagements(10, userIds, articleIds);
+  const imageEngage = genImageEngagements(10, userIds, imageIds);
+  const modelEngage = genModelEngagements(10, userIds, modelIds);
+  const mvEngage = genModelVersionEngagements(10, userIds, mvIds);
+  const tagEngage = genTagEngagements(10, userIds, tagIds);
+  const userEngage = genUserEngagements(10, userIds, userIds);
+
+  const articleReactions = genArticleReactions(10, userIds, articleIds);
+  const commentV1Reactions = genCommentReactions(10, userIds, commentsV1AllIds);
+  const commentV2Reactions = genCommentV2Reactions(10, userIds, commentsV2AllIds);
+  const imageReactions = genImageReactions(10, userIds, imageIds);
+  const postReactions = genPostReactions(10, userIds, postIds);
 
   /*
   Account
@@ -1799,10 +2071,10 @@ const genRows = async () => {
     ❌ AnswerVote
   ApiKey
   ✔️ Article
-    ArticleEngagement
+    ✔️ ArticleEngagement
     ArticleMetric
     ArticleRank
-    ArticleReaction
+    ✔️ ArticleReaction
     ArticleReport
   BlockedImage
   Bounty
@@ -1843,10 +2115,10 @@ const genRows = async () => {
     CollectionRank
     CollectionReport
   ✔️ Comment
-    CommentReaction
+    ✔️ CommentReaction
     CommentReport
   ✔️ CommentV2
-    CommentV2Reaction
+    ✔️ CommentV2Reaction
     CommentV2Report
   Cosmetic
     CosmeticShopItem
@@ -1866,12 +2138,12 @@ const genRows = async () => {
   HomeBlock
   ✔️ Image
     ImageConnection
-    ImageEngagement
+    ✔️ ImageEngagement
     ImageFlag
     ImageMetric
     ImageRank
     ImageRatingRequest
-    ImageReaction
+    ✔️ ImageReaction
     ImageReport
     ImageResource
     ✔️ ImageTechnique
@@ -1890,7 +2162,7 @@ const genRows = async () => {
   ModActivity
   ✔️ Model
     ModelAssociations
-    ModelEngagement
+    ✔️ ModelEngagement
   ✔️ ModelFile
     ModelFileHash
     ModelFlag
@@ -1900,7 +2172,7 @@ const genRows = async () => {
   ModelRank_New
   ModelReport
   ✔️ ModelVersion
-    ModelVersionEngagement
+    ✔️ ModelVersionEngagement
     ModelVersionExploration
     ModelVersionMetric
     ModelVersionMonetization
@@ -1912,7 +2184,7 @@ const genRows = async () => {
   ✔️ Post
     PostMetric
     PostRank
-    PostReaction
+    ✔️ PostReaction
     PostReport
   PressMention
   Price
@@ -1929,7 +2201,7 @@ const genRows = async () => {
   RedeemableCode
   Report
   ✔️ ResourceReview
-  ResourceReviewReaction
+    ❌ ResourceReviewReaction
   ResourceReviewReport
   RunStrategy
   SavedModel
@@ -1937,7 +2209,7 @@ const genRows = async () => {
   Session
   SessionInvalidation
   ✔️ Tag
-    TagEngagement
+    ✔️ TagEngagement
     TagMetric
     TagRank
     ✔️ TagsOnArticle
@@ -1958,7 +2230,7 @@ const genRows = async () => {
   ✔️ User
     UserCosmetic
     UserCosmeticShopPurchases
-    UserEngagement
+    ✔️ UserEngagement
     UserLink
     UserMetric
     UserNotificationSettings
