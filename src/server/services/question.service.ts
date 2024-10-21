@@ -10,7 +10,6 @@ import {
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { isTag } from '~/server/schema/tag.schema';
 import { QuestionSort, QuestionStatus } from '~/server/common/enums';
-import { playfab } from '~/server/playfab/client';
 
 export const getQuestions = async <TSelect extends Prisma.QuestionSelect>({
   limit = 20,
@@ -136,9 +135,6 @@ export const upsertQuestion = async ({
           select: { id: true, title: true },
         });
   });
-
-  if (result)
-    await playfab.trackEvent(userId, { eventName: 'user_ask_question', questionId: result.id });
 
   return result;
 };

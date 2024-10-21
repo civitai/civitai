@@ -5,14 +5,12 @@ import { z } from 'zod';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { colorDomains, constants, getRequestDomainColor } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { playfab } from '~/server/playfab/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
-import { getJoinLink } from '~/utils/join-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 
 const schema = z.object({
@@ -162,12 +160,6 @@ export default PublicEndpoint(
           VALUES (${userId}, ${modelVersionId}, ${now}, false)
           ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
         `;
-
-        await playfab.trackEvent(userId, {
-          eventName: 'user_download_model',
-          modelId: fileResult.modelId,
-          modelVersionId,
-        });
       }
 
       // Increment download count for user
