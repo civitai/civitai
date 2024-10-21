@@ -32,7 +32,6 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useBuzzDashboardStyles } from '../buzz.styles';
 import { CurrencyConfig } from '~/server/common/constants';
-import { report } from 'node:process';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -57,6 +56,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
     window: 'day',
     accountType: ['User', 'Generation'],
   });
+
   const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
     enabled: true,
   });
