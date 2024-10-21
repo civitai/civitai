@@ -447,6 +447,7 @@ export function formatTextToImageStep({
 
   return {
     $type: 'textToImage' as const,
+    timeout: step.timeout,
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
@@ -500,6 +501,7 @@ export function formatComfyStep({
           .map((image) => ({
             workflowId,
             stepName: step.name ?? '$0',
+
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
@@ -521,6 +523,7 @@ export function formatComfyStep({
 
   return {
     $type: 'comfy' as const,
+    timeout: step.timeout,
     name: step.name,
     params: { ...params! } as TextToImageParams,
     images,

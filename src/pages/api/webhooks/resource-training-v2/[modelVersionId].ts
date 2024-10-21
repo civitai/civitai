@@ -172,7 +172,7 @@ export async function updateRecords(workflow: Workflow) {
   const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
     epochNumber: e.epochNumber ?? -1,
     modelUrl: e.blobUrl,
-    modelSize: e.blobSize,
+    modelSize: e.blobSize ?? 0,
     sampleImages: e.sampleImages ?? [],
   }));
 
