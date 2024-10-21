@@ -147,7 +147,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? `Payment error: ${event.eventData.errorDescription}`
               : event.type === 'paymentDeferred'
               ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
-                  .map((r) => r.reasonDescription)
+                  .map((r: { reasonDescription: string }) => r.reasonDescription)
                   .join(', ')}`
               : 'Payment canceled';
 

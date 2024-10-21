@@ -230,8 +230,6 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
     throw throwBadRequestError('Tipalti not available');
   }
 
-  console.log(client);
-
   const user = await dbRead.user.findUnique({ where: { id: userId } });
 
   if (!user) throw throwBadRequestError(`User not found: ${userId}`);
@@ -240,7 +238,7 @@ export async function createTipaltiPayee({ userId }: { userId: number }) {
     where: { userId },
   });
 
-  if (existingConfig && existingConfig.stripeAccountId) {
+  if (existingConfig && existingConfig.tipaltiAccountId) {
     return existingConfig;
   }
 

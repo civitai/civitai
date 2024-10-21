@@ -3,6 +3,7 @@ import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';
 import { createHmac } from 'crypto';
+import { TipaltiStatus } from '~/server/common/enums';
 
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
@@ -75,6 +76,7 @@ class TipaltiCaller extends HttpCaller {
   }
 
   async getPayeeByRefCode(refCode: string) {
+    console.log('DOING SEARC');
     const response = await this.getRaw(`/payees`, {
       queryParams: { filter: `refCode=="${refCode}"` },
     });
@@ -95,9 +97,11 @@ class TipaltiCaller extends HttpCaller {
 
   async createPayee(payee: Tipalti.CreatePayeeInput) {
     try {
+      console.log(payee);
       // First, check if it exists:
       const existingPayee = await this.getPayeeByRefCode(payee.refCode);
 
+      console.log('May not exist???', existingPayee);
       if (existingPayee) {
         return existingPayee;
       }
@@ -107,11 +111,16 @@ class TipaltiCaller extends HttpCaller {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       });
 
+      console.log('ok', response.ok);
+
       if (!response.ok) {
         throw new Error(`Failed to create payee: ${response.statusText}`);
       }
 
       const data = await response.json();
+
+      console.log(data);
+
       return Tipalti.createPayeeResponseSchema.parse(data);
     } catch (error) {
       console.error('Error creating payee', error);

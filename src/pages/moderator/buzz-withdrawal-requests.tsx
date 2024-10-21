@@ -406,16 +406,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
                         )}
                       </Text>
                     </td>
-                    <td>{request.requestedToProvider}</td>
                     <td>
-                      <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
-                        {getDisplayName(request.status)}
-                      </Badge>
-                    </td>
-                    <td align="right">
-                      <Group noWrap>
-                        {buttons.map((btn) => btn)}
-                        <RequestHistory request={request} />
+                      <Group spacing="xs" noWrap>
+                        <Text>{request.requestedToProvider}</Text>
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
                           <Tooltip
@@ -426,10 +419,21 @@ export default function ModeratorBuzzWithdrawalRequests() {
                             label="Once approved, Tipalti items must be resolved in the Tipalti dashboard. Resolving them there will update the status here automatically."
                           >
                             <ActionIcon color="blue">
-                              <IconInfoTriangleFilled size={20} />
+                              <IconInfoTriangleFilled size={16} />
                             </ActionIcon>
                           </Tooltip>
                         )}
+                      </Group>
+                    </td>
+                    <td>
+                      <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
+                        {getDisplayName(request.status)}
+                      </Badge>
+                    </td>
+                    <td align="right">
+                      <Group noWrap>
+                        {buttons.map((btn) => btn)}
+                        <RequestHistory request={request} />
                       </Group>
                     </td>
                   </tr>
