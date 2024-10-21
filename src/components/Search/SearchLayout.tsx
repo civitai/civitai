@@ -67,7 +67,7 @@ export const useSearchLayout = () => {
   return context;
 };
 
-const useStyles = createStyles((theme, _, getRef) => {
+const useStyles = createStyles((theme) => {
   return {
     sidebar: {
       height: '100%',
@@ -77,7 +77,6 @@ const useStyles = createStyles((theme, _, getRef) => {
       transition: 'margin 200ms ease',
       borderRight: '2px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      zIndex: 200,
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
       display: 'flex',
       flexDirection: 'column',
@@ -85,6 +84,7 @@ const useStyles = createStyles((theme, _, getRef) => {
       [containerQuery.smallerThan('sm')]: {
         top: 0,
         left: 0,
+        zIndex: 200,
         height: '100%',
         width: '100%',
         marginLeft: `-100%`,
@@ -160,7 +160,12 @@ export function SearchLayout({
         future={{ preserveSharedStateOnUnmount: true }}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
-        <AppLayout renderSearchComponent={renderSearchComponent}>{children}</AppLayout>
+        <AppLayout
+          renderSearchComponent={renderSearchComponent}
+          scrollable={isMobile ? !sidebarOpen : true}
+        >
+          {children}
+        </AppLayout>
       </InstantSearch>
     </SearchLayoutCtx.Provider>
   );
@@ -196,7 +201,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
         <Text size="lg">Filters &amp; sorting</Text>
       </Group>
       <Divider />
-      <div className={classes.scrollable}>{children}</div>
+      <ScrollArea className="h-full p-4">{children}</ScrollArea>
     </div>
   );
 };
