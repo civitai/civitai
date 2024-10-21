@@ -3,7 +3,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
-import { BuzzAccountType } from '~/server/schema/buzz.schema';
+import { BuzzAccountType, GetTransactionsReportSchema } from '~/server/schema/buzz.schema';
 import { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { trpc } from '~/utils/trpc';
 
@@ -75,7 +75,7 @@ export const useBuzzTransactions = (
 ) => {
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
     {
-      limit: filters?.limit ?? 1000,
+      limit: filters?.limit ?? 200,
       accountId: accountId as number,
       accountType,
     },
@@ -86,6 +86,33 @@ export const useBuzzTransactions = (
 
   return {
     transactions: transactions ?? [],
-    transactionsLoading: accountId ? isLoading : false,
+    isLoading: accountId ? isLoading : false,
+  };
+};
+
+export const useTransactionsReport = (
+  filters: GetTransactionsReportSchema = {
+    window: 'hour',
+    accountType: ['User', 'Generation'],
+  },
+  opts: { enabled: boolean }
+) => {
+  const {
+    data: report = [],
+    isLoading,
+    ...rest
+  } = trpc.buzz.getTransactionsReport.useQuery(
+    {
+      ...(filters ?? {}),
+    },
+    {
+      enabled: opts.enabled,
+    }
+  );
+
+  return {
+    report: report ?? [],
+    isLoading: opts.enabled ? isLoading : false,
+    ...rest,
   };
 };

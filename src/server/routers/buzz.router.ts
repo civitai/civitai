@@ -6,6 +6,7 @@ import {
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
   getDailyCompensationRewardHandler,
+  getTransactionsReportHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
@@ -22,6 +23,7 @@ import {
   getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
   claimWatchedAdRewardSchema,
+  getTransactionsReportSchema,
 } from '~/server/schema/buzz.schema';
 import {
   claimBuzz,
@@ -85,4 +87,7 @@ export const buzzRouter = router({
     .mutation(({ input, ctx }) =>
       claimWatchedAdReward({ ...input, userId: ctx.user.id, ip: ctx.ip })
     ),
+  getTransactionsReport: protectedProcedure
+    .input(getTransactionsReportSchema)
+    .query(getTransactionsReportHandler),
 });
