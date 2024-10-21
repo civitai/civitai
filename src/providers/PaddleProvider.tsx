@@ -2,6 +2,7 @@ import { CheckoutEventsData, initializePaddle, Paddle, PaddleEventData } from '@
 import { useContext, useEffect, useState, createContext, useRef, useCallback } from 'react';
 import { env } from '~/env/client.mjs';
 import { isDev } from '~/env/other';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EventEmitter } from '~/utils/eventEmitter';
 
 type PaddleEventEmitter = {
@@ -24,6 +25,8 @@ export const usePaddle = () => {
 };
 
 export function PaddleProvider({ children }: { children: React.ReactNode }) {
+  const currentUser = useCurrentUser();
+
   const [paddle, setPaddle] = useState<Paddle>();
   const emitter = useRef<
     EventEmitter<{
@@ -55,10 +58,16 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         'checkout.closed': undefined;
         'checkout.loaded': undefined;
       }>();
+      const pwCustomer = currentUser
+        ? currentUser.paddleCustomerId
+          ? { id: currentUser.paddleCustomerId }
+          : { email: currentUser.email }
+        : {};
       initializePaddle({
         environment: isDev ? 'sandbox' : 'production',
         token: env.NEXT_PUBLIC_PADDLE_TOKEN,
         eventCallback,
+        pwCustomer,
         checkout: {
           settings: {
             theme: 'dark',
@@ -71,7 +80,7 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         }
       });
     }
-  }, []);
+  }, [currentUser, eventCallback]);
 
   return (
     <PaddleContext.Provider
