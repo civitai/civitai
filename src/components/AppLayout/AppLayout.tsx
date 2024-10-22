@@ -77,8 +77,8 @@ export function MainContent({
   footer?: React.ReactNode | null;
   announcements?: boolean;
 } & ScrollAreaProps) {
-  return (
-    <ScrollArea disabled={!scrollable} {...props}>
+  return scrollable ? (
+    <ScrollArea {...props}>
       <main className="flex-1">
         {subNav && <SubNav>{subNav}</SubNav>}
         {announcements && <Announcements />}
@@ -86,6 +86,14 @@ export function MainContent({
       </main>
       {footer}
     </ScrollArea>
+  ) : (
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <main className="flex flex-1 flex-col overflow-hidden">
+        {subNav && <SubNav>{subNav}</SubNav>}
+        {children}
+      </main>
+      {footer}
+    </div>
   );
 }
 
