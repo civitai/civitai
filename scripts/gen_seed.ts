@@ -1852,6 +1852,348 @@ const genPostReactions = (num: number, userIds: number[], postIds: number[]) => 
   return ret;
 };
 
+/**
+ * HomeBlock
+ */
+const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) => {
+  // id, "createdAt", "updatedAt", "userId", metadata, index, type, permanent, "sourceId"
+
+  return [
+    [
+      2,
+      '2023-07-25 18:13:12.053',
+      null,
+      -1,
+      '{"title": "Announcements", "announcements": {"limit": 4}}',
+      -1,
+      'Announcement',
+      true,
+      null,
+    ],
+    [
+      1,
+      '2023-07-25 18:13:12.053',
+      null,
+      -1,
+      `{"link": "/models", "title": "Featured Models", "linkText": "Explore all models", "withIcon": true, "collection": {"id": ${
+        rand(collectionData.filter((c) => c.type === 'Model')) ?? 1
+      }, "rows": 2, "limit": 8}, "description": "A filtered list of all models on the site, to view the complete model list click "explore all models"."}`,
+      3,
+      'Collection',
+      false,
+      null,
+    ],
+    [
+      3,
+      '2023-07-25 18:13:12.053',
+      null,
+      -1,
+      `{"link": "/images", "title": "Featured Images", "linkText": "Explore all images", "withIcon": true, "collection": {"id": ${
+        rand(collectionData.filter((c) => c.type === 'Image')) ?? 1
+      }, "rows": 2, "limit": 8}, "description": "All sorts of cool pictures created by our community, from simple shapes to detailed landscapes or human faces. A virtual canvas where you can unleash your creativity or get inspired."}`,
+      1,
+      'Collection',
+      false,
+      null,
+    ],
+    [
+      5,
+      '2023-07-25 18:13:12.053',
+      null,
+      -1,
+      `{"link": "/posts", "title": "Featured Posts", "linkText": "Explore all posts", "withIcon": true, "collection": {"id": ${
+        rand(collectionData.filter((c) => c.type === 'Post')) ?? 1
+      }, "limit": 8}, "description": "Find groups of pictures created by our community, using specific models."}`,
+      7,
+      'Collection',
+      false,
+      null,
+    ],
+    [
+      6,
+      '2023-07-25 18:13:12.053',
+      null,
+      -1,
+      `{"link": "/articles", "title": "Featured Articles", "linkText": "Explore all articles", "withIcon": true, "collection": {"id": ${
+        rand(collectionData.filter((c) => c.type === 'Article')) ?? 1
+      }, "limit": 8}, "description": "Find information, guides and tutorials, analysis on particular topics and much more. From the community, for the community."}`,
+      8,
+      'Collection',
+      false,
+      null,
+    ],
+  ];
+};
+
+/**
+ * Leaderboard
+ */
+const genLeaderboards = () => {
+  // id, index, title, description, "scoringDescription", query, active, public
+
+  return [
+    [
+      'overall',
+      1,
+      'Creators',
+      'Top model creators in the community',
+      `√((downloads/10) +
+(likes * 3) +
+(generations/100))
+---
+Only models without mature cover images are considered
+Diminishing returns up to 120 entries`,
+      // language=text
+      `WITH entries AS (
+	SELECT
+		m."userId",
+		( -- Points
+			(mvm."downloadCount" / 10) +
+			(mvm."thumbsUpCount" * 3) +
+			(mvm."generationCount" / 100)
+		) * ( -- Age
+		  1 - (1 * (EXTRACT(DAY FROM (now() - mv."publishedAt"))/30)^2)
+		) as score,
+		mvm."thumbsUpCount",
+		mvm."generationCount",
+		mvm."downloadCount",
+		mv."publishedAt"
+	FROM "ModelVersionMetric" mvm
+	JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+	JOIN "Model" m ON mv."modelId" = m.id
+	WHERE
+	  mv."publishedAt" > current_date - INTERVAL '30 days'
+	  AND mvm.timeframe = 'Month'
+	  AND mv.status = 'Published'
+	  AND m.status = 'Published'
+	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+), entries_ranked AS (
+	SELECT
+		*,
+		row_number() OVER (PARTITION BY "userId" ORDER BY score DESC) rank
+	FROM entries
+), entries_multiplied AS (
+  SELECT
+    *,
+    GREATEST(0, 1 - (rank/120::double precision)^0.5) as quantity_multiplier
+  FROM entries_ranked
+), scores AS (
+	SELECT
+	  "userId",
+	  sqrt(SUM(score * quantity_multiplier)) * 1000 score,
+	  jsonb_build_object(
+	    'thumbsUpCount', SUM("thumbsUpCount"),
+	    'generationCount', SUM("generationCount"),
+	    'downloadCount', SUM("downloadCount"),
+	    'entries', COUNT(*)
+		) metrics
+	FROM entries_multiplied er
+	JOIN "User" u ON u.id = er."userId"
+	WHERE u."deletedAt" IS NULL AND u.id > 0
+	GROUP BY "userId"
+)`,
+      true,
+      true,
+    ],
+    [
+      'overall_90',
+      2,
+      'Creators (90 Days)',
+      'Top model creators in the community over the last 90 days',
+      `√((downloads/10) +
+(likes * 3) +
+(generations/100))
+---
+Only models without mature cover images are considered
+Diminishing returns up to 120 entries
+This leaderboard is experimental and temporary`,
+      // language=text
+      `WITH entries AS (
+	SELECT
+		m."userId",
+		( -- Points
+			(mvm."downloadCount" / 10) +
+			(mvm."thumbsUpCount" * 3) +
+			(mvm."generationCount" / 100)
+		) * ( -- Age
+			-0.1 + ((1+0.1)/(1+(EXTRACT(DAY FROM (now() - mv."publishedAt"))/40.03)^2.71))
+		) as score,
+		EXTRACT(DAY FROM (now() - mv."publishedAt")) as days,
+		mvm."thumbsUpCount",
+		mvm."generationCount",
+		mvm."downloadCount",
+		mv."publishedAt"
+	FROM "ModelVersionMetric" mvm
+	JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+	JOIN "Model" m ON mv."modelId" = m.id
+	WHERE
+	  mv."publishedAt" BETWEEN current_date - INTERVAL '90 days' AND now()
+	  AND mvm.timeframe = 'AllTime'
+	  AND mv.status = 'Published'
+	  AND m.status = 'Published'
+	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+), entries_ranked AS (
+	SELECT
+		*,
+		row_number() OVER (PARTITION BY "userId" ORDER BY score DESC) rank
+	FROM entries
+), entries_multiplied AS (
+  SELECT
+    *,
+    GREATEST(0, 1 - (rank/120::double precision)^0.5) as quantity_multiplier
+  FROM entries_ranked
+), scores AS (
+	SELECT
+	  "userId",
+	  sqrt(SUM(score * quantity_multiplier)) * 1000 score,
+	  jsonb_build_object(
+	    'thumbsUpCount', SUM("thumbsUpCount"),
+	    'generationCount', SUM("generationCount"),
+	    'downloadCount', SUM("downloadCount"),
+	    'entries', COUNT(*)
+		) metrics
+	FROM entries_multiplied er
+	JOIN "User" u ON u.id = er."userId"
+	WHERE u."deletedAt" IS NULL AND u.id > 0
+	GROUP BY "userId"
+)`,
+      true,
+      true,
+    ],
+    [
+      'overall_nsfw',
+      3,
+      'Creators (mature)',
+      'Top model creators in the community',
+      `√((downloads/10) +
+(likes * 3) +
+(generations/100))
+---
+Diminishing returns up to 120 entries`,
+      // language=text
+      `WITH entries AS (
+	SELECT
+		m."userId",
+		( -- Points
+			(mvm."downloadCount" / 10) +
+			(mvm."thumbsUpCount" * 3) +
+			(mvm."generationCount" / 100)
+		) * ( -- Age
+		  1 - (1 * (EXTRACT(DAY FROM (now() - mv."publishedAt"))/30)^2)
+		) as score,
+		mvm."thumbsUpCount",
+		mvm."generationCount",
+		mvm."downloadCount",
+		mv."publishedAt"
+	FROM "ModelVersionMetric" mvm
+	JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+	JOIN "Model" m ON mv."modelId" = m.id
+	WHERE
+	  mv."publishedAt" > current_date - INTERVAL '30 days'
+	  AND mvm.timeframe = 'Month'
+	  AND mv.status = 'Published'
+	  AND m.status = 'Published'
+), entries_ranked AS (
+	SELECT
+		*,
+		row_number() OVER (PARTITION BY "userId" ORDER BY score DESC) rank
+	FROM entries
+), entries_multiplied AS (
+  SELECT
+    *,
+    GREATEST(0, 1 - (rank/120::double precision)^0.5) as quantity_multiplier
+  FROM entries_ranked
+), scores AS (
+	SELECT
+	  "userId",
+	  sqrt(SUM(score * quantity_multiplier)) * 1000 score,
+	  jsonb_build_object(
+	    'thumbsUpCount', SUM("thumbsUpCount"),
+	    'generationCount', SUM("generationCount"),
+	    'downloadCount', SUM("downloadCount"),
+	    'entries', COUNT(*)
+		) metrics
+	FROM entries_multiplied er
+	JOIN "User" u ON u.id = er."userId"
+	WHERE u."deletedAt" IS NULL AND u.id > 0
+	GROUP BY "userId"
+)`,
+      true,
+      true,
+    ],
+    [
+      'new_creators',
+      4,
+      'New Creators',
+      'Top new creators this month',
+      `√((downloads/10) +
+(likes * 3) +
+(generations/100))
+---
+Only models without mature cover images are considered
+Diminishing returns up to 120 entries
+First model added in the last 30 days`,
+      // language=text
+      `WITH entries AS (
+	SELECT
+		m."userId",
+		( -- Points
+			(mvm."downloadCount" / 10) +
+			(mvm."thumbsUpCount" * 3) +
+			(mvm."generationCount" / 100)
+		) * ( -- Age
+		  1 - (1 * (EXTRACT(DAY FROM (now() - mv."publishedAt"))/30)^2)
+		) as score,
+		mvm."thumbsUpCount",
+		mvm."generationCount",
+		mvm."downloadCount",
+		mv."publishedAt"
+	FROM "ModelVersionMetric" mvm
+	JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+	JOIN "Model" m ON mv."modelId" = m.id
+	WHERE
+	  mv."publishedAt" > current_date - INTERVAL '30 days'
+	  AND mvm.timeframe = 'Month'
+	  AND mv.status = 'Published'
+	  AND m.status = 'Published'
+	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+		AND NOT EXISTS (
+			SELECT 1 FROM "Model" mo
+			WHERE
+				mo."userId" = m."userId"
+				AND mo."publishedAt" < current_date - INTERVAL '31 days'
+		)
+), entries_ranked AS (
+	SELECT
+		*,
+		row_number() OVER (PARTITION BY "userId" ORDER BY score DESC) rank
+	FROM entries
+), entries_multiplied AS (
+  SELECT
+    *,
+    GREATEST(0, 1 - (rank/120::double precision)^0.5) as quantity_multiplier
+  FROM entries_ranked
+), scores AS (
+	SELECT
+	  "userId",
+	  sqrt(SUM(score * quantity_multiplier)) * 1000 score,
+	  jsonb_build_object(
+	    'thumbsUpCount', SUM("thumbsUpCount"),
+	    'generationCount', SUM("generationCount"),
+	    'downloadCount', SUM("downloadCount"),
+	    'entries', COUNT(*)
+		) metrics
+	FROM entries_multiplied er
+	JOIN "User" u ON u.id = er."userId"
+	WHERE u."deletedAt" IS NULL AND u.id > 0
+	GROUP BY "userId"
+)`,
+      true,
+      true,
+    ],
+  ];
+};
+
 const genRows = async () => {
   const users = genUsers(numRows, true);
   const userIds = users.map((u) => u[4] as number);
@@ -1966,6 +2308,10 @@ const genRows = async () => {
   const commentV2Reactions = genCommentV2Reactions(numRows, userIds, commentsV2AllIds);
   const imageReactions = genImageReactions(numRows, userIds, imageIds);
   const postReactions = genPostReactions(numRows, userIds, postIds);
+
+  const leaderboards = genLeaderboards();
+
+  const homeblocks = genHomeBlocks(collectionData);
 
   /*
   Account
