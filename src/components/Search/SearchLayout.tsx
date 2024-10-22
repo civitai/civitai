@@ -1,5 +1,4 @@
 import {
-  Container,
   createStyles,
   Divider,
   Group,
@@ -10,15 +9,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 
-import {
-  createContext,
-  Dispatch,
-  SetStateAction,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
@@ -75,7 +66,7 @@ const useStyles = createStyles((theme) => {
       width: `${SIDEBAR_SIZE}px`,
 
       transition: 'margin 200ms ease',
-      borderRight: '2px solid',
+      borderRight: '1px solid',
       borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
       background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
       display: 'flex',
@@ -89,6 +80,7 @@ const useStyles = createStyles((theme) => {
         width: '100%',
         marginLeft: `-100%`,
         position: 'absolute',
+        border: 'none',
       },
     },
 
@@ -120,9 +112,11 @@ const searchQuerySchema = z
 export function SearchLayout({
   children,
   indexName,
+  leftSidebar,
 }: {
   children: React.ReactNode;
   indexName: SearchIndex;
+  leftSidebar?: React.ReactNode;
 }) {
   const isMobile = useIsMobile();
   const [sidebarOpenLocalStorage, setSidebarOpenLocalStorage] = useLocalStorage({
@@ -163,6 +157,7 @@ export function SearchLayout({
         <AppLayout
           renderSearchComponent={renderSearchComponent}
           scrollable={isMobile ? !sidebarOpen : true}
+          left={leftSidebar}
         >
           {children}
         </AppLayout>
@@ -183,7 +178,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <div className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+    <aside className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -202,7 +197,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
       </Group>
       <Divider />
       <ScrollArea className="h-full p-4">{children}</ScrollArea>
-    </div>
+    </aside>
   );
 };
 

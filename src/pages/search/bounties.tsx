@@ -21,9 +21,6 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 export default function BountySearch() {
   return (
     <SearchLayout.Root>
-      <SearchLayout.Filters>
-        <RenderFilters />
-      </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
         <BountyHitList />
@@ -158,5 +155,16 @@ export function BountyHitList() {
 }
 
 BountySearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={BOUNTIES_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <SearchLayout
+      indexName={BOUNTIES_SEARCH_INDEX}
+      leftSidebar={
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
+      }
+    >
+      {page}
+    </SearchLayout>
+  );
 };

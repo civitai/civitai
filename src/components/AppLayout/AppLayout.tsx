@@ -43,11 +43,7 @@ export function AppLayout({
         <NotFound />
       ) : (
         <div className="flex flex-1 overflow-hidden">
-          {left && (
-            <aside className="scroll-area relative border-r border-gray-3 dark:border-dark-4">
-              {left}
-            </aside>
-          )}
+          {left}
           <MainContent
             subNav={subNav}
             scrollable={scrollable}
