@@ -1858,6 +1858,16 @@ const genPostReactions = (num: number, userIds: number[], postIds: number[]) => 
 const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) => {
   // id, "createdAt", "updatedAt", "userId", metadata, index, type, permanent, "sourceId"
 
+  const collectModel = collectionData.filter((c) => c.type === 'Model').map((c) => c.id);
+  const collectImage = collectionData.filter((c) => c.type === 'Image').map((c) => c.id);
+  const collectPost = collectionData.filter((c) => c.type === 'Post').map((c) => c.id);
+  const collectArticle = collectionData.filter((c) => c.type === 'Article').map((c) => c.id);
+
+  if (!collectModel.length) collectModel.push(1);
+  if (!collectImage.length) collectImage.push(1);
+  if (!collectPost.length) collectPost.push(1);
+  if (!collectArticle.length) collectArticle.push(1);
+
   return [
     [
       2,
@@ -1875,9 +1885,9 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       '2023-07-25 18:13:12.053',
       null,
       -1,
-      `{"link": "/models", "title": "Featured Models", "linkText": "Explore all models", "withIcon": true, "collection": {"id": ${
-        rand(collectionData.filter((c) => c.type === 'Model')) ?? 1
-      }, "rows": 2, "limit": 8}, "description": "A filtered list of all models on the site, to view the complete model list click "explore all models"."}`,
+      `{"link": "/models", "title": "Featured Models", "linkText": "Explore all models", "withIcon": true, "collection": {"id": ${rand(
+        collectModel
+      )}, "rows": 2, "limit": 8}, "description": "A filtered list of all models on the site, to view the complete model list click "explore all models"."}`,
       3,
       'Collection',
       false,
@@ -1888,9 +1898,9 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       '2023-07-25 18:13:12.053',
       null,
       -1,
-      `{"link": "/images", "title": "Featured Images", "linkText": "Explore all images", "withIcon": true, "collection": {"id": ${
-        rand(collectionData.filter((c) => c.type === 'Image')) ?? 1
-      }, "rows": 2, "limit": 8}, "description": "All sorts of cool pictures created by our community, from simple shapes to detailed landscapes or human faces. A virtual canvas where you can unleash your creativity or get inspired."}`,
+      `{"link": "/images", "title": "Featured Images", "linkText": "Explore all images", "withIcon": true, "collection": {"id": ${rand(
+        collectImage
+      )}, "rows": 2, "limit": 8}, "description": "All sorts of cool pictures created by our community, from simple shapes to detailed landscapes or human faces. A virtual canvas where you can unleash your creativity or get inspired."}`,
       1,
       'Collection',
       false,
@@ -1901,9 +1911,9 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       '2023-07-25 18:13:12.053',
       null,
       -1,
-      `{"link": "/posts", "title": "Featured Posts", "linkText": "Explore all posts", "withIcon": true, "collection": {"id": ${
-        rand(collectionData.filter((c) => c.type === 'Post')) ?? 1
-      }, "limit": 8}, "description": "Find groups of pictures created by our community, using specific models."}`,
+      `{"link": "/posts", "title": "Featured Posts", "linkText": "Explore all posts", "withIcon": true, "collection": {"id": ${rand(
+        collectPost
+      )}, "limit": 8}, "description": "Find groups of pictures created by our community, using specific models."}`,
       7,
       'Collection',
       false,
@@ -1914,9 +1924,9 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       '2023-07-25 18:13:12.053',
       null,
       -1,
-      `{"link": "/articles", "title": "Featured Articles", "linkText": "Explore all articles", "withIcon": true, "collection": {"id": ${
-        rand(collectionData.filter((c) => c.type === 'Article')) ?? 1
-      }, "limit": 8}, "description": "Find information, guides and tutorials, analysis on particular topics and much more. From the community, for the community."}`,
+      `{"link": "/articles", "title": "Featured Articles", "linkText": "Explore all articles", "withIcon": true, "collection": {"id": ${rand(
+        collectArticle
+      )}, "limit": 8}, "description": "Find information, guides and tutorials, analysis on particular topics and much more. From the community, for the community."}`,
       8,
       'Collection',
       false,
