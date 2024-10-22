@@ -1,6 +1,6 @@
 import { Anchor, Button, ButtonProps, Code, Group, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';

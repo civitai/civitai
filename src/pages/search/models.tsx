@@ -29,9 +29,6 @@ import { NoContent } from '~/components/NoContent/NoContent';
 export default function ModelsSearch() {
   return (
     <SearchLayout.Root>
-      <SearchLayout.Filters>
-        <RenderFilters />
-      </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
         <ModelsHitList />
@@ -202,7 +199,18 @@ export function ModelsHitList() {
 }
 
 ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={MODELS_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <SearchLayout
+      indexName={MODELS_SEARCH_INDEX}
+      leftSidebar={
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
+      }
+    >
+      {page}
+    </SearchLayout>
+  );
 };
 
 // const createRenderElement = trieMemoize(
