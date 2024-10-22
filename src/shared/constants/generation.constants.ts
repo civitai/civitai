@@ -267,6 +267,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       covered: resource.covered,
       minor: resource.model.minor,
       available: resource.available,
+      fileSizeKB: resource.fileSizeKB,
     };
   });
 }

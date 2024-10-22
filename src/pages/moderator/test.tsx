@@ -1,4 +1,6 @@
 import { Box, Button, Table, Text, useMantineTheme } from '@mantine/core';
+import { useLocalStorage, useSessionStorage } from '@mantine/hooks';
+import Link from 'next/link';
 import React, {
   Key,
   createContext,
@@ -51,11 +53,15 @@ export default function Test() {
         .toString()
         .split('\r\n')
         .reduce<Record<string, string[]>>((acc, value) => {
-          const [hash, link] = value.replaceAll('"', '').split(',');
-          if (!link?.startsWith('http')) return acc;
+          const [hash, links] = value.replaceAll('"', '').split(',');
+
+          if (!links?.startsWith('http')) return acc;
 
           if (!acc[hash]) acc[hash] = [];
-          acc[hash] = [...new Set([...acc[hash], link])];
+          for (const link of links.split(';')) {
+            acc[hash] = [...new Set([...acc[hash], link.trim()])];
+          }
+
           return acc;
         }, {});
       setState(result);
@@ -65,6 +71,7 @@ export default function Test() {
 
   return (
     <div className="container">
+      <Link href="/moderator/test?test=true">Test link</Link>
       {!state ? (
         <input
           type="file"

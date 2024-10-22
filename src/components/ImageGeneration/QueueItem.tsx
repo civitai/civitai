@@ -47,7 +47,7 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { WorkflowStatus } from '@civitai/client';
+import { TimeSpan, WorkflowStatus } from '@civitai/client';
 import {
   orchestratorPendingStatuses,
   orchestratorRefundableStatuses,
@@ -135,7 +135,9 @@ export function QueueItem({
       if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
     };
   }, [request.id, request.createdAt, pendingProcessing]);
-  const refundTime = dayjs(request.createdAt).add(EXPIRY_TIME, 'minute').toDate();
+  const refundTime = dayjs(request.createdAt)
+    .add(step.timeout ? new TimeSpan(step.timeout).minutes : EXPIRY_TIME, 'minute')
+    .toDate();
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ workflowId: request.id });
