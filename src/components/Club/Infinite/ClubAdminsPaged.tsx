@@ -22,11 +22,11 @@ import { IconTrash } from '@tabler/icons-react';
 import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
 import { IconPencil } from '@tabler/icons-react';
-import { dialogStore } from '../../Dialog/dialogStore';
+// import { dialogStore } from '../../Dialog/dialogStore';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '../../../utils/notifications';
 import { UserAvatar } from '../../UserAvatar/UserAvatar';
-import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
+// import { ClubAdminUpdateModal } from '../ClubAdminUpsertForm';
 import { ClubAdmin } from '../../../types/router';
 
 export function ClubAdminsPaged({ clubId }: Props) {
@@ -102,12 +102,12 @@ export function ClubAdminsPaged({ clubId }: Props) {
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
-                            dialogStore.trigger({
-                              component: ClubAdminUpdateModal,
-                              props: {
-                                clubAdmin: admin,
-                              },
-                            });
+                            // dialogStore.trigger({
+                            //   component: ClubAdminUpdateModal,
+                            //   props: {
+                            //     clubAdmin: admin,
+                            //   },
+                            // });
                           }}
                         >
                           <IconPencil />

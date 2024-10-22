@@ -11,12 +11,10 @@ import {
   Stack,
   ScrollArea,
   Divider,
-  Box,
   ActionIcon,
   Tooltip,
 } from '@mantine/core';
 import { MyCollections } from '~/components/Collections/MyCollections';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconLayoutSidebarLeftCollapse,
@@ -26,11 +24,10 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { dialogs } from '~/components/Dialog/routed-dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import CollectionEditModal from '~/components/Collections/CollectionEditModal';
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
+const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 
 const useStyle = createStyles((theme) => ({
   container: {

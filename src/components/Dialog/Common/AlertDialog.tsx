@@ -29,7 +29,7 @@ const DEFAULT_DIALOG_TEMPLATES: Record<DialogType, Omit<Props, 'type'>> = {
   },
 };
 
-export const AlertDialog = ({ type, ...props }: Props) => {
+export default function AlertDialog({ type, ...props }: Props) {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { children, icon, title } = {
@@ -61,4 +61,4 @@ export const AlertDialog = ({ type, ...props }: Props) => {
       )}
     </Modal>
   );
-};
+}

@@ -1,12 +1,12 @@
 import { Menu } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';
-import { dialogStore } from '../Dialog/dialogStore';
+// import { dialogStore } from '../Dialog/dialogStore';
 import { useQueryUserContributingClubs } from './club.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMemo } from 'react';
 import { ClubAdminPermission } from '@prisma/client';
-import { ClubPostFromResourceModal } from './ClubPost/ClubPostUpsertForm';
+// import { ClubPostFromResourceModal } from './ClubPost/ClubPostUpsertForm';
 import { IconPencilPin } from '@tabler/icons-react';
 
 export function ClubPostFromResourceMenuItem({ entityType, entityId }: Props) {
@@ -24,13 +24,13 @@ export function ClubPostFromResourceMenuItem({ entityType, entityId }: Props) {
   }, [userClubs, currentUser]);
 
   const onClick = async () => {
-    dialogStore.trigger({
-      component: ClubPostFromResourceModal,
-      props: {
-        entityType,
-        entityId,
-      },
-    });
+    // dialogStore.trigger({
+    //   component: ClubPostFromResourceModal,
+    //   props: {
+    //     entityType,
+    //     entityId,
+    //   },
+    // });
   };
 
   if (!features.clubs || canCreateClubPostClubs?.length === 0 || isLoadingUserClubs) {

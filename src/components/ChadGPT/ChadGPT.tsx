@@ -30,7 +30,7 @@ export default function ChadGPT({ isAuthed }: { isAuthed: boolean }) {
   return null;
 }
 
-function ChadGPTModal() {
+export function ChadGPTModal() {
   const dialog = useDialogContext();
 
   return (
@@ -69,7 +69,7 @@ function ChadGPTModal() {
           animation: '1s fadeIn 8s linear forwards',
           outline: 'none',
         }}
-        onClick={() => dialogStore.closeById('chadgpt')}
+        onClick={() => dialog.onClose()}
       >
         <IconCircleX size={48} strokeWidth={1} />
       </ActionIcon>
