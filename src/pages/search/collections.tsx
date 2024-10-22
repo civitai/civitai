@@ -23,9 +23,6 @@ import { NoContent } from '~/components/NoContent/NoContent';
 export default function CollectionSearch() {
   return (
     <SearchLayout.Root>
-      <SearchLayout.Filters>
-        <RenderFilters />
-      </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
         <CollectionHitList />
@@ -168,5 +165,16 @@ export function CollectionHitList() {
 }
 
 CollectionSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={COLLECTIONS_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <SearchLayout
+      indexName={COLLECTIONS_SEARCH_INDEX}
+      leftSidebar={
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
+      }
+    >
+      {page}
+    </SearchLayout>
+  );
 };
