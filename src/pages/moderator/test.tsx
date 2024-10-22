@@ -15,7 +15,6 @@ import { StoreApi, create, createStore } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { Announcement } from '~/components/Announcements/Announcement';
-import { ChadGPTModal } from '~/components/ChadGPT/ChadGPT';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -46,10 +45,6 @@ const useClickedStore = create<{
 
 export default function Test() {
   const [state, setState] = useState<Record<string, string[]> | null>();
-
-  // useEffect(() => {
-  //   dialogStore.trigger({ id: 'chadgpt', component: ChadGPTModal });
-  // }, []);
 
   function handleLoad(files: FileList) {
     const reader = new FileReader();

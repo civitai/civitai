@@ -21,7 +21,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import ChadGPT from '~/components/ChadGPT/ChadGPT';
+// import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
@@ -130,7 +130,7 @@ function MyApp(props: CustomAppProps) {
           <RegisterCatchNavigation />
           <RouterTransition />
           <UpdateRequiredWatcher />
-          <ChadGPT isAuthed={!!session} />
+          {/* <ChadGPT isAuthed={!!session} /> */}
           <SessionProvider
             session={session}
             refetchOnWindowFocus={false}
