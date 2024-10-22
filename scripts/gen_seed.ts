@@ -2323,8 +2323,8 @@ const genRows = async () => {
   ApiKey
   ✔️ Article
     ✔️ ArticleEngagement
-    ArticleMetric
-    ArticleRank
+    ❌ ArticleMetric
+    ❌ ArticleRank
     ✔️ ArticleReaction
     ArticleReport
   BlockedImage
@@ -2332,12 +2332,12 @@ const genRows = async () => {
     BountyBenefactor
     BountyEngagement
     BountyEntry
-    BountyEntryMetric
-    BountyEntryRank
+    ❌ BountyEntryMetric
+    ❌ BountyEntryRank
     BountyEntryReaction
     BountyEntryReport
-    BountyMetric
-    BountyRank
+    ❌ BountyMetric
+    ❌ BountyRank
     BountyReport
   BuildGuide
   BuzzClaim
@@ -2362,8 +2362,8 @@ const genRows = async () => {
   ✔️ Collection
     CollectionContributor
     ✔️ CollectionItem
-    CollectionMetric
-    CollectionRank
+    ❌ CollectionMetric
+    ❌ CollectionRank
     CollectionReport
   ✔️ Comment
     ✔️ CommentReaction
@@ -2383,27 +2383,27 @@ const genRows = async () => {
   DownloadHistory
   EntityAccess
   EntityCollaborator
-  EntityMetric
+  ❌ EntityMetric
   File
   GenerationServiceProvider
-  HomeBlock
+  ✔️ HomeBlock
   ✔️ Image
     ImageConnection
     ✔️ ImageEngagement
     ImageFlag
-    ImageMetric
-    ImageRank
+    ❌ ImageMetric
+    ❌ ImageRank
     ImageRatingRequest
     ✔️ ImageReaction
     ImageReport
-    ImageResource
+    ✔️ ImageResource
     ✔️ ImageTechnique
     ✔️ ImageTool
     ImagesOnModels
   Import
   JobQueue
   KeyValue
-  Leaderboard
+  ✔️ Leaderboard
   LeaderboardResult
   LegendsBoardResult
   License
@@ -2418,23 +2418,23 @@ const genRows = async () => {
     ModelFileHash
     ModelFlag
   ModelInterest
-  ModelMetric
-  ModelMetricDaily
-  ModelRank_New
+  ❌ ModelMetric
+  ❌ ModelMetricDaily
+  ❌ ModelRank_New
   ModelReport
   ✔️ ModelVersion
     ✔️ ModelVersionEngagement
     ModelVersionExploration
-    ModelVersionMetric
+    ❌ ModelVersionMetric
     ModelVersionMonetization
-    ModelVersionRank
+    ❌ ModelVersionRank
     ModelVersionSponsorshipSettings
   OauthClient
   OauthToken
   Partner
   ✔️ Post
-    PostMetric
-    PostRank
+    ❌ PostMetric
+    ❌ PostRank
     ✔️ PostReaction
     PostReport
   PressMention
@@ -2461,8 +2461,8 @@ const genRows = async () => {
   SessionInvalidation
   ✔️ Tag
     ✔️ TagEngagement
-    TagMetric
-    TagRank
+    ❌ TagMetric
+    ❌ TagRank
     ✔️ TagsOnArticle
     TagsOnBounty
     TagsOnCollection
@@ -2483,12 +2483,12 @@ const genRows = async () => {
     UserCosmeticShopPurchases
     ✔️ UserEngagement
     UserLink
-    UserMetric
+    ❌ UserMetric
     UserNotificationSettings
     UserPaymentConfiguration
     UserProfile
     UserPurchasedRewards
-    UserRank
+    ❌ UserRank
     UserReferral
     UserReferralCode
     UserReport
