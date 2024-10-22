@@ -2207,7 +2207,7 @@ First model added in the last 30 days`,
 const genRows = async () => {
   const users = genUsers(numRows, true);
   const userIds = users.map((u) => u[4] as number);
-  await insertRows('User', users);
+  // await insertRows('User', users);
 
   const models = genModels(numRows, userIds);
   const modelData = models.map((m) => ({ id: m[6] as number, type: m[25] as ModelUploadType }));
