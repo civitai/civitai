@@ -13,6 +13,7 @@ import {
   ModelUploadType,
   ModelVersionEngagementType,
   NsfwLevel,
+  Prisma,
   ReviewReactions,
   ScanResultCode,
   TagEngagementType,
@@ -26,117 +27,21 @@ import { capitalize } from 'lodash-es';
 import { constants } from '~/server/common/constants';
 import { CheckpointType, ModelType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-
-// const getSchema = async () => {
-//   const query = `
-//     select col.table_name,
-//            col.column_name,
-//            col.column_default,
-//            col.is_nullable,
-//            col.data_type,
-//            col.udt_name,
-//            string_agg(enu.enumlabel, '|' order by enu.enumsortorder) as enum_values
-// --        array_agg(enu.enumlabel) as enum_values
-//     from information_schema.columns col
-//            join information_schema.tables tab on tab.table_schema = col.table_schema
-//       and tab.table_name = col.table_name
-//       and tab.table_type = 'BASE TABLE'
-//            left join pg_type typ on col.udt_name = typ.typname
-//            left join pg_enum enu on typ.oid = enu.enumtypid
-//     where col.table_schema = 'public'
-// --       and typ.typtype = 'e'
-//     group by col.table_name,
-//              col.ordinal_position,
-//              col.column_name,
-//              col.column_default,
-//              col.is_nullable,
-//              col.data_type,
-//              col.udt_name
-//     order by col.table_name,
-//              col.ordinal_position;
-//   `;
-//
-//   type Query = {
-//     table_name: string;
-//     column_name: string;
-//     udt_name: string;
-//     data_type: string;
-//     is_nullable: 'YES' | 'NO';
-//     column_default: string | null;
-//     enum_values: string | null;
-//   };
-//
-//   const { rows } = await pgDbRead.query<Query>(query);
-//   console.log(rows[0]);
-//   console.log(rows[0].enum_values?.split('|'));
-//
-//   const tableData: { [p: string]: Omit<Query, 'table_name'>[] } = {};
-//
-//   for (const r of rows) {
-//     if (
-//       ![
-//         'integer',
-//         'bigint',
-//         'double precision',
-//         'numeric',
-//
-//         'timestamp with time zone',
-//         'timestamp without time zone',
-//         'date',
-//
-//         'text',
-//         'character varying',
-//
-//         'jsonb',
-//
-//         'boolean',
-//
-//         'ARRAY',
-//
-//         'USER-DEFINED',
-//       ].includes(r.data_type)
-//     )
-//       console.log(r);
-//
-//     // if (r.data_type === 'ARRAY') console.log(r);
-//
-//     const { table_name, ...rest } = r;
-//
-//     if (!tableData.hasOwnProperty(table_name)) {
-//       tableData[table_name] = [rest];
-//     } else {
-//       tableData[table_name].push(rest);
-//     }
-//   }
-//   console.log(tableData);
-//   return tableData;
-// };
-//
-// const desiredTables = ['User', 'Model'];
-//
-// const makeRows = async (schema: AsyncReturnType<typeof getSchema>) => {
-//   desiredTables.forEach((t) => {
-//     const s = schema[t];
-//     for (const col of s) {
-//       const { data_type } = col;
-//       let val: any;
-//       // TODO get foreign key
-//       if (['integer', 'bigint'].includes(data_type)) val = 0; // change to random
-//     }
-//   });
-// };
-//
-// const getRows = async (table: string) => {
-//   // Prisma.sql``
-//   const query = `SELECT * FROM "${table}" LIMIT 1`;
-//   const { rows } = await pgDbRead.query(query);
-//   console.log(rows[0]);
-//   return rows
-// }
+import { pgDbWrite } from '~/server/db/pgDb';
 
 const randw = faker.helpers.weightedArrayElement;
 const rand = faker.helpers.arrayElement;
 const fbool = faker.datatype.boolean;
+
+const numRows = 100;
+
+const insertRows = async (table: string, data: any[][]) => {
+  return await pgDbWrite.query(
+    Prisma.sql`INSERT INTO ${table} VALUES ${Prisma.join(
+      data.map((d) => Prisma.sql`(${Prisma.join(d)})`)
+    )}`
+  );
+};
 
 /**
  * User
@@ -1949,14 +1854,15 @@ const genPostReactions = (num: number, userIds: number[], postIds: number[]) => 
 };
 
 const genRows = async () => {
-  const users = genUsers(10, true);
+  const users = genUsers(numRows, true);
   const userIds = users.map((u) => u[4] as number);
+  await insertRows('User', users);
 
-  const models = genModels(10, userIds);
+  const models = genModels(numRows, userIds);
   const modelData = models.map((m) => ({ id: m[6] as number, type: m[25] as ModelUploadType }));
   const modelIds = models.map((m) => m[6] as number);
 
-  const mvs = genMvs(10, modelData);
+  const mvs = genMvs(numRows, modelData);
   const mvData = mvs.map((mv) => ({
     id: mv[6] as number,
     modelId: mv[7] as number,
@@ -1964,30 +1870,30 @@ const genRows = async () => {
   }));
   const mvIds = mvData.map((mv) => mv.id);
 
-  const mFiles = genMFiles(10, mvData);
+  const mFiles = genMFiles(numRows, mvData);
 
-  const reviews = genReviews(10, userIds, mvData);
+  const reviews = genReviews(numRows, userIds, mvData);
   const reviewIds = reviews.map((r) => r[0] as number);
 
-  const posts = genPosts(10, userIds, mvIds);
+  const posts = genPosts(numRows, userIds, mvIds);
   const postIds = posts.map((p) => p[0] as number);
 
-  const images = genImages(10, userIds, postIds);
+  const images = genImages(numRows, userIds, postIds);
   const imageIds = images.map((i) => i[5] as number);
 
-  const articles = genArticles(10, userIds, imageIds);
+  const articles = genArticles(numRows, userIds, imageIds);
   const articleIds = articles.map((i) => i[0] as number);
 
   const tools = genTools(10);
   const techniques = genTechniques();
 
-  const collections = genCollections(10, userIds, imageIds);
+  const collections = genCollections(numRows, userIds, imageIds);
   const collectionData = collections.map((c) => ({
     id: c[0] as number,
     type: c[8] as CollectionType,
   }));
   const collectionItems = genCollectionItems(
-    10,
+    numRows,
     collectionData,
     articleIds,
     postIds,
@@ -1997,41 +1903,41 @@ const genRows = async () => {
   );
 
   const imageTools = genImageTools(
-    10,
+    numRows,
     imageIds,
     tools.map((t) => t[0] as number)
   );
   const imageTechniques = genImageTechniques(
-    10,
+    numRows,
     imageIds,
     techniques.map((t) => t[0] as number)
   );
 
-  const tags = genTags(10);
+  const tags = genTags(numRows);
   const tagIds = tags.map((t) => t[4] as number);
 
-  const tagsOnArticles = genTagsOnArticles(10, tagIds, articleIds);
-  const tagsOnPosts = genTagsOnPosts(10, tagIds, postIds);
-  const tagsOnImages = genTagsOnImages(10, tagIds, imageIds);
-  const tagsOnModels = genTagsOnModels(10, tagIds, modelIds);
+  const tagsOnArticles = genTagsOnArticles(numRows, tagIds, articleIds);
+  const tagsOnPosts = genTagsOnPosts(numRows, tagIds, postIds);
+  const tagsOnImages = genTagsOnImages(numRows, tagIds, imageIds);
+  const tagsOnModels = genTagsOnModels(numRows, tagIds, modelIds);
 
   // TODO TagsOnImageVote
   // TODO TagsOnModelsVote
 
-  const commentsV1 = genCommentsModel(10, userIds, modelIds, [], false);
+  const commentsV1 = genCommentsModel(numRows, userIds, modelIds, [], false);
   const commentsV1Ids = commentsV1.map((mc) => mc[0] as number);
-  const commentsV1Thread = genCommentsModel(10, userIds, modelIds, commentsV1Ids, true);
+  const commentsV1Thread = genCommentsModel(numRows, userIds, modelIds, commentsV1Ids, true);
   const commentsV1AllIds = commentsV1Ids.concat(commentsV1Thread.map((mc) => mc[0] as number));
 
-  const threads = genThreads(10, imageIds, postIds, reviewIds, articleIds, [], [], false);
+  const threads = genThreads(numRows, imageIds, postIds, reviewIds, articleIds, [], [], false);
   const commentsV2 = genCommentsV2(
-    10,
+    numRows,
     userIds,
     threads.map((t) => t[0] as number)
   );
   const commentsV2Ids = commentsV2.map((mc) => mc[0] as number);
   const threadsNest = genThreads(
-    10,
+    numRows,
     [],
     [],
     [],
@@ -2041,26 +1947,26 @@ const genRows = async () => {
     true
   );
   const commentsV2Nest = genCommentsV2(
-    10,
+    numRows,
     userIds,
     threadsNest.map((t) => t[0] as number)
   );
   const commentsV2AllIds = commentsV2Ids.concat(commentsV2Nest.map((mc) => mc[0] as number));
 
-  const resources = genImageResources(10, mvIds, imageIds);
+  const resources = genImageResources(numRows, mvIds, imageIds);
 
-  const articleEngage = genArticleEngagements(10, userIds, articleIds);
-  const imageEngage = genImageEngagements(10, userIds, imageIds);
-  const modelEngage = genModelEngagements(10, userIds, modelIds);
-  const mvEngage = genModelVersionEngagements(10, userIds, mvIds);
-  const tagEngage = genTagEngagements(10, userIds, tagIds);
-  const userEngage = genUserEngagements(10, userIds, userIds);
+  const articleEngage = genArticleEngagements(numRows, userIds, articleIds);
+  const imageEngage = genImageEngagements(numRows, userIds, imageIds);
+  const modelEngage = genModelEngagements(numRows, userIds, modelIds);
+  const mvEngage = genModelVersionEngagements(numRows, userIds, mvIds);
+  const tagEngage = genTagEngagements(numRows, userIds, tagIds);
+  const userEngage = genUserEngagements(numRows, userIds, userIds);
 
-  const articleReactions = genArticleReactions(10, userIds, articleIds);
-  const commentV1Reactions = genCommentReactions(10, userIds, commentsV1AllIds);
-  const commentV2Reactions = genCommentV2Reactions(10, userIds, commentsV2AllIds);
-  const imageReactions = genImageReactions(10, userIds, imageIds);
-  const postReactions = genPostReactions(10, userIds, postIds);
+  const articleReactions = genArticleReactions(numRows, userIds, articleIds);
+  const commentV1Reactions = genCommentReactions(numRows, userIds, commentsV1AllIds);
+  const commentV2Reactions = genCommentV2Reactions(numRows, userIds, commentsV2AllIds);
+  const imageReactions = genImageReactions(numRows, userIds, imageIds);
+  const postReactions = genPostReactions(numRows, userIds, postIds);
 
   /*
   Account
@@ -2249,7 +2155,11 @@ const genRows = async () => {
    */
 };
 
-genRows().then(() => {
+const main = async () => {
+  await genRows();
+};
+
+main().then(() => {
   // pgDbRead.end();
   process.exit(0);
 });
