@@ -13,7 +13,6 @@ export function ScrollArea({
   className,
   scrollRestore,
   intersectionObserverOptions,
-  disabled,
   ...props
 }: ScrollAreaProps) {
   const { ref: scrollRef, key } = useScrollRestore<HTMLDivElement>(scrollRestore);
@@ -22,11 +21,7 @@ export function ScrollArea({
   return (
     <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
       <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
-        <Box
-          ref={scrollRef}
-          className={clsx(!disabled && 'scroll-area', 'flex-1 @container', className)}
-          {...props}
-        >
+        <Box ref={scrollRef} className={clsx('scroll-area', className)} {...props}>
           {mobile && <DragLoader />}
           {children}
         </Box>
@@ -41,7 +36,6 @@ export type ScrollAreaProps = BoxProps & {
   scrollRestore?: UseScrollRestoreProps;
   id?: string;
   intersectionObserverOptions?: IntersectionObserverInit;
-  disabled?: boolean;
 };
 
 function DragLoader() {
