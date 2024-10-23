@@ -79,6 +79,7 @@ export const constants = {
     'Hunyuan 1',
     'Lumina',
     'Kolors',
+    'Illustrious',
     'Other',
   ],
   hiddenBaseModels: [
@@ -421,6 +422,7 @@ export const baseModelSetTypes = [
   'HyDit1',
   'ODOR',
   'Flux1',
+  'Illustrious',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -439,6 +441,7 @@ export const baseModelSets = defineBaseModelSets({
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
+  Illustrious: ['Illustrious'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -457,6 +460,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   SCascade: 'Stable Cascade',
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
+  Illustrious: 'Illustrious',
 });
 
 type LicenseDetails = {
@@ -531,6 +535,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  'illustrious license': {
+    url: 'https://freedevproject.org/faipl-1.0-sd/',
+    name: 'Illustrious License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -567,6 +575,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
+  Illustrious: baseLicenses['illustrious license'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
