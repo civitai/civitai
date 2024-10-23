@@ -152,6 +152,9 @@ export function SearchableMultiSelectRefinementList({
     if (refinedItems.length === 0 && itemsAreRefined.length > 0) {
       // On initial render refine items
       setRefinedItems(itemsAreRefined);
+    } else if (itemsAreRefined.length === 0 && refinedItems.length > 0) {
+      // On clear all filters
+      setRefinedItems([]);
     }
   }, [items, refinedItems]);
 
