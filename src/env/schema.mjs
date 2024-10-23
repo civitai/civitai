@@ -16,6 +16,7 @@ export const serverSchema = z.object({
   DATABASE_PG_URL: z.string().url().optional(),
   DATABASE_REPLICA_URL: z.string().url(),
   DATABASE_REPLICA_LONG_URL: z.string().url().optional(),
+  DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.string().url(),
   NOTIFICATION_DB_REPLICA_URL: z.string().url(),
   DATABASE_SSL_CA: z.string().optional(),
@@ -193,7 +194,7 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().optional(),
+  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string().optional(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),

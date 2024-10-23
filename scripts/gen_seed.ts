@@ -12,7 +12,6 @@ import {
   ModelUploadType,
   ModelVersionEngagementType,
   NsfwLevel,
-  Prisma,
   ReviewReactions,
   ScanResultCode,
   TagEngagementType,
@@ -22,7 +21,8 @@ import {
   TrainingStatus,
   UserEngagementType,
 } from '@prisma/client';
-import { capitalize } from 'lodash-es';
+import { capitalize, pull, range, without } from 'lodash-es';
+import format from 'pg-format';
 import { constants } from '~/server/common/constants';
 import { CheckpointType, ModelType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
@@ -32,13 +32,47 @@ const randw = faker.helpers.weightedArrayElement;
 const rand = faker.helpers.arrayElement;
 const fbool = faker.datatype.boolean;
 
-const numRows = 100;
+const numRows = 300;
+
+// TODO fix tables ownership from doadmin to civitai
 
 const insertRows = async (table: string, data: any[][]) => {
-  return await pgDbWrite.query(
-    Prisma.sql`INSERT INTO ${table} VALUES ${Prisma.join(
-      data.map((d) => Prisma.sql`(${Prisma.join(d)})`)
-    )}`
+  console.log(`Inserting ${data.length} rows into ${table}`);
+
+  // language=text
+  // let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
+  // language=text
+  let query = 'INSERT INTO %I VALUES %L';
+
+  if (
+    !['ImageTool', 'ImageTechnique'].includes(table) &&
+    !table.startsWith('TagsOn') &&
+    !table.endsWith('Engagement')
+  ) {
+    query += ' RETURNING ID';
+  }
+
+  try {
+    const ret = await pgDbWrite.query<{ id: number }>(format(query, table, data));
+
+    if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
+    else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
+
+    return ret.rows.map((r) => r.id);
+  } catch (error) {
+    const e = error as MixedObject;
+    console.log(`\t-> ❌  ${e.message}`);
+    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+    return [];
+  }
+};
+
+const truncateRows = async () => {
+  console.log('Truncating tables');
+  await pgDbWrite.query(
+    'TRUNCATE TABLE "User", "Tag", "Leaderboard", "Tool", "Technique" RESTART IDENTITY CASCADE'
   );
 };
 
@@ -475,12 +509,13 @@ const genMFiles = (num: number, mvData: { id: number; type: ModelUploadType }[])
  * ResourceReview
  */
 const genReviews = (num: number, userIds: number[], mvData: { id: number; modelId: number }[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
-    const mv = rand(mvData);
     const isGood = fbool();
+    const mv = rand(mvData);
+    const existUsers = ret.filter((r) => r[1] === mv.id).map((r) => r[4] as number);
 
     const row = [
       step, // id
@@ -490,7 +525,7 @@ const genReviews = (num: number, userIds: number[], mvData: { id: number; modelI
         { value: null, weight: 10 },
         { value: faker.lorem.sentence(), weight: 1 },
       ]), // details
-      rand(userIds), // userId
+      rand(without(userIds, ...existUsers)), // userId
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       fbool(0.01), // exclude
@@ -631,7 +666,7 @@ const genCollectionItems = (
   modelIds: number[],
   userIds: number[]
 ) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
@@ -642,16 +677,25 @@ const genCollectionItems = (
       { value: 'REVIEW', weight: 1 },
     ]);
     const isReviewed = fbool(0.001);
+    const exist = ret.filter((r) => r[3] === collection.id);
 
     const row = [
       step, // id
       created, // createdAt
       rand([null, created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       collection.id, // collectionId
-      collection.type === 'Article' ? rand(articleIds) : null, // articleId
-      collection.type === 'Post' ? rand(postIds) : null, // postId
-      collection.type === 'Image' ? rand(imageIds) : null, // imageId
-      collection.type === 'Model' ? rand(modelIds) : null, // modelId
+      collection.type === 'Article'
+        ? rand(without(articleIds, ...exist.map((e) => e[4] as number)))
+        : null, // articleId
+      collection.type === 'Post'
+        ? rand(without(postIds, ...exist.map((e) => e[5] as number)))
+        : null, // postId
+      collection.type === 'Image'
+        ? rand(without(imageIds, ...exist.map((e) => e[6] as number)))
+        : null, // imageId
+      collection.type === 'Model'
+        ? rand(without(modelIds, ...exist.map((e) => e[7] as number)))
+        : null, // modelId
       rand([null, rand(userIds)]), // addedById
       null, // note
       status, // status
@@ -733,7 +777,8 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
     const ext = mime.split('/').pop();
     const width = rand([128, 256, 512, 768, 1024, 1920]);
     const height = rand([128, 256, 512, 768, 1024, 1920]);
-    const hash = faker.string.sample(36);
+    let hash = faker.string.sample(36);
+    hash = hash.replace(/[\\"']/g, '_');
     const isGenned = fbool();
 
     // [{"name": "ahegao_sdxl_v4", "type": "lora", "weight": 0.95}]
@@ -752,9 +797,10 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
       width, // width
       !isGenned
         ? null
-        : `{"Size": "${width}x${height}", "seed": ${faker.string.numeric(
-            10
-          )}, "steps": ${faker.number.int(
+        : `{"Size": "${width}x${height}", "seed": ${faker.string.numeric({
+            length: 10,
+            allowLeadingZeros: false,
+          })}, "steps": ${faker.number.int(
             100
           )}, "prompt": "${faker.lorem.sentence()}", "sampler": "${rand(
             constants.samplers
@@ -791,9 +837,9 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
           )}, "width": ${width}, "height": ${height}}`
         : `{"hash": "${hash}", "size": ${faker.number.int(
             1_000_000
-          )}, "width": ${width}, "height": ${height}}, "audio": ${fbool(
+          )}, "width": ${width}, "height": ${height}, "audio": ${fbool(
             0.2
-          )}, "duration": ${faker.number.float(30)}`, // metadata
+          )}, "duration": ${faker.number.float(30)}}`, // metadata
       type, // type
       '{"wd14": "20279865", "scans": {"WD14": 1716391779426, "Rekognition": 1716391774556}, "rekognition": "20279864", "common-conversions": "20279863"}', // scanJobs
       randw([
@@ -827,8 +873,12 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
 const genArticles = (num: number, userIds: number[], imageIds: number[]) => {
   const ret = [];
 
+  let usableImageIds = imageIds;
+
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
+    const coverId = rand(usableImageIds);
+    usableImageIds = without(usableImageIds, coverId);
 
     const row = [
       step, // id
@@ -852,7 +902,7 @@ const genArticles = (num: number, userIds: number[], imageIds: number[]) => {
         },
       ]), // availability
       fbool(0.01), // unlisted
-      rand(imageIds), // coverId
+      coverId, // coverId
       randw([
         { value: 0, weight: 1 },
         { value: 1, weight: 4 },
@@ -887,11 +937,12 @@ const genImageTools = (num: number, imageIds: number[], toolIds: number[]) => {
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const imageId = rand(imageIds);
-    // newImageIds = newImageIds.filter((i) => i !== imageId);
+    const existTools: number[] = ret.filter((r) => r[0] === imageId).map((r) => r[1] as number);
+    const toolId = rand(without(toolIds, ...existTools));
 
     const row = [
       imageId, // imageId
-      rand(toolIds), // toolId
+      toolId, // toolId
       null, // notes
       created, // createdAt
     ];
@@ -910,11 +961,12 @@ const genImageTechniques = (num: number, imageIds: number[], techniqueIds: numbe
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const imageId = rand(imageIds);
-    // newImageIds = newImageIds.filter((i) => i !== imageId);
+    const existTechs: number[] = ret.filter((r) => r[0] === imageId).map((r) => r[1] as number);
+    const techId = rand(without(techniqueIds, ...existTechs));
 
     const row = [
       imageId, // imageId
-      rand(techniqueIds), // techniqueId
+      techId, // techniqueId
       randw([
         { value: null, weight: 20 },
         { value: faker.lorem.sentence(), weight: 1 },
@@ -1322,12 +1374,16 @@ const genTags = (num: number) => {
   ];
 
   const retLen = ret.length;
+  const seenNames = ret.map((r) => r[0] as string);
 
   for (let step = retLen + 1; step <= retLen + num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
+    let name = rand([faker.word.noun(), `${faker.word.adjective()} ${faker.word.noun()}`]);
+    if (seenNames.includes(name)) name = `${name} ${faker.number.int(1_000)}`;
+    seenNames.push(name);
 
     const row = [
-      rand([faker.word.noun(), `${faker.word.adjective()} ${faker.word.noun()}`]), // name
+      name, // name
       null, // color
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
@@ -1364,14 +1420,16 @@ const genTags = (num: number) => {
  * TagsOnArticle
  */
 const genTagsOnArticles = (num: number, tagIds: number[], articleIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
+    const articleId = rand(articleIds);
+    const existTags = ret.filter((r) => (r[0] as number) === articleId).map((r) => r[1] as number);
 
     const row = [
-      rand(articleIds), // articleId
-      rand(tagIds), // tagId
+      articleId, // articleId
+      rand(without(tagIds, ...existTags)), // tagId
       created, // createdAt
     ];
 
@@ -1384,14 +1442,16 @@ const genTagsOnArticles = (num: number, tagIds: number[], articleIds: number[]) 
  * TagsOnPost
  */
 const genTagsOnPosts = (num: number, tagIds: number[], postIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
+    const postId = rand(postIds);
+    const existTags = ret.filter((r) => (r[0] as number) === postId).map((r) => r[1] as number);
 
     const row = [
-      rand(postIds), // postId
-      rand(tagIds), // tagId
+      postId, // postId
+      rand(without(tagIds, ...existTags)), // tagId
       created, // createdAt
       null, // confidence
       false, // disabled
@@ -1407,16 +1467,18 @@ const genTagsOnPosts = (num: number, tagIds: number[], postIds: number[]) => {
  * TagsOnImage
  */
 const genTagsOnImages = (num: number, tagIds: number[], imageIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isAutomated = fbool();
     const isDisabled = fbool(0.01);
+    const imageId = rand(imageIds);
+    const existTags = ret.filter((r) => (r[0] as number) === imageId).map((r) => r[1] as number);
 
     const row = [
-      rand(imageIds), // imageId
-      rand(tagIds), // tagId
+      imageId, // imageId
+      rand(without(tagIds, ...existTags)), // tagId
       created, // createdAt
       isAutomated, // automated
       isAutomated ? faker.number.int(99) : null, // confidence
@@ -1435,17 +1497,19 @@ const genTagsOnImages = (num: number, tagIds: number[], imageIds: number[]) => {
 };
 
 /**
- * TagsOnModel
+ * TagsOnModels
  */
 const genTagsOnModels = (num: number, tagIds: number[], modelIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
+    const modelId = rand(modelIds);
+    const existTags = ret.filter((r) => (r[0] as number) === modelId).map((r) => r[1] as number);
 
     const row = [
-      rand(modelIds), // modelId
-      rand(tagIds), // tagId
+      modelId, // modelId
+      rand(without(tagIds, ...existTags)), // tagId
       created, // createdAt
     ];
 
@@ -1462,11 +1526,12 @@ const genCommentsModel = (
   userIds: number[],
   modelIds: number[],
   parentIds: number[],
-  doThread = false
+  doThread = false,
+  startId = 0
 ) => {
   const ret = [];
 
-  for (let step = 1; step <= num; step++) {
+  for (let step = startId + 1; step <= startId + num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
 
     const row = [
@@ -1499,27 +1564,50 @@ const genThreads = (
   articleIds: number[],
   commentIds: number[],
   parentIds: number[],
-  doThread = false
+  doThread = false,
+  startId = 0
 ) => {
   const ret = [];
 
-  for (let step = 1; step <= num; step++) {
+  const seenImageIds: number[] = [];
+  const seenPostIds: number[] = [];
+  const seenReviewIds: number[] = [];
+  const seenArticleIds: number[] = [];
+
+  const parentIdxs = range(parentIds.length);
+
+  for (let step = startId + 1; step <= startId + num; step++) {
     const type = rand(['image', 'post', 'review', 'article']); // TODO bounty, bountyEntry
-    const parentIdx = faker.number.int(parentIds.length);
+
+    const imageId = type === 'image' && !doThread ? rand(without(imageIds, ...seenImageIds)) : null;
+    const postId = type === 'post' && !doThread ? rand(without(postIds, ...seenPostIds)) : null;
+    const reviewId =
+      type === 'review' && !doThread ? rand(without(reviewIds, ...seenReviewIds)) : null;
+    const articleId =
+      type === 'article' && !doThread ? rand(without(articleIds, ...seenArticleIds)) : null;
+
+    const parentIdx = doThread ? rand(parentIdxs) : 0;
+    if (doThread) pull(parentIdxs, parentIdx);
     const parentId = doThread ? parentIds[parentIdx] : null;
+    const commentId = doThread ? commentIds[parentIdx] : null;
+
+    if (imageId) seenImageIds.push(imageId);
+    if (postId) seenPostIds.push(postId);
+    if (reviewId) seenReviewIds.push(reviewId);
+    if (articleId) seenArticleIds.push(articleId);
 
     const row = [
       step, // id
       fbool(0.01), // locked
       null, // questionId
       null, // answerId
-      type === 'image' && !doThread ? rand(imageIds) : null, // imageId
-      type === 'post' && !doThread ? rand(postIds) : null, // postId
-      type === 'review' && !doThread ? rand(reviewIds) : null, // reviewId
+      imageId, // imageId
+      postId, // postId
+      reviewId, // reviewId
       '{}', // metadata // TODO do we need "reviewIds" here?
       null, // modelId
-      doThread ? commentIds[parentIdx] : null, // commentId
-      type === 'article' && !doThread ? rand(articleIds) : null, // articleId
+      commentId, // commentId
+      articleId, // articleId
       null, // bountyEntryId // TODO
       null, // bountyId // TODO
       null, // clubPostId
@@ -1535,10 +1623,10 @@ const genThreads = (
 /**
  * CommentV2
  */
-const genCommentsV2 = (num: number, userIds: number[], threadIds: number[]) => {
+const genCommentsV2 = (num: number, userIds: number[], threadIds: number[], startId = 0) => {
   const ret = [];
 
-  for (let step = 1; step <= num; step++) {
+  for (let step = startId + 1; step <= startId + num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
 
     const row = [
@@ -1602,15 +1690,17 @@ const genImageResources = (num: number, mvIds: number[], imageIds: number[]) => 
  * ArticleEngagement
  */
 const genArticleEngagements = (num: number, userIds: number[], articleIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(articleIds), // articleId
+      userId, // userId
+      rand(without(articleIds, ...existIds)), // articleId
       rand(Object.values(ArticleEngagementType)), // type
       created, // createdAt
     ];
@@ -1624,15 +1714,17 @@ const genArticleEngagements = (num: number, userIds: number[], articleIds: numbe
  * ImageEngagement
  */
 const genImageEngagements = (num: number, userIds: number[], imageIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(imageIds), // imageId
+      userId, // userId
+      rand(without(imageIds, ...existIds)), // imageId
       rand(Object.values(ImageEngagementType)), // type
       created, // createdAt
     ];
@@ -1646,15 +1738,17 @@ const genImageEngagements = (num: number, userIds: number[], imageIds: number[])
  * ModelEngagement
  */
 const genModelEngagements = (num: number, userIds: number[], modelIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(modelIds), // modelId
+      userId, // userId
+      rand(without(modelIds, ...existIds)), // modelId
       rand(Object.values(ModelEngagementType)), // type
       created, // createdAt
     ];
@@ -1668,15 +1762,17 @@ const genModelEngagements = (num: number, userIds: number[], modelIds: number[])
  * ModelVersionEngagement
  */
 const genModelVersionEngagements = (num: number, userIds: number[], mvIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(mvIds), // modelVersionId
+      userId, // userId
+      rand(without(mvIds, ...existIds)), // modelVersionId
       rand(Object.values(ModelVersionEngagementType)), // type
       created, // createdAt
     ];
@@ -1690,15 +1786,17 @@ const genModelVersionEngagements = (num: number, userIds: number[], mvIds: numbe
  * TagEngagement
  */
 const genTagEngagements = (num: number, userIds: number[], tagIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(tagIds), // tagId
+      userId, // userId
+      rand(without(tagIds, ...existIds)), // tagId
       rand(Object.values(TagEngagementType)), // type
       created, // createdAt
     ];
@@ -1712,15 +1810,17 @@ const genTagEngagements = (num: number, userIds: number[], tagIds: number[]) => 
  * UserEngagement
  */
 const genUserEngagements = (num: number, userIds: number[], targetUserIds: number[]) => {
-  const ret = [];
+  const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
     // nb not quite right, would need created of entity, but being lazy here
     const created = faker.date.past({ years: 3 }).toISOString();
+    const userId = rand(userIds);
+    const existIds = ret.filter((r) => (r[0] as number) === userId).map((r) => r[1] as number);
 
     const row = [
-      rand(userIds), // userId
-      rand(targetUserIds), // targetUserId
+      userId, // userId
+      rand(without(targetUserIds, ...existIds)), // targetUserId
       rand(Object.values(UserEngagementType)), // type
       created, // createdAt
     ];
@@ -1887,7 +1987,7 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       -1,
       `{"link": "/models", "title": "Featured Models", "linkText": "Explore all models", "withIcon": true, "collection": {"id": ${rand(
         collectModel
-      )}, "rows": 2, "limit": 8}, "description": "A filtered list of all models on the site, to view the complete model list click "explore all models"."}`,
+      )}, "rows": 2, "limit": 8}, "description": "A filtered list of all models on the site, to view the complete model list click Explore All Models."}`,
       3,
       'Collection',
       false,
@@ -2204,45 +2304,58 @@ First model added in the last 30 days`,
   ];
 };
 
-const genRows = async () => {
+const genRows = async (truncate = true) => {
+  if (truncate) await truncateRows();
+
   const users = genUsers(numRows, true);
-  const userIds = users.map((u) => u[4] as number);
-  // await insertRows('User', users);
+  const userIds = await insertRows('User', users);
 
   const models = genModels(numRows, userIds);
-  const modelData = models.map((m) => ({ id: m[6] as number, type: m[25] as ModelUploadType }));
-  const modelIds = models.map((m) => m[6] as number);
+  const modelIds = await insertRows('Model', models);
+  const modelData = models
+    .map((m) => ({ id: m[6] as number, type: m[25] as ModelUploadType }))
+    .filter((m) => modelIds.includes(m.id));
 
-  const mvs = genMvs(numRows, modelData);
-  const mvData = mvs.map((mv) => ({
-    id: mv[6] as number,
-    modelId: mv[7] as number,
-    type: mv[mv.length - 1] as ModelUploadType,
-  }));
-  const mvIds = mvData.map((mv) => mv.id);
+  const mvs = genMvs(Math.ceil(numRows * 1.5), modelData);
+  const mvIds = await insertRows('ModelVersion', mvs);
+  const mvData = mvs
+    .map((mv) => ({
+      id: mv[6] as number,
+      modelId: mv[7] as number,
+      type: mv[mv.length - 1] as ModelUploadType,
+    }))
+    .filter((mv) => mvIds.includes(mv.id));
 
-  const mFiles = genMFiles(numRows, mvData);
+  const mFiles = genMFiles(Math.ceil(numRows * 2), mvData);
+  await insertRows('ModelFile', mFiles);
 
   const reviews = genReviews(numRows, userIds, mvData);
-  const reviewIds = reviews.map((r) => r[0] as number);
+  const reviewIds = await insertRows('ResourceReview', reviews);
 
   const posts = genPosts(numRows, userIds, mvIds);
-  const postIds = posts.map((p) => p[0] as number);
+  const postIds = await insertRows('Post', posts);
 
   const images = genImages(numRows, userIds, postIds);
-  const imageIds = images.map((i) => i[5] as number);
+  const imageIds = await insertRows('Image', images);
 
   const articles = genArticles(numRows, userIds, imageIds);
-  const articleIds = articles.map((i) => i[0] as number);
+  const articleIds = await insertRows('Article', articles);
 
   const tools = genTools(10);
+  const toolIds = await insertRows('Tool', tools);
+
   const techniques = genTechniques();
+  const techniqueIds = await insertRows('Technique', techniques);
 
   const collections = genCollections(numRows, userIds, imageIds);
-  const collectionData = collections.map((c) => ({
-    id: c[0] as number,
-    type: c[8] as CollectionType,
-  }));
+  const collectionIds = await insertRows('Collection', collections);
+  const collectionData = collections
+    .map((c) => ({
+      id: c[0] as number,
+      type: c[8] as CollectionType,
+    }))
+    .filter((c) => collectionIds.includes(c.id));
+
   const collectionItems = genCollectionItems(
     numRows,
     collectionData,
@@ -2252,41 +2365,51 @@ const genRows = async () => {
     modelIds,
     userIds
   );
+  await insertRows('CollectionItem', collectionItems);
 
-  const imageTools = genImageTools(
-    numRows,
-    imageIds,
-    tools.map((t) => t[0] as number)
-  );
-  const imageTechniques = genImageTechniques(
-    numRows,
-    imageIds,
-    techniques.map((t) => t[0] as number)
-  );
+  const imageTools = genImageTools(numRows, imageIds, toolIds);
+  await insertRows('ImageTool', imageTools);
+
+  const imageTechniques = genImageTechniques(numRows, imageIds, techniqueIds);
+  await insertRows('ImageTechnique', imageTechniques);
 
   const tags = genTags(numRows);
-  const tagIds = tags.map((t) => t[4] as number);
+  const tagIds = await insertRows('Tag', tags);
 
   const tagsOnArticles = genTagsOnArticles(numRows, tagIds, articleIds);
+  await insertRows('TagsOnArticle', tagsOnArticles);
+
   const tagsOnPosts = genTagsOnPosts(numRows, tagIds, postIds);
+  await insertRows('TagsOnPost', tagsOnPosts);
+
   const tagsOnImages = genTagsOnImages(numRows, tagIds, imageIds);
+  await insertRows('TagsOnImage', tagsOnImages);
+
   const tagsOnModels = genTagsOnModels(numRows, tagIds, modelIds);
+  await insertRows('TagsOnModels', tagsOnModels);
 
   // TODO TagsOnImageVote
   // TODO TagsOnModelsVote
 
   const commentsV1 = genCommentsModel(numRows, userIds, modelIds, [], false);
-  const commentsV1Ids = commentsV1.map((mc) => mc[0] as number);
-  const commentsV1Thread = genCommentsModel(numRows, userIds, modelIds, commentsV1Ids, true);
-  const commentsV1AllIds = commentsV1Ids.concat(commentsV1Thread.map((mc) => mc[0] as number));
+  const commentsV1Ids = await insertRows('Comment', commentsV1);
 
-  const threads = genThreads(numRows, imageIds, postIds, reviewIds, articleIds, [], [], false);
-  const commentsV2 = genCommentsV2(
+  const commentsV1Thread = genCommentsModel(
     numRows,
     userIds,
-    threads.map((t) => t[0] as number)
+    modelIds,
+    commentsV1Ids,
+    true,
+    commentsV1Ids[commentsV1Ids.length - 1]
   );
-  const commentsV2Ids = commentsV2.map((mc) => mc[0] as number);
+  const commentsV1AllIds = await insertRows('Comment', commentsV1Thread);
+
+  const threads = genThreads(numRows, imageIds, postIds, reviewIds, articleIds, [], [], false);
+  const threadIds = await insertRows('Thread', threads);
+
+  const commentsV2 = genCommentsV2(numRows, userIds, threadIds);
+  const commentsV2Ids = await insertRows('CommentV2', commentsV2);
+
   const threadsNest = genThreads(
     numRows,
     [],
@@ -2295,33 +2418,53 @@ const genRows = async () => {
     [],
     commentsV2Ids,
     commentsV2.map((c) => c[7] as number),
-    true
+    true,
+    threadIds[threadIds.length - 1]
   );
+  const threadsNestIds = await insertRows('Thread', threadsNest);
+
   const commentsV2Nest = genCommentsV2(
     numRows,
     userIds,
-    threadsNest.map((t) => t[0] as number)
+    threadsNestIds,
+    commentsV2Ids[commentsV2Ids.length - 1]
   );
-  const commentsV2AllIds = commentsV2Ids.concat(commentsV2Nest.map((mc) => mc[0] as number));
+  const commentsV2NestIds = await insertRows('CommentV2', commentsV2Nest);
+
+  const commentsV2AllIds = commentsV2Ids.concat(commentsV2NestIds);
 
   const resources = genImageResources(numRows, mvIds, imageIds);
+  await insertRows('ImageResource', resources);
 
   const articleEngage = genArticleEngagements(numRows, userIds, articleIds);
+  await insertRows('ArticleEngagement', articleEngage);
   const imageEngage = genImageEngagements(numRows, userIds, imageIds);
+  await insertRows('ImageEngagement', imageEngage);
   const modelEngage = genModelEngagements(numRows, userIds, modelIds);
+  await insertRows('ModelEngagement', modelEngage);
   const mvEngage = genModelVersionEngagements(numRows, userIds, mvIds);
+  await insertRows('ModelVersionEngagement', mvEngage);
   const tagEngage = genTagEngagements(numRows, userIds, tagIds);
+  await insertRows('TagEngagement', tagEngage);
   const userEngage = genUserEngagements(numRows, userIds, userIds);
+  await insertRows('UserEngagement', userEngage);
 
   const articleReactions = genArticleReactions(numRows, userIds, articleIds);
+  await insertRows('ArticleReaction', articleReactions);
   const commentV1Reactions = genCommentReactions(numRows, userIds, commentsV1AllIds);
+  await insertRows('CommentReaction', commentV1Reactions);
   const commentV2Reactions = genCommentV2Reactions(numRows, userIds, commentsV2AllIds);
+  await insertRows('CommentV2Reaction', commentV2Reactions);
   const imageReactions = genImageReactions(numRows, userIds, imageIds);
+  await insertRows('ImageReaction', imageReactions);
   const postReactions = genPostReactions(numRows, userIds, postIds);
+  await insertRows('PostReaction', postReactions);
 
   const leaderboards = genLeaderboards();
+  await insertRows('Leaderboard', leaderboards);
 
   const homeblocks = genHomeBlocks(collectionData);
+  await insertRows('HomeBlock', homeblocks);
 
   /*
   Account
