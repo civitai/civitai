@@ -39,55 +39,57 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   const addDays = 1;
   let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
-  const tasks = leaderboards.map(({ id, query }) =>
-    withRetries(async () => {
-      // jobContext.checkIfCanceled();
-      if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
+  const tasks = leaderboards.map(
+    ({ id, query }) =>
+      () =>
+        withRetries(async () => {
+          // jobContext.checkIfCanceled();
+          if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
 
-      const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
+          const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
       SELECT COUNT(*) as count FROM "LeaderboardResult"
       WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
     `);
-      const hasData = hasDataQuery.rows[0].count > 0;
-      if (hasData) {
-        log(`Leaderboard ${id} - Previously completed`);
-        return;
-      }
+          const hasData = hasDataQuery.rows[0].count > 0;
+          if (hasData) {
+            log(`Leaderboard ${id} - Previously completed`);
+            return;
+          }
 
-      const includesCTE = query.includes('WITH ');
-      const context = { jobContext, id, query, includesCTE, addDays };
+          const includesCTE = query.includes('WITH ');
+          const context = { jobContext, id, query, includesCTE, addDays };
 
-      const start = Date.now();
-      log(`Leaderboard ${id} - Starting`);
-      logToAxiom({
-        type: 'leaderboard-start',
-        id,
-      }).catch();
+          const start = Date.now();
+          log(`Leaderboard ${id} - Starting`);
+          logToAxiom({
+            type: 'leaderboard-start',
+            id,
+          }).catch();
 
-      try {
-        if (includesCTE && query.includes('clickhouse_')) {
-          await clickhouseLeaderboardPopulation(context);
-        } else if (includesCTE && query.includes('image_scores AS')) {
-          if (!imageRange) imageRange = await getImageRange();
-          await imageLeaderboardPopulation(context, imageRange);
-        } else {
-          if (includesCTE && !query.includes('scores'))
-            throw new Error('Query must include scores CTE');
-          await defaultLeadboardPopulation(context);
-        }
-      } catch (e) {
-        const error = e as Error;
-        logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
-        throw e;
-      }
+          try {
+            if (includesCTE && query.includes('clickhouse_')) {
+              await clickhouseLeaderboardPopulation(context);
+            } else if (includesCTE && query.includes('image_scores AS')) {
+              if (!imageRange) imageRange = await getImageRange();
+              await imageLeaderboardPopulation(context, imageRange);
+            } else {
+              if (includesCTE && !query.includes('scores'))
+                throw new Error('Query must include scores CTE');
+              await defaultLeadboardPopulation(context);
+            }
+          } catch (e) {
+            const error = e as Error;
+            logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+            throw e;
+          }
 
-      log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
-      logToAxiom({
-        type: 'leaderboard-done',
-        id,
-        duration: Date.now() - start,
-      }).catch();
-    }, 3)
+          log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
+          logToAxiom({
+            type: 'leaderboard-done',
+            id,
+            duration: Date.now() - start,
+          }).catch();
+        }, 3)
   );
   try {
     await limitConcurrency(tasks, 1);
