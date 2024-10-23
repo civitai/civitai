@@ -1,7 +1,7 @@
 import { TrainingStatus } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
-import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2';
+import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
