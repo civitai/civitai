@@ -24,7 +24,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import React, { createContext, useContext, useState } from 'react';
-import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

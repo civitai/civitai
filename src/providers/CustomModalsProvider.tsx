@@ -143,7 +143,7 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       }
       // Setting zIndex so confirm modals popup above everything else
       modalProps={{
-        zIndex: 300,
+        zIndex: 400,
       }}
     >
       {children}

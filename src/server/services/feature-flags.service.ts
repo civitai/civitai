@@ -109,6 +109,7 @@ const featureFlags = createFeatureFlags({
   customPaymentProvider: ['public'],
   adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
+  admin: ['granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

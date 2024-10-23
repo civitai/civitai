@@ -1,6 +1,6 @@
 import { TrainingStatus } from '@prisma/client';
 import { env } from 'process';
-import { updateRecords } from '~/pages/api/webhooks/resource-training-v2';
+import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';
@@ -29,7 +29,7 @@ export const checkProcessingResourceTrainingV2 = createJob(
     const processingVersions = await dbRead.modelVersion.findMany({
       where: {
         trainingStatus: {
-          in: [TrainingStatus.Processing, TrainingStatus.Paused, TrainingStatus.Submitted],
+          in: [TrainingStatus.Processing, TrainingStatus.Submitted],
         },
       },
       select: {
@@ -50,7 +50,7 @@ export const checkProcessingResourceTrainingV2 = createJob(
           path: { workflowId },
         });
 
-        await updateRecords(workflow);
+        await updateRecords(workflow, workflow.status ?? 'preparing');
       } catch (e: unknown) {
         const err = e as Error | undefined;
         logWebhook({

@@ -1,5 +1,4 @@
 import sanitize, { Transformer } from 'sanitize-html';
-import linkBlocklist from '~/server/utils/link-blocklist.json';
 import { isNumber, isValidURL } from '~/utils/type-guards';
 
 export const DEFAULT_ALLOWED_TAGS = [
@@ -55,11 +54,15 @@ export const DEFAULT_ALLOWED_IFRAME_HOSTNAMES = [
   'www.strawpoll.com',
 ];
 
-export type santizeHtmlOptions = sanitize.IOptions & { stripEmpty?: boolean };
-export function sanitizeHtml(
-  html: string,
-  { stripEmpty, transformTags, ...options }: santizeHtmlOptions = { stripEmpty: false }
-) {
+export type santizeHtmlOptions = sanitize.IOptions & {
+  stripEmpty?: boolean;
+};
+export function sanitizeHtml(html: string, args?: santizeHtmlOptions) {
+  const { stripEmpty = false, transformTags, ...options } = args ?? {};
+  // if (throwOnBlockedDomain) {
+  //   const blockedDomains = getBlockedDomains(html);
+  //   if (blockedDomains.length) throw new Error(`invalid urls: ${blockedDomains.join(', ')}`);
+  // }
   return sanitize(html, {
     allowedTags: DEFAULT_ALLOWED_TAGS,
     allowedAttributes: DEFAULT_ALLOWED_ATTRIBUTES,
@@ -78,12 +81,12 @@ export function sanitizeHtml(
         const hrefDomain = isValidURL(updatedHref) ? new URL(updatedHref).hostname : undefined;
         if (!hrefDomain) return { tagName: 'span', ...attr };
 
-        const isBlocked = linkBlocklist.some((domain) => domain === hrefDomain);
-        if (isBlocked)
-          return {
-            tagName: 'span',
-            text: '[Blocked Link]',
-          };
+        // const isBlocked = getIsBlockedDomain(hrefDomain);
+        // if (isBlocked)
+        //   return {
+        //     tagName: 'span',
+        //     text: '[Blocked Link]',
+        //   };
         return {
           tagName: 'a',
           attribs: {

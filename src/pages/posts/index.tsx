@@ -1,5 +1,4 @@
 import { Stack } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -25,7 +24,6 @@ function PostsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           <IsClient>
             <PostCategories />
@@ -37,4 +35,4 @@ function PostsPage() {
   );
 }
 
-export default Page(PostsPage, { InnerLayout: FeedLayout });
+export default Page(PostsPage, { InnerLayout: FeedLayout, announcements: true });

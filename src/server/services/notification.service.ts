@@ -10,12 +10,14 @@ import {
   notificationCache,
   NotificationCategoryCount,
 } from '~/server/notifications/notification-cache';
+import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import {
   GetUserNotificationsSchema,
   MarkReadNotificationInput,
   ToggleNotificationSettingInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type NotificationsRaw = {
   id: number;

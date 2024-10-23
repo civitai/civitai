@@ -1,5 +1,4 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
@@ -25,7 +24,7 @@ export default Page(
         />
         <ToolBanner />
         <MasonryContainer>
-          <Announcements />
+          {/* <Announcements /> */}
           {hidden && <Title>Your Hidden Images</Title>}
           <Stack spacing="xs">
             <IsClient>
@@ -37,5 +36,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: FeedLayout }
+  { InnerLayout: FeedLayout, announcements: true }
 );

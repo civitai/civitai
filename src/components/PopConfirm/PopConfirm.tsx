@@ -10,7 +10,7 @@ export function PopConfirm({
   ...popoverProps
 }: {
   children: React.ReactElement;
-  message: React.ReactNode;
+  message?: React.ReactNode;
   onConfirm?: () => void;
   onCancel?: () => void;
   enabled?: boolean;

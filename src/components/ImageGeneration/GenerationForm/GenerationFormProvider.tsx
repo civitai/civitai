@@ -170,7 +170,14 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
-  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel || !vae.available) vae = undefined;
+  if (
+    !vae ||
+    !getBaseModelSetTypes({ modelType: vae.modelType, baseModel: vae.baseModel }).includes(
+      baseModel as SupportedBaseModel
+    ) ||
+    !vae.available
+  )
+    vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources

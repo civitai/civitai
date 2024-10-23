@@ -31,6 +31,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -98,6 +99,7 @@ export const upsertCommentHandler = async ({
   input: CommentUpsertInput;
 }) => {
   try {
+    await throwOnBlockedLinkDomain(input.content);
     const { ownerId, locked } = ctx;
     const { modelId } = input;
 

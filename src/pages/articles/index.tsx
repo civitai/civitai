@@ -1,5 +1,4 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
@@ -35,7 +34,6 @@ function ArticlesPage() {
       />
 
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <ArticleCategories />
@@ -46,4 +44,4 @@ function ArticlesPage() {
   );
 }
 
-export default Page(ArticlesPage, { InnerLayout: FeedLayout });
+export default Page(ArticlesPage, { InnerLayout: FeedLayout, announcements: true });

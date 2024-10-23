@@ -2,7 +2,7 @@ import { Button, Group, Modal, Stack, ButtonProps, Text } from '@mantine/core';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-export function ConfirmDialog({
+export default function ConfirmDialog({
   title,
   message,
   onConfirm,

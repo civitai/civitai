@@ -12,7 +12,6 @@ import utc from 'dayjs/plugin/utc';
 import { init as linkifyInit, registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
-import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -22,7 +21,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import ChadGPT from '~/components/ChadGPT/ChadGPT';
+// import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
@@ -111,6 +110,7 @@ function MyApp(props: CustomAppProps) {
           subNav={Component.subNav}
           scrollable={Component.scrollable}
           footer={Component.footer}
+          announcements={Component.announcements}
         >
           {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
         </AppLayout>
@@ -125,73 +125,67 @@ function MyApp(props: CustomAppProps) {
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <PlausibleProvider
-          domain="civitai.com"
-          customDomain="https://analytics.civitai.com"
-          selfHosted
-        >
-          <IsClientProvider>
-            <ClientHistoryStore />
-            <RegisterCatchNavigation />
-            <RouterTransition />
-            <UpdateRequiredWatcher />
-            <ChadGPT isAuthed={!!session} />
-            <SessionProvider
-              session={session}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
-              <FeatureFlagsProvider flags={flags}>
-                <CookiesProvider value={cookies}>
-                  <AccountProvider>
-                    <CivitaiSessionProvider>
-                      <BrowserSettingsProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaddleProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <GenerationProvider>
-                                              <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  <TrackPageView />
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </IntersectionObserverProvider>
-                                            </GenerationProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaddleProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </BrowserSettingsProvider>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </CookiesProvider>
-              </FeatureFlagsProvider>
-            </SessionProvider>
-          </IsClientProvider>
-        </PlausibleProvider>
+        <IsClientProvider>
+          <ClientHistoryStore />
+          <RegisterCatchNavigation />
+          <RouterTransition />
+          <UpdateRequiredWatcher />
+          {/* <ChadGPT isAuthed={!!session} /> */}
+          <SessionProvider
+            session={session}
+            refetchOnWindowFocus={false}
+            refetchWhenOffline={false}
+          >
+            <FeatureFlagsProvider flags={flags}>
+              <CookiesProvider value={cookies}>
+                <AccountProvider>
+                  <CivitaiSessionProvider>
+                    <BrowserSettingsProvider>
+                      <SignalProvider>
+                        <ActivityReportingProvider>
+                          <ReferralsProvider>
+                            <FiltersProvider>
+                              <AdsProvider>
+                                <PaddleProvider>
+                                  <HiddenPreferencesProvider>
+                                    <CivitaiLinkProvider>
+                                      <NotificationsProvider
+                                        className="notifications-container"
+                                        zIndex={9999}
+                                      >
+                                        <BrowserRouterProvider>
+                                          <GenerationProvider>
+                                            <IntersectionObserverProvider>
+                                              <BaseLayout>
+                                                <TrackPageView />
+                                                <ChatContextProvider>
+                                                  <CustomModalsProvider>
+                                                    {getLayout(<Component {...pageProps} />)}
+                                                    {/* <StripeSetupSuccessProvider /> */}
+                                                    <DialogProvider />
+                                                    <RoutedDialogProvider />
+                                                  </CustomModalsProvider>
+                                                </ChatContextProvider>
+                                              </BaseLayout>
+                                            </IntersectionObserverProvider>
+                                          </GenerationProvider>
+                                        </BrowserRouterProvider>
+                                      </NotificationsProvider>
+                                    </CivitaiLinkProvider>
+                                  </HiddenPreferencesProvider>
+                                </PaddleProvider>
+                              </AdsProvider>
+                            </FiltersProvider>
+                          </ReferralsProvider>
+                        </ActivityReportingProvider>
+                      </SignalProvider>
+                    </BrowserSettingsProvider>
+                  </CivitaiSessionProvider>
+                </AccountProvider>
+              </CookiesProvider>
+            </FeatureFlagsProvider>
+          </SessionProvider>
+        </IsClientProvider>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 

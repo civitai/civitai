@@ -10,7 +10,7 @@ import {
   Title,
   Box,
 } from '@mantine/core';
-import { GetAnnouncement } from '~/server/services/announcement.service';
+import { AnnouncementDTO } from '~/server/services/announcement.service';
 import Link from 'next/link';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
@@ -161,7 +161,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
 };
 
 type Props = {
-  announcement: GetAnnouncement;
+  announcement: AnnouncementDTO;
   onAnnouncementDismiss: (announcementId: number) => void;
 };
 
