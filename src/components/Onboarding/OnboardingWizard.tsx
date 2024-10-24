@@ -1,15 +1,4 @@
-import {
-  Center,
-  Container,
-  Group,
-  Modal,
-  Stack,
-  StepProps,
-  Stepper,
-  Text,
-  Title,
-  createStyles,
-} from '@mantine/core';
+import { Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -18,7 +7,6 @@ import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import { OnboardingProvider } from '~/components/Onboarding/OnboardingProvider';
 
@@ -55,7 +43,6 @@ const steps: StepPropsCustom[] = [
 ];
 
 export default function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
-  const dialog = useDialogContext();
   const onboardingSteps = useGetRequiredOnboardingSteps();
   const onboardingStepsRef = useRef(onboardingSteps);
   const [active, setActive] = useState(0);
@@ -73,26 +60,18 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
     availableSteps.length === 1 && availableSteps[0].step === OnboardingSteps.BrowsingLevels;
 
   return (
-    <Modal
-      {...dialog}
-      closeOnEscape={false}
-      withCloseButton={false}
-      closeOnClickOutside={false}
-      fullScreen
-    >
-      {!isReturningUser && (
-        <Center>
-          <Group spacing="xs">
+    <div className="size-full overflow-y-auto">
+      <div className="container my-3 flex max-w-md flex-col">
+        {!isReturningUser && (
+          <div className="mx-auto flex items-center gap-1">
             <LogoBadge w={86} />
             <Stack spacing={0} mt={-5}>
               <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>
             </Stack>
-          </Group>
-        </Center>
-      )}
-      <OnboardingProvider next={next} isReturningUser={isReturningUser}>
-        <Container size="lg" px="0" h="100%">
+          </div>
+        )}
+        <OnboardingProvider next={next} isReturningUser={isReturningUser}>
           {availableSteps.length > 1 ? (
             <Stepper
               active={active}
@@ -109,9 +88,9 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
           ) : (
             Component && <Component />
           )}
-        </Container>
-      </OnboardingProvider>
-    </Modal>
+        </OnboardingProvider>
+      </div>
+    </div>
   );
 }
 

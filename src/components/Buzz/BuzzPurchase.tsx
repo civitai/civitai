@@ -30,11 +30,11 @@ import { constants } from '~/server/common/constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
-import { AlertDialog } from '../Dialog/Common/AlertDialog';
+import AlertDialog from '../Dialog/Common/AlertDialog';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
 import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
 import { useCanUpgrade } from '~/components/Stripe/memberships.util';
-import { PaddleTransacionModal } from '~/components/Paddle/PaddleTransacionModal';
+import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useBuzzButtonStyles } from '~/components/Buzz/styles';
@@ -144,7 +144,7 @@ const BuzzPurchasePaymentButton = ({
     }
 
     dialogStore.trigger({
-      component: PaddleTransacionModal,
+      component: PaddleTransactionModal,
       props: {
         unitAmount,
         currency: 'USD',

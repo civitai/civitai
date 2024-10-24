@@ -4,11 +4,9 @@ import {
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
 } from '@civitai/client';
-import { TrainingStatus } from '@prisma/client';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   ImageTrainingStepSchema,
   ImageTrainingWorkflowSchema,
@@ -16,7 +14,7 @@ import {
 } from '~/server/schema/orchestrator/training.schema';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getTrainingServiceStatus, TrainingRequest } from '~/server/services/training.service';
-import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import { getTrainingFields, isInvalidRapid, modelMap } from '~/utils/training';
@@ -219,52 +217,6 @@ export const createTrainingWorkflow = async ({
   });
 
   // check workflow.status?
-
-  const workflowId = workflow.id ?? 'unknown';
-  const transactionData = workflow.transactions?.list ?? [];
-
-  const submittedAt = (
-    workflow.createdAt ? new Date(workflow.createdAt) : new Date()
-  ).toISOString();
-
-  await withRetries(() =>
-    dbWrite.modelVersion.update({
-      where: { id: modelVersionId },
-      data: {
-        trainingStatus: TrainingStatus.Submitted,
-      },
-    })
-  );
-
-  // TODO potential race condition here, sometimes this "doesn't work"
-  const newTrainingResults: TrainingResultsV2 = {
-    version: 2,
-    submittedAt,
-    workflowId,
-    transactionData,
-    history: [
-      {
-        time: submittedAt,
-        status: TrainingStatus.Submitted,
-      },
-    ],
-    epochs: [],
-    sampleImagesPrompts: [],
-  };
-
-  const newMetadata: FileMetadata = {
-    ...fileMetadata,
-    trainingResults: newTrainingResults,
-  };
-
-  await withRetries(() =>
-    dbWrite.modelFile.update({
-      where: { id: modelFileId },
-      data: {
-        metadata: newMetadata,
-      },
-    })
-  );
 
   return workflow;
 };

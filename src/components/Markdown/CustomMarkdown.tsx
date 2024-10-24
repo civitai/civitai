@@ -34,13 +34,13 @@ export function CustomMarkdown({
             )
           ) {
             return (
-              <div className="relative mx-auto aspect-video max-w-sm">
+              <span className="relative mx-auto mb-3 block aspect-video max-w-sm">
                 <iframe
                   allowFullScreen
                   src={href}
-                  className="absolute inset-0 border-none"
+                  className="absolute inset-0 size-full border-none"
                 ></iframe>
-              </div>
+              </span>
             );
           }
 

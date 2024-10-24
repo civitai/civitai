@@ -6,6 +6,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { env } from '~/env/server.mjs';
+import { getSystemPermissions } from '~/server/services/system-cache';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   console.log('hit me');
@@ -39,7 +40,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //   take: 10,
   //   tags: ['civitai', 'img'],
   // });
+  const data = await getSystemPermissions();
 
-  return res.status(200).json({ ok: true });
+  return res.status(200).json({ data });
   // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
 });

@@ -46,6 +46,7 @@ import { postgresSlugify, removeTags } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { userContentOverviewCache } from '~/server/redis/caches';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 type ArticleRaw = {
   id: number;
@@ -646,6 +647,7 @@ export const upsertArticle = async ({
   ...data
 }: UpsertArticleInput & { userId: number; isModerator?: boolean }) => {
   try {
+    await throwOnBlockedLinkDomain(data.content);
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;

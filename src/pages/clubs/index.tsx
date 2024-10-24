@@ -1,7 +1,6 @@
 import { createStyles, Group, Stack, ThemeIcon, Title } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { ClubsInfinite } from '~/components/Club/Infinite/ClubsInfinite';
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -91,7 +90,6 @@ export default function ClubsPage() {
         maxSingleColumnWidth={450}
       >
         <MasonryContainer>
-          <Announcements />
           <Stack spacing="xs">
             <Group position="apart" spacing={8}>
               <Group className={classes.filtersWrapper} spacing={8} noWrap>

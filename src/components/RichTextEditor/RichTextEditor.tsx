@@ -193,6 +193,7 @@ export function RichTextEditor({
       code: !addFormatting ? false : undefined,
       blockquote: !addFormatting ? false : undefined,
       codeBlock: !addFormatting ? false : undefined,
+      dropcursor: !addMedia ? false : undefined,
     }),
     ...(addHeading
       ? [

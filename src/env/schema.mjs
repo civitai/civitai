@@ -207,7 +207,7 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
+  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
   NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),

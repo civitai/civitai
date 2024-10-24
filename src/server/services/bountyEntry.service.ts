@@ -8,6 +8,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from '../schema/base.schema';
 import { userContentOverviewCache } from '~/server/redis/caches';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getEntryById = <TSelect extends Prisma.BountyEntrySelect>({
   input,
@@ -71,13 +72,13 @@ export const getBountyEntryEarnedBuzz = async ({
     FROM "BountyEntry" be
     LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
     WHERE be.id IN (${Prisma.join(ids)})
-    GROUP BY be.id 
+    GROUP BY be.id
   `;
 
   return data;
 };
 
-export const upsertBountyEntry = ({
+export const upsertBountyEntry = async ({
   id,
   bountyId,
   files,
@@ -86,6 +87,7 @@ export const upsertBountyEntry = ({
   description,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
+  if (description) await throwOnBlockedLinkDomain(description);
   return dbWrite.$transaction(async (tx) => {
     if (id) {
       const [awarded] = await getBountyEntryEarnedBuzz({ ids: [id] });

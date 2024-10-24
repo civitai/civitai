@@ -25,12 +25,12 @@ import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { FeatureIntroductionModal } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
 import {
   useTipaltiConfigurationUrl,
   useUserPaymentConfiguration,
 } from '~/components/UserPaymentConfiguration/util';
+import dynamic from 'next/dynamic';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
@@ -207,6 +207,10 @@ const StripeConnectStatusDisplay = ({ status }: { status: StripeConnectStatus })
       );
   }
 };
+
+const FeatureIntroductionModal = dynamic(
+  () => import('~/components/FeatureIntroduction/FeatureIntroduction')
+);
 
 const StripeConnectConfigurationCard = () => {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();

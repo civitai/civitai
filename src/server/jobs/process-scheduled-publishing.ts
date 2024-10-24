@@ -94,13 +94,14 @@ export const processScheduledPublishing = createJob(
           ;
         `;
 
-          if (returnedIds.length) {
-            await tx.$executeRaw`
-              UPDATE "Image"
-              SET "updatedAt" = NOW()
-              WHERE "postId" IN (${Prisma.join(returnedIds.map((r) => r.id))})
-            `;
-          }
+          // commenting this out, because it should be covered by the db_trigger `update_image_sort_at`
+          // if (returnedIds.length) {
+          //   await tx.$executeRaw`
+          //     UPDATE "Image"
+          //     SET "updatedAt" = NOW()
+          //     WHERE "postId" IN (${Prisma.join(returnedIds.map((r) => r.id))})
+          //   `;
+          // }
         }
 
         if (scheduledModelVersions.length) {

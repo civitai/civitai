@@ -2035,6 +2035,7 @@ model Announcement {
   startsAt  DateTime?
   endsAt    DateTime?
   metadata  Json?
+  disabled  Boolean   @default(false)
 }
 
 enum CosmeticType {
@@ -3210,6 +3211,14 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+}
+
+model Blocklist {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  type      String
+  data      String[]
 }
 
 /// @view

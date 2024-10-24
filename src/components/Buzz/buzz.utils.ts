@@ -111,6 +111,8 @@ export const useBuzzTransaction = (opts?: {
   const { message, purchaseSuccessMessage, performTransactionOnPurchase, type } = opts ?? {};
 
   const features = useFeatureFlags();
+  const queryUtils = trpc.useUtils();
+
   const { balance: userBalance, balanceLoading: userBalanceLoading } = useBuzz(undefined, 'user');
   const { balance: generationBalance, balanceLoading: generationBalanceLoading } = useBuzz(
     undefined,
@@ -122,6 +124,9 @@ export const useBuzzTransaction = (opts?: {
   const { trackAction } = useTrackEvent();
 
   const tipUserMutation = trpc.buzz.tipUser.useMutation({
+    async onSuccess() {
+      await queryUtils.buzz.getBuzzAccount.invalidate();
+    },
     onError(error) {
       showErrorNotification({
         title: 'Looks like there was an error sending your tip.',
