@@ -220,6 +220,68 @@ export function QueueSnackbar() {
   );
 }
 
+export function QueueSnackbar2() {
+  const { classes, theme } = useStyles();
+  const { queued, requestLimit, requestsRemaining, userTier, requestsLoading } =
+    useGenerationContext((state) => state);
+  const slots = Array(requestLimit).fill(0);
+
+  if (requestsLoading) return null;
+
+  return (
+    <div className="mb-1 flex w-full flex-col gap-2">
+      <div className="flex w-full justify-center gap-2">
+        {slots.map((slot, i) => {
+          const item = queued[i];
+          const colors = theme.fn.variant({
+            color: item ? generationStatusColors[item.status] : 'gray',
+            variant: 'light',
+          });
+          const quantity = item ? item.quantity : 0;
+          const complete = quantity ? item.complete / quantity : 0;
+          const processing = quantity ? item.processing / quantity : 0;
+          return (
+            <Progress
+              key={i}
+              color={item ? generationStatusColors[item.status] : 'gray'}
+              radius="xl"
+              sections={[
+                { value: complete * 100, color: 'green' },
+                { value: processing * 100, color: 'yellow' },
+              ]}
+              h={6}
+              w="100%"
+              // maw={32}
+              style={{ backgroundColor: item ? colors.background : undefined }}
+              className="flex-1"
+              styles={{
+                bar: {
+                  transition: 'width 200ms, left 200ms',
+                },
+              }}
+            />
+          );
+        })}
+      </div>
+      {requestsRemaining <= 0 && userTier === 'free' && (
+        <Badge color="yellow" h={'auto'} w="100%" p={0} radius="xl" classNames={classes}>
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 p-0.5">
+            <Text>
+              <div className="flex items-center gap-1 pl-1">
+                <IconHandStop size={16} />
+                You can queue {requestLimit} jobs at once
+              </div>
+            </Text>
+            <Button compact color="dark" radius="xl" component={NextLink} href="/pricing">
+              <Text color="yellow">Increase</Text>
+            </Button>
+          </div>
+        </Badge>
+      )}
+    </div>
+  );
+}
+
 const useStyles = createStyles((theme) => ({
   card: {
     boxShadow: `inset 0 2px ${

@@ -1,6 +1,7 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
+import { GeneratorInputProps } from '~/components/ImageGeneration/GenerationForm/input-types';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
 import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
@@ -9,7 +10,6 @@ import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema'
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { AirResourceData } from '~/server/services/orchestrator/common';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { GenerationInputConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -416,56 +416,6 @@ export const fluxModeOptions = [
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
 ];
-
-// const generationInputConfig: GenerationInputConfig = {
-//   model: { type: 'resourceSelect' },
-//   resources: { type: 'resourceSelect', multiple: true },
-//   vae: { type: 'resourceSelect' },
-//   prompt: {},
-//   negativePrompt: {},
-//   nsfw: {},
-//   draft: {},
-//   sampler: { defaultValue: 'undefined' },
-//   steps: { min: 20, max: 50, defaultValue: 30 },
-//   cfg: { min: 2, max: 20, defaultValue: 3.5 },
-//   workflow: {},
-//   clipSkip: {},
-//   fluxMode: {
-//     type: 'segmentedControl',
-//     options: [
-//       { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
-//       { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
-//       { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
-//     ],
-//   },
-// };
-
-// function getGenerationConfigSettings(baseModel: SupportedBaseModel) {
-//   const config = {
-//     resources: true,
-//     vae: true,
-//     negativePrompt: true,
-//     nsfw: true,
-//     draft: true,
-//     sampler: true,
-//     workflow: true,
-//     clipSkip: true,
-//   };
-
-//   if (baseModel === 'Flux1') {
-//     for (const key in config) {
-//       config[key as keyof typeof config] = false;
-//     }
-//   }
-
-//   return { config };
-// }
-
-// function getStepConfig(baseModel: SupportedBaseModel, draft: boolean, max?: number) {
-//   if(baseModel === 'Flux1') {
-//     return draft ? { min: 4, max: 4, defaultValue: 4 } : { min: 20, max: 50, defaultValue: 30 };
-//   }
-// }
 
 export function getBaseModelSetTypes({
   modelType,

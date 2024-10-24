@@ -53,7 +53,6 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
@@ -154,21 +153,19 @@ function MyApp(props: CustomAppProps) {
                                         zIndex={9999}
                                       >
                                         <BrowserRouterProvider>
-                                          <GenerationProvider>
-                                            <IntersectionObserverProvider>
-                                              <BaseLayout>
-                                                <TrackPageView />
-                                                <ChatContextProvider>
-                                                  <CustomModalsProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                    {/* <StripeSetupSuccessProvider /> */}
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </ChatContextProvider>
-                                              </BaseLayout>
-                                            </IntersectionObserverProvider>
-                                          </GenerationProvider>
+                                          <IntersectionObserverProvider>
+                                            <BaseLayout>
+                                              <TrackPageView />
+                                              <ChatContextProvider>
+                                                <CustomModalsProvider>
+                                                  {getLayout(<Component {...pageProps} />)}
+                                                  {/* <StripeSetupSuccessProvider /> */}
+                                                  <DialogProvider />
+                                                  <RoutedDialogProvider />
+                                                </CustomModalsProvider>
+                                              </ChatContextProvider>
+                                            </BaseLayout>
+                                          </IntersectionObserverProvider>
                                         </BrowserRouterProvider>
                                       </NotificationsProvider>
                                     </CivitaiLinkProvider>
