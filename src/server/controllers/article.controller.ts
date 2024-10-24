@@ -2,7 +2,8 @@ import { TRPCError } from '@trpc/server';
 
 import { Context } from '~/server/createContext';
 import { UpsertArticleInput } from '~/server/schema/article.schema';
-import { upsertArticle } from '~/server/services/article.service';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import { unpublishArticleById, upsertArticle } from '~/server/services/article.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 
@@ -28,3 +29,22 @@ export const upsertArticleHandler = async ({
     throw throwDbError(error);
   }
 };
+
+export function unpublishArticleHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return unpublishArticleById({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+}

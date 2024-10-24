@@ -2170,26 +2170,33 @@ model BuzzClaim {
   useMultiplier      Boolean         @default(false)
 }
 
+enum ArticleStatus {
+  Draft
+  Published
+  Unpublished
+}
+
 model Article {
-  id               Int          @id @default(autoincrement())
-  createdAt        DateTime?    @default(now())
-  updatedAt        DateTime?    @updatedAt
-  nsfw             Boolean      @default(false)
-  tosViolation     Boolean      @default(false)
+  id               Int           @id @default(autoincrement())
+  createdAt        DateTime?     @default(now())
+  updatedAt        DateTime?     @updatedAt
+  nsfw             Boolean       @default(false)
+  tosViolation     Boolean       @default(false)
   metadata         Json?
   title            String
   content          String
   cover            String?
-  coverId          Int?         @unique
-  coverImage       Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  coverId          Int?          @unique
+  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: NoAction)
   publishedAt      DateTime?
   userId           Int
-  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availability     Availability @default(Public)
-  unlisted         Boolean      @default(false)
-  nsfwLevel        Int          @default(0)
-  userNsfwLevel    Int          @default(0)
-  lockedProperties String[]     @default([])
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability     Availability  @default(Public)
+  unlisted         Boolean       @default(false)
+  nsfwLevel        Int           @default(0)
+  userNsfwLevel    Int           @default(0)
+  lockedProperties String[]      @default([])
+  status           ArticleStatus @default(Draft)
 
   thread          Thread?
   reactions       ArticleReaction[]

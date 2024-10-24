@@ -6,7 +6,6 @@ import {
   Stack,
   StackProps,
   Text,
-  ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
@@ -15,7 +14,7 @@ import {
   Paper,
   Input,
 } from '@mantine/core';
-import { TagTarget } from '@prisma/client';
+import { ArticleStatus, TagTarget } from '@prisma/client';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
@@ -168,6 +167,7 @@ export function ArticleUpsertForm({ article }: Props) {
           : undefined,
         tags,
         publishedAt: publishing ? new Date() : null,
+        status: publishing ? ArticleStatus.Published : undefined,
         coverImage: coverImage,
         lockedProperties: lockedPropertiesRef.current,
       },
@@ -383,7 +383,7 @@ function ActionButtons({
     <Stack spacing={8} {...stackProps}>
       {article?.publishedAt ? (
         <Button {...publishButtonProps} type="submit" fullWidth>
-          Save
+          {article.status === 'Unpublished' ? 'Publish' : 'Save'}
         </Button>
       ) : (
         <>

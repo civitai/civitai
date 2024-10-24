@@ -1,5 +1,6 @@
 import {
   ArticleEngagementType,
+  ArticleStatus,
   Availability,
   CosmeticSource,
   CosmeticType,
@@ -37,6 +38,7 @@ import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -47,6 +49,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { ImageMetadata } from '~/server/schema/media.schema';
 
 type ArticleRaw = {
   id: number;
@@ -58,6 +61,7 @@ type ArticleRaw = {
   nsfwLevel: number;
   availability: Availability;
   userId: number | null;
+  status: ArticleStatus;
   stats:
     | {
         favoriteCount: number;
@@ -287,7 +291,7 @@ export const getArticles = async ({
             1,
             period.toLowerCase() as ManipulateType
           )}`
-        : Prisma.sql`a."publishedAt" IS NOT NULL`;
+        : Prisma.sql`a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"`;
 
     if (publishedAtFilter) {
       AND.push(publishedAtFilter);
@@ -363,6 +367,7 @@ export const getArticles = async ({
         a."unlisted",
         a."availability",
         a."userId",
+        a.status,
         ${Prisma.raw(`
         jsonb_build_object(
           'favoriteCount', stats."favoriteCount${period}",
@@ -483,7 +488,7 @@ export const getArticles = async ({
                     ? article.nsfwLevel
                     : coverImage.nsfwLevel,
                 meta: coverImage.meta as ImageMetaProps,
-                metadata: coverImage.metadata as any,
+                metadata: coverImage.metadata as ImageMetadata,
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),
               }
             : undefined,
@@ -532,6 +537,7 @@ export const getCivitaiNews = async () => {
     JOIN "CollectionItem" ci ON ci."articleId" = a.id
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
+      AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
     ORDER BY a."createdAt" DESC
     LIMIT 10
   `;
@@ -596,7 +602,9 @@ export const getArticleById = async ({
     const article = await dbRead.article.findFirst({
       where: {
         id,
-        OR: !isModerator ? [{ publishedAt: { not: null } }, { userId }] : undefined,
+        OR: !isModerator
+          ? [{ publishedAt: { not: null }, status: ArticleStatus.Published }, { userId }]
+          : undefined,
       },
       select: articleDetailSelect,
     });
@@ -626,7 +634,7 @@ export const getArticleById = async ({
             ...article.coverImage,
             nsfwLevel: article.coverImage.nsfwLevel as NsfwLevel,
             meta: article.coverImage.meta as ImageMetaProps,
-            metadata: article.coverImage.metadata as any,
+            metadata: article.coverImage.metadata as ImageMetadata,
             tags: article.coverImage?.tags.flatMap((x) => x.tag.id),
           }
         : undefined,
@@ -708,19 +716,29 @@ export const upsertArticle = async ({
 
     const article = await dbWrite.article.findUnique({
       where: { id },
-      select: { id: true, cover: true, coverId: true, userId: true, publishedAt: true },
+      select: {
+        id: true,
+        cover: true,
+        coverId: true,
+        userId: true,
+        publishedAt: true,
+        status: true,
+      },
     });
     if (!article) throw throwNotFoundError();
 
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
 
+    const republishing =
+      article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published;
+
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
         where: { id },
         data: {
           ...data,
-          publishedAt: article.publishedAt ?? data.publishedAt,
+          publishedAt: republishing ? article.publishedAt : data.publishedAt,
           coverId,
           tags: tags
             ? {
@@ -777,6 +795,8 @@ export const upsertArticle = async ({
       return updated;
     });
 
+    if (!result) throw throwNotFoundError(`No article with id ${id}`);
+
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
       const isImgOwner = await isImageOwner({ userId, isModerator, imageId: article.coverId });
@@ -785,17 +805,7 @@ export const upsertArticle = async ({
       }
     }
 
-    if (!result) throw throwNotFoundError(`No article with id ${id}`);
-
-    // If it was unpublished, need to remove it from the queue.
-    if (!result.publishedAt) {
-      await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    }
-
-    // If tags changed, need to set is so it updates the queue.
-    if (tags) {
-      await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-    }
+    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
@@ -856,7 +866,7 @@ export const getDraftArticlesByUserId = async ({
     const { take, skip } = getPagination(limit, page);
     const where: Prisma.ArticleFindManyArgs['where'] = {
       userId,
-      publishedAt: null,
+      status: { in: [ArticleStatus.Draft, ArticleStatus.Unpublished] },
     };
 
     const articles = await dbRead.article.findMany({
@@ -869,6 +879,7 @@ export const getDraftArticlesByUserId = async ({
         title: true,
         createdAt: true,
         updatedAt: true,
+        status: true,
         tags: {
           where: { tag: { isCategory: true } },
           select: { tag: { select: { id: true, name: true } } },
@@ -888,15 +899,33 @@ export const getDraftArticlesByUserId = async ({
   }
 };
 
-// TODO.Briant - remove this after done updating article images
-export async function getAllArticlesForImageProcessing() {
-  return await dbRead.article.findMany({
-    select: {
-      id: true,
-      cover: true,
-      coverId: true,
-      userId: true,
-      coverImage: { select: { scannedAt: true, ingestion: true } },
-    },
+export async function unpublishArticleById({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const article = await dbRead.article.findUnique({
+    where: { id },
+    select: { userId: true, publishedAt: true, status: true },
   });
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  const isOwner = article.userId === userId || isModerator;
+  if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+
+  if (!article.publishedAt || article.status !== ArticleStatus.Published)
+    throw throwBadRequestError('Article is not published');
+
+  const updated = await dbWrite.article.update({
+    where: { id },
+    data: { status: ArticleStatus.Unpublished },
+  });
+
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+
+  return updated;
 }

@@ -9,14 +9,16 @@ import { getInfiniteArticlesSchema, upsertArticleInput } from '~/server/schema/a
 import { getAllQuerySchema, getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteArticleById,
-  getAllArticlesForImageProcessing,
   getArticleById,
   getArticles,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
 } from '~/server/services/article.service';
-import { upsertArticleHandler } from '~/server/controllers/article.controller';
+import {
+  unpublishArticleHandler,
+  upsertArticleHandler,
+} from '~/server/controllers/article.controller';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 
@@ -51,5 +53,8 @@ export const articleRouter = router({
     .mutation(({ input, ctx }) =>
       deleteArticleById({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
-  getAllForImageProcessing: protectedProcedure.query(() => getAllArticlesForImageProcessing()),
+  unpublish: guardedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('articles'))
+    .mutation(unpublishArticleHandler),
 });

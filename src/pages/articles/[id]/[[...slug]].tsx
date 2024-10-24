@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   AspectRatio,
   Badge,
   Box,
@@ -9,18 +10,20 @@ import {
   Divider,
   Grid,
   Group,
+  LoadingOverlay,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { ArticleEngagementType, Availability } from '@prisma/client';
-import { IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
+import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';
 import React from 'react';
 import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
@@ -56,6 +59,7 @@ import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -70,9 +74,7 @@ const querySchema = z.object({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg, features }) => {
-    // if (!features?.articles) return { notFound: true };
-
+  resolver: async ({ ctx, ssg }) => {
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
 
@@ -89,18 +91,42 @@ const MAX_WIDTH = 1320;
 
 function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes, theme } = useStyles();
+  const currentUser = useCurrentUser();
   const mobile = useContainerSmallerThan('sm');
   const { setImages, onSetImage, images } = useImageViewerCtx();
   const { articles } = useFeatureFlags();
 
-  const { data: article, isLoading } = trpc.article.getById.useQuery({ id });
+  const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
+  const isModerator = currentUser?.isModerator ?? false;
+  const isOwner = currentUser?.id === article?.user?.id || isModerator;
 
   // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !articles && !article?.user.isModerator;
+
+  const queryUtils = trpc.useUtils();
+  const upsertArticleMutation = trpc.article.upsert.useMutation();
+  const handlePublishArticle = () => {
+    if (!article || article.status === 'Published') return;
+
+    upsertArticleMutation.mutate(
+      { ...article, status: 'Published' },
+      {
+        async onSuccess() {
+          await queryUtils.article.getById.invalidate({ id });
+        },
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to publish article',
+            error: new Error(error.message),
+          });
+        },
+      }
+    );
+  };
 
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked || disableArticles) return <NotFound />;
@@ -184,8 +210,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       />
       <SensitiveShield contentNsfwLevel={article.nsfwLevel}>
         <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-        <Container size="xl">
-          <Stack spacing={0} mb="xl">
+        <Container size="xl" pos="relative">
+          <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
+          <Stack spacing={8} mb="xl">
             <Group position="apart" noWrap>
               <Title weight="bold" className={classes.title} order={1}>
                 {article.title}
@@ -239,6 +266,15 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </>
               )}
             </Group>
+            {article.status === 'Unpublished' && isOwner && (
+              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
+                This article has been unpublished.{' '}
+                <Anchor component="button" onClick={handlePublishArticle}>
+                  Click here
+                </Anchor>{' '}
+                to publish it again or make changes to it before publishing.
+              </AlertWithIcon>
+            )}
           </Stack>
           <Grid gutter="xl">
             <Grid.Col xs={12} md={8}>
