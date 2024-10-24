@@ -89,7 +89,7 @@ export default function ResourceSelectModal({
     if (!baseModels?.length) or.push(`type = ${type}`);
     else
       or.push(
-        `type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}]`
+        `(type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}])`
       );
   }
   if (or.length) filters.push(or.join(' OR '));
