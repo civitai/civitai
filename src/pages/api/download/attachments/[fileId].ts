@@ -101,12 +101,6 @@ export default PublicEndpoint(
     //     time: now,
     //   });
 
-    //   if (userId)
-    //     await playfab.trackEvent(userId, {
-    //       eventName: 'user_download_model',
-    //       modelId: file.model.id,
-    //       modelVersionId: file.id,
-    //     });
     // } catch (error) {
     //   return res.status(500).json({ error: 'Invalid database operation', cause: error });
     // }

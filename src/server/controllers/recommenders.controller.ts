@@ -9,11 +9,7 @@ import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVersionById } from '~/server/services/model-version.service';
-import {
-  getGallerySettingsByModelId,
-  getModel,
-  getModelsRaw,
-} from '~/server/services/model.service';
+import { getGallerySettingsByModelId, getModelsRaw } from '~/server/services/model.service';
 import {
   getRecommendations,
   toggleResourceRecommendation,

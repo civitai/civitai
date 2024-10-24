@@ -132,10 +132,10 @@ export const isFlagProtected = (flag: keyof FeatureAccess) =>
 const isOnboarded = t.middleware(({ ctx, next }) => {
   const { user } = ctx;
   if (!user) throw new TRPCError({ code: 'UNAUTHORIZED' });
-  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.TOS)) {
+  if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz)) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'You must accept our terms of service before performing this action',
+      message: 'You must complete the onboarding process before performing this action',
     });
   }
   return next({ ctx: { ...ctx, user } });
