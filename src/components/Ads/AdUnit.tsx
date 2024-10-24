@@ -169,7 +169,7 @@ export function AdUnit({
             return x.width <= width;
           })
         : undefined,
-    [keys.join(',')]
+    [keys.join(','), width]
   );
   const debouncer = useDebouncer(300);
   const prevWidthRef = useRef<number | null>(null);
