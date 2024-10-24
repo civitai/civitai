@@ -27,12 +27,21 @@ import { constants } from '~/server/common/constants';
 import { CheckpointType, ModelType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { pgDbWrite } from '~/server/db/pgDb';
+// import { fetchBlob } from '~/utils/file-utils';
+
+const numRows = 1000;
 
 const randw = faker.helpers.weightedArrayElement;
 const rand = faker.helpers.arrayElement;
 const fbool = faker.datatype.boolean;
 
-const numRows = 300;
+// const getUrlAsFile = async (url: string) => {
+//   const blob = await fetchBlob(url);
+//   if (!blob) return;
+//   const lastIndex = url.lastIndexOf('/');
+//   const name = url.substring(lastIndex + 1);
+//   return new File([blob], name, { type: blob.type });
+// };
 
 // TODO fix tables ownership from doadmin to civitai
 
@@ -40,9 +49,7 @@ const insertRows = async (table: string, data: any[][]) => {
   console.log(`Inserting ${data.length} rows into ${table}`);
 
   // language=text
-  // let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
-  // language=text
-  let query = 'INSERT INTO %I VALUES %L';
+  let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
 
   if (
     !['ImageTool', 'ImageTechnique'].includes(table) &&
@@ -124,10 +131,15 @@ const genUsers = (num: number, includeCiv = false) => {
     ret.push(civUser);
   }
 
+  const seenUserNames: string[] = [];
+
   // random users
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
+    let username = faker.internet.userName();
+    if (seenUserNames.includes(username)) username = `${username} ${faker.number.int(1_000)}`;
+    seenUserNames.push(username);
 
     const row = [
       randw([
@@ -151,7 +163,7 @@ const genUsers = (num: number, includeCiv = false) => {
       fbool(), // "showNsfw"
       randw([
         { value: null, weight: 1 },
-        { value: faker.internet.userName(), weight: 20 },
+        { value: username, weight: 20 },
       ]), // username
       fbool(0.01), // "isModerator"
       fbool(0.01), // tos
@@ -713,21 +725,28 @@ const genCollectionItems = (
 /**
  * Post
  */
-const genPosts = (num: number, userIds: number[], mvIds: number[]) => {
+const genPosts = (
+  num: number,
+  userIds: number[],
+  mvData: { id: number; modelId: number; userId?: number }[]
+) => {
   const ret = [];
 
   for (let step = 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isPublished = fbool(0.8);
-    const mvId = rand([null, rand(mvIds)]);
+
+    const mv = rand(mvData);
+    const mvId = rand([null, mv.id]);
+    const userId = mvId ? mv.userId ?? rand(userIds) : rand(userIds);
 
     const row = [
       step, // id
       fbool(0.4), // nsfw // 40% actually seems fair :/
       rand([null, `${faker.word.adjective()} ${faker.word.adjective()} ${faker.word.noun()}`]), // title
       rand([null, `<p>${faker.lorem.sentence()}</p>`]), // detail
-      rand(userIds), // userId
-      mvId, // modelVersionId // TODO nullable
+      userId, // userId
+      mvId, // modelVersionId
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       !isPublished ? null : faker.date.between({ from: created, to: Date.now() }).toISOString(), // publishedAt
@@ -777,17 +796,21 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
     const ext = mime.split('/').pop();
     const width = rand([128, 256, 512, 768, 1024, 1920]);
     const height = rand([128, 256, 512, 768, 1024, 1920]);
-    let hash = faker.string.sample(36);
-    hash = hash.replace(/[\\"']/g, '_');
     const isGenned = fbool();
+    const imageUrl = faker.image.url({ width, height });
 
-    // [{"name": "ahegao_sdxl_v4", "type": "lora", "weight": 0.95}]
+    // TODO getting a proper blurhash sucks and nothing works
+    // let hash = faker.string.sample(36);
+    // hash = hash.replace(/[\\"']/g, '_');
+    // const file = await getUrlAsFile(imageUrl);
+    // const meta = file ? await preprocessFile(file) : null;
+    const hash = null;
 
     const row = [
       `${capitalize(faker.word.adjective())}-${capitalize(
         faker.word.noun()
       )}-${faker.number.int()}.${ext}`, // name
-      faker.image.url({ width, height }), // url
+      imageUrl, // url
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       hash, // hash
@@ -1367,6 +1390,81 @@ const genTags = (num: number) => {
       true,
       false,
       'UserGenerated',
+      'None',
+      false,
+      1,
+    ],
+    [
+      'image category',
+      null,
+      '2023-03-24 23:13:52.715',
+      '2023-03-24 23:13:52.715',
+      27,
+      '{Tag}',
+      false,
+      false,
+      false,
+      'System',
+      'None',
+      false,
+      1,
+    ],
+    [
+      'model category',
+      null,
+      '2023-03-24 23:13:52.715',
+      '2023-03-24 23:13:52.715',
+      28,
+      '{Tag}',
+      false,
+      false,
+      false,
+      'System',
+      'None',
+      false,
+      1,
+    ],
+    [
+      'post category',
+      null,
+      '2023-03-24 23:13:52.715',
+      '2023-03-24 23:13:52.715',
+      29,
+      '{Tag}',
+      false,
+      false,
+      false,
+      'System',
+      'None',
+      false,
+      1,
+    ],
+    [
+      'contest',
+      null,
+      '2023-05-03 16:54:55.704',
+      '2023-12-02 11:35:33.324',
+      30,
+      '{Tag,Post,Question}',
+      false,
+      false,
+      false,
+      'System',
+      'None',
+      false,
+      1,
+    ],
+    [
+      'article category',
+      null,
+      '2023-05-12 21:43:26.532',
+      '2023-05-12 21:43:26.532',
+      31,
+      '{Tag}',
+      false,
+      false,
+      false,
+      'System',
       'None',
       false,
       1,
@@ -2313,29 +2411,34 @@ const genRows = async (truncate = true) => {
   const models = genModels(numRows, userIds);
   const modelIds = await insertRows('Model', models);
   const modelData = models
-    .map((m) => ({ id: m[6] as number, type: m[25] as ModelUploadType }))
+    .map((m) => ({ id: m[6] as number, userId: m[7] as number, type: m[25] as ModelUploadType }))
     .filter((m) => modelIds.includes(m.id));
 
-  const mvs = genMvs(Math.ceil(numRows * 1.5), modelData);
+  const mvs = genMvs(Math.ceil(numRows * 3), modelData);
   const mvIds = await insertRows('ModelVersion', mvs);
   const mvData = mvs
-    .map((mv) => ({
-      id: mv[6] as number,
-      modelId: mv[7] as number,
-      type: mv[mv.length - 1] as ModelUploadType,
-    }))
+    .map((mv) => {
+      const modelId = mv[7] as number;
+      const matchModel = modelData.find((m) => m.id === modelId);
+      return {
+        id: mv[6] as number,
+        modelId: modelId,
+        userId: matchModel?.userId,
+        type: mv[mv.length - 1] as ModelUploadType,
+      };
+    })
     .filter((mv) => mvIds.includes(mv.id));
 
-  const mFiles = genMFiles(Math.ceil(numRows * 2), mvData);
+  const mFiles = genMFiles(Math.ceil(numRows * 4), mvData);
   await insertRows('ModelFile', mFiles);
 
-  const reviews = genReviews(numRows, userIds, mvData);
+  const reviews = genReviews(Math.ceil(numRows * 5), userIds, mvData);
   const reviewIds = await insertRows('ResourceReview', reviews);
 
-  const posts = genPosts(numRows, userIds, mvIds);
+  const posts = genPosts(Math.ceil(numRows * 4), userIds, mvData);
   const postIds = await insertRows('Post', posts);
 
-  const images = genImages(numRows, userIds, postIds);
+  const images = genImages(Math.ceil(numRows * 8), userIds, postIds);
   const imageIds = await insertRows('Image', images);
 
   const articles = genArticles(numRows, userIds, imageIds);
@@ -2357,7 +2460,7 @@ const genRows = async (truncate = true) => {
     .filter((c) => collectionIds.includes(c.id));
 
   const collectionItems = genCollectionItems(
-    numRows,
+    Math.ceil(numRows * 2),
     collectionData,
     articleIds,
     postIds,
@@ -2376,22 +2479,22 @@ const genRows = async (truncate = true) => {
   const tags = genTags(numRows);
   const tagIds = await insertRows('Tag', tags);
 
-  const tagsOnArticles = genTagsOnArticles(numRows, tagIds, articleIds);
+  const tagsOnArticles = genTagsOnArticles(Math.ceil(numRows * 3), tagIds, articleIds);
   await insertRows('TagsOnArticle', tagsOnArticles);
 
-  const tagsOnPosts = genTagsOnPosts(numRows, tagIds, postIds);
+  const tagsOnPosts = genTagsOnPosts(Math.ceil(numRows * 3), tagIds, postIds);
   await insertRows('TagsOnPost', tagsOnPosts);
 
-  const tagsOnImages = genTagsOnImages(numRows, tagIds, imageIds);
+  const tagsOnImages = genTagsOnImages(Math.ceil(numRows * 3), tagIds, imageIds);
   await insertRows('TagsOnImage', tagsOnImages);
 
-  const tagsOnModels = genTagsOnModels(numRows, tagIds, modelIds);
+  const tagsOnModels = genTagsOnModels(Math.ceil(numRows * 3), tagIds, modelIds);
   await insertRows('TagsOnModels', tagsOnModels);
 
   // TODO TagsOnImageVote
   // TODO TagsOnModelsVote
 
-  const commentsV1 = genCommentsModel(numRows, userIds, modelIds, [], false);
+  const commentsV1 = genCommentsModel(Math.ceil(numRows * 3), userIds, modelIds, [], false);
   const commentsV1Ids = await insertRows('Comment', commentsV1);
 
   const commentsV1Thread = genCommentsModel(
@@ -2404,10 +2507,19 @@ const genRows = async (truncate = true) => {
   );
   const commentsV1AllIds = await insertRows('Comment', commentsV1Thread);
 
-  const threads = genThreads(numRows, imageIds, postIds, reviewIds, articleIds, [], [], false);
+  const threads = genThreads(
+    Math.ceil(numRows * 3),
+    imageIds,
+    postIds,
+    reviewIds,
+    articleIds,
+    [],
+    [],
+    false
+  );
   const threadIds = await insertRows('Thread', threads);
 
-  const commentsV2 = genCommentsV2(numRows, userIds, threadIds);
+  const commentsV2 = genCommentsV2(Math.ceil(numRows * 4), userIds, threadIds);
   const commentsV2Ids = await insertRows('CommentV2', commentsV2);
 
   const threadsNest = genThreads(
@@ -2449,15 +2561,19 @@ const genRows = async (truncate = true) => {
   const userEngage = genUserEngagements(numRows, userIds, userIds);
   await insertRows('UserEngagement', userEngage);
 
-  const articleReactions = genArticleReactions(numRows, userIds, articleIds);
+  const articleReactions = genArticleReactions(Math.ceil(numRows * 5), userIds, articleIds);
   await insertRows('ArticleReaction', articleReactions);
-  const commentV1Reactions = genCommentReactions(numRows, userIds, commentsV1AllIds);
+  const commentV1Reactions = genCommentReactions(Math.ceil(numRows * 5), userIds, commentsV1AllIds);
   await insertRows('CommentReaction', commentV1Reactions);
-  const commentV2Reactions = genCommentV2Reactions(numRows, userIds, commentsV2AllIds);
+  const commentV2Reactions = genCommentV2Reactions(
+    Math.ceil(numRows * 5),
+    userIds,
+    commentsV2AllIds
+  );
   await insertRows('CommentV2Reaction', commentV2Reactions);
-  const imageReactions = genImageReactions(numRows, userIds, imageIds);
+  const imageReactions = genImageReactions(Math.ceil(numRows * 5), userIds, imageIds);
   await insertRows('ImageReaction', imageReactions);
-  const postReactions = genPostReactions(numRows, userIds, postIds);
+  const postReactions = genPostReactions(Math.ceil(numRows * 5), userIds, postIds);
   await insertRows('PostReaction', postReactions);
 
   const leaderboards = genLeaderboards();
@@ -2654,7 +2770,13 @@ const genRows = async (truncate = true) => {
 };
 
 const main = async () => {
+  await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
+  await pgDbWrite.query(
+    'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "postgres"'
+  );
+  await pgDbWrite.query('GRANT ALL ON ALL TABLES IN schema public TO "postgres"');
   await genRows();
+  await pgDbWrite.query('REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails"');
 };
 
 main().then(() => {
