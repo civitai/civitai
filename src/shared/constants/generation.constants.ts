@@ -400,8 +400,8 @@ export const baseModelResourceTypes = {
     },
   ],
   Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Pony, 'SD 1.5'] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Illustrious, 'SD 1.5'] },
     {
       type: ModelType.LORA,
       baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
