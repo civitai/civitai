@@ -730,6 +730,28 @@ export const generationConfig = {
       available: true,
     } as GenerationResource,
   },
+  Illustrious: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 889818,
+      name: 'v0.1',
+      trainedWords: [],
+      modelId: 795765,
+      modelName: 'Illustrious-XL',
+      modelType: 'Checkpoint',
+      baseModel: 'Illustrious',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
   Flux1: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
