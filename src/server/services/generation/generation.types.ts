@@ -21,11 +21,13 @@ export namespace Generation {
     removedForSafety: boolean;
     jobToken?: string;
     duration?: number | null;
+    remixedFromImageId?: number;
   };
 
   export type Data = {
     params?: Partial<Params>;
     resources: Resource[];
+    remixedFromImageId?: number;
   };
 
   export type Params = {
