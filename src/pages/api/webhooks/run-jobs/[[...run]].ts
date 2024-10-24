@@ -31,7 +31,6 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
-import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
@@ -98,7 +97,6 @@ export const jobs: Job[] = [
   rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
-  processCreatorProgramEarlyAccessRewards,
   processCreatorProgramImageGenerationRewards,
   processVaultItems,
   clearVaultItems,

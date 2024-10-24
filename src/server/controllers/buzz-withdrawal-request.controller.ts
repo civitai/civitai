@@ -82,11 +82,12 @@ export function updateBuzzWithdrawalRequestHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
+    const { buzzWithdrawalTransfer } = ctx.features;
     if (
       [BuzzWithdrawalRequestStatus.Reverted, BuzzWithdrawalRequestStatus.Transferred].some(
         (s) => s === input.status
       ) &&
-      ctx.features.buzzWithdrawalTransfer
+      !buzzWithdrawalTransfer
     ) {
       // Ensure this user has permission to do this:
       throw throwAuthorizationError('You do not have permission to perform this action');

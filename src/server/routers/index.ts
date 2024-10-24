@@ -49,7 +49,7 @@ import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
-import { userStripeConnectRouter } from './user-stripe-connect.router';
+import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 import { integrationRouter } from './integration.router';
 import { paypalRouter } from './paypal.router';
@@ -123,7 +123,7 @@ export const appRouter = router({
   cosmetic: cosmeticRouter,
   event: eventRouter,
   csam: csamRouter,
-  userStripeConnect: userStripeConnectRouter,
+  userPaymentConfiguration: userPaymentConfigurationRouter,
   buzzWithdrawalRequest: buzzWithdrawalRequestRouter,
   integration: integrationRouter,
   paypal: paypalRouter,

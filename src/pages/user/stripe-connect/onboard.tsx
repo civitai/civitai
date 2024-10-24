@@ -1,6 +1,6 @@
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getStripeConnectOnboardingLink } from '../../../server/services/user-stripe-connect.service';
+import { getStripeConnectOnboardingLink } from '../../../server/services/user-payment-configuration.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,

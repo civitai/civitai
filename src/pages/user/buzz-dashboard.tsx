@@ -25,7 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
-import { StripeConnectCard } from '../../components/Account/StripeConnectCard';
+import { UserPaymentConfigurationCard } from '../../components/Account/UserPaymentConfigurationCard';
 import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
 import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
@@ -113,7 +113,7 @@ export default function UserBuzzDashboard() {
 
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
 
-          <StripeConnectCard />
+          <UserPaymentConfigurationCard />
           <OwnedBuzzWithdrawalRequestsPaged />
 
           <EarningBuzz withCTA />

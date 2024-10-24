@@ -66,19 +66,6 @@ export const shortenPlanInterval = (interval?: string | null) => {
   return interval ?? '';
 };
 
-export const useUserStripeConnect = () => {
-  const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
-  const { data: userStripeConnect, isLoading } = trpc.userStripeConnect.get.useQuery(undefined, {
-    enabled: !!features.creatorsProgram && !!currentUser,
-  });
-
-  return {
-    userStripeConnect,
-    isLoading,
-  };
-};
-
 export const usePaymentIntent = ({
   unitAmount,
   currency = Currency.USD,
