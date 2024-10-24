@@ -1,0 +1,8 @@
+version: 3
+agent:
+  authtoken:
+endpoints:
+  - name: civitai-app
+    upstream:
+      url: 8000
+      protocol: http2

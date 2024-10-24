@@ -3,8 +3,13 @@
  * This file is included in `/next.config.mjs` which ensures the app isn't built with invalid env vars.
  * It has to be a `.mjs`-file to be imported there.
  */
+import * as dotenv from 'dotenv';
 import { env as clientEnv, formatErrors } from './client.mjs';
 import { serverSchema } from './schema.mjs';
+
+if (process.env.NODE_ENV === 'development') {
+  dotenv.config({ path: __dirname + '/../../.env' });
+}
 
 const _serverEnv = serverSchema.safeParse(process.env);
 

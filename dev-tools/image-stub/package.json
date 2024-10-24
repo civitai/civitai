@@ -1,0 +1,11 @@
+{
+  "name": "image-stub",
+  "version": "1.0.0",
+  "main": "index.mjs",
+  "author": "Civitai",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}

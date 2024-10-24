@@ -1,17 +1,29 @@
 version: '3.9'
 services:
-  db:
+  prisma-pit:
     image: postgres:alpine
-    container_name: db
     ports:
-      - 5432:5432
+      - 15433:5432
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=modelshare
       - POSTGRES_DB=postgres
     volumes:
-      - ./postgres/data:/var/lib/postgresql/data
+      - ./postgres/prisma-pit:/var/lib/postgresql/data
     restart: unless-stopped
+
+  db:
+    image: postgres:alpine
+    container_name: db
+    ports:
+      - 15432:5432
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=civitai
+    volumes:
+      - ./docker-init/postgres:/docker-entrypoint-initdb.d
+      # - ./postgres/db:/var/lib/postgresql/data
+
   redis:
     image: redis:alpine
     container_name: redis
@@ -21,6 +33,7 @@ services:
     volumes:
       - ./redis/data:/data
     restart: unless-stopped
+
   minio:
     image: minio/minio
     container_name: minio
@@ -34,6 +47,7 @@ services:
       - ./minio/data:/data
     command: minio server /data --console-address ":9001"
     restart: unless-stopped
+
   meilisearch:
     image: getmeili/meilisearch:v1.2
     container_name: meilisearch
@@ -43,6 +57,7 @@ services:
       - ./meilisearch/data:/meili_data
     environment:
       - MEILI_MASTER_KEY=meilisearch
+      
   createbuckets:
     image: minio/mc
     container_name: createbuckets
@@ -51,6 +66,7 @@ services:
     entrypoint: >
       /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/settled && /usr/bin/mc policy set public minio/settled && exit 0"
     restart: unless-stopped
+
   maildev:
     image: maildev/maildev
     container_name: maildev
@@ -61,3 +77,42 @@ services:
       - 1025:1025
       - 1080:1080
     restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:22.2
+    ports:
+      - 18123:8123
+      - 19000:9000
+    volumes:
+      - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
+    environment:
+      # - CLICKHOUSE_DB="test"
+      # - CLICKHOUSE_USER="test"
+      # - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT="1"
+      - CLICKHOUSE_PASSWORD="default"
+  
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command:
+      - "start"
+      - "--all"
+      - "--config"
+      - "/etc/ngrok.yml"
+    volumes:
+      - ./docker-init/ngrok/config.yaml:/etc/ngrok.yml
+    ports:
+      - 8080:8080
+      - 4040:4040
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+
+  image-stub:
+    build: dev-tools/image-stub
+    ports:
+      - 5000:3000
+    volumes:
+      - ./dev/image-stub/images:/usr/src/app/images
+    environment:
+      NODE_ENV: development
+    

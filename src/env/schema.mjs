@@ -16,6 +16,7 @@ export const serverSchema = z.object({
   DATABASE_PG_URL: z.string().url().optional(),
   DATABASE_REPLICA_URL: z.string().url(),
   DATABASE_REPLICA_LONG_URL: z.string().url().optional(),
+  DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.string().url(),
   NOTIFICATION_DB_REPLICA_URL: z.string().url(),
   DATABASE_SSL_CA: z.string().optional(),
@@ -194,8 +195,8 @@ export const serverSchema = z.object({
  */
 export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
-  NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
-  NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
+  NEXT_PUBLIC_IMAGE_LOCATION: z.string().optional(),
+  NEXT_PUBLIC_CIVITAI_LINK: z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: z.string().optional(),
   NEXT_PUBLIC_CANNY_BUG_BOARD: z.string().optional(),
@@ -217,7 +218,7 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
-  NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
+  NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_ADS: zc.booleanString.default(false),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
