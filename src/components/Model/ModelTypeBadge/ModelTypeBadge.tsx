@@ -33,6 +33,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   'Hunyuan 1': 'HY',
   Lumina: 'L',
   ODOR: <IconNose size={16} strokeWidth={2} />,
+  Illustrious: 'IL',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

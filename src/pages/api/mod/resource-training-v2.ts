@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { updateRecords } from '~/pages/api/webhooks/resource-training-v2';
+import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
@@ -44,7 +44,7 @@ export default ModEndpoint(async (req, res) => {
       path: { workflowId: workflowId as string },
     });
 
-    await updateRecords(workflow);
+    await updateRecords(workflow, workflow.status ?? 'preparing');
   } catch (e: unknown) {
     const err = e as Error | undefined;
     logWebhook({

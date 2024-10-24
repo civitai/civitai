@@ -48,7 +48,8 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
   let token = getEncryptedCookie(ctx, generationServiceCookie.name);
-  if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (env.ORCHESTRATOR_MODE === 'dev')
+    token = env.ORCHESTRATOR_USER_ACCESS_TOKEN ?? env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({
       name: generationServiceCookie.name,
