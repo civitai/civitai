@@ -158,7 +158,7 @@ export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
 
   return (
     <Link
-      href={`/tools/${sluggifiedName}?toolId=${data.id}`}
+      href={`/tools/${sluggifiedName}?tools=${data.id}`}
       as={`/tools/${sluggifiedName}`}
       passHref
     >
