@@ -467,6 +467,9 @@ function filterPreferences<
         hidden,
       };
     }
+    case 'tools':
+      // No need to apply hidden preferences to tools
+      return { items: value, hidden };
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
@@ -564,6 +567,10 @@ type BaseTag = {
   name?: string | null;
 };
 
+type BaseTool = {
+  id: number;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -573,4 +580,5 @@ export type BaseDataTypeMap = {
   bounties: BaseBounty[];
   posts: BasePost[];
   tags: BaseTag[];
+  tools: BaseTool[];
 };

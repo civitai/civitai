@@ -56,6 +56,7 @@ import {
 import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
+import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -182,6 +183,7 @@ const targetData = [
   { value: 'users', label: 'Users' },
   { value: 'collections', label: 'Collections' },
   { value: 'bounties', label: 'Bounties' },
+  { value: 'tools', label: 'Tools' },
 ] as const;
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
@@ -198,6 +200,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
         searchIndexMap.models,
         searchIndexMap.images,
         searchIndexMap.collections,
+        searchIndexMap.tools,
       ].some((i) => i === searchIndexMap[targetIndex]),
     [targetIndex]
   );
@@ -396,7 +399,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
             ({ value }) =>
               (features.imageSearch ? true : value !== 'images') &&
               (features.bounties ? true : value !== 'bounties') &&
-              (features.articles ? true : value !== 'articles')
+              (features.articles ? true : value !== 'articles') &&
+              (features.toolSearch ? true : value !== 'tools')
           )}
           rightSection={<IconChevronDown size={16} color="currentColor" />}
           sx={{ flexShrink: 1 }}
@@ -501,6 +505,7 @@ const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
   images: ImagesSearchItem,
   collections: CollectionsSearchItem,
   bounties: BountiesSearchItem,
+  tools: ToolSearchItem,
 };
 
 const queryFilters: Record<

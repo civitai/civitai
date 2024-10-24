@@ -2,10 +2,12 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import {
   ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   METRICS_IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -17,6 +19,8 @@ import {
   usersSearchIndex,
   imagesMetricsSearchIndex,
   collectionsSearchIndex,
+  bountiesSearchIndex,
+  toolsSearchIndex,
 } from '~/server/search-index';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
@@ -31,6 +35,8 @@ export const schema = z.object({
     ARTICLES_SEARCH_INDEX,
     METRICS_IMAGES_SEARCH_INDEX,
     COLLECTIONS_SEARCH_INDEX,
+    BOUNTIES_SEARCH_INDEX,
+    TOOLS_SEARCH_INDEX,
   ]),
 });
 export default ModEndpoint(async function updateIndexSync(
@@ -68,6 +74,12 @@ export default ModEndpoint(async function updateIndexSync(
           break;
         case COLLECTIONS_SEARCH_INDEX:
           await collectionsSearchIndex.updateSync(data, jobContext);
+          break;
+        case BOUNTIES_SEARCH_INDEX:
+          await bountiesSearchIndex.updateSync(data, jobContext);
+          break;
+        case TOOLS_SEARCH_INDEX:
+          await toolsSearchIndex.updateSync(data, jobContext);
           break;
         default:
           break;

@@ -2,6 +2,7 @@ import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ImageProcess({ imageId }: { imageId: number }) {
@@ -24,7 +25,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
             <Text className="font-semibold">Tools</Text>
           </div>
           <div className="flex flex-wrap gap-2">
-            {tools.map(({ id, name, notes, domain }) => (
+            {tools.map(({ id, name, notes }) => (
               <Badge
                 key={id}
                 size="lg"
@@ -33,7 +34,11 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 }`}
                 classNames={{ inner: 'flex gap-1 h-full' }}
               >
-                <NextLink href={`/images?tools=${id}`} data-activity={`tool-click:${id}`}>
+                <NextLink
+                  href={`/tools/${slugit(name)}?tools=${id}`}
+                  as={`/tools/${slugit(name)}`}
+                  data-activity={`tool-click:${id}`}
+                >
                   {name}
                 </NextLink>
                 {notes && (

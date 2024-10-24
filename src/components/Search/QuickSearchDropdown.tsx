@@ -25,12 +25,13 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IndexToLabel } from '~/components/Search/useSearchState';
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
+import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -238,6 +239,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
             .filter(
               (value) =>
                 (features.imageSearch ? true : searchIndexMap[value] !== IMAGES_SEARCH_INDEX) &&
+                (features.toolSearch ? true : searchIndexMap[value] !== TOOLS_SEARCH_INDEX) &&
                 (features.articles ? true : value !== 'articles')
             )
             .map((index) => ({ label: IndexToLabel[searchIndexMap[index]], value: index }))}
@@ -300,4 +302,5 @@ const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
   images: ImagesSearchItem,
   collections: CollectionsSearchItem,
   bounties: BountiesSearchItem,
+  tools: ToolSearchItem,
 };
