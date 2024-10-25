@@ -247,8 +247,9 @@ export function GenerationFormContent() {
       if (additionalResources.length === 0) creatorTip = 0;
     }
 
-    const resources = [modelClone, ...additionalResources, vae].filter(isDefined);
-    // .filter((x) => x.available !== false); // TODO - uncomment for prod
+    const resources = [modelClone, ...additionalResources, vae]
+      .filter(isDefined)
+      .filter((x) => x.available !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -447,7 +448,7 @@ export function GenerationFormContent() {
                           buttonLabel="Add Model"
                           allowRemove={false}
                           options={{
-                            // canGenerate: true, // TODO - uncomment for prod
+                            canGenerate: true,
                             resources: resourceTypes
                               .filter((x) => x.type === 'Checkpoint')
                               .map(({ type, baseModels }) => ({

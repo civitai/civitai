@@ -177,13 +177,13 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  // if (!resourceData.resources.every((x) => x.available)) // TODO - uncomment in prod
-  //   throw throwBadRequestError(
-  //     `Some of your resources are not available for generation: ${resourceData.resources
-  //       .filter((x) => !x.covered)
-  //       .map((x) => x.air)
-  //       .join(', ')}`
-  //   );
+  if (!resourceData.resources.every((x) => x.available))
+    throw throwBadRequestError(
+      `Some of your resources are not available for generation: ${resourceData.resources
+        .filter((x) => !x.covered)
+        .map((x) => x.air)
+        .join(', ')}`
+    );
 
   const availableResourceTypes = getBaseModelResourceTypes(params.baseModel).map((x) => x.type);
   // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);

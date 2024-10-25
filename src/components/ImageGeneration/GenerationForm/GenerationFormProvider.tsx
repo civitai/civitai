@@ -164,8 +164,8 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   // if current checkpoint doesn't match baseModel, set checkpoint based on baseModel config
   if (
     !checkpoint ||
-    getBaseModelSetType(checkpoint.baseModel) !== baseModel
-    // || !checkpoint.available // tODO -uncomment for prod
+    getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
+    !checkpoint.available
   ) {
     checkpoint = config.checkpoint;
   }
