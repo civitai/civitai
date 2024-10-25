@@ -338,7 +338,7 @@ export const updateBuzzWithdrawalRequest = async ({
   ) {
     const transaction = await createBuzzTransaction({
       fromAccountId: 0, // bank
-      toAccountId: userId,
+      toAccountId: request.userId as number,
       amount: request.requestedBuzzAmount,
       type: TransactionType.Refund,
       description: 'Refund due to rejection or cancellation of withdrawal request',

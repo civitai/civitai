@@ -247,6 +247,11 @@ export function getIsFlux(baseModel?: string) {
   return baseModelSetType === 'Flux1';
 }
 
+export function getIsSD3(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'SD3';
+}
+
 export type GenerationResource = MakeUndefinedOptional<
   ReturnType<typeof formatGenerationResources>[number]
 >;
@@ -423,6 +428,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
   ],
+  SD3: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

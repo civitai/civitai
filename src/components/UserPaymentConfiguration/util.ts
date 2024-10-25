@@ -1,5 +1,6 @@
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 import { trpc } from '~/utils/trpc';
 
 export const useUserPaymentConfiguration = () => {
@@ -18,9 +19,12 @@ export const useUserPaymentConfiguration = () => {
   };
 };
 
-export const useTipaltiConfigurationUrl = (enabled: boolean) => {
+export const useTipaltiConfigurationUrl = (
+  input: GetTipaltiDashbordUrlSchema,
+  enabled: boolean
+) => {
   const { data: tipaltiConfigurationUrl, ...rest } =
-    trpc.userPaymentConfiguration.getTipaltiOnboardingUrl.useQuery(undefined, {
+    trpc.userPaymentConfiguration.getTipaltiDashboardUrl.useQuery(input, {
       enabled,
     });
 

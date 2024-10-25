@@ -322,7 +322,8 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ? (
+      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ||
+      userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.InternalValue ? (
         <>
           <Stack>
             <Text>
