@@ -101,7 +101,6 @@ export const serverSchema = z.object({
   ORCHESTRATOR_MODE: z.string().default('dev'),
   GENERATION_CALLBACK_HOST: z.string().url().optional(),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
-  ORCHESTRATOR_USER_ACCESS_TOKEN: z.string().optional(),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
@@ -187,18 +186,18 @@ export const serverSchema = z.object({
   CONTENT_SCAN_MODEL: z.string().optional(),
   // TIPALTI. It uses a lot of little env vars, so we group them here.
   // iFrame Related:
-  TIPALTI_PAYER_NAME: z.string().optional(), 
-  TIPALTI_PAYEE_DASHBOARD_URL: z.string().optional(), 
-  TIPALTI_IFRAME_KEY: z.string().optional(), 
-  TIPALTI_WEBTOKEN_SECRET: z.string().optional(), 
-  
+  TIPALTI_PAYER_NAME: z.string().optional(),
+  TIPALTI_PAYEE_DASHBOARD_URL: z.string().optional(),
+  TIPALTI_IFRAME_KEY: z.string().optional(),
+  TIPALTI_WEBTOKEN_SECRET: z.string().optional(),
+
   // API Related:
-  TIPALTI_API_URL: z.string().optional(), 
-  TIPALTI_API_CLIENT_ID: z.string().optional(), 
-  TIPALTI_API_SECRET: z.string().optional(), 
-   TIPALTI_API_CODE_VERIFIER: z.string().optional(), 
-   TIPALTI_API_REFRESH_TOKEN: z.string().optional(), 
-   TIPALTI_API_TOKEN_URL: z.string().optional(), 
+  TIPALTI_API_URL: z.string().optional(),
+  TIPALTI_API_CLIENT_ID: z.string().optional(),
+  TIPALTI_API_SECRET: z.string().optional(),
+   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
+   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
+   TIPALTI_API_TOKEN_URL: z.string().optional(),
 });
 
 /**
