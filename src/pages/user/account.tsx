@@ -17,7 +17,7 @@ import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
-import { StripeConnectCard } from '~/components/Account/StripeConnectCard';
+import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 
@@ -45,7 +45,7 @@ export default function Account({ providers }: Props) {
           <ContentControlsCard />
           {canViewNsfw && <ModerationCard />}
           <AccountsCard providers={providers} />
-          <StripeConnectCard />
+          <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}

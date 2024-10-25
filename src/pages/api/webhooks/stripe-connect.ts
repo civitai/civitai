@@ -4,7 +4,7 @@ import { env } from '~/env/server.mjs';
 import Stripe from 'stripe';
 // import { buffer } from 'micro';
 import { Readable } from 'node:stream';
-import { updateByStripeConnectAccount } from '../../../server/services/user-stripe-connect.service';
+import { updateByStripeConnectAccount } from '../../../server/services/user-payment-configuration.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
