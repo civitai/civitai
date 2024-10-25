@@ -425,6 +425,20 @@ export const baseModelSetTypes = [
   'Illustrious',
 ] as const;
 
+// TODO - new base model definitions to include ecosystems
+const baseModelSet = {
+  SD1: {
+    name: 'Stable Diffusion',
+    ecosystem: 'sd1',
+    baseModels: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
+  },
+  SD2: {
+    name: 'Stable Diffusion',
+    ecosystem: 'sd2',
+    baseModels: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+  },
+};
+
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
 export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
@@ -462,6 +476,13 @@ export const baseModelSetNames = defineBaseModelSetNames({
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
 });
+
+export const modelEcosystems = {
+  sd1: ['SD1'],
+  sdxl: ['SDXL', 'Pony', 'Illustrious'],
+  flux1: ['FLUX1'],
+  sd3: ['SD3'],
+};
 
 type LicenseDetails = {
   url: string;

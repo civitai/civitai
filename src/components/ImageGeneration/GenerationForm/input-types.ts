@@ -1,3 +1,5 @@
+import Ajv, { JSONSchemaType } from 'ajv';
+
 type BaseInputProps = {
   name: string;
   label: string;
@@ -80,7 +82,7 @@ type GenerationConfigGroup = {
   type: 'image' | 'video';
   name: string; // ie. Text to Image, Image to Image, Flux
   modelId?: number;
-  baseModel: string; // ie. SD1, SDXL, Pony
+  env?: string; // ie. sd1, sdxl, flux, sd3
 };
 
 type BaseGenerationConfig = {
@@ -89,7 +91,6 @@ type BaseGenerationConfig = {
   name: string; // ie. Face fix
   description?: string;
   batchSize?: number;
-  tag?: string; // 'txt2img' | 'img2img' | 'flux' | ''
 };
 
 type Test = {
@@ -105,7 +106,7 @@ type Tes2 = {
 type GenerationModelConfig = BaseGenerationConfig & {
   category: 'model';
   modelId?: number;
-  baseModel: string; // ie. SD1, SDXL, Pony
+  env?: string; // ie. sd1, sdxl, flux, sd3
 };
 
 type GenerationServiceConfig = BaseGenerationConfig & {
@@ -190,7 +191,7 @@ const negativePrompt: TextAreaInputProps = {
   placeholder: 'Your negative prompt goes here...',
   info: `add aspects you'd like to avoid in the negative prompt`,
 };
-const sd1AspectRatio: AspectRatioInputProps = {
+const aspectRatioSd1: AspectRatioInputProps = {
   type: 'aspect-ratio',
   name: 'aspectRatio',
   label: 'Aspect Ratio',
@@ -200,6 +201,26 @@ const sd1AspectRatio: AspectRatioInputProps = {
     { label: 'Portrait', width: 512, height: 768 },
   ],
 };
+const matureToggle: SwitchInputProps = {
+  type: 'switch',
+  name: 'nsfw',
+  label: 'Mature content',
+};
+const aspectRatio = {
+  type: 'aspect-ratio',
+  name: 'aspectRatio',
+  label: 'Aspect Ratio',
+  options: [
+    { label: 'Square', width: 1024, height: 1024 },
+    { label: 'Landscape', width: 1216, height: 832 },
+    { label: 'Portrait', width: 832, height: 1216 },
+  ],
+};
+
+const sd1Config = [prompt, negativePrompt, aspectRatioSd1, matureToggle];
+const sdxlConfig = [prompt, negativePrompt, aspectRatio, matureToggle];
+const fluxConfig = [prompt, aspectRatio];
+
 // can this be included by default. Could we add something like `supportsAdditionalResources` to the generation config?
 const sd1ResourceSelect: ResourceSelectInputProps = {
   type: 'resource-select',
@@ -212,6 +233,27 @@ const sd1ResourceSelect: ResourceSelectInputProps = {
     { type: 'LORA' },
     { type: 'DoRA' },
     { type: 'LoCon' },
-    { type: 'VAE', limit: 1 },
   ],
+};
+
+const textToImageSchema: JSONSchemaType<{
+  prompt: string;
+  negativePrompt: string;
+  aspectRatio: string;
+}> = {
+  type: 'object',
+  properties: {
+    prompt: { type: 'string', minLength: 0, maxLength: 1500 },
+    negativePrompt: { type: 'string', maxLength: 1000 },
+    aspectRatio: { type: 'string' },
+  },
+  required: ['prompt', 'aspectRatio'],
+  additionalProperties: false,
+};
+
+const environmentConfigs = {
+  sd1: {},
+  sdxl: {},
+  flux: {},
+  sd3: {},
 };

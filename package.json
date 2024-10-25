@@ -115,6 +115,7 @@
     "@trpc/server": "^10.45.0",
     "@types/stream-to-blob": "^2.0.0",
     "@vladmandic/human": "^3.0.5",
+    "ajv": "^8.17.1",
     "algoliasearch": "^4.23.3",
     "archiver": "^6.0.1",
     "arraybuffer-to-buffer": "^0.0.7",
