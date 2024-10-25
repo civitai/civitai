@@ -600,6 +600,12 @@ export function GenerationFormContent() {
                   }}
                 </Watch>
 
+                {isSD3 && (
+                  <Alert>
+                    This is an experimental build, as such pricing and results are subject to change
+                  </Alert>
+                )}
+
                 {isFlux && (
                   <Watch {...form} fields={['resources']}>
                     {({ resources }) => (
