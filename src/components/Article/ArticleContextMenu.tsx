@@ -19,6 +19,7 @@ import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { ArticleGetById } from '~/types/router';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -74,7 +75,11 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             message: 'Successfully unpublished article',
           });
 
-          await queryUtils.article.getById.invalidate({ id: result.id });
+          queryUtils.article.getById.setData({ id: article.id }, (old) => ({
+            ...(old as ArticleGetById),
+            ...result,
+          }));
+
           await queryUtils.article.getInfinite.invalidate();
           await queryUtils.article.getMyDraftArticles.invalidate();
         },
