@@ -13,8 +13,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (!user) return;
 
   let token = getEncryptedCookie({ req, res }, generationServiceCookie.name);
-  if (env.ORCHESTRATOR_MODE === 'dev')
-    token = env.ORCHESTRATOR_USER_ACCESS_TOKEN ?? env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({
       name: generationServiceCookie.name,

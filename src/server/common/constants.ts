@@ -774,6 +774,28 @@ export const generationConfig = {
       available: true,
     } as GenerationResource,
   },
+  SD3: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 983602,
+      name: '',
+      trainedWords: [],
+      modelId: 878387,
+      modelName: 'Stable Diffusion 3.5 Large',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 3.5',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
 };
 
 // export type GenerationBaseModel = keyof typeof generationConfig;

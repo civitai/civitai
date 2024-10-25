@@ -123,10 +123,6 @@ function useAdUnitContext() {
 function AdUnitContent() {
   const { item } = useAdUnitContext();
 
-  useEffect(() => {
-    console.log('item');
-  }, [item]);
-
   return (
     <AdWrapper width={item.width} height={item.height}>
       {item && (

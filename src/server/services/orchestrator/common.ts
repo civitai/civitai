@@ -22,6 +22,7 @@ import {
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
+  getIsSD3,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -41,7 +42,7 @@ import {
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { generation, getGenerationConfig } from '~/server/common/constants';
+import { generation } from '~/server/common/constants';
 import { SessionUser } from 'next-auth';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { z } from 'zod';
@@ -127,6 +128,17 @@ export async function parseGenerateImageInput({
     originalParams.fluxMode = undefined;
   }
 
+  const isSD3 = getIsSD3(originalParams.baseModel);
+  if (isSD3) {
+    originalParams.sampler = 'undefined';
+    originalParams.nsfw = true; // No nsfw helpers in SD3
+    originalParams.draft = false;
+    if (originalResources.find((x) => x.id === 983611)) {
+      originalParams.steps = 4;
+      originalParams.cfgScale = 1;
+    }
+  }
+
   let params = { ...originalParams };
   const status = await getGenerationStatus();
   const limits = status.limits[user.tier ?? 'free'];
@@ -165,13 +177,13 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => x.available))
-    throw throwBadRequestError(
-      `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.covered)
-        .map((x) => x.air)
-        .join(', ')}`
-    );
+  // if (!resourceData.resources.every((x) => x.available)) // TODO - uncomment in prod
+  //   throw throwBadRequestError(
+  //     `Some of your resources are not available for generation: ${resourceData.resources
+  //       .filter((x) => !x.covered)
+  //       .map((x) => x.air)
+  //       .join(', ')}`
+  //   );
 
   const availableResourceTypes = getBaseModelResourceTypes(params.baseModel).map((x) => x.type);
   // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
@@ -216,7 +228,7 @@ export async function parseGenerateImageInput({
   params.nsfw ??= isPromptNsfw !== false;
 
   const injectable: InjectableResource[] = [];
-  if (!isFlux) {
+  if (!isFlux && !isSD3) {
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
