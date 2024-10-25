@@ -965,6 +965,7 @@ export function GenerationFormContent() {
                                 <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
                                 <InfoPopover size="xs" iconProps={{ size: 14 }}>
                                   These provide additional color and detail improvements.{' '}
+                                  {/* TODO -update link - https://education.civitai.com/civitais-guide-to-resource-types/ */}
                                   <Anchor
                                     href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
                                     target="_blank"
