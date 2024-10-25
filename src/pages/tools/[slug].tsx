@@ -1,4 +1,5 @@
 import { Stack } from '@mantine/core';
+import { startCase } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -42,7 +43,9 @@ function ToolFeedPage() {
     <>
       <Meta
         title="Civitai Gallery | AI-Generated Art Showcase"
-        description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
+        description={`See the latest art created with ${startCase(
+          slug as string
+        )} by the generative AI art community and delve into the inspirations and prompts behind their work`}
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools/${slug}`, rel: 'canonical' }]}
       />
       <ToolBanner slug={slug as string} />
