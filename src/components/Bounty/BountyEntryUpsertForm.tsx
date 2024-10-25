@@ -149,7 +149,12 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
     ];
 
     bountyEntryUpsertMutation.mutate(
-      { ...data, bountyId: bounty.id, images: [...bountyEntryImages, ...filteredImages], files },
+      {
+        ...data,
+        bountyId: bounty.id,
+        images: [...bountyEntryImages.map((i, index) => ({ ...i, index })), ...filteredImages],
+        files,
+      },
       {
         async onSuccess() {
           await queryUtils.bounty.getEntries.invalidate({ id: bounty.id });
