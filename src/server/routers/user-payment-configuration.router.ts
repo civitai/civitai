@@ -2,8 +2,9 @@ import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 import { getHandler } from '../controllers/user-payment-configuration.controller';
 import {
   getStripeConnectOnboardingLink,
-  getTipaltiOnboardingUrl,
+  getTipaltiDashboardUrl,
 } from '../services/user-payment-configuration.service';
+import { getTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 
 export const userPaymentConfigurationRouter = router({
   get: protectedProcedure.use(isFlagProtected('creatorsProgram')).query(getHandler),
@@ -11,7 +12,10 @@ export const userPaymentConfigurationRouter = router({
     .use(isFlagProtected('creatorsProgram'))
     .query(({ ctx }) => getStripeConnectOnboardingLink({ userId: ctx.user.id })),
 
-  getTipaltiOnboardingUrl: protectedProcedure
+  getTipaltiDashboardUrl: protectedProcedure
     .use(isFlagProtected('creatorsProgram'))
-    .query(({ ctx }) => getTipaltiOnboardingUrl({ userId: ctx.user.id })),
+    .input(getTipaltiDashbordUrlSchema)
+    .query(({ ctx, input }) =>
+      getTipaltiDashboardUrl({ userId: ctx.user.id, type: input.type ?? 'setup' })
+    ),
 });

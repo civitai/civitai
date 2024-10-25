@@ -9,6 +9,7 @@ import { getServerStripe } from '../utils/get-server-stripe';
 import { createNotification } from './notification.service';
 import { UserPaymentConfiguration } from '@prisma/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
+import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -332,23 +333,19 @@ export async function updateByTipaltiAccount({
   return updated;
 }
 
-export async function getTipaltiOnboardingUrl({ userId }: { userId: number }) {
-  if (!env.NEXT_PUBLIC_BASE_URL) throw throwBadRequestError('NEXT_PUBLIC_BASE_URL not set');
-
+export async function getTipaltiDashboardUrl({
+  type,
+  userId,
+}: GetTipaltiDashbordUrlSchema & { userId: number }) {
   const userPaymentConfig = await getUserPaymentConfiguration({ userId });
   if (!userPaymentConfig || !userPaymentConfig.tipaltiAccountId)
     throw throwBadRequestError('User tipalti account not found');
 
-  const stripe = await getServerStripe();
-
-  if (!stripe) throw throwBadRequestError('Stripe not available');
-
   const client = await tipaltiCaller();
-  const accountLink = await client.getPaymentDashboardUrl(userId.toString(), 'setup');
+  const accountLink = await client.getPaymentDashboardUrl(userId.toString(), type);
 
   return accountLink;
 }
-
 export const payToTipaltiAccount = async ({
   byUserId,
   toUserId,
