@@ -428,7 +428,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
   ],
-  SD3: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] }],
+  SD3: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
