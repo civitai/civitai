@@ -18,7 +18,8 @@ export const buzzWithdrawalRequestModerationDetails =
     ...buzzWithdrawalRequestDetails,
     buzzWithdrawalTransactionId: true,
     transferId: true,
-    connectedAccountId: true,
+    requestedToId: true,
+    requestedToProvider: true,
     transferredAmount: true,
     platformFeeRate: true,
     history: {
@@ -32,5 +33,6 @@ export const buzzWithdrawalRequestModerationDetails =
           select: userWithCosmeticsSelect,
         },
       },
+      orderBy: { createdAt: 'desc' },
     },
   });

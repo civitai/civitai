@@ -399,6 +399,26 @@ export const baseModelResourceTypes = {
       baseModels: [...baseModelSets.SDXL],
     },
   ],
+  Illustrious: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Illustrious, 'SD 1.5'] },
+    {
+      type: ModelType.LORA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL],
+    },
+  ],
   Flux1: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },

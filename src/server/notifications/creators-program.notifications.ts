@@ -8,7 +8,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `Your account has been approved for the Civitai Creators Program! Setup your stripe account so you can start getting paid!.`,
-      url: `/user/account#stripe`,
+      url: `/user/account#payments`,
     }),
   },
   'creators-program-payments-enabled': {

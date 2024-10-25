@@ -14,11 +14,12 @@ import dayjs from 'dayjs';
 import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo } from 'react';
-import { Currency, StripeConnectStatus } from '@prisma/client';
+import { Currency } from '@prisma/client';
 import { Paper, Stack, Title, Text, Center, Loader } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { StripeConnectStatus } from '~/server/common/enums';
 
 ChartJS.register(
   CategoryScale,
@@ -31,12 +32,12 @@ ChartJS.register(
 );
 
 export const EarlyAccessRewards = () => {
-  const { userStripeConnect } = useUserStripeConnect();
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
     trpc.modelVersion.earlyAccessModelVersionsOnTimeframe.useQuery(
       { timeframe: 14 },
       {
-        enabled: userStripeConnect?.status === StripeConnectStatus.Approved,
+        enabled: userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
       }
     );
 
@@ -110,7 +111,7 @@ export const EarlyAccessRewards = () => {
       });
   }, [modelVersions]);
 
-  if (userStripeConnect?.status !== StripeConnectStatus.Approved) {
+  if (userPaymentConfiguration?.stripeAccountStatus !== StripeConnectStatus.Approved) {
     return null;
   }
 
