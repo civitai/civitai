@@ -351,7 +351,7 @@ export function GenerationFormContent() {
               <ScrollArea
                 scrollRestore={{ key: 'generation-form' }}
                 pt={0}
-                className="flex flex-col gap-2 px-3"
+                className="flex flex-col gap-2 px-3 pb-3"
               >
                 {!isFlux && !isSD3 && (
                   <div className="flex items-start justify-start gap-3">
