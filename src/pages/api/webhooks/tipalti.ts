@@ -42,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!isValid) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
-          error: 'Invalid Request',
+          error: 'Invalid Request. Could not validate Webhook signature',
         });
       }
 
