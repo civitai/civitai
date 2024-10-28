@@ -353,7 +353,7 @@ export function GenerationFormContent() {
               <ScrollArea
                 scrollRestore={{ key: 'generation-form' }}
                 pt={0}
-                className="flex flex-col gap-2 px-3"
+                className="flex flex-col gap-2 px-3 pb-3"
               >
                 {!isFlux && !isSD3 && (
                   <div className="flex items-start justify-start gap-3">
@@ -603,7 +603,7 @@ export function GenerationFormContent() {
                 </Watch>
 
                 {isSD3 && (
-                  <Alert>
+                  <Alert className="overflow-visible">
                     This is an experimental build, as such pricing and results are subject to change
                   </Alert>
                 )}
