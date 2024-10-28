@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import { ArticleEngagementType, Availability } from '@prisma/client';
+import { ArticleEngagementType, ArticleStatus, Availability } from '@prisma/client';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -110,10 +110,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
   const handlePublishArticle = () => {
-    if (!article || article.status === 'Published') return;
+    if (!article || article.status === ArticleStatus.Published) return;
 
     upsertArticleMutation.mutate(
-      { ...article, status: 'Published' },
+      { ...article, status: ArticleStatus.Published },
       {
         async onSuccess() {
           await queryUtils.article.getById.invalidate({ id });
@@ -266,7 +266,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </>
               )}
             </Group>
-            {article.status === 'Unpublished' && isOwner && (
+            {article.status === ArticleStatus.Unpublished && isOwner && (
               <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
                 This article has been unpublished.{' '}
                 <Anchor component="button" onClick={handlePublishArticle}>

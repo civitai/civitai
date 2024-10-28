@@ -383,7 +383,7 @@ function ActionButtons({
     <Stack spacing={8} {...stackProps}>
       {article?.publishedAt ? (
         <Button {...publishButtonProps} type="submit" fullWidth>
-          {article.status === 'Unpublished' ? 'Publish' : 'Save'}
+          {article.status !== ArticleStatus.Published ? 'Publish' : 'Save'}
         </Button>
       ) : (
         <>

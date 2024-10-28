@@ -926,6 +926,7 @@ export async function unpublishArticleById({
   });
 
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await userContentOverviewCache.bust(article.userId);
 
   return updated;
 }
