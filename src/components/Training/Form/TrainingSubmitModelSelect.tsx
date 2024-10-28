@@ -133,7 +133,7 @@ const ModelSelector = ({
               resources: [
                 {
                   type: ModelType.Checkpoint,
-                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony'],
+                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Illustrious'],
                 },
               ],
             }}
@@ -156,6 +156,7 @@ const ModelSelector = ({
                     ...baseModelSets.SDXL,
                     ...baseModelSets.SDXLDistilled,
                     ...baseModelSets.Pony,
+                    ...baseModelSets.Illustrious,
                   ] as string[]
                 ).includes(baseModel)
                   ? 'sdxl'
