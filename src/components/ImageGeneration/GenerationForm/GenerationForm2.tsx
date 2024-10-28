@@ -601,7 +601,7 @@ export function GenerationFormContent() {
                 </Watch>
 
                 {isSD3 && (
-                  <Alert>
+                  <Alert className="overflow-visible">
                     This is an experimental build, as such pricing and results are subject to change
                   </Alert>
                 )}
