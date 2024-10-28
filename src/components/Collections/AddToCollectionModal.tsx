@@ -287,6 +287,7 @@ function CollectionListForm({
                                 value: tag.id.toString(),
                                 label: tag.name,
                               }))}
+                              zIndex={400}
                             />
                           )}
                         </Stack>
@@ -356,11 +357,15 @@ function CollectionListForm({
                                 size="xs"
                                 label="Tag your entry"
                                 value={selectedItem.tagId?.toString() ?? null}
+                                zIndex={400}
                                 onChange={(value) => {
                                   setSelectedCollections((curr) =>
                                     curr.map((c) => {
                                       if (c.collectionId === collection.id) {
-                                        return { ...c, tagId: value ? parseInt(value, 10) : null };
+                                        return {
+                                          ...c,
+                                          tagId: value ? parseInt(value, 10) : null,
+                                        };
                                       }
                                       return c;
                                     })

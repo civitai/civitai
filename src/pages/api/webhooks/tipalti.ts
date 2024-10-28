@@ -7,15 +7,6 @@ import { dbRead } from '~/server/db/client';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 
-async function buffer(readable: Readable) {
-  const chunks = [];
-  for await (const chunk of readable) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  }
-
-  return Buffer.concat(chunks);
-}
-
 type TipaltiWebhookEvent = {
   id: string;
   type: string;
@@ -28,17 +19,20 @@ type TipaltiWebhookEvent = {
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
-    const sig = req.headers['tipalti-signature'];
+    const sig =
+      req.headers['tipalti-signature'] ??
+      req.headers['x-tipalti-signature'] ??
+      req.headers['Tipalti-Signature'];
+
     const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
-    const buf = await buffer(req);
     let event: TipaltiWebhookEvent;
 
-    console.log(req.headers, sig);
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
         return res.status(400).send({
-          error: 'Invalid Request',
+          error: 'Invalid Request. Signature or Secret not found',
+          sig,
         });
       }
 
@@ -53,8 +47,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       event = req.body as TipaltiWebhookEvent;
-
-      console.log(event.type);
 
       switch (event.type) {
         case 'payeeDetailsChanged':
