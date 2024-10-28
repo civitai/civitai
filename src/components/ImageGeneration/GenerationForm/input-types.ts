@@ -9,16 +9,6 @@ type BaseInputProps = {
   hidden?: boolean;
 };
 
-// type ResourceSelectInputProps = BaseInputProps & {
-//   type: 'resource-select';
-//   multiple?: boolean;
-//   value?: { air: string; strength?: number; trainedWords?: string[] }[];
-//   resources?: {
-//     type: string;
-//     limit?: number;
-//   }[];
-// };
-
 type TextAreaInputProps = BaseInputProps & {
   type: 'textarea';
   value?: string;
@@ -127,47 +117,47 @@ type GenerationInput = {
   data: GeneratorInputProps;
 };
 
-// const group1: GenerationConfigGroup = {
-//   id: 1,
-//   type: 'image',
-//   name: 'Text to Image',
-//   baseModel: 'SD1',
-//   // modelId: 618692
-// };
+const group1: GenerationConfigGroup = {
+  id: 1,
+  type: 'image',
+  name: 'Text to Image',
+  baseModel: 'SD1',
+  // modelId: 618692
+};
 
-// const config1: GenerationConfig = {
-//   id: 1,
-//   // groupId: 1,
-//   category: 'model',
-//   name: 'Standard',
-//   // fields: [
-//   //   { type: 'resource-select', name: 'resources', label: 'Additional Resources', multiple: true },
-//   //   {
-//   //     type: 'textarea',
-//   //     name: 'prompt',
-//   //     label: 'Prompt',
-//   //     placeholder: 'Your prompt goes here...',
-//   //     required: true,
-//   //     info: `Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt`,
-//   //   },
-//   //   {
-//   //     type: 'textarea',
-//   //     name: 'negativePrompt',
-//   //     label: 'Negative Prompt',
-//   //     placeholder: 'Your negative prompt goes here...',
-//   //   },
-//   //   {
-//   //     type: 'aspect-ratio',
-//   //     name: 'aspectRatio',
-//   //     label: 'Aspect Ratio',
-//   //     options: [
-//   //       { label: 'Square', width: 512, height: 512 },
-//   //       { label: 'Landscape', width: 768, height: 512 },
-//   //       { label: 'Portrait', width: 512, height: 768 },
-//   //     ],
-//   //   },
-//   // ],
-// };
+const config1: GenerationConfig = {
+  id: 1,
+  // groupId: 1,
+  category: 'model',
+  name: 'Standard',
+  // fields: [
+  //   { type: 'resource-select', name: 'resources', label: 'Additional Resources', multiple: true },
+  //   {
+  //     type: 'textarea',
+  //     name: 'prompt',
+  //     label: 'Prompt',
+  //     placeholder: 'Your prompt goes here...',
+  //     required: true,
+  //     info: `Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt`,
+  //   },
+  //   {
+  //     type: 'textarea',
+  //     name: 'negativePrompt',
+  //     label: 'Negative Prompt',
+  //     placeholder: 'Your negative prompt goes here...',
+  //   },
+  //   {
+  //     type: 'aspect-ratio',
+  //     name: 'aspectRatio',
+  //     label: 'Aspect Ratio',
+  //     options: [
+  //       { label: 'Square', width: 512, height: 512 },
+  //       { label: 'Landscape', width: 768, height: 512 },
+  //       { label: 'Portrait', width: 512, height: 768 },
+  //     ],
+  //   },
+  // ],
+};
 
 /**
  * TODO - add model light descriptions

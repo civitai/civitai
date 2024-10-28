@@ -79,7 +79,7 @@ export function MainContent({
 } & ScrollAreaProps) {
   return scrollable ? (
     <ScrollArea {...props}>
-      <main className="flex-1">
+      <main className="flex flex-1 flex-col">
         {subNav && <SubNav>{subNav}</SubNav>}
         {announcements && <Announcements />}
         {children}

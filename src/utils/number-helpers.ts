@@ -114,9 +114,14 @@ export function isNumeric(value?: unknown) {
 }
 
 export const findClosest = (array: number[], target: number) => {
-  return array.reduce((a, b) => {
-    return Math.abs(b - target) < Math.abs(a - target) ? b : a;
+  return array.reduce((prev, curr) => {
+    return Math.abs(curr - target) < Math.abs(prev - target) ? curr : prev;
   });
+};
+
+export const findClosestIndex = (array: number[], target: number) => {
+  const value = findClosest(array, target);
+  return array.indexOf(value);
 };
 
 export const formatCurrencyForDisplay = (
