@@ -121,7 +121,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: Generate,
+    Component: GenerationForm2,
   },
   queue: {
     Icon: IconClockHour9,

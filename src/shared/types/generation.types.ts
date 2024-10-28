@@ -10,7 +10,12 @@ interface BaseGenerationWorkflowConfig {
   id: number;
   name: string; // ie. Face fix
   description?: string;
+  /** used for things like 'draft mode' */ // TODO - determine if this should simply go into `values` prop
   batchSize?: number;
+  /** displays an alert message about the generation workflow  */
+  message?: string;
+  /** default values used for generation */
+  values: Record<string, unknown>;
 }
 
 interface ImageGenerationWorkflowConfig {

@@ -95,6 +95,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -116,11 +117,13 @@ export function GenerationForm2() {
         </div>
       )} */}
 
-      <GenerationFormProvider>
-        <TextToImageWhatIfProvider>
-          <GenerationFormContent />
-        </TextToImageWhatIfProvider>
-      </GenerationFormProvider>
+      <GenerationProvider>
+        <GenerationFormProvider>
+          <TextToImageWhatIfProvider>
+            <GenerationFormContent />
+          </TextToImageWhatIfProvider>
+        </GenerationFormProvider>
+      </GenerationProvider>
     </IsClient>
   );
 }

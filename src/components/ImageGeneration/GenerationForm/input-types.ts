@@ -9,15 +9,15 @@ type BaseInputProps = {
   hidden?: boolean;
 };
 
-type ResourceSelectInputProps = BaseInputProps & {
-  type: 'resource-select';
-  multiple?: boolean;
-  value?: { air: string; strength?: number; trainedWords?: string[] }[];
-  resources?: {
-    type: string;
-    limit?: number;
-  }[];
-};
+// type ResourceSelectInputProps = BaseInputProps & {
+//   type: 'resource-select';
+//   multiple?: boolean;
+//   value?: { air: string; strength?: number; trainedWords?: string[] }[];
+//   resources?: {
+//     type: string;
+//     limit?: number;
+//   }[];
+// };
 
 type TextAreaInputProps = BaseInputProps & {
   type: 'textarea';
@@ -68,7 +68,7 @@ type SeedInputProps = BaseInputProps & {
 };
 
 export type GeneratorInputProps =
-  | ResourceSelectInputProps
+  // | ResourceSelectInputProps
   | TextAreaInputProps
   | TextInputProps
   | AspectRatioInputProps
