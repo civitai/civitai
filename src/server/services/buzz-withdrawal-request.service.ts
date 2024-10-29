@@ -490,7 +490,10 @@ export const updateBuzzWithdrawalRequest = async ({
       await dbWrite.buzzWithdrawalRequest.update({
         where: { id: requestId },
         data: {
-          transferId: metadata.stripeTransferId,
+          transferId:
+            request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+              ? undefined
+              : metadata.stripeTransferId,
           transferredAmount: payoutAmount,
           metadata: metadata as any,
         },
