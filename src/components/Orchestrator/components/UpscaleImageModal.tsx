@@ -1,6 +1,5 @@
-import { Modal, SegmentedControl, Text } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
-import { Controller, useWatch } from 'react-hook-form';
+import { Modal, Text } from '@mantine/core';
+import { Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -8,14 +7,8 @@ import { UpscalePicker } from '~/components/ImageGeneration/GenerationForm/Upsca
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
-import { generationConfig } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
-  GenerationResource,
-  getBaseModelSetType,
-  whatIfQueryOverrides,
-} from '~/shared/constants/generation.constants';
-import { createImageElement } from '~/utils/image-utils';
+import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
