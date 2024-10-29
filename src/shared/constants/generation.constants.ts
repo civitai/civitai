@@ -28,6 +28,17 @@ export const generationServiceCookie = {
   maxAge: 3600,
 };
 
+export const maxUpscaleSize = 8192;
+export function getRoundedUpscaleSize({ width, height }: { width: number; height: number }) {
+  const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
+  const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
+  const ratio = Math.min(maxWidth / width, maxHeight / height);
+  return {
+    width: Math.ceil((width * ratio) / 64) * 64,
+    height: Math.ceil((height * ratio) / 64) * 64,
+  };
+}
+
 // #region [statuses]
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
   unassigned: 'yellow',
@@ -332,6 +343,7 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
+  if (!ratios.length) return '0';
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);
   return `${index ?? 0}`;
@@ -343,7 +355,8 @@ export function getWorkflowDefinitionFeatures(workflow?: {
   return {
     draft: workflow?.features?.includes('draft') ?? false,
     denoise: workflow?.features?.includes('denoise') ?? false,
-    upscale: workflow?.features?.includes('upscale') ?? false,
+    upscaleWidth: workflow?.features?.includes('upscale') ?? false,
+    upscaleHeight: workflow?.features?.includes('upscale') ?? false,
     image: workflow?.features?.includes('image') ?? false,
   };
 }
@@ -373,7 +386,6 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
-    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SD1] },
   ],
   SDXL: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
@@ -382,7 +394,6 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
-    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SDXL] },
   ],
   Pony: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
@@ -433,7 +444,7 @@ export const baseModelResourceTypes = {
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
-  throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
+  // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
 export const fluxModeOptions = [

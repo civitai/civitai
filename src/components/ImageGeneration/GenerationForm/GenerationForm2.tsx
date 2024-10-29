@@ -345,6 +345,7 @@ export function GenerationFormContent() {
           }
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
+          if (!resourceTypes) return <></>;
 
           return (
             <>

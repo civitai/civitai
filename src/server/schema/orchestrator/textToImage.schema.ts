@@ -36,11 +36,10 @@ export const textToImageParamsSchema = z.object({
   denoise: z.number().max(1).optional(),
   image: z
     .string()
-    .startsWith(
-      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
-    )
+    .startsWith(isProd ? 'https://orchestration.civitai.com' : 'https://orchestration.civitai.com')
     .optional(),
-  upscale: z.number().max(3).optional(),
+  upscaleWidth: z.number().optional(),
+  upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
   experimental: z.boolean().optional(),

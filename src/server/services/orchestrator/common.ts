@@ -23,6 +23,7 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsSD3,
+  getRoundedUpscaleSize,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -162,12 +163,13 @@ export async function parseGenerateImageInput({
   )
     throw throwBadRequestError('You have exceed the number of allowed resources.');
 
-  const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
-  if (!checkpoint)
-    throw throwBadRequestError('A checkpoint is required to make a generation request');
-  if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
+  const model = resourceData.resources.find(
+    (x) => x.model.type === ModelType.Checkpoint || x.model.type === ModelType.Upscaler
+  );
+  if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
+  if (params.baseModel !== getBaseModelSetType(model.baseModel))
     throw throwBadRequestError(
-      `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
+      `Invalid base model. Checkpoint with baseModel: ${model.baseModel} does not match the input baseModel: ${params.baseModel}`
     );
 
   const injectableResources = getInjectablResources(params.baseModel);
@@ -185,10 +187,11 @@ export async function parseGenerateImageInput({
         .join(', ')}`
     );
 
-  const availableResourceTypes = getBaseModelResourceTypes(params.baseModel).map((x) => x.type);
+  const availableResourceTypes =
+    getBaseModelResourceTypes(params.baseModel)?.map((x) => x.type) ?? [];
   // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const availableResources = [
-    checkpoint,
+    model,
     ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type as any)),
   ];
 
@@ -282,14 +285,11 @@ export async function parseGenerateImageInput({
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       // temp?
-      upscaleWidth: getUpscaleSize(params.width, params.upscale),
-      upscaleHeight: getUpscaleSize(params.height, params.upscale),
+      ...(params.upscaleHeight && params.upscaleWidth
+        ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+        : {}),
     },
   };
-}
-
-function getUpscaleSize(src: number, multiplier = 1) {
-  return Math.ceil((src * multiplier) / 64) * 64;
 }
 
 function getResources(step: WorkflowStep) {

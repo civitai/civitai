@@ -423,6 +423,7 @@ export const baseModelSetTypes = [
   'ODOR',
   'Flux1',
   'Illustrious',
+  'Other',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -442,6 +443,7 @@ export const baseModelSets = defineBaseModelSets({
   Pony: ['Pony'],
   ODOR: ['ODOR'],
   Illustrious: ['Illustrious'],
+  Other: ['Other'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -461,6 +463,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
+  Other: 'Other',
 });
 
 type LicenseDetails = {
@@ -794,6 +797,24 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+    } as GenerationResource,
+  },
+  Other: {
+    aspectRatios: [] as { label: string; width: number; height: number }[],
+    checkpoint: {
+      id: 164821,
+      name: '',
+      trainedWords: [],
+      modelId: 147759,
+      modelName: 'Remacri',
+      modelType: 'Upscaler',
+      baseModel: 'Other',
+      covered: true,
+      available: true,
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      minor: false,
     } as GenerationResource,
   },
 };
