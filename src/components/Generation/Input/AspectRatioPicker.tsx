@@ -16,7 +16,7 @@ export function AspectRatioPicker({ label, options }: AspectRatioPickerProps) {
   const [width, height] = watch([widthKey, heightKey]);
 
   useEffect(() => {
-    const { width, height } = getValues();
+    const [width, height] = getValues([widthKey, heightKey]);
     if (!width || !height) {
       setValue(widthKey, options[0].width);
       setValue(heightKey, options[0].height);

@@ -3,16 +3,24 @@ import { Group, Input, InputWrapperProps, SegmentedControl } from '@mantine/core
 import { useEffect, useState } from 'react';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
+import { generation } from '~/server/common/constants';
 
 type Props = {
   value?: number;
   onChange?: (value?: number) => void;
-  min: number;
-  max: number;
+  min?: number;
+  max?: number;
   disabled?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
 
-function SeedInput({ value, onChange, min, max, disabled, ...inputWrapperProps }: Props) {
+function SeedInput({
+  value,
+  onChange,
+  min = 1,
+  max = generation.maxValues.seed,
+  disabled,
+  ...inputWrapperProps
+}: Props) {
   const [control, setControl] = useState(value ? 'custom' : 'random');
 
   const previousControl = usePrevious(control);

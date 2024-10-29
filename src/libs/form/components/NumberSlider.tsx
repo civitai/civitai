@@ -68,7 +68,7 @@ export function NumberSlider({
   };
 
   const precision = useMemo(
-    () => initialPrecision ?? step?.toString().split('.')[1].length,
+    () => initialPrecision ?? step?.toString().split('.')[1]?.length,
     [initialPrecision, step]
   );
 
@@ -131,7 +131,7 @@ export function NumberSlider({
               disabled={disabled}
               color="blue"
               options={presets}
-              value={state.selectedPreset}
+              value={value?.toString()}
               onChange={(value) => {
                 setState((current) => ({ ...current, selectedPreset: value }));
                 onChange?.(Number(value));
@@ -142,13 +142,13 @@ export function NumberSlider({
           label
         )
       }
-      className={cx(classes.fill, inputWrapperProps.className)}
+      className={cx('flex flex-col', inputWrapperProps.className)}
       styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
     >
       <Group spacing="xs" style={reverse ? { flexDirection: 'row-reverse' } : undefined}>
         <Slider
           {...sliderProps}
-          className={cx(classes.fill, sliderProps?.className)}
+          className={cx('flex-1', sliderProps?.className)}
           min={min}
           max={max}
           step={step}
@@ -195,6 +195,8 @@ const getComputedWidth = (elem: HTMLInputElement, min: number, max: number, prec
 };
 
 const useStyles = createStyles(() => ({
-  fill: { flex: 1 },
+  fill: {
+    // flex: 1
+  },
   number: { flex: 0, minWidth: 60 },
 }));

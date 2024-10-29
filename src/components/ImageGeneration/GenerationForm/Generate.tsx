@@ -1,4 +1,4 @@
-import { Button, SegmentedControl, Select } from '@mantine/core';
+import { Accordion, Button, SegmentedControl, Select, Text } from '@mantine/core';
 import React, { useState } from 'react';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
@@ -11,10 +11,11 @@ import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvi
 import { QueueSnackbar2 } from '~/components/ImageGeneration/QueueSnackbar';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { WorkflowConfigInput } from '~/components/Generation/Input/WorkflowConfigInput';
-import { sd1WorkflowConfig } from '~/components/Generation/config';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
+import { workflows } from '~/components/Generation/config';
+import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 
-const availableWorkflows = [sd1WorkflowConfig];
+// const availableWorkflows = workflows;
 
 /**
   TODO list
@@ -23,10 +24,14 @@ const availableWorkflows = [sd1WorkflowConfig];
 
 export function Generate() {
   const [tab, setTab] = useState('image');
-  const [config, setConfig] = useState<GenerationWorkflowConfig>(availableWorkflows[0]); // TODO - see todo list
+  const [config, setConfig] = useState<GenerationWorkflowConfig>(
+    workflows.filter(
+      (x) => x.type === 'image' && x.subType === 'txt2img' && x.name === 'Standard'
+    )[0]
+  ); // TODO - see todo list
   const isClient = useIsClient();
 
-  const form = useForm<Record<string, unknown>>({ defaultValues: { ...config.values } });
+  const form = useForm({ defaultValues: { ...config.values } });
 
   if (!isClient) return null;
 
@@ -54,12 +59,23 @@ export function Generate() {
           {config.fields.map((field, i) => (
             <WorkflowConfigInput key={'name' in field ? field.name : i} {...field} />
           ))}
+          <PersistentAccordion storeKey="generation-form-advanced" variant="contained">
+            <Accordion.Item value="advanced">
+              <Accordion.Control>
+                <Text size="sm" weight={590}>
+                  Advanced
+                </Text>
+              </Accordion.Control>
+              <Accordion.Panel>
+                <div className="flex flex-col gap-3">
+                  {config.advanced?.map((field, i) => (
+                    <WorkflowConfigInput key={'name' in field ? field.name : i} {...field} />
+                  ))}
+                </div>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </PersistentAccordion>
         </ScrollArea>
-        {/* <GenerationFormProvider>
-          <TextToImageWhatIfProvider>
-            <GenerationFormContent />
-          </TextToImageWhatIfProvider>
-        </GenerationFormProvider> */}
         <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
           <QueueSnackbar2 />
           <div className="flex gap-2">
@@ -76,8 +92,8 @@ export function Generate() {
   );
 }
 
-const workflowConfig = {
-  workflow: 'txt2img',
-  schema: z.object({}),
-  fields: <></>,
-};
+// const workflowConfig = {
+//   workflow: 'txt2img',
+//   schema: z.object({}),
+//   fields: <></>,
+// };

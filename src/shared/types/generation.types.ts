@@ -7,6 +7,8 @@ export type ComfyNode = {
 };
 
 // #region [input builder]
+type InputValue = string | number | boolean;
+type SupportedEnv = 'sd1' | 'sdxl' | 'flux1' | 'sd3' | 'any';
 interface BaseInputProps {
   type: string;
   name: string;
@@ -14,6 +16,13 @@ interface BaseInputProps {
   required?: boolean;
   info?: string;
   hidden?: boolean;
+  defaultValue?: InputValue | Record<string, InputValue>;
+  // env?: string | string[];
+  // modelId?: string;
+}
+
+interface EnvironmentOptions {
+  env: SupportedEnv | SupportedEnv[];
 }
 
 interface PlaceholderInputProps extends BaseInputProps {
@@ -40,12 +49,12 @@ interface AspectRatioInputProps extends Omit<BaseInputProps, 'name'> {
 
 interface NumberSliderInputProps extends BaseInputProps {
   type: 'number-slider';
-  min?: number;
-  max?: number;
-  step?: number;
+  min: number;
+  max: number;
+  step: number;
   precision?: number;
   reverse?: boolean;
-  presets?: { label: string; value: number }[];
+  presets?: { label: string; value: string }[];
 }
 
 interface SelectInputProps extends PlaceholderInputProps {
@@ -60,6 +69,11 @@ interface SeedInputProps extends BaseInputProps {
   max?: number;
 }
 
+interface UpscaleInputProps extends BaseInputProps {
+  type: 'upscale';
+  sizes: number[];
+}
+
 export type WorkflowConfigInputProps =
   | TextInputProps
   | TextareaInputProps
@@ -67,12 +81,13 @@ export type WorkflowConfigInputProps =
   | AspectRatioInputProps
   | NumberSliderInputProps
   | SelectInputProps
-  | SeedInputProps;
+  | SeedInputProps
+  | UpscaleInputProps;
 // #endregion
 
 // #region [workflow config]
 interface BaseGenerationWorkflowConfig {
-  id: number;
+  // id: number;
   name: string; // ie. Face fix
   description?: string;
   /** used for things like 'draft mode' */ // TODO - determine if this should simply go into `values` prop
@@ -82,7 +97,7 @@ interface BaseGenerationWorkflowConfig {
   fields: WorkflowConfigInputProps[];
   advanced?: WorkflowConfigInputProps[];
   /** default values used for generation */
-  values?: Record<string, unknown>;
+  values?: Record<string, any>;
 }
 
 interface ImageGenerationWorkflowConfig {
@@ -98,7 +113,10 @@ interface VideoGenerationWorkflowConfig {
 interface ModelGenerationWorkflowConfig {
   category: 'model';
   modelId?: number;
-  env?: string; // ie. sd1, sdxl, flux, sd3
+  env: SupportedEnv | SupportedEnv[]; // ie. sd1, sdxl, flux, sd3
+  modelType?: string | string[];
+  checkpointSelect?: boolean; // not sure about this one
+  additionalResources?: boolean;
 }
 
 interface ServiceGenerationWorkflowConfig {
