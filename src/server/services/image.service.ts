@@ -3121,9 +3121,12 @@ export const getEntityCoverImage = async ({
     }));
   }
 
+  const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
+
   return images.map((i) => ({
     ...i,
     tags: tagsVar?.filter((x) => x.imageId === i.id),
+    cosmetic: cosmetics[i.id],
   }));
 };
 
