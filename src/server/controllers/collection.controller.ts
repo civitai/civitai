@@ -255,7 +255,7 @@ export const saveItemHandler = async ({
     const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
       isDefined
     );
-    if (input.collections.length === 1) {
+    if (input.collections?.length === 1) {
       const [collection] = input.collections;
       const isOwner = await checkUserOwnsCollectionAndItem({
         itemId,

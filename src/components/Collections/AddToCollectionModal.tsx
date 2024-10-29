@@ -91,7 +91,6 @@ function CollectionListForm({
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
-  const currentUser = useCurrentUser();
   const { classes } = useCollectionListStyles();
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
@@ -153,7 +152,7 @@ function CollectionListForm({
             result.isOwner &&
             type === CollectionType.Model &&
             modelId &&
-            collections.length === 1
+            collections?.length === 1
           ) {
             const [collection] = collections;
             if (collection.read === CollectionReadConfiguration.Public) {
