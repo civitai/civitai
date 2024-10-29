@@ -393,7 +393,7 @@ export const updateBuzzWithdrawalRequest = async ({
       metadata.stripeTransferId = transfer.id;
     }
 
-    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti && !note) {
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti && userId !== -1) {
       throw throwBadRequestError(
         'Tipalti is not supported for transfers. Approving the request will create a transfer request in the Tipalti dashboard.'
       );
