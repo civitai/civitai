@@ -14,7 +14,7 @@ clickhouse client -n <<-EOSQL
         reason LowCardinality(String),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type)
             SETTINGS index_granularity = 8192;
 
@@ -28,7 +28,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, activity, userId)
             SETTINGS index_granularity = 8192;
@@ -42,7 +42,7 @@ clickhouse client -n <<-EOSQL
         duration    Float32,
         impressions Int32 default 1
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (time, userId, deviceId)
             SETTINGS index_granularity = 8192;
 
@@ -58,7 +58,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, answerId, userId)
             SETTINGS index_granularity = 8192;
 
@@ -72,7 +72,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, articleId)
             SETTINGS index_granularity = 8192;
 
@@ -87,7 +87,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, bountyId)
             SETTINGS index_granularity = 8192;
 
@@ -101,7 +101,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, bountyId)
             SETTINGS index_granularity = 8192;
 
@@ -116,7 +116,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, bountyId)
             SETTINGS index_granularity = 8192;
 
@@ -132,7 +132,7 @@ clickhouse client -n <<-EOSQL
         createdDate   Date materialized toDate(time),
         deviceId      String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, bountyEntryId)
             SETTINGS index_granularity = 8192;
 
@@ -152,7 +152,7 @@ clickhouse client -n <<-EOSQL
         multiplier         Decimal(3, 2) default 1,
         deviceId           String        default ''
     )
-        engine = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', version)
+        engine = ReplacingMergeTree()
             PARTITION BY toYYYYMM(time)
             ORDER BY (type, toUserId, forId, byUserId)
             SETTINGS index_granularity = 8192;
@@ -171,7 +171,7 @@ clickhouse client -n <<-EOSQL
         details               String,
         externalTransactionId String
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (date, fromAccountId, toAccountId)
             SETTINGS index_granularity = 8192;
 
@@ -184,7 +184,7 @@ clickhouse client -n <<-EOSQL
         total          UInt32,
         updated_at     DateTime default now()
     )
-        engine = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', updated_at)
+        engine = ReplacingMergeTree()
             ORDER BY (date, modelVersionId)
             SETTINGS index_granularity = 8192;
 
@@ -199,7 +199,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type)
             SETTINGS index_granularity = 8192;
 
@@ -215,7 +215,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, entityId, userId)
             SETTINGS index_granularity = 8192;
 
@@ -226,7 +226,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         downloads      UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (modelId, modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -237,7 +237,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         users_state AggregateFunction(uniq, String)
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (modelId, modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -247,16 +247,16 @@ clickhouse client -n <<-EOSQL
         count       UInt32,
         nsfw        UInt32
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.daily_generation_counts
+    create table if not exists daily_generation_counts
     (
         createdDate Date,
         count       UInt32
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
@@ -266,16 +266,16 @@ clickhouse client -n <<-EOSQL
         users_state AggregateFunction(uniq, Int32),
         users_nsfw_state AggregateFunction(uniqIf, Int32, UInt8)
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.daily_generation_user_counts
+    create table if not exists daily_generation_user_counts
     (
         createdDate Date,
         users_state AggregateFunction(uniq, Int32)
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
@@ -285,17 +285,17 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         count          UInt64
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY (modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.daily_resource_generation_counts
+    create table if not exists daily_resource_generation_counts
     (
         modelVersionId Int32,
         createdDate    Date,
         count          UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -305,7 +305,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         count          UInt64
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY (modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -315,7 +315,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         users_state AggregateFunction(uniq, Int32)
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY (modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -327,7 +327,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date,
         runs           UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (modelId, modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -337,7 +337,7 @@ clickhouse client -n <<-EOSQL
         authed_users_state AggregateFunction(uniqIf, Int32, UInt8),
         unauthed_users_state AggregateFunction(uniqIf, String, UInt8)
     )
-        engine = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = AggregatingMergeTree()
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
@@ -348,7 +348,7 @@ clickhouse client -n <<-EOSQL
         createdDate   Date,
         count         Int32
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (userKey, authenticated, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -358,7 +358,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date,
         count       UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (userId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -368,7 +368,7 @@ clickhouse client -n <<-EOSQL
         modelVersionId Int32,
         date           Date
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (modelVersionId, date)
             SETTINGS index_granularity = 8192;
 
@@ -379,7 +379,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date,
         views       UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY (entityType, entityId, createdDate)
             SETTINGS index_granularity = 8192;
 
@@ -392,11 +392,11 @@ clickhouse client -n <<-EOSQL
         metricValue Int32,
         createdAt   DateTime64(3)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (entityType, entityId, createdAt)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.failedTextToImageJobs
+    create table if not exists failedTextToImageJobs
     (
         jobId                   String,
         imageHash               String,
@@ -416,7 +416,7 @@ clickhouse client -n <<-EOSQL
         issuedBy LowCardinality(String),
         creatorsTip             Float64
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY createdAt
             SETTINGS index_granularity = 8192;
 
@@ -432,7 +432,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, entityId)
             SETTINGS index_granularity = 8192;
 
@@ -447,7 +447,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, type, entityId)
             SETTINGS index_granularity = 8192;
@@ -469,7 +469,7 @@ clickhouse client -n <<-EOSQL
         mediaType LowCardinality(String) default 'image',
         deviceId    String               default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, imageId, userId)
             SETTINGS index_granularity = 8192;
 
@@ -482,11 +482,11 @@ clickhouse client -n <<-EOSQL
         userId    Int32,
         version   UInt8                  default 1
     )
-        engine = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', version)
+        engine = ReplacingMergeTree()
             ORDER BY id
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.jobs
+    create table if not exists jobs
     (
         jobId       String,
         userId      Int32,
@@ -500,7 +500,7 @@ clickhouse client -n <<-EOSQL
         resourcesUsed Array(Int32) default [],
         remixOfId Nullable(String)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY createdAt
             SETTINGS index_granularity = 8192;
 
@@ -510,7 +510,7 @@ clickhouse client -n <<-EOSQL
         prompt String,
         label Enum8('safe' = 1, 'sexual' = 2, 'csam' = 3) default 'csam'
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY time
             SETTINGS index_granularity = 8192;
 
@@ -525,7 +525,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, type, modelId)
             SETTINGS index_granularity = 8192;
@@ -542,7 +542,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, modelId, userId)
             SETTINGS index_granularity = 8192;
 
@@ -558,7 +558,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date materialized toDate(time),
         deviceId       String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, id, modelVersionId)
             SETTINGS index_granularity = 8192;
 
@@ -576,7 +576,7 @@ clickhouse client -n <<-EOSQL
         earlyAccess    Bool     default false,
         deviceId       String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, type, modelId, modelVersionId)
             SETTINGS index_granularity = 8192;
@@ -596,7 +596,7 @@ clickhouse client -n <<-EOSQL
         windowWidth  Int16    default 0,
         windowHeight Int16    default 0
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(time)
             ORDER BY (time, pageId, userId)
             SETTINGS index_granularity = 8192;
@@ -615,7 +615,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date materialized toDate(time),
         deviceId       String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, partnerId)
             SETTINGS index_granularity = 8192;
 
@@ -631,7 +631,7 @@ clickhouse client -n <<-EOSQL
         ip             String default '',
         userAgent      String default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, partnerId)
             SETTINGS index_granularity = 8192;
 
@@ -648,7 +648,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYear(createdDate)
             ORDER BY (time, postId, userId)
             SETTINGS index_granularity = 8192;
@@ -665,7 +665,7 @@ clickhouse client -n <<-EOSQL
         negativePrompt Nullable(String),
         deviceId    String                        default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, userId)
             SETTINGS index_granularity = 8192;
 
@@ -680,7 +680,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, questionId, userId)
             SETTINGS index_granularity = 8192;
 
@@ -698,7 +698,7 @@ clickhouse client -n <<-EOSQL
         ownerId     Int32    default -1,
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, reaction, entityId, userId)
             SETTINGS index_granularity = 8192;
@@ -714,7 +714,7 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, activity, userId)
             SETTINGS index_granularity = 8192;
 
@@ -732,7 +732,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, type, userId, entityId)
             SETTINGS index_granularity = 8192;
 
@@ -750,7 +750,7 @@ clickhouse client -n <<-EOSQL
         createdDate    Date materialized toDate(time),
         deviceId       String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYear(createdDate)
             ORDER BY (time, type, modelId, modelVersionId, userId)
             SETTINGS index_granularity = 8192;
@@ -758,7 +758,7 @@ clickhouse client -n <<-EOSQL
     create table if not exists default.search
     (
         query       String,
-        index String default '',
+        "index"     String   default '',
         filters     String   default '',
         time        DateTime default now(),
         userId      Int32    default 0,
@@ -767,7 +767,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY time
             SETTINGS index_granularity = 8192;
@@ -783,7 +783,7 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         deviceId    String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, platform, userId)
             SETTINGS index_granularity = 8192;
 
@@ -797,21 +797,21 @@ clickhouse client -n <<-EOSQL
         userAgent   String   default '',
         createdDate Date materialized toDate(time)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (time, tagId, userId)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.taintedTextToImageJobs
+    create table if not exists taintedTextToImageJobs
     (
         jobId     String,
         taintedAt DateTime64(3),
         reason    String
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY taintedAt
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.textToImageJobs
+    create table if not exists textToImageJobs
     (
         jobId                   String,
         imageHash               String,
@@ -834,7 +834,7 @@ clickhouse client -n <<-EOSQL
         movieRating LowCardinality(String),
         creatorsTip             Float64
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY createdAt
             SETTINGS index_granularity = 8192;
 
@@ -850,7 +850,7 @@ clickhouse client -n <<-EOSQL
         landingPage  String,
         deviceId     String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYear(createdDate)
             ORDER BY (time, type, userId)
             SETTINGS index_granularity = 8192;
@@ -866,7 +866,7 @@ clickhouse client -n <<-EOSQL
         createdDate  Date materialized toDate(time),
         deviceId     String   default ''
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYear(createdDate)
             ORDER BY (time, type, targetUserId, userId)
             SETTINGS index_granularity = 8192;
@@ -887,7 +887,7 @@ clickhouse client -n <<-EOSQL
         deviceId      String                                            default '',
         isMember Nullable(Bool)                                         default NULL
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             PARTITION BY toYYYYMM(createdDate)
             ORDER BY (time, entityType, entityId, userId)
             SETTINGS index_granularity = 8192;
@@ -897,11 +897,11 @@ clickhouse client -n <<-EOSQL
         imageId UInt32,
         views   UInt64
     )
-        engine = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = SummingMergeTree()
             ORDER BY imageId
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.workerResources
+    create table if not exists workerResources
     (
         provider LowCardinality(String),
         workerId String,
@@ -912,11 +912,11 @@ clickhouse client -n <<-EOSQL
         jobs     Int32,
         reason LowCardinality(String)
     )
-        engine = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = MergeTree()
             ORDER BY (provider, workerId, resource, first)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists orchestration.workers
+    create table if not exists workers
     (
         provider LowCardinality(String),
         id           String,
@@ -933,18 +933,18 @@ clickhouse client -n <<-EOSQL
         destroyedAt Nullable(DateTime),
         destroyedReason LowCardinality(String)
     )
-        engine = SharedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+        engine = ReplacingMergeTree()
             ORDER BY id
             SETTINGS index_granularity = 8192;
 
     CREATE MATERIALIZED VIEW default.buzz_cohorts_first_seen
                 (
-                `userId` Int32,
-                `purchase_type` String,
-                `firstSeenDate` DateTime,
-                `firstSeenMonth` Date
+                userId Int32,
+                purchase_type String,
+                firstSeenDate DateTime,
+                firstSeenMonth Date
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     ORDER BY (userId, purchase_type)
                     SETTINGS index_granularity = 8192
     AS
@@ -961,12 +961,12 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.buzz_cohorts_monthly_activity
                 (
-                `firstSeenMonth` Date,
-                `purchase_type` String,
-                `activityMonth` Date,
-                `users_state` AggregateFunction(uniq, Int32)
+                firstSeenMonth Date,
+                purchase_type String,
+                activityMonth Date,
+                users_state AggregateFunction(uniq, Int32)
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY (firstSeenMonth, purchase_type, activityMonth)
                     SETTINGS index_granularity = 8192
     AS
@@ -990,11 +990,11 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.cohorts_first_seen
                 (
-                `userId` Int32,
-                `firstSeenDate` Date,
-                `firstSeenMonth` Date
+                userId Int32,
+                firstSeenDate Date,
+                firstSeenMonth Date
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1008,19 +1008,19 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.cohorts_first_seen_combined
                 (
-                `userId` Int32,
-                `firstSeenMonth` Date,
-                `firstSeenDate` Date,
-                `hasViewedImage` Bool,
-                `hasViewedModel` Bool,
-                `hasViewedProfile` Bool,
-                `hasViewedCollection` Bool,
-                `hasGeneratedImage` Bool,
-                `hasPostedImage` Bool,
-                `hasCreatedModel` Bool,
-                `hasPublishedModel` Bool
+                userId Int32,
+                firstSeenMonth Date,
+                firstSeenDate Date,
+                hasViewedImage Bool,
+                hasViewedModel Bool,
+                hasViewedProfile Bool,
+                hasViewedCollection Bool,
+                hasGeneratedImage Bool,
+                hasPostedImage Bool,
+                hasCreatedModel Bool,
+                hasPublishedModel Bool
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1045,18 +1045,18 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.cohorts_grouped_by_activity
                 (
-                `firstSeenMonth` Date,
-                `hasViewedImage` Bool,
-                `hasViewedModel` Bool,
-                `hasViewedProfile` Bool,
-                `hasViewedCollection` Bool,
-                `hasGeneratedImage` Bool,
-                `hasPostedImage` Bool,
-                `hasCreatedModel` Bool,
-                `hasPublishedModel` Bool,
-                `userCount` AggregateFunction(count, Int32)
+                firstSeenMonth Date,
+                hasViewedImage Bool,
+                hasViewedModel Bool,
+                hasViewedProfile Bool,
+                hasViewedCollection Bool,
+                hasGeneratedImage Bool,
+                hasPostedImage Bool,
+                hasCreatedModel Bool,
+                hasPublishedModel Bool,
+                userCount AggregateFunction(count, Int32)
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     ORDER BY (firstSeenMonth, hasViewedImage, hasViewedModel, hasViewedProfile, hasViewedCollection,
                             hasGeneratedImage, hasPostedImage, hasCreatedModel, hasPublishedModel)
                     SETTINGS index_granularity = 8192
@@ -1084,19 +1084,19 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.cohorts_monthly_activity
                 (
-                `firstSeenMonth` Date,
-                `activityMonth` Date,
-                `hasViewedImage` Bool,
-                `hasViewedModel` Bool,
-                `hasViewedProfile` Bool,
-                `hasViewedCollection` Bool,
-                `hasGeneratedImage` Bool,
-                `hasPostedImage` Bool,
-                `hasCreatedModel` Bool,
-                `hasPublishedModel` Bool,
-                `users_state` AggregateFunction(uniq, Int32)
+                firstSeenMonth Date,
+                activityMonth Date,
+                hasViewedImage Bool,
+                hasViewedModel Bool,
+                hasViewedProfile Bool,
+                hasViewedCollection Bool,
+                hasGeneratedImage Bool,
+                hasPostedImage Bool,
+                hasCreatedModel Bool,
+                hasPublishedModel Bool,
+                users_state AggregateFunction(uniq, Int32)
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY (firstSeenMonth, activityMonth, hasViewedImage, hasViewedModel, hasViewedProfile,
                             hasViewedCollection, hasGeneratedImage, hasPostedImage, hasCreatedModel, hasPublishedModel)
                     SETTINGS index_granularity = 8192
@@ -1128,21 +1128,21 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.cohorts_pivoted_activity
                 (
-                `firstSeenMonth` Date,
-                `month_1` UInt64,
-                `month_2` UInt64,
-                `month_3` UInt64,
-                `month_4` UInt64,
-                `month_5` UInt64,
-                `month_6` UInt64,
-                `month_7` UInt64,
-                `month_8` UInt64,
-                `month_9` UInt64,
-                `month_10` UInt64,
-                `month_11` UInt64,
-                `month_12` UInt64
+                firstSeenMonth Date,
+                month_1 UInt64,
+                month_2 UInt64,
+                month_3 UInt64,
+                month_4 UInt64,
+                month_5 UInt64,
+                month_6 UInt64,
+                month_7 UInt64,
+                month_8 UInt64,
+                month_9 UInt64,
+                month_10 UInt64,
+                month_11 UInt64,
+                month_12 UInt64
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     PARTITION BY firstSeenMonth
                     ORDER BY firstSeenMonth
                     SETTINGS index_granularity = 8192
@@ -1166,10 +1166,10 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_downloads_mv
                 TO default.daily_downloads
                 (
-                `modelId` Int32,
-                `modelVersionId` Int32,
-                `createdDate` Date,
-                `downloads` UInt64
+                modelId Int32,
+                modelVersionId Int32,
+                createdDate Date,
+                downloads UInt64
                     )
     AS
     SELECT modelId,
@@ -1185,10 +1185,10 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_downloads_unique_mv
                 TO default.daily_downloads_unique
                 (
-                `modelId` Int32,
-                `modelVersionId` Int32,
-                `createdDate` Date,
-                `users_state` AggregateFunction(uniq, String)
+                modelId Int32,
+                modelVersionId Int32,
+                createdDate Date,
+                users_state AggregateFunction(uniq, String)
                     )
     AS
     SELECT modelId,
@@ -1204,61 +1204,37 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_generation_counts_mv
                 TO default.daily_generation_counts
                 (
-                `createdDate` DateTime,
-                `count` UInt64,
-                `nsfw` UInt64
+                createdDate DateTime,
+                count UInt64,
+                nsfw UInt64
                     )
     AS
     SELECT toStartOfDay(createdAt)                                           AS createdDate,
         count(*)                                                          AS count,
         countIf(has(resourcesUsed, 250708) OR has(resourcesUsed, 250712)) AS nsfw
-    FROM orchestration.textToImageJobs
-    GROUP BY createdDate;
-
-    CREATE MATERIALIZED VIEW orchestration.daily_generation_counts_mv
-                TO orchestration.daily_generation_counts
-                (
-                `createdDate` DateTime,
-                `count()` UInt64
-                    )
-    AS
-    SELECT toStartOfDay(createdAt) AS createdDate,
-        count(*)
-    FROM orchestration.textToImageJobs
+    FROM textToImageJobs
     GROUP BY createdDate;
 
     CREATE MATERIALIZED VIEW default.daily_generation_user_counts_mv
                 TO default.daily_generation_user_counts
                 (
-                `createdDate` DateTime,
-                `users_state` AggregateFunction(uniq, Int32),
-                `users_nsfw_state` AggregateFunction(uniqIf, Int32, UInt8)
+                createdDate DateTime,
+                users_state AggregateFunction(uniq, Int32),
+                users_nsfw_state AggregateFunction(uniqIf, Int32, UInt8)
                     )
     AS
     SELECT toStartOfDay(createdAt)                                                       AS createdDate,
         uniqState(userId)                                                             AS users_state,
         uniqIfState(userId, has(resourcesUsed, 250708) OR has(resourcesUsed, 250712)) AS users_nsfw_state
-    FROM orchestration.textToImageJobs
-    GROUP BY createdDate;
-
-    CREATE MATERIALIZED VIEW orchestration.daily_generation_user_counts_mv
-                TO orchestration.daily_generation_user_counts
-                (
-                `createdDate` DateTime,
-                `users_state` AggregateFunction(uniq, Int32)
-                    )
-    AS
-    SELECT toStartOfDay(createdAt) AS createdDate,
-        uniqState(userId)       AS users_state
-    FROM orchestration.textToImageJobs
+    FROM textToImageJobs
     GROUP BY createdDate;
 
     CREATE MATERIALIZED VIEW default.daily_resource_generation_counts_all_mv
                 TO default.daily_resource_generation_counts_all
                 (
-                `modelVersionId` Int32,
-                `createdDate` Date,
-                `count` UInt64
+                modelVersionId Int32,
+                createdDate Date,
+                count UInt64
                     )
     AS
     SELECT modelVersionId,
@@ -1271,9 +1247,9 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_resource_generation_counts_mv
                 TO default.daily_resource_generation_counts
                 (
-                `modelVersionId` Int32,
-                `createdDate` Date,
-                `count` UInt64
+                modelVersionId Int32,
+                createdDate Date,
+                count UInt64
                     )
     AS
     SELECT modelVersionId,
@@ -1283,31 +1259,12 @@ clickhouse client -n <<-EOSQL
     GROUP BY modelVersionId,
             date;
 
-    CREATE MATERIALIZED VIEW orchestration.daily_resource_generation_counts_mv
-                TO orchestration.daily_resource_generation_counts
-                (
-                `modelVersionId` Int32,
-                `date` DateTime,
-                `count` UInt64
-                    )
-    AS
-    SELECT modelVersionId,
-        date,
-        count(*) AS count
-    FROM (
-            SELECT arrayJoin(resourcesUsed) AS modelVersionId,
-                    toStartOfDay(createdAt)  AS date
-            FROM orchestration.textToImageJobs
-            )
-    GROUP BY modelVersionId,
-            date;
-
     CREATE MATERIALIZED VIEW default.daily_resource_generation_user_counts_mv
                 TO default.daily_resource_generation_user_counts
                 (
-                `modelVersionId` Int32,
-                `date` Date,
-                `users_state` AggregateFunction(uniq, Int32)
+                modelVersionId Int32,
+                date Date,
+                users_state AggregateFunction(uniq, Int32)
                     )
     AS
     SELECT modelVersionId,
@@ -1321,11 +1278,11 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_runs_mv
                 TO default.daily_runs
                 (
-                `modelId` Int32,
-                `modelVersionId` Int32,
-                `partnerId` Int32,
-                `createdDate` Date,
-                `runs` UInt64
+                modelId Int32,
+                modelVersionId Int32,
+                partnerId Int32,
+                createdDate Date,
+                runs UInt64
                     )
     AS
     SELECT modelId,
@@ -1343,9 +1300,9 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_user_counts_mv
                 TO default.daily_user_counts
                 (
-                `createdDate` Date,
-                `authed_users_state` AggregateFunction(uniqIf, Int32, UInt8),
-                `unauthed_users_state` AggregateFunction(uniqIf, String, UInt8)
+                createdDate Date,
+                authed_users_state AggregateFunction(uniqIf, Int32, UInt8),
+                unauthed_users_state AggregateFunction(uniqIf, String, UInt8)
                     )
     AS
     SELECT createdDate,
@@ -1357,10 +1314,10 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_user_downloads_mv
                 TO default.daily_user_downloads
                 (
-                `userKey` String,
-                `authenticated` UInt8,
-                `createdDate` Date,
-                `count` UInt64
+                userKey String,
+                authenticated UInt8,
+                createdDate Date,
+                count UInt64
                     )
     AS
     SELECT if(userId = 0, ip, toString(userId)) AS userKey,
@@ -1376,38 +1333,38 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.daily_user_generation_counts_mv
                 TO default.daily_user_generation_counts
                 (
-                `userId` Int32,
-                `date` DateTime,
-                `count` UInt64
+                userId Int32,
+                date DateTime,
+                count UInt64
                     )
     AS
     SELECT userId,
         toStartOfDay(createdAt) AS date,
         count(*)                AS count
-    FROM orchestration.textToImageJobs
+    FROM textToImageJobs
     GROUP BY userId,
             date;
 
     CREATE MATERIALIZED VIEW default.daily_user_resource_mv
                 TO default.daily_user_resource
                 (
-                `userId` Int32,
-                `modelVersionId` Int32,
-                `date` DateTime
+                userId Int32,
+                modelVersionId Int32,
+                date DateTime
                     )
     AS
     SELECT userId,
         arrayJoin(resourcesUsed) AS modelVersionId,
         toStartOfDay(createdAt)  AS date
-    FROM orchestration.textToImageJobs;
+    FROM textToImageJobs;
 
     CREATE MATERIALIZED VIEW default.daily_views_mv
                 TO default.daily_views
                 (
-                `entityType` Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
-                `entityId` Int32,
-                `createdDate` Date,
-                `views` UInt64
+                entityType Enum8('User' = 1, 'Image' = 2, 'Post' = 3, 'Model' = 4, 'ModelVersion' = 5, 'Article' = 6, 'Collection' = 7, 'Bounty' = 8, 'BountyEntry' = 9),
+                entityId Int32,
+                createdDate Date,
+                views UInt64
                     )
     AS
     SELECT entityType,
@@ -1421,11 +1378,11 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.modelVersionUniqueDownloads
                 (
-                `modelVersionId` Int32,
-                `downloadKey` String,
-                `time` SimpleAggregateFunction(max, DateTime)
+                modelVersionId Int32,
+                downloadKey String,
+                time SimpleAggregateFunction(max, DateTime)
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     PARTITION BY toYYYYMM(time)
                     ORDER BY (modelVersionId, downloadKey)
                     SETTINGS index_granularity = 8192
@@ -1440,12 +1397,12 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.uniqueViews
                 (
-                `type` String,
-                `entityId` Int32,
-                `viewKey` String,
-                `time` SimpleAggregateFunction(max, DateTime)
+                type String,
+                entityId Int32,
+                viewKey String,
+                time SimpleAggregateFunction(max, DateTime)
                     )
-                ENGINE = SharedAggregatingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = AggregatingMergeTree()
                     PARTITION BY toYYYYMM(time)
                     ORDER BY (type, entityId, viewKey)
                     SETTINGS index_granularity = 8192
@@ -1461,13 +1418,13 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_activity_combined_pt1
                 (
-                `userId` Int32,
-                `image_views` UInt64,
-                `model_views` UInt64,
-                `profile_views` UInt64,
-                `collection_views` UInt64
+                userId Int32,
+                image_views UInt64,
+                model_views UInt64,
+                profile_views UInt64,
+                collection_views UInt64
                     )
-                ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = MergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1482,14 +1439,14 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_activity_combined_pt2
                 (
-                `userId` Int32,
-                `image_views` UInt64,
-                `model_views` UInt64,
-                `profile_views` UInt64,
-                `collection_views` UInt64,
-                `images_generated` UInt64
+                userId Int32,
+                image_views UInt64,
+                model_views UInt64,
+                profile_views UInt64,
+                collection_views UInt64,
+                images_generated UInt64
                     )
-                ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = MergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1505,15 +1462,15 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_activity_combined_pt3
                 (
-                `userId` Int32,
-                `image_views` UInt64,
-                `model_views` UInt64,
-                `profile_views` UInt64,
-                `collection_views` UInt64,
-                `images_generated` UInt64,
-                `images_posted` UInt64
+                userId Int32,
+                image_views UInt64,
+                model_views UInt64,
+                profile_views UInt64,
+                collection_views UInt64,
+                images_generated UInt64,
+                images_posted UInt64
                     )
-                ENGINE = SharedMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = MergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1530,25 +1487,25 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_image_generation
                 (
-                `userId` Int32,
-                `total_images_generated` UInt64
+                userId Int32,
+                total_images_generated UInt64
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
     SELECT userId,
         count() AS total_images_generated
-    FROM orchestration.textToImageJobs
+    FROM textToImageJobs
     WHERE userId > 0
     GROUP BY userId;
 
     CREATE MATERIALIZED VIEW default.user_image_posts
                 (
-                `userId` Int32,
-                `total_images_posted` UInt64
+                userId Int32,
+                total_images_posted UInt64
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1560,11 +1517,11 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_model_posts
                 (
-                `userId` Int32,
-                `models_created` UInt64,
-                `models_published` UInt64
+                userId Int32,
+                models_created UInt64,
+                models_published UInt64
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1578,13 +1535,13 @@ clickhouse client -n <<-EOSQL
 
     CREATE MATERIALIZED VIEW default.user_views
                 (
-                `userId` Int32,
-                `image_views` UInt64,
-                `model_views` UInt64,
-                `profile_views` UInt64,
-                `collection_views` UInt64
+                userId Int32,
+                image_views UInt64,
+                model_views UInt64,
+                profile_views UInt64,
+                collection_views UInt64
                     )
-                ENGINE = SharedSummingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}')
+                ENGINE = SummingMergeTree()
                     ORDER BY userId
                     SETTINGS index_granularity = 8192
     AS
@@ -1600,12 +1557,12 @@ clickhouse client -n <<-EOSQL
     CREATE MATERIALIZED VIEW default.views_images_counts_mv
                 TO default.views_images_counts
                 (
-                `imageId` Int32,
-                `count()` UInt64
+                imageId Int32,
+                count UInt64
                     )
     AS
     SELECT entityId AS imageId,
-        count(*)
+        count(*) as count
     FROM default.views
     WHERE entityType = 'Image'
     GROUP BY imageId;

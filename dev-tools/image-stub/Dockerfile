@@ -1,4 +1,4 @@
-FROM node:20-alpine3.16
+FROM node:20-alpine3.19
 
 # Set working directory
 WORKDIR /usr/src/app
@@ -14,4 +14,4 @@ COPY . .
 EXPOSE 3000
 
 # Run the app
-CMD ["node", "app.js"]
+CMD ["node", "index.mjs"]

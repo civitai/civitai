@@ -1,34 +1,33 @@
-import { createServer } from 'node:http';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import path from 'node:path';
 import sharp from 'sharp';
 
-const hostname = '127.0.0.1';
+const hostname = '0.0.0.0';
 const port = 3000;
 // Path to the folder containing your images
 const imageDirectory = path.resolve('images');
 
 const server = createServer(async (req, res) => {
-  const widthMatch = req.url.match(/width=(\d+)/);
-  if (!widthMatch) {
-    res.statusCode = 400;
-    res.setHeader('Content-Type', 'text/plain');
-    res.end('Invalid URL format');
-    return;
-  }
-
-  const width = widthMatch[1];
-
   try {
-    // Get a random image from the directory  
+    // Get a random image from the directory
     const imageId = extractImageId(req.url);
     const imagePath = getRandomImage(imageId);
-    const resizedImage = await resizeImage(imagePath, width);
 
-    res.setHeader('Content-Type', 'image/jpeg');
-    res.end(resizedImage);
-  }
-  catch (error) {
+    const widthMatch = req.url.match(/width=(\d+)/);
+    if (widthMatch) {
+      const width = widthMatch[1];
+
+      const resizedImage = await resizeImage(imagePath, width);
+
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.end(resizedImage);
+    } else {
+      const imageBuffer = readFileSync(imagePath);
+      res.setHeader('Content-Type', 'image/jpeg');
+      res.end(imageBuffer);
+    }
+  } catch (error) {
     console.error('Error:', error);
     res.writeHead(500, { 'Content-Type': 'text/plain' });
     res.end('Error generating image');
@@ -83,4 +82,3 @@ function hashString(str) {
   }
   return hash;
 }
-

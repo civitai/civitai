@@ -33,6 +33,8 @@ import { notificationProcessors } from '~/server/notifications/utils.notificatio
 
 const numRows = 1000;
 
+faker.seed(1337);
+
 const randw = faker.helpers.weightedArrayElement;
 const rand = faker.helpers.arrayElement;
 const fbool = faker.datatype.boolean;
@@ -106,6 +108,11 @@ const truncateRows = async () => {
   await pgDbWrite.query(
     'TRUNCATE TABLE "User", "Tag", "Leaderboard", "Tool", "Technique" RESTART IDENTITY CASCADE'
   );
+};
+
+const truncateNotificationRows = async () => {
+  console.log('Truncating notification tables');
+  await notifDbWrite.query('TRUNCATE TABLE "Notification" RESTART IDENTITY CASCADE');
 };
 
 /**
@@ -2836,7 +2843,9 @@ const genUserNotifications = (num: number, notifIds: number[], userIds: number[]
   return ret;
 };
 
-const genNotificationRows = async () => {
+const genNotificationRows = async (truncate = true) => {
+  if (truncate) await truncateNotificationRows();
+
   const userData = await pgDbWrite.query<{ id: number }>(`SELECT id from "User"`);
   const userIds = userData.rows.map((u) => u.id);
 
