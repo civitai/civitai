@@ -35,7 +35,6 @@ services:
     volumes:
       - ./docker-init/notification:/docker-entrypoint-initdb.d
 
-
   redis:
     image: redis:alpine
     container_name: redis
