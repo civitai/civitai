@@ -24,9 +24,11 @@ import {
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { constants } from '~/server/common/constants';
-import { CheckpointType, ModelType } from '~/server/common/enums';
+import { CheckpointType, ModelType, NotificationCategory } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
+import { notificationProcessors } from '~/server/notifications/utils.notifications';
 // import { fetchBlob } from '~/utils/file-utils';
 
 const numRows = 1000;
@@ -61,6 +63,29 @@ const insertRows = async (table: string, data: any[][]) => {
 
   try {
     const ret = await pgDbWrite.query<{ id: number }>(format(query, table, data));
+
+    if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
+    else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
+
+    return ret.rows.map((r) => r.id);
+  } catch (error) {
+    const e = error as MixedObject;
+    console.log(`\t-> ❌  ${e.message}`);
+    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+    return [];
+  }
+};
+
+const insertNotifRows = async (table: string, data: any[][]) => {
+  console.log(`Inserting ${data.length} rows into ${table}`);
+
+  // language=text
+  const query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING RETURNING ID';
+
+  try {
+    const ret = await notifDbWrite.query<{ id: number }>(format(query, table, data));
 
     if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
     else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
@@ -2769,6 +2794,59 @@ const genRows = async (truncate = true) => {
    */
 };
 
+/**
+ * Notification
+ */
+const genNotifications = (num: number) => {
+  const ret = [];
+
+  const types = Object.keys(notificationProcessors);
+
+  for (let step = 1; step <= num; step++) {
+    const row = [
+      step, // id
+      rand(types), // type
+      faker.string.uuid(), // key // TODO this isn't right, but it works
+      rand(Object.values(NotificationCategory)), // category
+      '{}', // details // TODO
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+/**
+ * UserNotification
+ */
+const genUserNotifications = (num: number, notifIds: number[], userIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const row = [
+      step, // id
+      rand(notifIds), // notificationId
+      rand(userIds), // userId
+      fbool(), // viewed
+      faker.date.past({ years: 3 }).toISOString(), // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+const genNotificationRows = async () => {
+  const userData = await pgDbWrite.query<{ id: number }>(`SELECT id from "User"`);
+  const userIds = userData.rows.map((u) => u.id);
+
+  const notifs = genNotifications(numRows);
+  const notifIds = await insertNotifRows('Notification', notifs);
+
+  const userNotifs = genUserNotifications(numRows, notifIds, userIds);
+  await insertNotifRows('UserNotification', userNotifs);
+};
+
 const main = async () => {
   await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
   await pgDbWrite.query(
@@ -2777,6 +2855,8 @@ const main = async () => {
   await pgDbWrite.query('GRANT ALL ON ALL TABLES IN schema public TO "postgres"');
   await genRows();
   await pgDbWrite.query('REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails"');
+
+  await genNotificationRows();
 };
 
 main().then(() => {
