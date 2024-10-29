@@ -2852,7 +2852,7 @@ const genNotificationRows = async (truncate = true) => {
   const notifs = genNotifications(numRows);
   const notifIds = await insertNotifRows('Notification', notifs);
 
-  const userNotifs = genUserNotifications(numRows, notifIds, userIds);
+  const userNotifs = genUserNotifications(numRows * 3, notifIds, userIds);
   await insertNotifRows('UserNotification', userNotifs);
 };
 
