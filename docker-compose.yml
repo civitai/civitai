@@ -24,6 +24,18 @@ services:
       - ./docker-init/postgres:/docker-entrypoint-initdb.d
       # - ./postgres/db:/var/lib/postgresql/data
 
+  notif:
+    image: postgres:alpine
+    container_name: notif
+    ports:
+      - 15434:5432
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - ./docker-init/notification:/docker-entrypoint-initdb.d
+
+
   redis:
     image: redis:alpine
     container_name: redis
@@ -57,7 +69,7 @@ services:
       - ./meilisearch/data:/meili_data
     environment:
       - MEILI_MASTER_KEY=meilisearch
-      
+
   createbuckets:
     image: minio/mc
     container_name: createbuckets
@@ -90,7 +102,7 @@ services:
       # - CLICKHOUSE_USER="test"
       # - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT="1"
       - CLICKHOUSE_PASSWORD="default"
-  
+
   ngrok:
     image: ngrok/ngrok:latest
     restart: unless-stopped
@@ -115,4 +127,3 @@ services:
       - ./dev/image-stub/images:/usr/src/app/images
     environment:
       NODE_ENV: development
-    
