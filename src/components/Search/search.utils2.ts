@@ -10,8 +10,7 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 
 import { ImageIngestionStatus } from '@prisma/client';
 import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
-import { createInfiniteHitsSessionStorageCache } from 'instantsearch.js/es/lib/infiniteHitsCache';
-import { InfiniteHitsCache } from 'instantsearch.js/es/connectors/infinite-hits/connectInfiniteHits';
+import { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
 
 // #region [transformers]
 function handleOldImageTags(tags?: number[] | { id: number }[]) {
@@ -87,6 +86,11 @@ function usersTransform(items: Hit<UserSearchIndexRecord>[]) {
   return items;
 }
 
+type ToolsTransformed = ReturnType<typeof toolsTransform>;
+function toolsTransform(items: Hit<ToolSearchIndexRecord>[]) {
+  return items;
+}
+
 type IndexName = keyof SearchIndexDataMap;
 export type SearchIndexDataMap = {
   models: ModelsTransformed;
@@ -95,6 +99,7 @@ export type SearchIndexDataMap = {
   users: UsersTransformed;
   collections: CollectionsTransformed;
   bounties: BountiesTransformed;
+  tools: ToolsTransformed;
 };
 // type IndexName = keyof typeof searchIndexTransformMap;
 // export type SearchIndexDataTransformType<T extends IndexName> = ReturnType<
@@ -107,6 +112,7 @@ const searchIndexTransformMap = {
   users: usersTransform,
   collections: collectionsTransform,
   bounties: bountiesTransform,
+  tools: toolsTransform,
 };
 // #endregion
 
