@@ -11,6 +11,7 @@ import { UserSearchIndexRecord } from '~/server/search-index/users.search-index'
 import { ImageIngestionStatus } from '@prisma/client';
 import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
 import { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
+import { ImageMetadata } from '~/server/schema/media.schema';
 
 // #region [transformers]
 function handleOldImageTags(tags?: number[] | { id: number }[]) {
@@ -48,7 +49,11 @@ function articlesTransform(items: Hit<ArticleSearchIndexRecord>[]) {
   return items.map((article) => ({
     ...article,
     nsfwLevel: flagifyBrowsingLevel(article.nsfwLevel),
-    coverImage: { ...article.coverImage, tags: article.coverImage.tags.map((x) => x.id) },
+    coverImage: {
+      ...article.coverImage,
+      tags: article.coverImage.tags.map((x) => x.id),
+      metadata: article.coverImage.metadata as ImageMetadata,
+    },
   }));
 }
 

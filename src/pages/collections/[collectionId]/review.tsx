@@ -42,22 +42,19 @@ import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { formatDate, secondsAsMinutes } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import dayjs from 'dayjs';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -281,9 +278,9 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                           </Badge>
                         )}
                       </Group>
-                      {image.type === 'video' && image?.metadata?.duration && (
+                      {image.type === 'video' && (image.metadata as VideoMetadata)?.duration && (
                         <Badge variant="filled" color="gray" size="xs">
-                          {secondsAsMinutes(image?.metadata?.duration)}
+                          {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
                         </Badge>
                       )}
                     </Stack>

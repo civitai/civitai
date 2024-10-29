@@ -12,7 +12,7 @@ import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import Link from 'next/link';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { SearchLayout } from '~/components/Search/SearchLayout';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -68,7 +68,6 @@ const RenderFilters = () => {
 export function ArticlesHitList() {
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'articles'>();
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
 
   const { loadingPreferences, items, hiddenCount } = useApplyHiddenPreferences({
     type: 'articles',

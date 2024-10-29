@@ -2224,7 +2224,7 @@ export type ImagesForModelVersions = {
   modelVersionId: number;
   // meta: ImageMetaProps | null;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata | null;
   tags?: number[];
   availability: Availability;
   sizeKB?: number;
