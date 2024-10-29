@@ -182,7 +182,13 @@ class TipaltiCaller extends HttpCaller {
 
     const vValue = v.split('=')[1];
 
-    return hash.toString().toLowerCase() === vValue;
+    return {
+      isValid: hash.toString().toLowerCase() === vValue,
+      hash: hash.toString().toLowerCase(),
+      vValue,
+      stringToSign,
+      signature,
+    };
   }
 
   async createPaymentBatch(payments: Tipalti.PaymentInput[]) {
