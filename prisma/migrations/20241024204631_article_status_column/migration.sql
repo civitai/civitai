@@ -8,6 +8,6 @@ ALTER TABLE "Article" ADD COLUMN     "status" "ArticleStatus" NOT NULL DEFAULT '
 UPDATE "Article"
 SET "status" = CASE
   WHEN "publishedAt" IS NOT NULL
-    THEN 'Published'
-  ELSE 'Draft' END;
+    THEN 'Published'::"ArticleStatus"
+  ELSE 'Draft'::"ArticleStatus" END;
 END;

@@ -38,11 +38,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
       const client = await tipaltiCaller();
 
-      const isValid = client.validateWebhookEvent(sig as string, JSON.stringify(req.body));
-      if (!isValid) {
+      const { isValid, ...data } = client.validateWebhookEvent(
+        sig as string,
+        JSON.stringify(req.body)
+      );
+      const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
+        sig as string,
+        req.body as string
+      );
+      if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
           error: 'Invalid Request. Could not validate Webhook signature',
+          data,
+          data2,
         });
       }
 
