@@ -12,7 +12,7 @@ const s3Domain = (env.S3_IMAGE_UPLOAD_ENDPOINT ?? env.S3_UPLOAD_ENDPOINT).replac
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
-  if (!userId || session.user?.bannedAt) {
+  if (!userId || session.user?.bannedAt || session.user?.muted) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
