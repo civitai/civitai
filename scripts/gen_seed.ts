@@ -29,6 +29,7 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
+import { lastRunMigrationkey } from './run_migrations';
 // import { fetchBlob } from '~/utils/file-utils';
 
 const numRows = 1000;
@@ -2866,6 +2867,11 @@ const main = async () => {
   await pgDbWrite.query('REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails"');
 
   await genNotificationRows();
+
+  // last migration was "2024-10-01 00:00:00"
+  await pgDbWrite.query(
+    `INSERT INTO "KeyValue" VALUES ('${lastRunMigrationkey}', '1727755200000')`
+  );
 };
 
 main().then(() => {
