@@ -130,6 +130,7 @@
     "crypto": "^1.0.1",
     "dayjs": "^1.11.12",
     "discord.js": "^14.7.1",
+    "dotenv": "^16.4.5",
     "draft-js": "^0.11.7",
     "embla-carousel-react": "^7.0.3",
     "exifreader": "^4.13.0",
