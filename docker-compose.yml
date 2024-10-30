@@ -69,14 +69,14 @@ services:
     environment:
       - MEILI_MASTER_KEY=meilisearch
 
-  createbuckets:
-    image: minio/mc
-    container_name: createbuckets
-    depends_on:
-      - minio
-    entrypoint: >
-      /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/settled && /usr/bin/mc policy set public minio/settled && exit 0"
-    restart: unless-stopped
+#  createbuckets:
+#    image: minio/mc
+#    container_name: createbuckets
+#    depends_on:
+#      - minio
+#    entrypoint: >
+#      /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/settled && /usr/bin/mc policy set public minio/settled && exit 0"
+#    restart: unless-stopped
 
   maildev:
     image: maildev/maildev
@@ -97,21 +97,21 @@ services:
     volumes:
       - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
 
-  ngrok:
-    image: ngrok/ngrok:latest
-    restart: unless-stopped
-    command:
-      - "start"
-      - "--all"
-      - "--config"
-      - "/etc/ngrok.yml"
-    volumes:
-      - ./docker-init/ngrok/config.yaml:/etc/ngrok.yml
-    ports:
-      - "8080:8080"
-      - "4040:4040"
-    environment:
-      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+#  ngrok:
+#    image: ngrok/ngrok:latest
+#    restart: unless-stopped
+#    command:
+#      - "start"
+#      - "--all"
+#      - "--config"
+#      - "/etc/ngrok.yml"
+#    volumes:
+#      - ./docker-init/ngrok/config.yaml:/etc/ngrok.yml
+#    ports:
+#      - "8080:8080"
+#      - "4040:4040"
+#    environment:
+#      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
 
   image-stub:
     build: dev-tools/image-stub
