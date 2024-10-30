@@ -152,7 +152,7 @@ function CollectionListForm({
             result.isOwner &&
             type === CollectionType.Model &&
             modelId &&
-            collections?.length === 1
+            collections.length === 1
           ) {
             const [collection] = collections;
             if (collection.read === CollectionReadConfiguration.Public) {
