@@ -102,7 +102,17 @@ const ModelSelector = ({
             .filter(([, v]) => v.type === type)
             .map(([k, v]) => {
               return {
-                label: v.label,
+                label:
+                  k === 'illustrious' && Date.now() < new Date('2024-11-06').getTime() ? (
+                    <Group noWrap spacing={6}>
+                      <Text>{v.label}</Text>
+                      <Badge size="xs" color="green">
+                        NEW
+                      </Badge>
+                    </Group>
+                  ) : (
+                    v.label
+                  ),
                 value: k,
               };
             })}
