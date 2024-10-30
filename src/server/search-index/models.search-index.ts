@@ -214,11 +214,10 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         (metrics.rating * metrics.ratingCount + RATING_BAYESIAN_M * RATING_BAYESIAN_C) /
         (metrics.ratingCount + RATING_BAYESIAN_C);
 
-      const [{ files, ...version }] = modelVersions;
+      const [version] = modelVersions;
+      if (!version) return null;
 
-      if (!version) {
-        return null;
-      }
+      const { files, ...restVersion } = version;
 
       const canGenerate = modelVersions.some(
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
@@ -235,9 +234,9 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         user,
         category: category?.tag,
         version: {
-          ...version,
-          settings: version.settings as RecommendedSettingsSchema,
-          hashes: version.hashes.map((hash) => hash.hash),
+          ...restVersion,
+          settings: restVersion.settings as RecommendedSettingsSchema,
+          hashes: restVersion.hashes.map((hash) => hash.hash),
         },
         versions: modelVersions.map(({ generationCoverage, files, hashes, settings, ...x }) => ({
           ...x,

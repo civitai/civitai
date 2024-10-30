@@ -29,6 +29,7 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { lastRunMigrationkey } from './run_migrations';
 // import { fetchBlob } from '~/utils/file-utils';
 
@@ -2857,6 +2858,15 @@ const genNotificationRows = async (truncate = true) => {
   await insertNotifRows('UserNotification', userNotifs);
 };
 
+const genRedisSystemFeatures = async () => {
+  const keys = [[REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS]];
+
+  for (const keySet of keys) {
+    const [baseKey, subKey] = keySet;
+    await redis.hSet(baseKey, subKey, JSON.stringify({}));
+  }
+};
+
 const main = async () => {
   await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
   await pgDbWrite.query(
@@ -2872,6 +2882,8 @@ const main = async () => {
   await pgDbWrite.query(
     `INSERT INTO "KeyValue" VALUES ('${lastRunMigrationkey}', '1727755200000')`
   );
+
+  await genRedisSystemFeatures();
 };
 
 main().then(() => {

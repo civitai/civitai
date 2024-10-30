@@ -75,8 +75,8 @@ export const serverSchema = z.object({
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
   S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
   RATE_LIMITING: zc.booleanString,
-  CF_ACCOUNT_ID: z.string(),
-  CF_IMAGES_TOKEN: z.string(),
+  CF_ACCOUNT_ID: z.string().optional(),
+  CF_IMAGES_TOKEN: z.string().optional(),
   CF_API_TOKEN: z.string().optional(),
   CF_ZONE_ID: z.string().optional(),
   JOB_TOKEN: z.string(),
@@ -196,9 +196,9 @@ export const serverSchema = z.object({
   TIPALTI_API_URL: z.string().optional(),
   TIPALTI_API_CLIENT_ID: z.string().optional(),
   TIPALTI_API_SECRET: z.string().optional(),
-   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
-   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
-   TIPALTI_API_TOKEN_URL: z.string().optional(),
+  TIPALTI_API_CODE_VERIFIER: z.string().optional(),
+  TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
+  TIPALTI_API_TOKEN_URL: z.string().optional(),
 });
 
 /**

@@ -452,7 +452,7 @@ export async function processCsamReport(report: CsamReportProps) {
     incidentDateTime,
   });
 
-  const { reportId } = await ncmecCaller.initializeReport(reportPayload);
+  const { reportId } = await ncmecCaller().initializeReport(reportPayload);
 
   const fns = {
     [CsamReportType.Image]: uploadImages,
@@ -461,7 +461,7 @@ export async function processCsamReport(report: CsamReportProps) {
 
   try {
     const data = await fns[report.type]();
-    await ncmecCaller.finishReport(reportId);
+    await ncmecCaller().finishReport(reportId);
     console.log('finished report:', reportId);
 
     await dbWrite.csamReport.update({
@@ -471,7 +471,7 @@ export async function processCsamReport(report: CsamReportProps) {
   } catch (e) {
     console.log('ERROR');
     console.log(e);
-    await ncmecCaller.retractReport(reportId);
+    await ncmecCaller().retractReport(reportId);
     throw e;
   }
 
@@ -518,7 +518,7 @@ export async function processCsamReport(report: CsamReportProps) {
           const blob = await fetchBlob(imageUrl);
           if (!blob) return;
 
-          const { fileId, hash } = await ncmecCaller.uploadFile({
+          const { fileId, hash } = await ncmecCaller().uploadFile({
             reportId,
             file: blob,
             fileDetails: {
@@ -576,7 +576,7 @@ export async function processCsamReport(report: CsamReportProps) {
 
       const results = await unzipTrainingData(zData, ({ imgBlob, filename }) =>
         limit(async () => {
-          const { fileId, hash } = await ncmecCaller.uploadFile({
+          const { fileId, hash } = await ncmecCaller().uploadFile({
             reportId,
             file: imgBlob,
             fileDetails: {
