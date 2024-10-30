@@ -307,9 +307,9 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
-        LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
+      logger(`PullData Complete :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
       if (images.length === 0) {
         return null;
