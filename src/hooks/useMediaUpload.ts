@@ -2,7 +2,6 @@ import { MediaType } from '@prisma/client';
 import { useEffect, useRef, useState } from 'react';
 import { useFileUpload } from '~/hooks/useFileUpload';
 import { useS3Upload } from '~/hooks/useS3Upload';
-import Id from '~/pages/api/v1/model-versions/[id]';
 import { constants } from '~/server/common/constants';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
@@ -44,7 +43,14 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
 }: UseMediaUploadProps<TContext>) {
   // #region [state]
   const [error, setError] = useState<Error>();
-  const { files, upload, reset, removeFile } = useFileUpload();
+  const {
+    files,
+    uploadToS3: upload,
+    resetFiles: reset,
+    removeFile,
+  } = useS3Upload({
+    endpoint: '/api/v1/image-upload/multipart',
+  });
   const canAdd =
     max - count > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
@@ -119,8 +125,8 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           );
         } else {
           upload(file)
-            .then(({ id }) => {
-              onComplete({ status: 'added', ...data, url: id, index }, context);
+            .then(({ key }) => {
+              onComplete({ status: 'added', ...data, url: key, index }, context);
             })
             .catch((error) => {
               console.error(error);
@@ -142,7 +148,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     if (files.every((file) => file.progress === 100)) {
       timeoutRef.current = setTimeout(() => {
         for (const file of files) {
-          removeFile(file.url);
+          removeFile(file.file);
         }
       }, 3000);
     } else clearTimeout(timeoutRef.current);
