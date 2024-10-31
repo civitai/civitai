@@ -73,15 +73,14 @@ export const useBuzzTransactions = (
     limit: number;
   }
 ) => {
+  const features = useFeatureFlags();
   const { data: { transactions = [] } = {}, isLoading } = trpc.buzz.getAccountTransactions.useQuery(
     {
       limit: filters?.limit ?? 1000,
       accountId: accountId as number,
       accountType,
     },
-    {
-      enabled: !!accountId,
-    }
+    { enabled: !!accountId && features.buzz }
   );
 
   return {

@@ -53,7 +53,7 @@ const defaultFilters = {
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, features }) => {
+  resolver: async ({ features }) => {
     if (!features?.buzz) {
       return { notFound: true };
     }

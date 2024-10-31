@@ -22,7 +22,7 @@ const { openModal, Modal } = createContextModal<{
     const selectedVersion = data?.modelVersions.find((v) => v.id === versionId);
 
     const handleToggleAIRecommendations = async () => {
-      if (!versionId) return;
+      if (!versionId || !features.recommenders) return;
       await toggleResourceRecommendation({ resourceId: versionId }).catch(() => null);
     };
 
