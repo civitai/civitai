@@ -89,7 +89,8 @@ services:
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server:22.2
+    image: clickhouse/clickhouse-server
+    container_name: clickhouse
     ports:
       - "18123:8123"
       - "19000:9000"

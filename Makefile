@@ -17,6 +17,12 @@ down:
 .PHONY: restart
 restart: down start
 
+# Rebuilds the containers
+.PHONY: rebuild
+rebuild:
+	docker-compose down \
+		&& docker-compose up --build -d
+
 # Stop and remove all containers, networks, images, and volumes
 .PHONY: burn
 burn:
