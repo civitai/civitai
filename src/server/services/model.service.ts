@@ -1577,12 +1577,14 @@ export const unpublishModelById = async ({
   reason,
   customMessage,
   meta,
-  user,
+  userId,
+  isModerator,
 }: UnpublishModelSchema & {
   meta?: ModelMeta;
-  user: SessionUser;
+  userId: number;
+  isModerator?: boolean;
 }) => {
-  if (!user.isModerator) {
+  if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
       where: { modelId: id },
       select: { id: true, meta: true },
@@ -1614,7 +1616,7 @@ export const unpublishModelById = async ({
             }
           : {}),
         unpublishedAt,
-        unpublishedBy: user.id,
+        unpublishedBy: userId,
       };
       const updatedModel = await tx.model.update({
         where: { id },
@@ -1637,7 +1639,7 @@ export const unpublishModelById = async ({
         SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
-            'unpublishedBy', ${user.id},
+            'unpublishedBy', ${userId},
             'prevPublishedAt', "publishedAt"
           ),
           "publishedAt" = NULL

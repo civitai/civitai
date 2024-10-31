@@ -6,17 +6,13 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
+  ModelStatus,
   Prisma,
 } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import {
-  banReasonDetails,
-  CacheTTL,
-  constants,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
-import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { searchClient } from '~/server/meilisearch/client';
@@ -88,6 +84,7 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
+import { unpublishModelById } from '~/server/services/model.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -1030,7 +1027,9 @@ export const toggleBan = async ({
   reasonCode,
   detailsInternal,
   detailsExternal,
-}: ToggleBanUser) => {
+  userId,
+  isModerator,
+}: ToggleBanUser & { userId: number; isModerator: boolean }) => {
   const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -1057,10 +1056,21 @@ export const toggleBan = async ({
 
   if (!user.bannedAt) {
     // Unpublish their models
-    await dbWrite.model.updateMany({
-      where: { userId: id },
-      data: { publishedAt: null, status: 'Unpublished' },
+    const models = await dbRead.model.findMany({
+      where: { userId: id, status: ModelStatus.Published },
     });
+
+    await Promise.all(
+      models.map((model) =>
+        unpublishModelById({
+          id: model.id,
+          reason: 'other',
+          customMessage: 'User banned',
+          userId,
+          isModerator,
+        })
+      )
+    );
 
     // Cancel their subscription
     await cancelSubscriptionPlan({ userId: id }).catch((error) =>
