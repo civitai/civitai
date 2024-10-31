@@ -2,6 +2,8 @@
 set -e
 
 clickhouse client -n <<-EOSQL
+    CREATE DATABASE IF NOT EXISTS orchestration;
+
     create table if not exists default.actions
     (
         type Enum16('AddToBounty_Click' = 1, 'AddToBounty_Confirm' = 2, 'AwardBounty_Click' = 3, 'AwardBounty_Confirm' = 4, 'Tip_Click' = 5, 'Tip_Confirm' = 6, 'TipInteractive_Click' = 7, 'TipInteractive_Cancel' = 8, 'NotEnoughFunds' = 9, 'PurchaseFunds_Cancel' = 10, 'PurchaseFunds_Confirm' = 11, 'LoginRedirect' = 12, 'Membership_Cancel' = 13),
@@ -251,7 +253,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
-    create table if not exists daily_generation_counts
+    create table if not exists orchestration.daily_generation_counts
     (
         createdDate Date,
         count       UInt32
@@ -270,7 +272,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY createdDate
             SETTINGS index_granularity = 8192;
 
-    create table if not exists daily_generation_user_counts
+    create table if not exists orchestration.daily_generation_user_counts
     (
         createdDate Date,
         users_state AggregateFunction(uniq, Int32)
@@ -289,7 +291,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY (modelVersionId, createdDate)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists daily_resource_generation_counts
+    create table if not exists orchestration.daily_resource_generation_counts
     (
         modelVersionId Int32,
         createdDate    Date,
@@ -396,7 +398,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY (entityType, entityId, createdAt)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists failedTextToImageJobs
+    create table if not exists orchestration.failedTextToImageJobs
     (
         jobId                   String,
         imageHash               String,
@@ -486,7 +488,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY id
             SETTINGS index_granularity = 8192;
 
-    create table if not exists jobs
+    create table if not exists orchestration.jobs
     (
         jobId       String,
         userId      Int32,
@@ -801,7 +803,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY (time, tagId, userId)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists taintedTextToImageJobs
+    create table if not exists orchestration.taintedTextToImageJobs
     (
         jobId     String,
         taintedAt DateTime64(3),
@@ -811,7 +813,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY taintedAt
             SETTINGS index_granularity = 8192;
 
-    create table if not exists textToImageJobs
+    create table if not exists orchestration.textToImageJobs
     (
         jobId                   String,
         imageHash               String,
@@ -901,7 +903,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY imageId
             SETTINGS index_granularity = 8192;
 
-    create table if not exists workerResources
+    create table if not exists orchestration.workerResources
     (
         provider LowCardinality(String),
         workerId String,
@@ -916,7 +918,7 @@ clickhouse client -n <<-EOSQL
             ORDER BY (provider, workerId, resource, first)
             SETTINGS index_granularity = 8192;
 
-    create table if not exists workers
+    create table if not exists orchestration.workers
     (
         provider LowCardinality(String),
         id           String,
@@ -1212,7 +1214,7 @@ clickhouse client -n <<-EOSQL
     SELECT toStartOfDay(createdAt)                                           AS createdDate,
         count(*)                                                          AS count,
         countIf(has(resourcesUsed, 250708) OR has(resourcesUsed, 250712)) AS nsfw
-    FROM textToImageJobs
+    FROM orchestration.textToImageJobs
     GROUP BY createdDate;
 
     CREATE MATERIALIZED VIEW default.daily_generation_user_counts_mv
@@ -1226,7 +1228,7 @@ clickhouse client -n <<-EOSQL
     SELECT toStartOfDay(createdAt)                                                       AS createdDate,
         uniqState(userId)                                                             AS users_state,
         uniqIfState(userId, has(resourcesUsed, 250708) OR has(resourcesUsed, 250712)) AS users_nsfw_state
-    FROM textToImageJobs
+    FROM orchestration.textToImageJobs
     GROUP BY createdDate;
 
     CREATE MATERIALIZED VIEW default.daily_resource_generation_counts_all_mv
@@ -1341,7 +1343,7 @@ clickhouse client -n <<-EOSQL
     SELECT userId,
         toStartOfDay(createdAt) AS date,
         count(*)                AS count
-    FROM textToImageJobs
+    FROM orchestration.textToImageJobs
     GROUP BY userId,
             date;
 
@@ -1356,7 +1358,7 @@ clickhouse client -n <<-EOSQL
     SELECT userId,
         arrayJoin(resourcesUsed) AS modelVersionId,
         toStartOfDay(createdAt)  AS date
-    FROM textToImageJobs;
+    FROM orchestration.textToImageJobs;
 
     CREATE MATERIALIZED VIEW default.daily_views_mv
                 TO default.daily_views
@@ -1496,7 +1498,7 @@ clickhouse client -n <<-EOSQL
     AS
     SELECT userId,
         count() AS total_images_generated
-    FROM textToImageJobs
+    FROM orchestration.textToImageJobs
     WHERE userId > 0
     GROUP BY userId;
 

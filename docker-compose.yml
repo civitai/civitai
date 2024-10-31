@@ -1,4 +1,3 @@
-version: '3.9'
 services:
   prisma-pit:
     image: postgres:alpine
@@ -21,8 +20,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=civitai
     volumes:
-      # - ./docker-init/postgres:/docker-entrypoint-initdb.d
-      - ./postgres/db:/var/lib/postgresql/data
+       - ./docker-init/postgres:/docker-entrypoint-initdb.d
+       - ./postgres/db:/var/lib/postgresql/data
 
   notif:
     image: postgres:alpine
@@ -98,10 +97,6 @@ services:
       - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
       - ./clickhouse/data:/var/lib/clickhouse
       - ./clickhouse/logs:/var/log/clickhouse-server
-    environment:
-      - CLICKHOUSE_USER=default
-      - CLICKHOUSE_PASSWORD=clickhouse
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
 
 #  ngrok:
 #    image: ngrok/ngrok:latest
