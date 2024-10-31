@@ -1489,7 +1489,14 @@ export const upsertModel = async (
             userId,
             isModerator,
           },
-        }).catch((error) => logToAxiom({ type: 'error', name: 'save-item-in-collections', error }));
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
       } else {
         saveItemInCollections({
           input: {
@@ -1502,7 +1509,14 @@ export const upsertModel = async (
             modelId: id,
             type: 'Model',
           },
-        });
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
       }
     }
 
