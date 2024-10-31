@@ -388,7 +388,8 @@ export const upsertSubscription = async (
   if (
     userSubscription &&
     !isSameSubscriptionItem &&
-    (subscriptionItemProduct?.metadata as SubscriptionProductMetadata)?.tier === 'free'
+    (subscriptionItemProduct?.metadata as SubscriptionProductMetadata)?.tier === 'free' &&
+    userSubscription.status === 'active'
   ) {
     // This is a free tier subscription, we should cancel the old one.
     log(
