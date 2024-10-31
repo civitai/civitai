@@ -22,8 +22,8 @@ import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
-import { dialogStore } from '../Dialog/dialogStore';
+// import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
+// import { dialogStore } from '../Dialog/dialogStore';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
 
 const schema = upsertClubResourceInput;
@@ -63,16 +63,16 @@ export const AddResourceToClubModal = ({ clubId, ...props }: Props) => {
     handleClose();
 
     if (createClubPost && clubId) {
-      dialogStore.trigger({
-        component: ClubPostUpsertFormModal,
-        props: {
-          clubId,
-          resource: {
-            entityType,
-            entityId,
-          },
-        },
-      });
+      // dialogStore.trigger({
+      //   component: ClubPostUpsertFormModal,
+      //   props: {
+      //     clubId,
+      //     resource: {
+      //       entityType,
+      //       entityId,
+      //     },
+      //   },
+      // });
     }
   };
 

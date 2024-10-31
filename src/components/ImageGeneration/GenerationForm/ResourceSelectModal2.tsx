@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Badge,
-  Box,
   Button,
   Center,
   CloseButton,
@@ -17,7 +16,6 @@ import {
   Title,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { ModelType } from '@prisma/client';
 import {
   IconCloudOff,
   IconDotsVertical,
@@ -190,10 +188,13 @@ function ResourceHitList({
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
   const filtered = useMemo(() => {
+    if (!canGenerate && !resourceTypes.length) return models;
+
     return models
       .map((model) => {
         const resourceType = resourceTypes.find((x) => x.type === model.type);
         if (!resourceType) return null;
+
         const versions = model.versions.filter((version) => {
           return (
             (canGenerate ? canGenerate === version.canGenerate : true) &&
@@ -206,7 +207,7 @@ function ResourceHitList({
         return { ...model, versions };
       })
       .filter(isDefined);
-  }, [models]);
+  }, [canGenerate, models, resourceTypes]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;

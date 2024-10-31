@@ -1,7 +1,7 @@
-import { redis } from '~/server/redis/client';
-import { getHomeBlockData, HomeBlockWithData } from '~/server/services/home-block.service';
 import { HomeBlockType } from '@prisma/client';
+import { redis } from '~/server/redis/client';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
+import { getHomeBlockData, HomeBlockWithData } from '~/server/services/home-block.service';
 import { createLogger } from '~/utils/logging';
 
 const CACHE_EXPIRY = {

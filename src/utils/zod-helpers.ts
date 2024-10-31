@@ -80,13 +80,20 @@ export function booleanString() {
 }
 
 export function sanitizedNullableString(options: santizeHtmlOptions) {
-  return z.preprocess((val) => {
+  return z.preprocess((val, ctx) => {
     if (!val) return;
-    const str = String(val);
-    const result = sanitizeHtml(str, options);
-    if (result.length === 0) return null;
 
-    return result;
+    try {
+      const str = String(val);
+      const result = sanitizeHtml(str, options);
+      if (result.length === 0) return null;
+      return result;
+    } catch (e) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: (e as any).message,
+      });
+    }
   }, z.string().nullish());
 }
 

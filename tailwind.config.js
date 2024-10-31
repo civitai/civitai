@@ -111,7 +111,16 @@ module.exports = {
           aspectRatio: '7 / 9'
         },
         '.card': {},
-        '.absolute-center': {}
+        '.absolute-center': {},
+        '.scrollbar-none': {
+            scrollbarWidth: 'none',
+            '::-webkit-scrollbar': {
+              display: 'none',
+            },
+        },
+        '.scrollbar-thin': {
+            scrollbarWidth: 'thin'
+        }
       }),
       addVariant('not-first', ({ modifySelectors, separator }) => {
         modifySelectors(({ className }) => {

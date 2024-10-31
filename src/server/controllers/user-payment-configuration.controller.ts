@@ -1,15 +1,15 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { throwDbError } from '../utils/errorHandling';
-import { getUserStripeConnectAccount } from '../services/user-stripe-connect.service';
+import { getUserPaymentConfiguration } from '../services/user-payment-configuration.service';
 
 export const getHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const userId = ctx.user.id;
   try {
-    const stripeConnect = await getUserStripeConnectAccount({ userId });
-    if (!stripeConnect) return null;
+    const userPaymentConfig = await getUserPaymentConfiguration({ userId });
+    if (!userPaymentConfig) return null;
 
-    return stripeConnect;
+    return userPaymentConfig;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

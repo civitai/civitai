@@ -35,7 +35,7 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux } from '~/shared/constants/generation.constants';
+import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
@@ -226,8 +226,9 @@ export function GeneratedImage({
 
   const isUpscale = step.params.workflow === 'img2img-upscale';
   const isFlux = getIsFlux(step.params.baseModel);
+  const isSD3 = getIsSD3(step.params.baseModel);
   const canRemix = !isUpscale;
-  const canImg2Img = !isFlux && !isUpscale;
+  const canImg2Img = !isFlux && !isUpscale && !isSD3;
   const { params } = step;
 
   return (

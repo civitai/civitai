@@ -173,8 +173,12 @@ export function purgeOnSuccess(tags: string[]) {
   });
 }
 
-export function noEdgeCache() {
+export function noEdgeCache(opts?: { authedOnly?: boolean }) {
+  const { authedOnly } = opts ?? {};
+
   return middleware(({ next, ctx }) => {
+    if (authedOnly && !ctx.user) return next();
+
     if (ctx.cache) {
       ctx.cache.edgeTTL = 0;
       ctx.cache.browserTTL = 0;

@@ -86,6 +86,7 @@ import {
 } from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -322,6 +323,14 @@ export const updateUserById = async ({
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
+  }
+
+  if (data.email && user.paddleCustomerId) {
+    // Update the email in Paddle
+    await updatePaddleCustomerEmail({
+      customerId: user.paddleCustomerId,
+      email: data.email as string,
+    });
   }
 
   return user;

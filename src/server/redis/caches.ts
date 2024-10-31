@@ -24,6 +24,7 @@ import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -345,31 +346,35 @@ export const tagCache = createCachedObject<TagLookup>({
 });
 
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
-type Resource = Prisma.ModelVersionGetPayload<{
-  select: typeof generationResourceSelect;
-}>;
-export const resourceDataCache = createCachedArray<
-  Omit<Resource, 'generationCoverage'> & {
-    settings?: RecommendedSettingsSchema;
-    covered: boolean;
-    available: boolean;
-  }
->({
+export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-  idKey: 'id',
-  dontCacheFn: (data) => data.availability === Availability.Private,
   lookupFn: async (ids) => {
-    const dbResults = (
-      await dbWrite.modelVersion.findMany({
+    const [modelVersions, modelVersionFiles] = await Promise.all([
+      dbWrite.modelVersion.findMany({
         where: { id: { in: ids as number[] } },
         select: generationResourceSelect,
-      })
-    ).map(({ generationCoverage, settings = {}, ...result }) => {
+      }),
+      dbRead.modelFile.findMany({
+        where: { modelVersionId: { in: ids }, visibility: 'Public' },
+        select: { id: true, sizeKB: true, type: true, metadata: true, modelVersionId: true },
+      }),
+    ]);
+
+    const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
       const covered = generationCoverage?.covered ?? false;
+      const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
+        id: number;
+        sizeKB: number;
+        type: string;
+        modelVersionId: number;
+        metadata: FileMetadata;
+      }[];
+      const primaryFile = getPrimaryFile(files);
       return removeEmpty({
         ...result,
         settings: settings as RecommendedSettingsSchema,
         covered,
+        fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
         available:
           covered &&
           (result.availability === 'Public' ||
@@ -385,6 +390,8 @@ export const resourceDataCache = createCachedArray<
     }, {});
     return results;
   },
+  idKey: 'id',
+  dontCacheFn: (data) => !data.available,
   ttl: CacheTTL.hour,
 });
 
@@ -506,7 +513,7 @@ export const userContentOverviewCache = createCachedObject<UserContentOverview>(
           INNER JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" IS NOT NULL AND p.availability != 'Private'
           WHERE i."ingestion" = 'Scanned' AND i."needsReview" IS NULL AND i."userId" = u.id AND i."postId" IS NOT NULL AND i."type" = 'video'::"MediaType"
         ) as "videoCount",
-        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private') as "articleCount",
+        (SELECT COUNT(*)::INT FROM "Article" a WHERE a."userId" = u.id AND a."publishedAt" IS NOT NULL AND a."publishedAt" <= NOW() AND a.availability != 'Private' AND a.status = 'Published'::"ArticleStatus") as "articleCount",
         (SELECT COUNT(*)::INT FROM "Bounty" b WHERE b."userId" = u.id AND b."startsAt" <= NOW() AND b.availability != 'Private') as "bountyCount",
         (SELECT COUNT(*)::INT FROM "BountyEntry" be WHERE be."userId" = u.id) as "bountyEntryCount",
         (SELECT EXISTS (SELECT 1 FROM "ResourceReview" r INNER JOIN "Model" m ON m.id = r."modelId" AND m."userId" = u.id WHERE r."userId" != u.id)) as "hasReceivedReviews",

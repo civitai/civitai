@@ -60,6 +60,7 @@ import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { logToAxiom } from '~/server/logging/client';
 import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -168,6 +169,7 @@ export const upsertModelVersion = async ({
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
+  if (data.description) await throwOnBlockedLinkDomain(data.description);
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
   if (
     updatedEarlyAccessConfig?.timeframe &&

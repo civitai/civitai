@@ -170,7 +170,14 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
-  if (!vae || getBaseModelSetType(vae.modelType) !== baseModel || !vae.available) vae = undefined;
+  if (
+    !vae ||
+    !getBaseModelSetTypes({ modelType: vae.modelType, baseModel: vae.baseModel }).includes(
+      baseModel as SupportedBaseModel
+    ) ||
+    !vae.available
+  )
+    vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources
@@ -312,7 +319,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (name === 'baseModel') {
-        if (watchedValues.baseModel === 'Flux1') {
+        if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
         if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {

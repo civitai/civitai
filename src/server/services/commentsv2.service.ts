@@ -10,6 +10,7 @@ import {
 } from './../schema/commentv2.schema';
 import { CommentV2Sort } from '~/server/common/enums';
 import { constants } from '../common/constants';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const upsertComment = async ({
   userId,
@@ -18,6 +19,7 @@ export const upsertComment = async ({
   parentThreadId,
   ...data
 }: UpsertCommentV2Input & { userId: number }) => {
+  await throwOnBlockedLinkDomain(data.content);
   // only check for threads on comment create
   let thread = await dbWrite.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
@@ -179,7 +181,10 @@ export const getCommentsThreadDetails = async ({
           rootThreadId: true,
           comments: {
             orderBy: { createdAt: 'asc' },
-            where: { hidden },
+            where: {
+              hidden,
+              userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+            },
             select: commentV2Select,
           },
         },

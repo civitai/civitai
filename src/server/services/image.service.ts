@@ -4,7 +4,6 @@ import {
   CollectionMode,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
-  ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
   ModelType,
@@ -85,6 +84,7 @@ import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
@@ -127,7 +127,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { upsertImageFlag } from '~/server/services/image-flag.service';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -678,15 +677,6 @@ type GetAllImagesRaw = {
   username: string | null;
   userImage: string | null;
   deletedAt: Date | null;
-  cryCount: number;
-  laughCount: number;
-  likeCount: number;
-  dislikeCount: number;
-  heartCount: number;
-  commentCount: number;
-  collectedCount: number;
-  tippedAmountCount: number;
-  viewCount: number;
   cursorId?: string;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
@@ -1182,15 +1172,6 @@ export const getAllImages = async (
           ) "baseModel",`
           : ''
       )}
-      im."cryCount",
-      im."laughCount",
-      im."likeCount",
-      im."dislikeCount",
-      im."heartCount",
-      im."commentCount",
-      im."collectedCount",
-      im."tippedAmountCount",
-      im."viewCount",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       ${queryFrom}
       ORDER BY ${Prisma.raw(orderBy)}
@@ -1280,6 +1261,17 @@ export const getAllImages = async (
   ]);
 
   const now = new Date();
+  const filtered = rawImages.filter((x) => {
+    if (isModerator) return true;
+    // if (x.needsReview && x.userId !== userId) return false;
+    if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
+      return false;
+    // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
+    return true;
+  });
+
+  const imageMetrics = await getImageMetricsObject(filtered);
+
   const images: Array<
     Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
       // meta: ImageMetaProps | null; // TODO - don't fetch meta
@@ -1297,34 +1289,11 @@ export const getAllImages = async (
       metadata: ImageMetadata | VideoMetadata | null;
       onSite: boolean;
     }
-  > = rawImages
-    .filter((x) => {
-      if (isModerator) return true;
-      // if (x.needsReview && x.userId !== userId) return false;
-      if ((!x.publishedAt || x.publishedAt > now || !!x.unpublishedAt) && x.userId !== userId)
-        return false;
-      // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
-      return true;
-    })
-    .map(
-      ({
-        userId: creatorId,
-        username,
-        userImage,
-        deletedAt,
-        cryCount,
-        likeCount,
-        laughCount,
-        dislikeCount,
-        heartCount,
-        commentCount,
-        collectedCount,
-        tippedAmountCount,
-        viewCount,
-        cursorId,
-        unpublishedAt,
-        ...i
-      }) => ({
+  > = filtered.map(
+    ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
+      const match = imageMetrics[i.id];
+
+      return {
         ...i,
         user: {
           id: creatorId,
@@ -1335,23 +1304,26 @@ export const getAllImages = async (
           profilePicture: profilePictures?.[creatorId] ?? null,
         },
         stats: {
-          cryCountAllTime: cryCount,
-          laughCountAllTime: laughCount,
-          likeCountAllTime: likeCount,
-          dislikeCountAllTime: dislikeCount,
-          heartCountAllTime: heartCount,
-          commentCountAllTime: commentCount,
-          collectedCountAllTime: collectedCount,
-          tippedAmountCountAllTime: tippedAmountCount,
-          viewCountAllTime: viewCount,
+          likeCountAllTime: match?.reactionLike ?? 0,
+          laughCountAllTime: match?.reactionLaugh ?? 0,
+          heartCountAllTime: match?.reactionHeart ?? 0,
+          cryCountAllTime: match?.reactionCry ?? 0,
+
+          commentCountAllTime: match?.comment ?? 0,
+          collectedCountAllTime: match?.collection ?? 0,
+          tippedAmountCountAllTime: match?.buzz ?? 0,
+
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
         },
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsVar?.filter((x) => x.imageId === i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
-      })
-    );
+      };
+    }
+  );
 
   return {
     nextCursor,
@@ -1711,7 +1683,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
       filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
-    else filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`));
+    else {
+      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      if (currentUserId) {
+        publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+      }
+      filters.push(`(${publishedFilters.join(' OR ')})`);
+    }
   } else {
     // Users should only see published stuff or things they own
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
@@ -1837,22 +1815,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
     // TODO maybe grab more if the number is now too low?
 
-    let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
-    try {
-      imageMetrics = await getImageMetrics(filtered.map((h) => h.id));
-    } catch (e) {
-      const error = e as Error;
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'Failed to getImageMetrics',
-          message: error.message,
-          stack: error.stack,
-          cause: error.cause,
-        },
-        'clickhouse'
-      ).catch();
-    }
+    const imageMetrics = await getImageMetricsObject(filtered);
 
     const fullData = filtered.map((h) => {
       const match = imageMetrics[h.id];
@@ -1913,6 +1876,26 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     return { data: [], nextCursor: undefined };
   }
 }
+
+const getImageMetricsObject = async (data: { id: number }[]) => {
+  let imageMetrics: AsyncReturnType<typeof getImageMetrics> = {};
+  try {
+    imageMetrics = await getImageMetrics(data.map((d) => d.id));
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getImageMetrics',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+  }
+  return imageMetrics;
+};
 
 const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
@@ -2137,15 +2120,6 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      COALESCE(im."cryCount", 0) as "cryCount",
-      COALESCE(im."laughCount", 0) as "laughCount",
-      COALESCE(im."likeCount", 0) as "likeCount",
-      COALESCE(im."dislikeCount", 0) as "dislikeCount",
-      COALESCE(im."heartCount", 0) as "heartCount",
-      COALESCE(im."commentCount", 0) as "commentCount",
-      COALESCE(im."tippedAmountCount", 0) as "tippedAmountCount",
-      COALESCE(im."viewCount", 0) as "viewCount",
-      COALESCE(im."collectedCount", 0) as "collectedCount",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2176,33 +2150,18 @@ export const getImage = async ({
             !isModerator ? 'AND p."publishedAt" < now()' : ''
           }`
     )}
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);
 
-  const [
-    {
-      userId: creatorId,
-      username,
-      userImage,
-      deletedAt,
-      reactions,
-      cryCount,
-      laughCount,
-      likeCount,
-      dislikeCount,
-      heartCount,
-      commentCount,
-      tippedAmountCount,
-      viewCount,
-      collectedCount,
-      ...firstRawImage
-    },
-  ] = rawImages;
+  const [{ userId: creatorId, username, userImage, deletedAt, reactions, ...firstRawImage }] =
+    rawImages;
 
   const userCosmetics = await getCosmeticsForUsers([creatorId]);
   const profilePictures = await getProfilePicturesForUsers([creatorId]);
+
+  const imageMetrics = await getImageMetricsObject([firstRawImage]);
+  const match = imageMetrics[firstRawImage.id];
 
   const image = {
     ...firstRawImage,
@@ -2215,15 +2174,17 @@ export const getImage = async ({
       profilePicture: profilePictures?.[creatorId] ?? null,
     },
     stats: {
-      cryCountAllTime: cryCount,
-      laughCountAllTime: laughCount,
-      likeCountAllTime: likeCount,
-      dislikeCountAllTime: dislikeCount,
-      heartCountAllTime: heartCount,
-      commentCountAllTime: commentCount,
-      tippedAmountCountAllTime: tippedAmountCount,
-      viewCountAllTime: viewCount,
-      collectedCountAllTime: collectedCount,
+      likeCountAllTime: match?.reactionLike ?? 0,
+      laughCountAllTime: match?.reactionLaugh ?? 0,
+      heartCountAllTime: match?.reactionHeart ?? 0,
+      cryCountAllTime: match?.reactionCry ?? 0,
+
+      commentCountAllTime: match?.comment ?? 0,
+      collectedCountAllTime: match?.collection ?? 0,
+      tippedAmountCountAllTime: match?.buzz ?? 0,
+
+      dislikeCountAllTime: 0,
+      viewCountAllTime: 0,
     },
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
@@ -2274,7 +2235,7 @@ export type ImagesForModelVersions = {
   modelVersionId: number;
   // meta: ImageMetaProps | null;
   type: MediaType;
-  metadata: Prisma.JsonValue;
+  metadata: ImageMetadata | VideoMetadata | null;
   tags?: number[];
   availability: Availability;
   sizeKB?: number;
@@ -2544,13 +2505,6 @@ export const getImagesForPosts = async ({
       hash: string;
       createdAt: Date;
       postId: number;
-      cryCount: number;
-      laughCount: number;
-      likeCount: number;
-      dislikeCount: number;
-      heartCount: number;
-      commentCount: number;
-      tippedAmountCount: number;
       type: MediaType;
       metadata: ImageMetadata | VideoMetadata | null;
       hasMeta: boolean;
@@ -2582,16 +2536,8 @@ export const getImagesForPosts = async ({
           THEN TRUE
           ELSE FALSE
         END
-      ) as "onSite",
-      COALESCE(im."cryCount", 0) "cryCount",
-      COALESCE(im."laughCount", 0) "laughCount",
-      COALESCE(im."likeCount", 0) "likeCount",
-      COALESCE(im."dislikeCount", 0) "dislikeCount",
-      COALESCE(im."heartCount", 0) "heartCount",
-      COALESCE(im."commentCount", 0) "commentCount",
-      COALESCE(im."tippedAmountCount", 0) "tippedAmountCount"
+      ) as "onSite"
     FROM "Image" i
-    LEFT JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
   `;
@@ -2610,11 +2556,28 @@ export const getImagesForPosts = async ({
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  return images.map((i) => ({
-    ...i,
-    tagIds: tagIds[i.id]?.tags,
-    reactions: userReactions?.[i.id] ?? [],
-  }));
+  const imageMetrics = await getImageMetricsObject(images);
+
+  return images.map((i) => {
+    const match = imageMetrics[i.id];
+    return {
+      ...i,
+      tagIds: tagIds[i.id]?.tags,
+      reactions: userReactions?.[i.id] ?? [],
+
+      likeCount: match?.reactionLike ?? 0,
+      laughCount: match?.reactionLaugh ?? 0,
+      heartCount: match?.reactionHeart ?? 0,
+      cryCount: match?.reactionCry ?? 0,
+
+      commentCount: match?.comment ?? 0,
+      collectedCount: match?.collection ?? 0,
+      tippedAmountCount: match?.buzz ?? 0,
+
+      dislikeCount: 0,
+      viewCount: 0,
+    };
+  });
 };
 
 export const removeImageResource = async ({ id }: GetByIdInput) => {
@@ -3169,9 +3132,12 @@ export const getEntityCoverImage = async ({
     }));
   }
 
+  const cosmetics = await getCosmeticsForEntity({ ids: images.map((i) => i.id), entity: 'Image' });
+
   return images.map((i) => ({
     ...i,
     tags: tagsVar?.filter((x) => x.imageId === i.id),
+    cosmetic: cosmetics[i.id],
   }));
 };
 

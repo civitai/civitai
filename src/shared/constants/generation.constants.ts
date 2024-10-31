@@ -247,6 +247,11 @@ export function getIsFlux(baseModel?: string) {
   return baseModelSetType === 'Flux1';
 }
 
+export function getIsSD3(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'SD3';
+}
+
 export type GenerationResource = MakeUndefinedOptional<
   ReturnType<typeof formatGenerationResources>[number]
 >;
@@ -267,6 +272,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       covered: resource.covered,
       minor: resource.model.minor,
       available: resource.available,
+      fileSizeKB: resource.fileSizeKB,
     };
   });
 }
@@ -398,10 +404,31 @@ export const baseModelResourceTypes = {
       baseModels: [...baseModelSets.SDXL],
     },
   ],
+  Illustrious: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Illustrious, 'SD 1.5'] },
+    {
+      type: ModelType.LORA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL],
+    },
+  ],
   Flux1: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
   ],
+  SD3: [{ type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

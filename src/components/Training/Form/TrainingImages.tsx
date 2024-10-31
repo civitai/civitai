@@ -294,7 +294,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const maxImgPerPage = 9;
 
   const getResizedImgUrl = async (data: FileWithPath | Blob, type: string): Promise<string> => {
-    const imgUrl = URL.createObjectURL(data);
+    const blob = new Blob([data], { type: type });
+    const imgUrl = URL.createObjectURL(blob);
     const img = await createImageElement(imgUrl);
     let { width, height } = img;
 

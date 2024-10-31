@@ -1,6 +1,6 @@
 import { Anchor, Button, ButtonProps, Code, Group, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
@@ -43,7 +43,7 @@ export function AppFooter() {
     >
       <ChatPortal showFooter={showFooter} />
       <div className="absolute bottom-[var(--footer-height)] right-0">
-        <div className="relative mb-2  mr-2 flex gap-2">
+        <div className="relative mb-2  mr-2 flex gap-2 group-[.no-scroll]:mb-3 group-[.no-scroll]:mr-4">
           <Button
             px="xs"
             onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}

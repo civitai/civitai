@@ -70,7 +70,7 @@ export function createCachedArray<T extends object>({
     const cacheResults: T[] = [];
     for (const batch of chunk(ids, 200)) {
       const batchResults = await redis.packed.mGet<T>(batch.map((id) => `${key}:${id}`));
-      cacheResults.push(...batchResults.filter((x) => x !== null));
+      cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
     const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));

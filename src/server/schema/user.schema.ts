@@ -160,7 +160,7 @@ export const deleteUserSchema = z.object({
 
 export type GetUserCosmeticsSchema = z.infer<typeof getUserCosmeticsSchema>;
 export const getUserCosmeticsSchema = z.object({
-  equipped: z.boolean(),
+  equipped: z.boolean().optional(),
 });
 
 export type GetUserArticleEngagementsInput = z.infer<typeof getUserArticleEngagementsSchema>;

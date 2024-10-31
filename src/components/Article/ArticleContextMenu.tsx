@@ -8,18 +8,18 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
-import type { ArticleGetAll, ArticleGetAllRecord } from '~/server/services/article.service';
+import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { CollectionType, CosmeticEntity } from '@prisma/client';
+import { ArticleStatus, CollectionType, CosmeticEntity } from '@prisma/client';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import type { ArticleGetInfinite } from '~/types/router';
+import { ArticleGetById } from '~/types/router';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -29,7 +29,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
   const isOwner = currentUser?.id === article.user?.id;
 
   const atDetailsPage = router.pathname === '/articles/[id]/[[...slug]]';
-  const showUnpublish = atDetailsPage && article.publishedAt !== null;
+  const showUnpublish = atDetailsPage && article.status === ArticleStatus.Published;
   const features = useFeatureFlags();
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
@@ -64,10 +64,10 @@ export function ArticleContextMenu({ article, ...props }: Props) {
     });
   };
 
-  const upsertArticleMutation = trpc.article.upsert.useMutation();
+  const unpublishArticleMutation = trpc.article.unpublish.useMutation();
   const handleUnpublishArticle = () => {
-    upsertArticleMutation.mutate(
-      { ...article, publishedAt: null },
+    unpublishArticleMutation.mutate(
+      { id: article.id },
       {
         async onSuccess(result) {
           showSuccessNotification({
@@ -75,7 +75,11 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             message: 'Successfully unpublished article',
           });
 
-          await queryUtils.article.getById.invalidate({ id: result.id });
+          queryUtils.article.getById.setData({ id: article.id }, (old) => ({
+            ...(old as ArticleGetById),
+            ...result,
+          }));
+
           await queryUtils.article.getInfinite.invalidate();
           await queryUtils.article.getMyDraftArticles.invalidate();
         },
@@ -146,13 +150,20 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             {showUnpublish && (
               <Menu.Item
                 color="yellow"
-                icon={<IconBan size={14} stroke={1.5} />}
+                icon={
+                  unpublishArticleMutation.isLoading ? (
+                    <Loader size={14} />
+                  ) : (
+                    <IconBan size={14} stroke={1.5} />
+                  )
+                }
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
                   handleUnpublishArticle();
                 }}
-                disabled={upsertArticleMutation.isLoading}
+                disabled={unpublishArticleMutation.isLoading}
+                closeMenuOnClick={false}
               >
                 Unpublish
               </Menu.Item>

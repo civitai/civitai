@@ -17,6 +17,8 @@ import {
   GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
+  GetTransactionsReportResultSchema,
+  GetTransactionsReportSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
   getUserBuzzTransactionsResponse,
@@ -36,7 +38,6 @@ import { stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
 // import { adWatchedReward } from '~/server/rewards';
-import { generateSecretHash } from '~/server/utils/key-generator';
 
 type AccountType = 'User';
 
@@ -899,4 +900,45 @@ export async function claimWatchedAdReward({
   // });
 
   // return true;
+}
+
+export async function getTransactionsReport({
+  userId,
+  ...input
+}: GetTransactionsReportSchema & { userId: number }) {
+  const startDate =
+    input.window === 'hour'
+      ? dayjs().startOf('day')
+      : input.window === 'day'
+      ? dayjs().startOf('day').subtract(7, 'day')
+      : input.window === 'week'
+      ? dayjs().startOf('day').subtract(1, 'month')
+      : dayjs().startOf('year');
+  const endDate = dayjs().endOf('day');
+
+  const query = QS.stringify({
+    ...input,
+    start: startDate.format('YYYY-MM-DD'),
+    end: endDate.format('YYYY-MM-DD'),
+  });
+
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/user/${userId}/transactions/report?${query}`);
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError();
+      case 404:
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data = (await response.json()) as GetTransactionsReportResultSchema;
+
+  return data;
 }

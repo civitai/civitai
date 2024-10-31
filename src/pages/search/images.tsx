@@ -26,9 +26,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 export default function ImageSearch() {
   return (
     <SearchLayout.Root>
-      <SearchLayout.Filters>
-        <RenderFilters />
-      </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
         <ImagesHitList />
@@ -221,7 +218,18 @@ function ImagesHitList() {
 }
 
 ImageSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={IMAGES_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <SearchLayout
+      indexName={IMAGES_SEARCH_INDEX}
+      leftSidebar={
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
+      }
+    >
+      {page}
+    </SearchLayout>
+  );
 };
 
 export const getServerSideProps = createServerSideProps({

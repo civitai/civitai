@@ -10,7 +10,6 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
-import { getAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
@@ -25,6 +24,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getSectionById, getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
+import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -124,7 +124,7 @@ export const getHomeBlockById = async ({
 };
 
 type GetLeaderboardsWithResults = AsyncReturnType<typeof getLeaderboardsWithResults>;
-type GetAnnouncements = AsyncReturnType<typeof getAnnouncements>;
+type GetAnnouncements = AsyncReturnType<typeof getCurrentAnnouncements>;
 type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
   items: AsyncReturnType<typeof getCollectionItemsByCollectionId>;
 };
@@ -230,11 +230,11 @@ export const getHomeBlockData = async ({
       }
 
       const announcementIds = metadata.announcements.ids;
-      const announcements = await getAnnouncements({
+      const announcements = await getCurrentAnnouncements({
         ids: announcementIds,
         dismissed: input.dismissed,
         limit: metadata.announcements.limit,
-        user,
+        userId: user?.id,
       });
 
       if (!announcements.length) {

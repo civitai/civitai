@@ -153,7 +153,7 @@ export const REDIS_KEYS = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-2',
+    RESOURCE_DATA: 'packed:generation:resource-data',
     COUNT: 'generation:count',
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
@@ -176,6 +176,7 @@ export const REDIS_KEYS = {
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
+    BLOCKLIST: 'system:blocklist',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
@@ -196,6 +197,7 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     IMAGE_META: 'packed:caches:image-meta',
+    ANNOUNCEMENTS: 'packed:caches:image-meta',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

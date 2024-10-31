@@ -21,6 +21,7 @@ import {
   IconUsers,
   IconLayoutCollage,
   IconMoneybag,
+  IconTools,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -32,6 +33,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -237,6 +239,26 @@ export const SearchHeader = () => {
       ),
       value: USERS_SEARCH_INDEX,
     },
+    features.toolSearch
+      ? {
+          label: (
+            <Group align="center" spacing={8} noWrap>
+              <ThemeIcon
+                size={30}
+                color={index === TOOLS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                p={6}
+                radius="xl"
+              >
+                <IconTools />
+              </ThemeIcon>
+              <Text size="sm" inline>
+                Tools
+              </Text>
+            </Group>
+          ),
+          value: TOOLS_SEARCH_INDEX,
+        }
+      : undefined,
   ].filter(isDefined);
 
   const loading = status === 'loading' || status === 'stalled';

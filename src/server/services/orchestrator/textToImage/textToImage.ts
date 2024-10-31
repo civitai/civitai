@@ -4,7 +4,12 @@ import {
   formatGeneratedImageResponses,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
-import { Scheduler, TextToImageStepTemplate, type ImageJobNetworkParams } from '@civitai/client';
+import {
+  Scheduler,
+  TextToImageStepTemplate,
+  TimeSpan,
+  type ImageJobNetworkParams,
+} from '@civitai/client';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { SignalMessages } from '~/server/common/enums';
@@ -48,6 +53,10 @@ export async function createTextToImageStep(
     remixOfId: input.remixOfId,
   });
 
+  const timeSpan = new TimeSpan(0, 10, 0);
+  // add one minute for each additional resource minus the checkpoint
+  timeSpan.addMinutes(Object.keys(input.resources).length - 1);
+
   return {
     $type: 'textToImage',
     input: {
@@ -57,7 +66,7 @@ export async function createTextToImageStep(
       ...params,
       imageMetadata,
     },
-    timeout: '00:10:00',
+    timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
       params: input.params,
