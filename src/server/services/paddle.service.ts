@@ -346,6 +346,10 @@ export const upsertSubscription = async (
     throw throwNotFoundError('No active subscription product found');
   }
 
+  const subscriptionItemProduct = subscriptionProducts.find(
+    (p) => p.id === mainSubscriptionItem.price?.productId
+  );
+
   log('upsertSubscription :: main subscription item:', mainSubscriptionItem);
 
   if (isUpdatingSubscription) {
@@ -380,6 +384,19 @@ export const upsertSubscription = async (
     (isCreatingSubscription || userSubscription?.product?.provider !== PaymentProvider.Paddle) &&
     userHasSubscription &&
     !isSameSubscriptionItem;
+
+  if (
+    userSubscription &&
+    !isSameSubscriptionItem &&
+    (subscriptionItemProduct?.metadata as SubscriptionProductMetadata)?.tier === 'free'
+  ) {
+    // This is a free tier subscription, we should cancel the old one.
+    log(
+      'upsertSubscription :: Free tier subscription, ignoring this event since user has a sub already'
+    );
+
+    return;
+  }
 
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
