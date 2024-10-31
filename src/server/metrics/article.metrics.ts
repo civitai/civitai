@@ -204,7 +204,7 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
         tf.timeframe,
         ${snippets.timeframeSum('ae."createdAt"')} "hideCount"
       FROM "ArticleEngagement" ae
-      JOIN "Article" a ON a.id = bt."entityId" -- ensure the article exists
+      JOIN "Article" a ON a.id = ae."articleId" -- ensure the article exists
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "articleId" IN (${ids}) AND ae.type = 'Hide'
       GROUP BY "articleId", tf.timeframe
