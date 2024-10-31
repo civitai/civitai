@@ -5,7 +5,7 @@ import { pgDbWrite } from '~/server/db/pgDb';
 import { isDefined } from '~/utils/type-guards';
 
 const baseDir = './prisma/migrations';
-export const lastRunMigrationkey = 'last-run-migration';
+const lastRunMigrationkey = 'last-run-migration';
 
 async function main() {
   const lastRunQuery = await pgDbWrite.query<{ value: number | null }>(

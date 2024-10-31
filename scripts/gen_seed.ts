@@ -30,10 +30,12 @@ import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { lastRunMigrationkey } from './run_migrations';
 // import { fetchBlob } from '~/utils/file-utils';
 
 const numRows = 1000;
+
+// TODO combine these in a constants file
+const lastRunMigrationkey = 'last-run-migration';
 
 faker.seed(1337);
 

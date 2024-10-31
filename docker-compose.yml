@@ -21,7 +21,7 @@ services:
       - POSTGRES_DB=civitai
     volumes:
        - ./docker-init/postgres:/docker-entrypoint-initdb.d
-       - ./postgres/db:/var/lib/postgresql/data
+#       - ./postgres/db:/var/lib/postgresql/data
 
   notif:
     image: postgres:alpine
