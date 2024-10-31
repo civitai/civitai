@@ -44,8 +44,8 @@ To get a local copy up and running follow these simple example steps.
 ### Prerequisites
 
 First, make sure that you have the following installed on your machine:
-- Node.js (version 18 or later)
-- Docker (for running the database)
+- Node.js (version 20 or later)
+- Docker (for running the database and services)
 
 > We recommend you have installed `nvm` in order to set the right node version to run this project
 > ```sh
@@ -61,28 +61,18 @@ First, make sure that you have the following installed on your machine:
 1. Create your `.env` by making a copy of the contents from `.env-example` file.
     * Most default values are configured to work with the docker-compose setup, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
     * Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
-    * Comment out or remove
-      * `CLICKHOUSE_HOST`
-      * `CLICKHOUSE_USERNAME`
-      * `CLICKHOUSE_PASSWORD`
-      * `CLICKHOUSE_TRACKER_URL`
     * Add a random string of your choice to the email properties to allow user registration
       * `EMAIL_USER`
       * `EMAIL_PASS`
       * `EMAIL_FROM` (Valid email format needed)
     * Replace `ORCHESTRATOR_ENDPOINT` url with http://localhost
     * Set `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` to a random string of your choice. This functions as a bypass as stripe credentials are internal
-    * Add http://localhost as the value to the following fields
-      * `RESOURCE_RECOMMENDER_URL`
-      * `NOTIFICATION_DB_URL`
-      * `NOTIFICATION_DB_REPLICA_URL`
 1. Run `npm run db:migrate` to run all database migrations.
 1. Run `npm run db:generate` to generate the prisma client.
 1. Start the development server by running `npm run dev`.
 1. Visit the page `http://localhost:3000/api/webhooks/run-jobs?token=WEBHOOK_TOKEN&run=update-metrics` to start the metrics update job (make sure to substitute `WEBHOOK_TOKEN`)
 1. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
     * Note that account creation will run emails through maildev, which can be accessed at [http://localhost:1080](http://localhost:1080).
-    * Also note that Cloudflare credentials are necessary in order for image uploads to work.
 
 ### Important Scripts
 ```sh
