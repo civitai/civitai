@@ -489,7 +489,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
-  let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
+  let orderBy = `m."lastVersionAt" DESC NULLS LAST, m."id" DESC`;
 
   if (sort === ModelSort.HighestRated)
     orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
