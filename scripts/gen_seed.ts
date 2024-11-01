@@ -3,6 +3,7 @@ import {
   ArticleEngagementType,
   Availability,
   CollectionType,
+  EntityMetric_MetricType_Type,
   ImageEngagementType,
   ImageGenerationProcess,
   ModelEngagementType,
@@ -25,6 +26,7 @@ import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
+import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { CheckpointType, ModelType, NotificationCategory } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
@@ -90,6 +92,11 @@ const insertRows = async (table: string, data: any[][]) => {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const insertNotifRows = async (table: string, data: any[][]) => {
+  if (!data.length) {
+    console.log(`No rows to insert. Skipping ${table}.`);
+    return [];
+  }
+
   console.log(`Inserting ${data.length} rows into ${table}`);
 
   // language=text
@@ -103,6 +110,40 @@ const insertNotifRows = async (table: string, data: any[][]) => {
     else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
 
     return ret.rows.map((r) => r.id);
+  } catch (error) {
+    const e = error as MixedObject;
+    console.log(`\t-> ❌  ${e.message}`);
+    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+    return [];
+  }
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const insertClickhouseRows = async (table: string, data: any[][]) => {
+  if (!data.length) {
+    console.log(`No rows to insert. Skipping ${table}.`);
+    return [];
+  }
+  if (!clickhouse) {
+    console.log(`No clickhouse client. Skipping ${table}.`);
+    return [];
+  }
+
+  console.log(`Inserting ${data.length} rows into ${table}`);
+
+  // language=text
+  const query = 'INSERT INTO %I VALUES %L';
+
+  try {
+    const ret = await clickhouse.$query(format(query, table, data));
+    console.log(ret);
+
+    if (ret.length === data.length) console.log(`\t-> ✔️ Inserted ${ret.length} rows`);
+    else if (ret.length === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
+    else console.log(`\t-> ⚠️ Only inserted ${ret.length} of ${data.length} rows`);
+
+    return ret;
   } catch (error) {
     const e = error as MixedObject;
     console.log(`\t-> ❌  ${e.message}`);
@@ -2865,6 +2906,43 @@ const genNotificationRows = async (truncate = true) => {
   await insertNotifRows('UserNotification', userNotifs);
 };
 
+/**
+ * entityMetricEvents
+ */
+const genEntityMetricEvents = (num: number, imageIds: number[], userIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    const reaction = rand(Object.values(EntityMetric_MetricType_Type));
+    const row = [
+      'Image', // entityType
+      rand(imageIds), // entityId
+      rand(userIds), // userId
+      reaction, // metricType,
+      reaction === 'Buzz' ? faker.number.int(5000) : rand([1, -1]), // metricValue
+      faker.date.past({ years: 3 }).toISOString(), // createdAt
+    ];
+
+    ret.push(row);
+  }
+  return ret;
+};
+
+const genClickhouseRows = async () => {
+  if (!clickhouse) {
+    console.log(`No clickhouse client. Skipping.`);
+    return;
+  }
+
+  const imageData = await pgDbWrite.query<{ id: number }>(`SELECT id from "Image"`);
+  const imageIds = imageData.rows.map((i) => i.id);
+  const userData = await pgDbWrite.query<{ id: number }>(`SELECT id from "User"`);
+  const userIds = userData.rows.map((u) => u.id);
+
+  const entityMetricEvents = genEntityMetricEvents(numRows * 10, imageIds, userIds);
+  await insertClickhouseRows('entityMetricEvents', entityMetricEvents);
+};
+
 const genRedisSystemFeatures = async () => {
   const keys = [[REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS]];
 
@@ -3302,6 +3380,8 @@ const main = async () => {
   await pgDbWrite.query('REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails"');
 
   await genNotificationRows();
+
+  await genClickhouseRows();
 
   await genRedisSystemFeatures();
 
