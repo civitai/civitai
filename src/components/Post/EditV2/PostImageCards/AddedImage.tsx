@@ -245,7 +245,7 @@ function EditDetail() {
                       </div>
                     ))}
                   </div>
-                  {!isBlocked && (
+                  {!isBlocked && !('engine' in (image.meta ?? {})) && (
                     <div>
                       <Button
                         variant="light"
