@@ -25,6 +25,7 @@ export function useFileUpload() {
           status: 'pending',
           abort: () => undefined,
           url: '',
+          name: file.name,
           file,
         });
       })
