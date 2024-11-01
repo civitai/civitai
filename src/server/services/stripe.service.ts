@@ -5,7 +5,6 @@ import { Stripe } from 'stripe';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { playfab } from '~/server/playfab/client';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -462,13 +461,6 @@ export const upsertSubscription = async (
     dbWrite.customerSubscription.upsert({ where: { id: data.id }, update: data, create: data }),
     dbWrite.user.update({ where: { id: user.id }, data: { subscriptionId: subscription.id } }),
   ]);
-
-  if (user.subscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
-    await playfab.trackEvent(user.id, {
-      eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
-      productId: data.productId,
-    });
-  }
 
   const userVault = await dbRead.vault.findFirst({
     where: { userId: user.id },

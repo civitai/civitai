@@ -91,7 +91,6 @@ function CollectionListForm({
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
-  const currentUser = useCurrentUser();
   const { classes } = useCollectionListStyles();
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);

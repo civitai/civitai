@@ -150,10 +150,17 @@ export const getManagementUrlsHandler = async ({ ctx }: { ctx: DeepNonNullable<C
 
       urls.updatePaymentMethod = paddleSubscription.managementUrls?.updatePaymentMethod;
       // Cancel through paddle as we don't have a Free plan for whatever reason.
-      return urls;
+      return {
+        ...urls,
+        freeSubscriptionPriceId: null,
+      };
     } catch (e) {
-      // Ignore error and assume subscription was not found.
-      return urls;
+      // This might be due to subscription not found, but if the user has an active on the DB and not on paddle
+      // it might mess a few things up. Better return null.
+      return {
+        updatePaymentMethod: null,
+        freeSubscriptionPriceId: null,
+      };
     }
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);

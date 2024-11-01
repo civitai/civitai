@@ -45,7 +45,7 @@ export const recipeSchema = z.object({
 });
 
 export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
-export const trainingDetailsBaseModelsXL = ['sdxl', 'pony'] as const;
+export const trainingDetailsBaseModelsXL = ['sdxl', 'pony', 'illustrious'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 const trainingDetailsBaseModelCustom = z
   .string()

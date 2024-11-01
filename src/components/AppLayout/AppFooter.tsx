@@ -43,7 +43,7 @@ export function AppFooter() {
     >
       <ChatPortal showFooter={showFooter} />
       <div className="absolute bottom-[var(--footer-height)] right-0">
-        <div className="relative mb-2  mr-2 flex gap-2">
+        <div className="relative mb-2  mr-2 flex gap-2 group-[.no-scroll]:mb-3 group-[.no-scroll]:mr-4">
           <Button
             px="xs"
             onClick={() => scrollRef?.current?.scrollTo({ top: 0, behavior: 'smooth' })}

@@ -70,6 +70,7 @@ type UseS3UploadTools = {
   uploadToS3: UploadToS3;
   files: TrackedFile[];
   resetFiles: () => void;
+  removeFile: (file: File, abort?: boolean) => void;
 };
 
 type UseS3Upload = (options?: UseS3UploadOptions) => UseS3UploadTools;
@@ -101,6 +102,14 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
   const resetFiles = () => {
     setFiles([]);
   };
+
+  function removeFile(file: File, abort?: boolean) {
+    if (abort) {
+      const toAbort = files.find((x) => x.file === file);
+      if (toAbort) toAbort.abort();
+    }
+    setFiles((state) => state.filter((x) => x.file !== file));
+  }
 
   const endpoint = options.endpoint ?? '/api/upload';
   const completeEndpoint = options.endpointComplete ?? '/api/upload/complete';
@@ -280,5 +289,6 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
     uploadToS3,
     files,
     resetFiles,
+    removeFile,
   };
 };

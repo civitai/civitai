@@ -21,6 +21,7 @@ export const modelMap: { [key in TrainingDetailsBaseModelList]: string } = {
   //
   sdxl: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
   pony: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
+  illustrious: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
   //
   flux_dev: 'urn:air:flux1:checkpoint:civitai:618692@691639',
 };
@@ -88,5 +89,6 @@ export const baseModelPretty: {
   realistic: 'Realistic',
   sdxl: 'SDXL',
   pony: 'Pony',
+  illustrious: 'Illustrious',
   flux_dev: 'Flux',
 };

@@ -27,7 +27,6 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
-import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -87,6 +86,7 @@ import {
 } from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -325,6 +325,14 @@ export const updateUserById = async ({
     await deleteBasicDataForUser(id);
   }
 
+  if (data.email && user.paddleCustomerId) {
+    // Update the email in Paddle
+    await updatePaddleCustomerEmail({
+      customerId: user.paddleCustomerId,
+      email: data.email as string,
+    });
+  }
+
   return user;
 };
 
@@ -529,7 +537,6 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
   return true;
 };
 
@@ -560,7 +567,6 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   return true;
 };
 

@@ -1,7 +1,6 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
-import { playfab } from '~/server/playfab/client';
 import {
   answerMetrics,
   articleMetrics,
@@ -31,11 +30,6 @@ export const toggleReaction = async ({
     return 'removed';
   } else {
     await createReaction({ entityType, entityId, userId, reaction });
-    await playfab.trackEvent(userId, {
-      eventName: `user_react_${entityType}`,
-      id: entityId,
-      reaction,
-    });
     return 'created';
   }
 };

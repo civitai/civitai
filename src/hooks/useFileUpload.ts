@@ -31,7 +31,7 @@ export function useFileUpload() {
     );
 
     return limit(async () => {
-      const res = await fetch('/api/image-upload', {
+      const res = await fetch('/api/v1/image-upload', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

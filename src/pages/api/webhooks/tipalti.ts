@@ -7,6 +7,12 @@ import { dbRead } from '~/server/db/client';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
 type TipaltiWebhookEvent = {
   id: string;
   type: string;
@@ -17,6 +23,15 @@ type TipaltiWebhookEvent = {
   eventData: Record<string, any>;
 };
 
+async function buffer(readable: Readable) {
+  const chunks = [];
+  for await (const chunk of readable) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    console.log('chunk:', chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
     const sig =
@@ -26,6 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
     let event: TipaltiWebhookEvent;
+    const buf = await buffer(req);
 
     try {
       if (!sig || !webhookSecret) {
@@ -37,11 +53,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const client = await tipaltiCaller();
+      const buffAsString = buf.toString('utf8');
 
-      const { isValid, ...data } = client.validateWebhookEvent(
-        sig as string,
-        JSON.stringify(req.body)
-      );
+      const { isValid, ...data } = client.validateWebhookEvent(sig as string, buffAsString);
       const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
         sig as string,
         req.body as string
@@ -55,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      event = req.body as TipaltiWebhookEvent;
+      event = JSON.parse(buffAsString) as TipaltiWebhookEvent;
 
       switch (event.type) {
         case 'payeeDetailsChanged':

@@ -42,6 +42,8 @@ import { getUserByUsername, getUsers } from './user.service';
 type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   return withRetries(
     async () => {
       if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
@@ -90,6 +92,8 @@ export async function getUserBuzzTransactions({
   accountType,
   ...query
 }: GetUserBuzzTransactionsSchema & { accountId: number; accountType?: BuzzAccountType }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const queryString = QS.stringify({
     ...query,
     start: query.start?.toISOString(),
@@ -163,6 +167,8 @@ export async function createBuzzTransaction({
   fromAccountType?: BuzzAccountType;
   insufficientFundsErrorMsg?: string;
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
@@ -319,6 +325,7 @@ export async function createBuzzTransactionMany(
     externalTransactionId: string;
   })[]
 ) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
@@ -362,6 +369,8 @@ export async function completeStripeBuzzTransaction({
 }: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
   transactionId: string;
 }> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
@@ -459,6 +468,8 @@ export async function refundTransaction(
   description?: string,
   details?: MixedObject
 ) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const body = JSON.stringify({
     description,
     details,
@@ -510,6 +521,8 @@ export async function getAccountSummary({
   end?: Date;
   window?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
   const queryParams: [string, string][] = [['descending', 'false']];
   if (start) queryParams.push(['start', stripTime(start)]);
@@ -551,6 +564,8 @@ export async function getTopContributors({
   end?: Date;
   limit?: number;
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
   const queryParams: [string, string][] = [['limit', limit.toString()]];
   if (start) queryParams.push(['start', start.toISOString()]);
@@ -579,6 +594,8 @@ export async function getTopContributors({
 }
 
 export async function pingBuzzService() {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   try {
     const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
     return response.ok;
@@ -590,6 +607,8 @@ export async function pingBuzzService() {
 }
 
 export async function getTransactionByExternalId(externalId: string) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions/${externalId}`);
   if (!response.ok) {
     switch (response.status) {

@@ -10,6 +10,8 @@ export type CivitaiLinkInstance = {
 };
 
 const clFetch = async (url: string, options: RequestInit = {}) => {
+  if (!env.NEXT_PUBLIC_CIVITAI_LINK) throw new Error('Civitai Link URL not set');
+
   if (!url.startsWith('/')) url = '/' + url;
   const response = await fetch(env.NEXT_PUBLIC_CIVITAI_LINK + url, {
     ...options,

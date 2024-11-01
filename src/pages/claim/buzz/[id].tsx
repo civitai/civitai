@@ -18,6 +18,7 @@ import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { enterFall, jelloVertical } from '~/libs/animations';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -50,11 +51,13 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ClaimBuzzPage({ id }: { id: string }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
   const { multipliers, multipliersLoading } = useUserMultipliers();
-  const { data: claim, isLoading: claimLoading } = trpc.buzz.getClaimStatus.useQuery({
-    id,
-  });
+  const { data: claim, isLoading: claimLoading } = trpc.buzz.getClaimStatus.useQuery(
+    { id },
+    { enabled: features.buzz }
+  );
   const mantineTheme = useMantineTheme();
   const config = CurrencyConfig[Currency.BUZZ];
   const theme = config?.themes?.[claim?.details?.accountType ?? ''] ?? config;
