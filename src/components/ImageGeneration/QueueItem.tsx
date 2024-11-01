@@ -400,7 +400,7 @@ const ProgressIndicator = ({
       sections={[{ value, color }]}
       label={
         <Text color="blue" weight={700} align="center" size="xl">
-          {value}%
+          {value.toFixed(0)}%
         </Text>
       }
     />
