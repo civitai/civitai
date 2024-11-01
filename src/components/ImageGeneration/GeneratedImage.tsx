@@ -366,11 +366,13 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
-              <Menu.Item
-                onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
-              >
-                Image to Video
-              </Menu.Item>
+              {!isVideo && (
+                <Menu.Item
+                  onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
+                >
+                  Image to Video
+                </Menu.Item>
+              )}
               <Menu.Divider />
               <Menu.Label>System</Menu.Label>
               <Menu.Item
