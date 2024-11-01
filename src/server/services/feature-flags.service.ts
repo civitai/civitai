@@ -67,7 +67,7 @@ const featureFlags = createFeatureFlags({
   imageSearch: ['dev'],
   buzz: isDev ? ['granted'] : ['public'],
   signal: isDev ? ['granted'] : ['user'],
-  recommenders: isDev ? ['granted'] : ['public'],
+  recommenders: isDev ? ['granted'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
