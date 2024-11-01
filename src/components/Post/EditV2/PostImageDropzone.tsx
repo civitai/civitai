@@ -94,9 +94,9 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [handlers]
-  const handleDrop = (files: File[]) => {
+  function handleUpload(fileData: { file: File; meta?: Record<string, unknown> }[]) {
     if (currentUser?.muted) return;
-    if (post) upload(files);
+    if (post) upload(fileData);
     else {
       createPostMutation.mutate(
         { modelVersionId, tag },
@@ -104,7 +104,7 @@ export function PostImageDropzone({
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
             await onCreatePost?.(data);
-            upload(files, { postId: data.id });
+            upload(fileData, { postId: data.id });
           },
           onError(error) {
             showErrorNotification({
@@ -115,6 +115,10 @@ export function PostImageDropzone({
         }
       );
     }
+  }
+
+  const handleDrop = (files: File[]) => {
+    handleUpload(files.map((file) => ({ file })));
   };
   // #endregion
 
@@ -123,7 +127,7 @@ export function PostImageDropzone({
     async function handleSrc() {
       if (!src) return;
       const files = await orchestratorMediaTransmitter.getFiles(src);
-      if (files.length) handleDrop([...files]);
+      if (files.length) handleUpload([...files]);
     }
     handleSrc();
   }, []); // eslint-disable-line

@@ -273,6 +273,7 @@ async function getVideoGenerationData(id: number) {
   });
   if (!image) throw throwNotFoundError();
   return {
+    resources: [],
     params: {
       ...(image.meta as Record<string, any>),
       width: image.width,

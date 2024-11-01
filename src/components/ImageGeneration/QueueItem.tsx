@@ -116,9 +116,10 @@ export function QueueItem({
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
   const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
+  const cancellable = !!request.steps[0].timeout;
 
   useEffect(() => {
-    if (!pendingProcessing) return;
+    if (!pendingProcessing || !cancellable) return;
     const id = request.id.toString();
     if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
     delayTimeouts.set(
@@ -131,7 +132,7 @@ export function QueueItem({
     return () => {
       if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
     };
-  }, [request.id, request.createdAt, pendingProcessing]);
+  }, [request.id, request.createdAt, pendingProcessing, cancellable]);
   const refundTime = dayjs(request.createdAt)
     .add(step.timeout ? new TimeSpan(step.timeout).minutes : EXPIRY_TIME, 'minute')
     .toDate();
@@ -235,7 +236,11 @@ export function QueueItem({
                   {...tooltipProps}
                   label={pendingProcessing ? 'Cancel job' : 'Delete job'}
                 >
-                  <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+                  <ActionIcon
+                    size="md"
+                    disabled={cancellingDeleting || (pendingProcessing && !cancellable)}
+                    color="red"
+                  >
                     {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
                   </ActionIcon>
                 </ButtonTooltip>

@@ -797,7 +797,9 @@ export const addPostImage = async ({
 
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
-  if (sourceName || sourceHomepage) {
+  if (meta && 'engine' in meta) {
+    toolId = (await getToolByName(meta.engine as string))?.id;
+  } else if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;
     }

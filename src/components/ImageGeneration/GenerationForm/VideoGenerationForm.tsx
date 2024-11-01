@@ -69,7 +69,6 @@ export function VideoGenerationForm() {
   }
 
   useEffect(() => {
-    console.log({ type });
     if (type === 'video' && storeData) {
       const { params } = storeData;
       for (const [key, value] of Object.entries(params)) {

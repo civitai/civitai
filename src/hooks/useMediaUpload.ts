@@ -15,6 +15,7 @@ const MAX_VIDEO_DURATION = constants.mediaUpload.maxVideoDurationSeconds;
 type ProcessingFile = PreprocessFileReturnType & {
   file: File;
   blockedFor?: string;
+  meta?: Record<string, unknown>;
 };
 
 type MediaUploadDataProps = PreprocessFileReturnType & { url: string; index: number };
@@ -50,13 +51,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   // #endregion
 
   // #region [file processor]
-  async function processFiles(files: File[], context?: TContext) {
+  async function processFiles(
+    data: { file: File; meta?: Record<string, unknown> }[],
+    context?: TContext
+  ) {
     try {
       const start = count + 1;
 
       // check for files that exceed the max size
       if (maxSize) {
-        for (const file of files) {
+        for (const { file } of data) {
           const mediaType = MEDIA_TYPE[file.type];
           const _maxSize = Array.isArray(maxSize)
             ? maxSize.find((x) => x.type === mediaType)?.maxSize
@@ -68,19 +72,22 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = files.slice(0, max - count);
+      const sliced = data.slice(0, max - count);
 
       // process media metadata
       const mapped = await Promise.all(
-        sliced.map(async (file) => {
+        sliced.map(async ({ file, meta: fileMeta }) => {
           const data = await preprocessFile(file);
-          const processing: ProcessingFile = { ...data, file };
-          if (data.type === 'image') {
-            const { meta } = data;
+          const processing: ProcessingFile = { ...data, meta: { ...fileMeta, ...data.meta }, file };
+          const { meta } = data;
+
+          if (meta) {
             const audit = await auditMetaData(meta, false);
             if (audit.blockedFor.length) processing.blockedFor = audit.blockedFor.join(',');
+          }
 
-            if (meta.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
+          if (data.type === 'image') {
+            if (meta?.comfy && calculateSizeInMegabytes(meta.comfy) > 1)
               throw new Error(
                 'Comfy metadata is too large. Please consider updating your workflow'
               );

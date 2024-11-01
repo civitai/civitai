@@ -24,7 +24,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import React, { createContext, useContext, useState } from 'react';
-import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -352,8 +352,8 @@ function EditDetail() {
                     position="right"
                     iconProps={{ size: 20 }}
                   >
-                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
-                    create this image.
+                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
+                    used to create this image.
                   </InfoPopover>
                 </div>
                 {resources
@@ -400,7 +400,7 @@ function EditDetail() {
             {/*
           // #region [missing resources]
           */}
-            {!resources?.length && (
+            {!resources?.length && image.type === 'image' && (
               <Alert className="rounded-lg" color="yellow">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-2">
@@ -414,8 +414,8 @@ function EditDetail() {
                       position="right"
                       iconProps={{ size: 20 }}
                     >
-                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
-                      create this image.
+                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
+                      used to create this image.
                     </InfoPopover>
                   </div>
                   <Text>

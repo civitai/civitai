@@ -111,7 +111,7 @@ export default function IntentPost() {
         onSuccess: async (res) => {
           queryUtils.post.getEdit.setData({ id: res.id }, () => res);
 
-          orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, [readyData.mediaUrl]);
+          orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, [{ url: readyData.mediaUrl }]);
 
           showSuccessNotification({
             title: 'Success!',

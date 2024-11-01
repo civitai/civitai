@@ -1,3 +1,4 @@
+import { MediaType } from '@prisma/client';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -6,20 +7,19 @@ import { GenerationData } from '~/server/services/generation/generation.service'
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'params' | 'replay';
-export type GenerationType = 'image' | 'video';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
-  type: GenerationType;
+  type: MediaType;
   data?: GenerationData & { runType: RunType };
   // input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: GenerationPanelView) => void;
-  setType: (type: GenerationType) => void;
-  setData: (args: GenerationData & { view?: GenerationPanelView; type: GenerationType }) => void;
+  setType: (type: MediaType) => void;
+  setData: (args: GenerationData & { view?: GenerationPanelView; type: MediaType }) => void;
   clearData: () => void;
 };
 
