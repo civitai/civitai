@@ -1062,7 +1062,7 @@ export const toggleBan = async ({
 
     if (models.length) {
       for (const model of models) {
-        unpublishModelById({
+        await unpublishModelById({
           id: model.id,
           reason: 'other',
           customMessage: 'User banned',
