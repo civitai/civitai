@@ -14,7 +14,9 @@ import { findClosest } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
+  GENERATION: 'gen',
   IMAGE: 'img',
+  VIDEO: 'vid',
   FAVORITE: 'favorite',
   FOLDER: 'folder',
   FEEDBACK: {

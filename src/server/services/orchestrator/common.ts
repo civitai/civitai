@@ -1,9 +1,13 @@
 import {
   Blob,
   ComfyStep,
+  HaiperVideoGenInput,
+  HaiperVideoGenOutput,
   ImageJobNetworkParams,
   TextToImageInput,
   TextToImageStep,
+  VideoGenStep,
+  Workflow,
   WorkflowStatus,
   WorkflowStep,
   WorkflowStepJob,
@@ -294,11 +298,12 @@ export async function parseGenerateImageInput({
 
 function getResources(step: WorkflowStep) {
   if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-  else
+  else if (step.$type === 'textToImage')
     return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
       strength: x.networkParams.strength,
     }));
+  else return [];
 }
 
 function combineResourcesWithInputResource(
@@ -314,8 +319,7 @@ function combineResourcesWithInputResource(
   });
 }
 
-export type GeneratedImageResponseFormatted = AsyncReturnType<typeof formatGeneratedImageResponses>;
-export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
+export async function formatGenerationResponse(workflows: Workflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
@@ -334,7 +338,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
         }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
-      steps: workflow.steps.map((step) =>
+      steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
           step,
@@ -369,18 +373,74 @@ function formatWorkflowStep(args: {
       return formatTextToImageStep(args);
     case 'comfy':
       return formatComfyStep(args);
+    case 'videoGen':
+      return formatVideoGenStep(args);
     default:
       throw new Error('failed to extract generation resources: unsupported workflow type');
   }
 }
 
-export function formatTextToImageStep({
+function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
+  const { input, output, jobs } = step as VideoGenStep;
+
+  let aspectRatio: number,
+    width: number,
+    height = 1;
+
+  switch (input.engine) {
+    case 'haiper': {
+      [width, height] = (input as HaiperVideoGenInput).aspectRatio?.split(':').map(Number) ?? [
+        1, 1,
+      ];
+      aspectRatio = width / height;
+    }
+  }
+
+  const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        [output?.video]
+          ?.filter(isDefined)
+          .filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            type: 'video',
+            progress: (output as HaiperVideoGenOutput).progress ?? 0,
+            workflowId,
+            stepName: step.name,
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: (input as any).seed, // tODO - determine if seed should be a common videoGen prop
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url as string,
+            aspectRatio,
+          })) ?? [],
+    }),
+    {}
+  );
+  const videos = Object.values(grouped).flat();
+  const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+
+  return {
+    $type: 'videoGen' as const,
+    timeout: step.timeout,
+    name: step.name,
+    params: { ...input, workflow: 'sourceImageUrl' in input ? 'img2vid' : 'txt2vid', quantity: 1 },
+    images: videos,
+    status: step.status,
+    metadata,
+    resources: [],
+  };
+}
+
+function formatTextToImageStep({
   step,
-  resources: allResources,
+  resources: allResources = [],
   workflowId,
 }: {
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources?: AirResourceData[];
   workflowId: string;
 }) {
   const { input, output, jobs } = step as TextToImageStep;
@@ -438,14 +498,16 @@ export function formatTextToImageStep({
         output?.images
           ?.filter((x) => x.jobId === job.id)
           .map((image) => ({
+            type: 'image',
             workflowId,
-            stepName: step.name ?? '$0',
+            stepName: step.name,
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
+            aspectRatio: input.width / input.height,
           })) ?? [],
     }),
     {}
@@ -494,15 +556,21 @@ export function formatTextToImageStep({
 
 export function formatComfyStep({
   step,
-  resources,
+  resources = [],
   workflowId,
 }: {
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources?: AirResourceData[];
   workflowId: string;
 }) {
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
+
+  if (params?.aspectRatio) {
+    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+    params.width = size.width;
+    params.height = size.height;
+  }
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -511,8 +579,9 @@ export function formatComfyStep({
         output?.blobs
           ?.filter((x) => x.jobId === job.id)
           .map((image) => ({
+            type: 'image',
             workflowId,
-            stepName: step.name ?? '$0',
+            stepName: step.name,
 
             jobId: job.id,
             id: image.id,
@@ -520,18 +589,13 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
+            aspectRatio: (params?.width ?? 1) / (params?.height ?? 1),
           })) ?? [],
     }),
     {}
   );
 
   const images = Object.values(groupedImages).flat();
-
-  if (params?.aspectRatio) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
 
   return {
     $type: 'comfy' as const,
@@ -555,13 +619,10 @@ export type GeneratedImageWorkflowModel = AsyncReturnType<
 export async function queryGeneratedImageWorkflows(
   props: Parameters<typeof queryWorkflows>[0] & { token: string }
 ) {
-  const { nextCursor, items } = await queryWorkflows({
-    ...props,
-    tags: [WORKFLOW_TAGS.IMAGE, ...(props.tags ?? [])],
-  });
+  const { nextCursor, items } = await queryWorkflows(props);
 
   return {
-    items: await formatGeneratedImageResponses(items as GeneratedImageWorkflow[]),
+    items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
     nextCursor,
   };
 }

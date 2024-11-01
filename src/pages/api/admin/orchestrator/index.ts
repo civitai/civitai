@@ -36,7 +36,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const { nextCursor, items } = await queryWorkflows({
     token,
     take: 10,
-    tags: ['civitai', 'img'],
+    tags: ['civitai', 'gen'],
   });
 
   return res.status(200).json(items);

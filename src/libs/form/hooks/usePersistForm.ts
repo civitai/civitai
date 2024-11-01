@@ -62,8 +62,7 @@ export function usePersistForm<
           : Object.keys(defaultValues).length
           ? { ...getParsedStorage(), ...defaultValues }
           : undefined;
-
-    if (values) {
+    if (values && !_defaultValues.current) {
       _defaultValues.current =
         typeof values === 'function'
           ? values(getParsedStorage())

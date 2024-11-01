@@ -46,11 +46,15 @@ export function useGetTextToImageRequests(
   options?: { enabled?: boolean }
 ) {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(input ?? {}, {
-    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-    enabled: !!currentUser,
-    ...options,
-  });
+  const { tags = [] } = input ?? {};
+  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
+    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
 
   const flatData = useMemo(
     () =>
@@ -128,6 +132,24 @@ function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => vo
 
 export function useSubmitCreateImage() {
   return trpc.orchestrator.generateImage.useMutation({
+    onSuccess: (data) => {
+      updateTextToImageRequests((old) => {
+        old.pages[0].items.unshift(data);
+      });
+      updateFromEvents();
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to generate',
+        error: new Error(error.message),
+        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+      });
+    },
+  });
+}
+
+export function useGenerate() {
+  return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests((old) => {
         old.pages[0].items.unshift(data);

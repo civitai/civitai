@@ -4,7 +4,7 @@ import {
   Badge,
   Card,
   createStyles,
-  MantineColor,
+  Loader,
   Text,
   Tooltip,
   TooltipProps,
@@ -26,7 +26,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { GeneratedImage, GenerationPlaceholder } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
   useGenerationStatus,
@@ -48,10 +48,7 @@ import {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { TimeSpan, WorkflowStatus } from '@civitai/client';
-import {
-  orchestratorPendingStatuses,
-  orchestratorRefundableStatuses,
-} from '~/shared/constants/generation.constants';
+import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -93,7 +90,7 @@ export function QueueItem({
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
-  const { params, resources } = step;
+  const { params, resources = [] } = step;
 
   let { images } = step;
 
@@ -151,10 +148,11 @@ export function QueueItem({
 
   const handleGenerate = () => {
     generationStore.setData({
-      resources: step.resources,
+      resources: step.resources ?? [],
       params: { ...step.params, seed: undefined },
       remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('generate') ? 'generate' : view,
+      type: images[0].type, // TODO - type based off type of media
     });
   };
 
@@ -296,7 +294,17 @@ export function QueueItem({
                   step={step}
                 />
               ))}
-              {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
+              {processing && (
+                <div
+                  className="flex flex-col items-center justify-center border card"
+                  style={{ aspectRatio: images[0].aspectRatio }}
+                >
+                  <Loader size={24} />
+                  <Text color="dimmed" size="xs" align="center">
+                    Generating
+                  </Text>
+                </div>
+              )}
             </div>
           </div>
         </>

@@ -349,6 +349,7 @@ export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[numbe
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   lookupFn: async (ids) => {
+    if (!ids.length) return {};
     const [modelVersions, modelVersionFiles] = await Promise.all([
       dbWrite.modelVersion.findMany({
         where: { id: { in: ids as number[] } },

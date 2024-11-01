@@ -1,5 +1,16 @@
-import { ActionIcon, Checkbox, createStyles, Group, Loader, Menu, Text } from '@mantine/core';
-import { useClipboard } from '@mantine/hooks';
+import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
+import {
+  ActionIcon,
+  Checkbox,
+  createStyles,
+  Group,
+  Loader,
+  Menu,
+  Modal,
+  Text,
+} from '@mantine/core';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
@@ -18,10 +29,15 @@ import {
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useState, useRef } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+// import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGetTextToImageRequestsImages,
+  useUpdateImageStepMetadata,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
@@ -86,26 +102,34 @@ export function GeneratedImage({
     );
   const { copied, copy } = useClipboard();
 
+  const canClickImage = useDialogStore(
+    (state) => !state.dialogs.some((x) => x.id === 'generated-image')
+  );
   const handleImageClick = () => {
-    if (!image || !available) return;
+    if (!image || !available || !canClickImage) return;
 
     dialogStore.trigger({
+      id: 'generated-image',
       component: GeneratedImageLightbox,
       props: { image, request },
-      // options: { zIndex: 300 },
     });
   };
+  function handleCloseImageLightbox() {
+    dialogStore.closeById('generated-image');
+  }
 
   const handleAuxClick = () => {
     if (image) window.open(image.url, '_blank');
   };
 
   const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
+    handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('/generate') ? 'generate' : view,
+      type: image.type, // TODO - type based off type of media
     });
   };
 
@@ -118,7 +142,7 @@ export function GeneratedImage({
         'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
       confirmProps: { color: 'red' },
-      onConfirm: () =>
+      onConfirm: () => {
         updateImages([
           {
             workflowId: request.id,
@@ -129,25 +153,29 @@ export function GeneratedImage({
               },
             },
           },
-        ]),
+        ]);
+        handleCloseImageLightbox();
+      },
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
   };
 
   const handleUpscale = (workflow: string) => {
-    dialogStore.trigger({
-      component: UpscaleImageModal,
-      props: {
-        resources: step.resources,
-        params: {
-          ...step.params,
-          image: image.url,
-          seed: image.seed ?? step.params.seed,
-          workflow,
+    handleCloseImageLightbox();
+    if (step.$type !== 'videoGen')
+      dialogStore.trigger({
+        component: UpscaleImageModal,
+        props: {
+          resources: step.resources,
+          params: {
+            ...step.params,
+            image: image.url,
+            seed: image.seed,
+            workflow,
+          },
         },
-      },
-    });
+      });
   };
 
   const imageRef = useRef<HTMLImageElement>(null);
@@ -224,23 +252,22 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
-  const isUpscale = step.params.workflow === 'img2img-upscale';
-  const isFlux = getIsFlux(step.params.baseModel);
-  const isSD3 = getIsSD3(step.params.baseModel);
-  const canRemix = !isUpscale;
-  const canImg2Img = !isFlux && !isUpscale && !isSD3;
-  const { params } = step;
+  // const isUpscale = step.params.workflow === 'img2img-upscale';
+  // const isFlux = getIsFlux(step.params.baseModel);
+  // const isSD3 = getIsSD3(step.params.baseModel);
+  // const canRemix = !isUpscale;
+  // const canImg2Img = !isFlux && !isUpscale && !isSD3;
+  const canRemix = true;
+  const canImg2Img = true;
 
   return (
-    <TwCard
-      ref={ref}
-      className={classes.imageWrapper}
-      style={{ aspectRatio: params.width / params.height }}
-    >
+    <TwCard ref={ref} className={classes.imageWrapper} style={{ aspectRatio: image.aspectRatio }}>
       {inView && (
         <>
           <div
-            className="relative flex flex-1 cursor-pointer flex-col items-center justify-center"
+            className={clsx('relative flex flex-1 flex-col items-center justify-center', {
+              ['cursor-pointer']: canClickImage,
+            })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
               if (e.button === 1) return handleAuxClick();
@@ -426,20 +453,6 @@ export function GeneratedImage({
   );
 }
 
-export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
-  return (
-    <div
-      className="flex flex-col items-center justify-center border card"
-      style={{ aspectRatio: width / height }}
-    >
-      <Loader size={24} />
-      <Text color="dimmed" size="xs" align="center">
-        Generating
-      </Text>
-    </div>
-  );
-}
-
 const useStyles = createStyles((theme, _params, getRef) => {
   const thumbActionRef = getRef('thumbAction');
   const favoriteButtonRef = getRef('favoriteButton');
@@ -506,3 +519,114 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
   };
 });
+
+const TRANSITION_DURATION = 200;
+
+export function GeneratedImageLightbox({
+  image,
+  request,
+}: {
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
+}) {
+  const dialog = useDialogContext();
+  const { steps } = useGetTextToImageRequestsImages();
+
+  const [embla, setEmbla] = useState<Embla | null>(null);
+  useAnimationOffsetEffect(embla, TRANSITION_DURATION);
+
+  useHotkeys([
+    ['ArrowLeft', () => embla?.scrollPrev()],
+    ['ArrowRight', () => embla?.scrollNext()],
+  ]);
+
+  const images = steps.flatMap((step) =>
+    step.images
+      .filter((x) => x.status === 'succeeded')
+      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed } }))
+  );
+
+  const [slide, setSlide] = useState(() => {
+    const initialSlide = images.findIndex((item) => item.id === image.id);
+    return initialSlide > -1 ? initialSlide : 0;
+  });
+
+  return (
+    <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
+      <IntersectionObserverProvider id="generated-image-lightbox">
+        <Carousel
+          align="center"
+          slideGap="md"
+          slidesToScroll={1}
+          controlSize={40}
+          initialSlide={slide}
+          getEmblaApi={setEmbla}
+          withKeyboardEvents={false}
+          onSlideChange={setSlide}
+          loop
+        >
+          {steps.flatMap((step) =>
+            step.images
+              .filter((x) => x.status === 'succeeded')
+              .map((image) => (
+                <Carousel.Slide
+                  key={`${image.workflowId}_${image.id}`}
+                  style={{
+                    height: 'calc(100vh - 84px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {image.url && (
+                    <GeneratedImage
+                      image={{ ...image, params: { ...step.params, seed: image.seed } }}
+                      request={request}
+                      step={step}
+                    />
+                  )}
+                </Carousel.Slide>
+              ))
+          )}
+          {/* {images.map((item) => (
+          <Carousel.Slide
+            key={`${item.workflowId}_${item.id}`}
+            style={{
+              height: 'calc(100vh - 84px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {item.url && <GeneratedImage image={image} request={request} step={step} />}
+          </Carousel.Slide>
+        ))} */}
+        </Carousel>
+      </IntersectionObserverProvider>
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          right: 0,
+          width: '100%',
+          maxWidth: 450,
+          zIndex: 10,
+        }}
+      >
+        <GenerationDetails
+          label="Generation Details"
+          params={images?.[slide]?.params}
+          labelWidth={150}
+          paperProps={{ radius: 0 }}
+          controlProps={{
+            sx: (theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            }),
+          }}
+          upsideDown
+        />
+      </div>
+    </Modal>
+  );
+}

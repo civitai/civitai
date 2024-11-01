@@ -6,17 +6,20 @@ import { GenerationData } from '~/server/services/generation/generation.service'
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'params' | 'replay';
+export type GenerationType = 'image' | 'video';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
+  type: GenerationType;
   data?: GenerationData & { runType: RunType };
-  input?: GetGenerationDataInput;
+  // input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
   open: (input?: GetGenerationDataInput) => Promise<void>;
   close: () => void;
   setView: (view: GenerationPanelView) => void;
-  setData: (args: GenerationData & { view?: GenerationPanelView }) => void;
+  setType: (type: GenerationType) => void;
+  setData: (args: GenerationData & { view?: GenerationPanelView; type: GenerationType }) => void;
   clearData: () => void;
 };
 
@@ -25,6 +28,7 @@ export const useGenerationStore = create<GenerationState>()(
     immer((set) => ({
       opened: false,
       view: 'generate',
+      type: 'video', // TODO - set default to 'image' before sending to prod
       open: async (input) => {
         set((state) => {
           state.opened = true;
@@ -48,8 +52,14 @@ export const useGenerationStore = create<GenerationState>()(
         set((state) => {
           state.view = view;
         }),
-      setData: ({ view, ...data }) =>
+      setType: (type) => {
         set((state) => {
+          state.type = type;
+        });
+      },
+      setData: ({ view, type, ...data }) =>
+        set((state) => {
+          state.type = type;
           state.view = view ?? 'generate';
           state.data = { ...data, runType: 'replay' };
         }),
@@ -67,6 +77,7 @@ export const generationPanel = {
   open: store.open,
   close: store.close,
   setView: store.setView,
+  setType: store.setType,
 };
 
 export const generationStore = {

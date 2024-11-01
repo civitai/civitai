@@ -4,9 +4,9 @@ import {
   createStyles,
   Group,
   NumberInput,
-  NumberInputProps,
   Popover,
   PopoverProps,
+  Text,
 } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -16,6 +16,7 @@ import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useTipStore } from '~/store/tip.store';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -46,14 +47,16 @@ const useStyles = createStyles((theme) => ({
 export function GenerationCostPopover({
   children,
   workflowCost,
-  creatorTipInputOptions,
-  civitaiTipInputOptions,
   readOnly,
   disabled,
   hideCreatorTip,
   ...popoverProps
 }: Props) {
   const { classes, cx } = useStyles();
+  const { civitaiTip, creatorTip } = useTipStore((state) => ({
+    creatorTip: state.creatorTip * 100,
+    civitaiTip: state.civitaiTip * 100,
+  }));
 
   const handleShowExplanationClick: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.preventDefault();
@@ -69,30 +72,20 @@ export function GenerationCostPopover({
   const items: DescriptionTableProps['items'] = [
     {
       label: 'Quantity',
-      value: (
-        <Group spacing={4} position="right" noWrap>
-          {Math.ceil(workflowCost.factors?.quantity ?? 0)}x
-        </Group>
-      ),
+      value: <Text align="right">{Math.ceil(workflowCost.factors?.quantity ?? 0)}x</Text>,
       visible: !!workflowCost.factors?.quantity && workflowCost.factors?.quantity > 1,
       className: classes.tableCell,
     },
     {
       label: 'Size',
-      value: (
-        <Group spacing={4} position="right" noWrap>
-          {Math.ceil(workflowCost.factors?.size ?? 0)}x
-        </Group>
-      ),
+      value: <Text align="right">{Math.ceil(workflowCost.factors?.size ?? 0)}x</Text>,
       visible: !!workflowCost.factors?.size && workflowCost.factors?.size > 1,
       className: classes.tableCell,
     },
     {
       label: 'Steps',
       value: (
-        <Group spacing={4} position="right" noWrap>
-          {Math.round(((workflowCost.factors?.steps ?? 0) - 1) * 100)}%
-        </Group>
+        <Text align="right">{Math.round(((workflowCost.factors?.steps ?? 0) - 1) * 100)}%</Text>
       ),
       visible: !!workflowCost.factors?.steps && workflowCost.factors?.steps !== 1,
       className: classes.tableCell,
@@ -100,9 +93,7 @@ export function GenerationCostPopover({
     {
       label: 'Sampler',
       value: (
-        <Group spacing={4} position="right" noWrap>
-          {Math.round(((workflowCost.factors?.scheduler ?? 0) - 1) * 100)}%
-        </Group>
+        <Text align="right">{Math.round(((workflowCost.factors?.scheduler ?? 0) - 1) * 100)}%</Text>
       ),
       visible: !!workflowCost.factors?.scheduler && workflowCost.factors?.scheduler !== 1,
       className: classes.tableCell,
@@ -119,17 +110,17 @@ export function GenerationCostPopover({
     },
     {
       label: (
-        <Group position="apart">
+        <div className="flex items-center justify-between">
           Creator Tip{' '}
           <NumberInput
-            {...creatorTipInputOptions}
+            value={creatorTip}
+            onChange={(value = 0) => useTipStore.setState({ creatorTip: value / 100 })}
             min={0}
             max={100}
             w={110}
             step={5}
-            defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
-            icon={getEmojiByValue(creatorTipInputOptions?.value ?? 0)}
+            icon={getEmojiByValue(creatorTip)}
             formatter={(value) => {
               if (!value) return '0%';
               const parsedValue = parseFloat(value);
@@ -137,13 +128,11 @@ export function GenerationCostPopover({
               return !Number.isNaN(parsedValue) ? `${parsedValue}%` : '0%';
             }}
           />
-        </Group>
+        </div>
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.base && creatorTipInputOptions?.value
-            ? Math.ceil(((workflowCost.base ?? 0) * (creatorTipInputOptions?.value ?? 0)) / 100)
-            : '0'}
+          {Math.ceil(((workflowCost.base ?? 0) * creatorTip) / 100)}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -163,17 +152,18 @@ export function GenerationCostPopover({
     },
     {
       label: (
-        <Group position="apart">
+        <div className="flex items-center justify-between">
           Civitai Tip{' '}
           <NumberInput
-            {...civitaiTipInputOptions}
+            value={civitaiTip}
+            onChange={(value = 0) => useTipStore.setState({ civitaiTip: value / 100 })}
             min={0}
             max={100}
             w={110}
             step={5}
             defaultValue={0}
             classNames={{ input: 'pr-[30px] text-end' }}
-            icon={getEmojiByValue(civitaiTipInputOptions?.value ?? 0)}
+            icon={getEmojiByValue(civitaiTip ?? 0)}
             formatter={(value) => {
               if (!value) return '%';
               const parsedValue = parseFloat(value);
@@ -181,13 +171,11 @@ export function GenerationCostPopover({
               return !Number.isNaN(parsedValue) ? `${parsedValue}%` : '%';
             }}
           />
-        </Group>
+        </div>
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.base && civitaiTipInputOptions?.value
-            ? Math.ceil(((workflowCost.base ?? 0) * (civitaiTipInputOptions?.value ?? 0)) / 100)
-            : '0'}
+          {Math.ceil(((workflowCost.base ?? 0) * civitaiTip) / 100)}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -236,9 +224,10 @@ function BreakdownExplanation() {
   return (
     <ul className="list-inside list-none text-sm">
       <li className="mb-2">
-        <span className="font-semibold">Base Cost:</span> The base cost of generating an image is
+        <span className="font-semibold">Base Cost:</span>
+        {` The base cost of generating an image is
         ⚡1 for 512x512 at 30 steps with a basic sampler. Flux's base cost is currently driven by
-        our underlying provider. We'll continue to improve this as we onboard additional providers.
+        our underlying provider. We'll continue to improve this as we onboard additional providers.`}
       </li>
       <li className="mb-2">
         <span className="font-semibold">Size Multiplier:</span> Based on the size difference between
@@ -274,8 +263,6 @@ function BreakdownExplanation() {
 type Props = Omit<PopoverProps, 'children'> & {
   children: React.ReactNode;
   workflowCost: WorkflowCost;
-  creatorTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
-  civitaiTipInputOptions?: Pick<NumberInputProps, 'value' | 'onChange'>;
   readOnly?: boolean;
   disabled?: boolean;
   hideCreatorTip?: boolean;

@@ -15,9 +15,9 @@ import {
   Anchor,
   Badge,
   Divider,
-  LoadingOverlay,
   ActionIcon,
   Group,
+  SegmentedControl,
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
@@ -96,10 +96,14 @@ import { clone } from 'lodash-es';
 import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
+import { useTipStore } from '~/store/tip.store';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
 export function GenerationForm2() {
+  const type = useGenerationStore((state) => state.type);
   // const utils = trpc.useUtils();
   // const currentUser = useCurrentUser();
 
@@ -109,6 +113,20 @@ export function GenerationForm2() {
   //   utils.generation.getWorkflowDefinitions.invalidate();
   // };
 
+  // !important - this is to move the 'tip' values to its own local storage bucket
+  useEffect(() => {
+    const stored = localStorage.getItem('generation-form-2');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (typeof parsed !== 'object' || !('state' in parsed)) return;
+      const { creatorTip, civitaiTip, ...state } = parsed.state;
+      if (creatorTip !== undefined && civitaiTip !== undefined) {
+        useTipStore.setState({ creatorTip, civitaiTip });
+        localStorage.setItem('generation-form-2', JSON.stringify({ ...parsed, state }));
+      }
+    }
+  }, []);
+
   return (
     <IsClient>
       {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
@@ -116,12 +134,25 @@ export function GenerationForm2() {
           <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
         </div>
       )} */}
+      <SegmentedControl
+        value={type}
+        onChange={generationPanel.setType}
+        className="-mt-2 overflow-visible px-2"
+        color="blue"
+        data={[
+          { label: 'Image', value: 'image' },
+          { label: 'Video', value: 'video' },
+        ]}
+      />
 
-      <GenerationFormProvider>
-        <TextToImageWhatIfProvider>
-          <GenerationFormContent />
-        </TextToImageWhatIfProvider>
-      </GenerationFormProvider>
+      {type === 'image' && (
+        <GenerationFormProvider>
+          <TextToImageWhatIfProvider>
+            <GenerationFormContent />
+          </TextToImageWhatIfProvider>
+        </GenerationFormProvider>
+      )}
+      {type === 'video' && <VideoGenerationForm />}
     </IsClient>
   );
 }
@@ -218,6 +249,9 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
+    const tips = useTipStore.getState();
+    let creatorTip = tips.creatorTip;
+    const civitaiTip = tips.civitaiTip;
 
     const {
       model,
@@ -226,11 +260,8 @@ export function GenerationFormContent() {
       remixOfId,
       remixSimilarity,
       aspectRatio,
-      civitaiTip = 0,
-      creatorTip: _creatorTip,
       ...params
     } = data;
-    let { creatorTip = 0.25 } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
@@ -354,6 +385,15 @@ export function GenerationFormContent() {
                 pt={0}
                 className="flex flex-col gap-2 px-3 pb-3"
               >
+                {/* <InputSegmentedControl
+                  name="type"
+                  className="overflow-visible"
+                  color="blue"
+                  data={[
+                    { label: 'Image', value: 'image' },
+                    { label: 'Video', value: 'video' },
+                  ]}
+                /> */}
                 {!isFlux && !isSD3 && (
                   <div className="flex items-start justify-start gap-3">
                     {features.image && image && (
@@ -950,12 +990,7 @@ export function GenerationFormContent() {
                             </Watch>
                           </div>
                         )}
-                        <InputSeed
-                          name="seed"
-                          label="Seed"
-                          min={1}
-                          max={generation.maxValues.seed}
-                        />
+                        <InputSeed name="seed" label="Seed" />
                         {!isSDXL && !isFlux && !isSD3 && (
                           <InputNumberSlider
                             name="clipSkip"
@@ -1159,15 +1194,11 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
+  const { civitaiTip, creatorTip } = useTipStore();
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel, resources] = form.watch([
-    'creatorTip',
-    'civitaiTip',
-    'baseModel',
-    'resources',
-  ]);
+  const [baseModel, resources] = form.watch(['baseModel', 'resources']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const hasCreatorTip = (!isFlux && !isSD3) || resources?.length > 0;
@@ -1180,7 +1211,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
 
   const cost = data?.cost?.base ?? 0;
   const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip ?? 0 : 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+    Math.ceil(cost * (hasCreatorTip ? creatorTip : 0)) + Math.ceil(cost * civitaiTip);
   const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
@@ -1208,14 +1239,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
         <GenerationCostPopover
           width={300}
           workflowCost={data?.cost ?? {}}
-          creatorTipInputOptions={{
-            value: (creatorTip ?? 0) * 100,
-            onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
-          }}
-          civitaiTipInputOptions={{
-            value: (civitaiTip ?? 0) * 100,
-            onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
-          }}
           hideCreatorTip={!hasCreatorTip}
         >
           <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>

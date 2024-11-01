@@ -36,7 +36,9 @@ export const textToImageParamsSchema = z.object({
   denoise: z.number().max(1).optional(),
   image: z
     .string()
-    .startsWith(isProd ? 'https://orchestration.civitai.com' : 'https://orchestration.civitai.com')
+    .startsWith(
+      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
+    )
     .optional(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
@@ -86,8 +88,8 @@ export const generateImageSchema = z.object({
   remixOfId: z.number().optional(),
   tips: z
     .object({
-      creators: z.number().min(0).max(1).default(0).optional(),
-      civitai: z.number().min(0).max(1).default(0).optional(),
+      creators: z.number().min(0).max(1).default(0),
+      civitai: z.number().min(0).max(1).default(0),
     })
     .optional(),
 });
