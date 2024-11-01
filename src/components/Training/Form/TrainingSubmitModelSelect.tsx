@@ -141,6 +141,7 @@ const ModelSelector = ({
               resources: [
                 {
                   type: ModelType.Checkpoint,
+                  // nb: when adding here, make sure logic is added in castBase below
                   baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Illustrious'],
                 },
               ],
@@ -170,6 +171,8 @@ const ModelSelector = ({
                   ? 'sdxl'
                   : ([...baseModelSets.Flux1] as string[]).includes(baseModel)
                   ? 'flux'
+                  : ([...baseModelSets.SD3] as string[]).includes(baseModel)
+                  ? 'sd35'
                   : 'sd15';
 
                 const cLink = stringifyAIR({ baseModel, type: modelType, modelId, id: mvId });
