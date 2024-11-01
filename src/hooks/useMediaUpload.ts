@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useFileUpload } from '~/hooks/useFileUpload';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { constants } from '~/server/common/constants';
+import { UploadType } from '~/server/common/enums';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { PreprocessFileReturnType, preprocessFile } from '~/utils/media-preprocessors';
@@ -124,7 +125,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             context
           );
         } else {
-          upload(file)
+          upload(file, UploadType.Image)
             .then(({ key }) => {
               onComplete({ status: 'added', ...data, url: key, index }, context);
             })
