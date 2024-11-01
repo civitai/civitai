@@ -48,9 +48,12 @@ bootstrap-metrics:
 copy-env:
 	cp -u ./.env-example ./.env.development
 
-.PHONY: init
-init: copy-env start bootstrap-db run-migrations bootstrap-metrics
+.PHONY: npm-install
+npm-install:
 	npm i
+
+.PHONY: init
+init: copy-env npm-install start bootstrap-db run-migrations bootstrap-metrics
 	npm run db:generate
 	npm run dev
 
