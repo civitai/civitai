@@ -55,6 +55,7 @@ import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import { MediaType } from '@prisma/client';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -122,14 +123,14 @@ export function GeneratedImage({
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
+  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}, type?: MediaType) => {
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
       view: !pathname.includes('/generate') ? 'generate' : view,
-      type: image.type, // TODO - type based off type of media
+      type: type ?? image.type, // TODO - type based off type of media
     });
   };
 
@@ -346,6 +347,11 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
+              <Menu.Item
+                onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
+              >
+                Image to Video
+              </Menu.Item>
               <Menu.Divider />
               <Menu.Label>System</Menu.Label>
               <Menu.Item

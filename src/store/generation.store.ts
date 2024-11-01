@@ -28,7 +28,7 @@ export const useGenerationStore = create<GenerationState>()(
     immer((set) => ({
       opened: false,
       view: 'generate',
-      type: 'video', // TODO - set default to 'image' before sending to prod
+      type: 'image',
       open: async (input) => {
         set((state) => {
           state.opened = true;

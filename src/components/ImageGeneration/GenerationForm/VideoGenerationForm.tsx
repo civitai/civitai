@@ -1,4 +1,4 @@
-import { Button, Input, Title, Text } from '@mantine/core';
+import { Button, Input, Title, Text, ActionIcon } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFormContext, useFormState } from 'react-hook-form';
 import { z } from 'zod';
@@ -20,6 +20,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { titleCase } from '~/utils/string-helpers';
+import { IconX } from '@tabler/icons-react';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -79,6 +80,7 @@ export function VideoGenerationForm() {
   }, [storeData, type]);
 
   const engine = form.watch('engine');
+  const image = form.watch('sourceImageUrl');
 
   return (
     <Form
@@ -92,12 +94,33 @@ export function VideoGenerationForm() {
           <Text size="sm">{engineText[engine]}</Text>
         </div>
         <InputText name="engine" hidden clearable={false} />
+        <InputText name="sourceImageUrl" hidden clearable={false} />
+        <div>
+          <div className="relative inline-block">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={image}
+              alt="image to refine"
+              className="max-w-40 rounded-md shadow-sm shadow-black"
+            />
+            <ActionIcon
+              variant="light"
+              size="sm"
+              color="red"
+              radius="xl"
+              className="absolute -right-2 -top-2"
+              onClick={() => form.setValue('sourceImageUrl', undefined)}
+            >
+              <IconX size={16} strokeWidth={2.5} />
+            </ActionIcon>
+          </div>
+        </div>
         <InputTextArea
           name="prompt"
           label="Prompt"
           placeholder="Your prompt goes here..."
           autosize
-          required
+          required={!image}
         />
         <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
         <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />

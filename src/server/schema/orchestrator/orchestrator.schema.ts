@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const baseVideoSchema = z.object({
   engine: z.string(),
-  prompt: z.string().nonempty().max(1500, 'Prompt cannot be longer than 1500 characters'),
+  prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters'),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({
