@@ -19,13 +19,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
 
   const imageKey = randomUUID();
   const s3 = getS3Client('image');
-  const result = await getMultipartPutUrl(
-    imageKey,
-    req.body.size,
-    s3,
-    env.S3_IMAGE_UPLOAD_BUCKET,
-    10 * 1024 * 1024 // 10 MB
-  );
+  const result = await getMultipartPutUrl(imageKey, req.body.size, s3, env.S3_IMAGE_UPLOAD_BUCKET);
 
   if (env.S3_IMAGE_UPLOAD_OVERRIDE) {
     result.urls = result.urls.map((item) => ({
