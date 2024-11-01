@@ -32,7 +32,6 @@ export const useGenerationStore = create<GenerationState>()(
       open: async (input) => {
         set((state) => {
           state.opened = true;
-          console.log(input);
           if (input) {
             state.view = 'generate';
             if (input.type === 'video') state.type = 'video';

@@ -72,7 +72,6 @@ export function VideoGenerationForm() {
     console.log({ type });
     if (type === 'video' && storeData) {
       const { params } = storeData;
-      console.log({ params });
       for (const [key, value] of Object.entries(params)) {
         form.setValue(key as any, value);
       }
