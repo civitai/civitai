@@ -247,6 +247,12 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         all: { disabled: true },
       },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
+      },
     },
   },
   {
@@ -463,8 +469,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { default: 'Prodigy' } },
       illustrious: { all: { default: 'Adafactor' } },
       flux_dev: { 'x-flux': { disabled: true } },
-      sd3_medium: { all: { default: 'Adafactor' } },
-      sd3_large: { all: { default: 'Adafactor' } },
     },
   },
   {
@@ -483,8 +487,6 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
         'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
       },
-      sd3_medium: { all: { default: optimizerArgMap.Adafactor } },
-      sd3_large: { all: { default: optimizerArgMap.Adafactor } },
     },
   },
 ];
