@@ -305,7 +305,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
                   )}
                   {image.hasMeta && (
                     <div className="absolute bottom-0.5 right-0.5 z-10">
-                      <ImageMetaPopover2 imageId={image.id}>
+                      <ImageMetaPopover2 imageId={image.id} type={image.type}>
                         <ActionIcon variant="transparent" size="lg">
                           <IconInfoCircle
                             color="white"

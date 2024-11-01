@@ -299,9 +299,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           message: 'Some resources used to generate this image are unavailable',
         });
       }
-      return () => {
-        generationStore.clearData();
-      };
+      generationStore.clearData();
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
 

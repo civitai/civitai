@@ -122,7 +122,7 @@ export function PostImages({
                             e.preventDefault();
                             e.stopPropagation();
                             generationPanel.open({
-                              type: 'image',
+                              type: image.type,
                               id: image.id,
                             });
                           }}
@@ -183,7 +183,7 @@ export function PostImages({
                     />
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">
-                        <ImageMetaPopover2 imageId={image.id}>
+                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
                           <ActionIcon variant="transparent" size="lg" component="span">
                             <IconInfoCircle
                               color="white"

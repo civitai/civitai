@@ -1,4 +1,4 @@
-import { Button, Input } from '@mantine/core';
+import { Button, Input, Title, Text } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useFormContext, useFormState } from 'react-hook-form';
 import { z } from 'zod';
@@ -19,6 +19,7 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { titleCase } from '~/utils/string-helpers';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -68,17 +69,18 @@ export function VideoGenerationForm() {
   }
 
   useEffect(() => {
+    console.log({ type });
     if (type === 'video' && storeData) {
       const { params } = storeData;
       console.log({ params });
       for (const [key, value] of Object.entries(params)) {
         form.setValue(key as any, value);
       }
-      return () => {
-        generationStore.clearData();
-      };
+      generationStore.clearData();
     }
   }, [storeData, type]);
+
+  const engine = form.watch('engine');
 
   return (
     <Form
@@ -87,8 +89,18 @@ export function VideoGenerationForm() {
       onSubmit={handleSubmit}
     >
       <ScrollArea scrollRestore={{ key: 'generation-form' }} className="flex flex-col gap-2 p-2">
+        <div>
+          <Title order={2}>{titleCase(engine)}</Title>
+          <Text size="sm">{engineText[engine]}</Text>
+        </div>
         <InputText name="engine" hidden clearable={false} />
-        <InputTextArea name="prompt" placeholder="Your prompt goes here..." autosize required />
+        <InputTextArea
+          name="prompt"
+          label="Prompt"
+          placeholder="Your prompt goes here..."
+          autosize
+          required
+        />
         <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
         <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
         <InputSelect
@@ -116,7 +128,7 @@ export function VideoGenerationForm() {
       <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
         <DailyBoostRewardClaim />
         <div className="flex gap-2">
-          <SubmitButton />
+          <SubmitButton loading={isLoading} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
             Reset
           </Button>
@@ -126,7 +138,7 @@ export function VideoGenerationForm() {
   );
 }
 
-function SubmitButton() {
+function SubmitButton({ loading }: { loading: boolean }) {
   const [query, setQuery] = useState<z.infer<typeof schema> | null>(null);
   const { control, getValues, watch } = useFormContext<z.infer<typeof schema>>();
   const { isValid } = useFormState({ control });
@@ -163,7 +175,7 @@ function SubmitButton() {
       type="submit"
       className="flex-1"
       disabled={!data || !isValid}
-      loading={isFetching}
+      loading={isFetching || loading}
       cost={totalCost}
     >
       Generate
@@ -172,3 +184,7 @@ function SubmitButton() {
 }
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
+
+const engineText = {
+  haiper: `Haiper is a video and image AI platform building its own powerful foundation model. Haiper's next-gen 2.0 model generates hyper-realistic and stunning images and videos that can be enhanced and extended.`,
+};

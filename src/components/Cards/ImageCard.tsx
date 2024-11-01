@@ -74,7 +74,7 @@ function UnroutedImageCard({ data }: Props) {
                           e.preventDefault();
                           e.stopPropagation();
                           generationPanel.open({
-                            type: 'image',
+                            type: data.type,
                             id: data.id,
                           });
                         }}
@@ -150,7 +150,7 @@ function UnroutedImageCard({ data }: Props) {
               targetUserId={data.user.id}
             />
             {data.hasMeta && (
-              <ImageMetaPopover2 imageId={data.id}>
+              <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ActionIcon className={sharedClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                 </ActionIcon>

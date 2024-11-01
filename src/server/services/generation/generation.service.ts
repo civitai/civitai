@@ -209,6 +209,8 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
   switch (props.type) {
     case 'image':
       return await getImageGenerationData(props.id);
+    case 'video':
+      return await getVideoGenerationData(props.id);
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
     case 'modelVersions':
@@ -258,6 +260,26 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
     },
   };
 };
+
+async function getVideoGenerationData(id: number) {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      meta: true,
+      height: true,
+      width: true,
+    },
+  });
+  if (!image) throw throwNotFoundError();
+  return {
+    params: {
+      ...(image.meta as Record<string, any>),
+      width: image.width,
+      height: image.height,
+    },
+  };
+}
 
 // const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
 const getImageGenerationData = async (id: number) => {

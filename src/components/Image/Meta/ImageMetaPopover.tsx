@@ -9,13 +9,16 @@ import { generationPanel } from '~/store/generation.store';
 import { encodeMetadata } from '~/utils/metadata';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
 import { useIsClient } from '~/providers/IsClientProvider';
+import { MediaType } from '@prisma/client';
 
 export function ImageMetaPopover2({
   imageId,
   children,
+  type,
 }: {
   imageId: number;
   children: React.ReactElement;
+  type: MediaType;
   // TODO - accept meta props
 }) {
   const isClient = useIsClient();
