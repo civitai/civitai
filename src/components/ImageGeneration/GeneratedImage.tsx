@@ -579,7 +579,7 @@ export function GeneratedImageLightbox({
                 >
                   {image.url && (
                     <GeneratedImage
-                      image={{ ...image, params: { ...step.params, seed: image.seed } }}
+                      image={{ ...image, params: { ...step.params, seed: image.seed } } as any}
                       request={request}
                       step={step}
                     />
