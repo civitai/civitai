@@ -411,9 +411,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            seed: (input as any).seed, // tODO - determine if seed should be a common videoGen prop
+            seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
-            url: image.url as string,
+            url: image.url + '.mp4',
             aspectRatio,
           })) ?? [],
     }),

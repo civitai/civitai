@@ -124,7 +124,7 @@ export function GeneratedImageActions({
           const blob = await fetchBlob(image.url);
           if (!blob) return;
           const file = new File([blob], image.id);
-          zip.file(`${image.id}.jpg`, file);
+          zip.file(image.type === 'video' ? `${image.id}.mp4` : `${image.id}.jpg`, file);
         })
       )
     );

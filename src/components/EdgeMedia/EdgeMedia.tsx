@@ -151,6 +151,7 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) =>
     },
     videoThumbRoot: {
       height: '100%',
+      width: '100%',
       position: 'relative',
       '&:hover': {
         [`& .${ref}`]: {

@@ -453,6 +453,7 @@ function updateFromEvents() {
             for (const image of images) {
               image.status = signalEvent.status!;
               image.completed = signalEvent.completed;
+              if (image.type === 'video') image.progress = signalEvent.progress ?? 0;
             }
 
             if (status === signalJobEventsDictionary[jobId].status) {

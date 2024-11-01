@@ -7,6 +7,8 @@ import {
   Loader,
   Menu,
   Modal,
+  RingProgress,
+  RingProgressProps,
   Text,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -43,7 +45,6 @@ import { useInViewDynamic } from '~/components/IntersectionObserver/Intersection
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
-import images from '~/pages/api/v1/images';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -55,6 +56,7 @@ import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
 
 export type GeneratedImageProps = {
@@ -179,8 +181,6 @@ export function GeneratedImage({
       });
   };
 
-  const imageRef = useRef<HTMLImageElement>(null);
-
   const feedback = step.metadata?.images?.[image.id]?.feedback;
   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
   const available = image.status === 'succeeded';
@@ -251,15 +251,32 @@ export function GeneratedImage({
     );
   }
 
+  if (image.status === 'processing')
+    return (
+      <div
+        className="flex flex-col items-center justify-center border card"
+        style={{ aspectRatio: image.aspectRatio }}
+      >
+        {image.type === 'video' && image.progress ? (
+          <ProgressIndicator progress={image.progress} />
+        ) : (
+          <Loader size={24} />
+        )}
+        <Text color="dimmed" size="xs" align="center">
+          Generating
+        </Text>
+      </div>
+    );
   if (!available) return <></>;
 
-  // const isUpscale = step.params.workflow === 'img2img-upscale';
-  // const isFlux = getIsFlux(step.params.baseModel);
-  // const isSD3 = getIsSD3(step.params.baseModel);
-  // const canRemix = !isUpscale;
-  // const canImg2Img = !isFlux && !isUpscale && !isSD3;
-  const canRemix = true;
-  const canImg2Img = true;
+  const isUpscale = step.params.workflow === 'img2img-upscale';
+  const isVideo = step.$type === 'videoGen';
+  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
+  const canRemix = !isUpscale;
+  const canImg2Img = !isFlux && !isUpscale && !isSD3 && !isVideo;
+  // const canRemix = true;
+  // const canImg2Img = true;
 
   return (
     <TwCard ref={ref} className={classes.imageWrapper} style={{ aspectRatio: image.aspectRatio }}>
@@ -274,26 +291,28 @@ export function GeneratedImage({
               if (e.button === 1) return handleAuxClick();
             }}
           >
-            {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
-            <img
-              ref={imageRef}
-              alt=""
+            <EdgeMedia2
               src={image.url}
-              onDragStart={(e) => {
-                if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-              }}
+              type={image.type}
+              alt=""
+              wrapperProps={{ style: { height: '100%' } }}
+              // onDragStart={(e) => {
+              //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
+              // }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          <label className="absolute left-3 top-3 ">
-            <Checkbox
-              className={classes.checkbox}
-              checked={selected}
-              onChange={(e) => {
-                toggleSelect(e.target.checked);
-              }}
-            />
-          </label>
+          {canClickImage && (
+            <label className="absolute left-3 top-3 ">
+              <Checkbox
+                className={classes.checkbox}
+                checked={selected}
+                onChange={(e) => {
+                  toggleSelect(e.target.checked);
+                }}
+              />
+            </label>
+          )}
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
               <div className="absolute right-3 top-3">
@@ -525,6 +544,26 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
   };
 });
+
+const ProgressIndicator = ({
+  progress,
+  ...ringProgressProps
+}: Omit<RingProgressProps, 'sections'> & { progress: number }) => {
+  const color = progress >= 1 ? 'green' : 'blue';
+  const value = progress * 100;
+
+  return (
+    <RingProgress
+      {...ringProgressProps}
+      sections={[{ value, color }]}
+      label={
+        <Text color="blue" weight={700} align="center" size="xl">
+          {value}%
+        </Text>
+      }
+    />
+  );
+};
 
 const TRANSITION_DURATION = 200;
 
