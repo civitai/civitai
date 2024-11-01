@@ -1,61 +1,45 @@
-import dayjs, { Dayjs } from 'dayjs';
 import fs from 'fs/promises';
 import * as process from 'node:process';
 import { pgDbWrite } from '~/server/db/pgDb';
-import { isDefined } from '~/utils/type-guards';
+import { insertNewMigrations } from './gen_seed';
 
 const baseDir = './prisma/migrations';
-const lastRunMigrationkey = 'last-run-migration';
 
 async function main() {
-  const lastRunQuery = await pgDbWrite.query<{ value: number | null }>(
-    `SELECT value FROM "KeyValue" where key = '${lastRunMigrationkey}'`
+  const alreadyRunQuery = await pgDbWrite.query<{ migration_name: string }>(
+    `SELECT migration_name FROM "_prisma_migrations" where finished_at is not null`
   );
-  const lastRun = lastRunQuery.rows[0]?.value;
-  if (!isDefined(lastRun)) {
-    console.error(`No value found for "${lastRunMigrationkey}" in KeyValue. Exiting.`);
-    process.exit(1);
-  }
-  let lastRunDate: Dayjs;
-  try {
-    lastRunDate = dayjs(lastRun);
-  } catch (e) {
-    console.error(e);
-    process.exit(1);
-  }
+  const alreadyRun = alreadyRunQuery.rows.map((r) => r.migration_name);
 
-  console.log(`Last run: ${lastRunDate.toISOString()}`);
-
-  // TODO it's possible to miss migrations if they are run, then a PR is merged in with a date older than that
-  // TODO if one migration fails, it will not be run again
-  // the option to fix both of these is to store the names in an array for "run_migrations"
-
-  const currentDate = new Date().getTime();
   const folders = await fs.readdir(baseDir, { withFileTypes: true });
-  let applied = false;
+  const newMigrations: string[] = [];
+  const failedMigrations: string[] = [];
 
   for (const folder of folders) {
-    if (folder.isDirectory() && folder.name !== '20241003192438_model_flag_poi_name_column') {
+    if (folder.isDirectory()) {
       try {
-        const dateStr = folder.name.split('_')[0];
-        const date = dayjs(dateStr);
-        if (date.isAfter(lastRunDate)) {
+        if (!alreadyRun.includes(folder.name)) {
           const content = await fs.readFile(`${baseDir}/${folder.name}/migration.sql`, 'utf-8');
           console.log(`Applying ${folder.name}...`);
           await pgDbWrite.query(content);
-          applied = true;
+          newMigrations.push(folder.name);
         }
       } catch (err) {
         console.error(err);
+        failedMigrations.push(folder.name);
       }
     }
   }
 
-  if (applied) {
-    console.log(`Finished migrations. Updating "${lastRunMigrationkey}".`);
-    await pgDbWrite.query(
-      `UPDATE "KeyValue" SET value='${currentDate}' WHERE key = '${lastRunMigrationkey}'`
-    );
+  if (newMigrations.length > 0) {
+    await insertNewMigrations(newMigrations);
+  }
+
+  if (newMigrations.length || failedMigrations.length) {
+    console.log('--------------------');
+    console.log(`Finished migrations.`);
+    console.log(`Successes: ${newMigrations.length}.`);
+    console.log(`Failures: ${failedMigrations.length}.`);
   } else {
     console.log('Up to date.');
   }

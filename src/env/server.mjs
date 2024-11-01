@@ -8,7 +8,7 @@ import { env as clientEnv, formatErrors } from './client.mjs';
 import { serverSchema } from './schema.mjs';
 
 if (process.env.NODE_ENV === 'development') {
-  dotenv.config({ path: ['.env.local', '.env.development', '.env'] });
+  dotenv.config({ path: ['.env.development.local', '.env.local', '.env.development', '.env'] });
 }
 
 const _serverEnv = serverSchema.safeParse(process.env);

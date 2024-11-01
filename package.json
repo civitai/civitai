@@ -263,6 +263,7 @@
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",
     "tsc-files": "^1.1.4",
+    "tsx": "^4.19.2",
     "typescript": "^5.5.3"
   },
   "ct3aMetadata": {

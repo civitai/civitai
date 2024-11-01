@@ -8,16 +8,16 @@ start:
 stop:
 	docker-compose stop
 
-# shut down
+# Remove containers
 .PHONY: down
 down:
 	docker-compose down
 
-# restart
+# Restart containers
 .PHONY: restart
-restart: down start
+restart: stop start
 
-# Rebuilds the containers
+# Rebuild the containers
 .PHONY: rebuild
 rebuild:
 	docker-compose down \
@@ -32,12 +32,27 @@ burn:
 # Initialize the database and seed it with data
 .PHONY: bootstrap-db
 bootstrap-db:
-	NODE_ENV=development npx tsx ./scripts/gen_seed.ts
+	cross-env NODE_ENV=development npx tsx ./scripts/gen_seed.ts
+
+# Run new migrations
+.PHONY: run-migrations
+run-migrations:
+	cross-env NODE_ENV=development npx tsx ./scripts/run_migrations.ts
 
 # Trigger metrics and search data jobs
 .PHONY: bootstrap-metrics
 bootstrap-metrics:
-	NODE_ENV=development npx tsx ./scripts/bootstrap-metrics-search.ts
+	cross-env NODE_ENV=development npx tsx ./scripts/bootstrap-metrics-search.ts
+
+.PHONY: copy-env
+copy-env:
+	cp -u ./.env-example ./.env.development
+
+.PHONY: init
+init: copy-env start bootstrap-db run-migrations bootstrap-metrics
+	npm i
+	npm run db:generate
+	npm run dev
 
 .PHONY: default
 default: start
