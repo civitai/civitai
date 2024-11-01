@@ -1060,17 +1060,24 @@ export const toggleBan = async ({
       where: { userId: id, status: ModelStatus.Published },
     });
 
-    await Promise.all(
-      models.map((model) =>
+    if (models.length) {
+      for (const model of models) {
         unpublishModelById({
           id: model.id,
           reason: 'other',
           customMessage: 'User banned',
           userId,
           isModerator,
-        })
-      )
-    );
+        }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-unpublish-model',
+            message: error.message,
+            error,
+          });
+        });
+      }
+    }
 
     // Cancel their subscription
     await cancelSubscriptionPlan({ userId: id }).catch((error) =>
