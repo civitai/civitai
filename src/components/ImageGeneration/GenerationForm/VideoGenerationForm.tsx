@@ -95,26 +95,28 @@ export function VideoGenerationForm() {
         </div>
         <InputText name="engine" hidden clearable={false} />
         <InputText name="sourceImageUrl" hidden clearable={false} />
-        <div>
-          <div className="relative inline-block">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={image}
-              alt="image to refine"
-              className="max-w-40 rounded-md shadow-sm shadow-black"
-            />
-            <ActionIcon
-              variant="light"
-              size="sm"
-              color="red"
-              radius="xl"
-              className="absolute -right-2 -top-2"
-              onClick={() => form.setValue('sourceImageUrl', undefined)}
-            >
-              <IconX size={16} strokeWidth={2.5} />
-            </ActionIcon>
+        {image && (
+          <div>
+            <div className="relative inline-block">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={image}
+                alt="image to refine"
+                className="max-w-40 rounded-md shadow-sm shadow-black"
+              />
+              <ActionIcon
+                variant="light"
+                size="sm"
+                color="red"
+                radius="xl"
+                className="absolute -right-2 -top-2"
+                onClick={() => form.setValue('sourceImageUrl', undefined)}
+              >
+                <IconX size={16} strokeWidth={2.5} />
+              </ActionIcon>
+            </div>
           </div>
-        </div>
+        )}
         <InputTextArea
           name="prompt"
           label="Prompt"
