@@ -131,6 +131,8 @@ export const trainingSettings: TrainingSettingsType[] = [
         'x-flux': { default: 5, max: 5, min: 2 },
         rapid: { default: 1, min: 1, max: 1 },
       },
+      sd3_medium: { all: { default: 5 } },
+      sd3_large: { all: { default: 5 } },
     },
   },
   {
@@ -167,6 +169,8 @@ export const trainingSettings: TrainingSettingsType[] = [
         'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
       },
+      sd3_medium: { all: { default: 4, max: 4 } },
+      sd3_large: { all: { default: 4, max: 4 } },
     },
   },
   {
@@ -308,6 +312,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         'x-flux': { default: 5e-5 },
       },
+      sd3_medium: { all: { default: 1e-5 } },
+      sd3_large: { all: { default: 1e-5 } },
     },
   },
   {
@@ -322,6 +328,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       anime: { all: { default: 1e-4 } },
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_large: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -391,6 +399,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
       flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
+      sd3_medium: { all: { default: 2 } },
+      sd3_large: { all: { default: 2 } },
     },
   },
   {
@@ -453,6 +463,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { default: 'Prodigy' } },
       illustrious: { all: { default: 'Adafactor' } },
       flux_dev: { 'x-flux': { disabled: true } },
+      sd3_medium: { all: { default: 'Adafactor' } },
+      sd3_large: { all: { default: 'Adafactor' } },
     },
   },
   {
@@ -471,6 +483,8 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
         'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
       },
+      sd3_medium: { all: { default: optimizerArgMap.Adafactor } },
+      sd3_large: { all: { default: optimizerArgMap.Adafactor } },
     },
   },
 ];
