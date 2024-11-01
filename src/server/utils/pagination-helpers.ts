@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
 import { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
 import { PaginationInput } from '~/server/schema/base.schema';
@@ -107,7 +108,7 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
   const result: Record<string, number | Date> = {};
   for (let i = 0; i < fields.length; i++) {
     const value = values[i];
-    if (value.includes('-')) result[fields[i].field] = new Date(value);
+    if (value.includes('-')) result[fields[i].field] = dayjs.utc(value).toDate();
     else result[fields[i].field] = parseInt(value, 10);
   }
   return result;
@@ -124,7 +125,7 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
       const conditionParts: Prisma.Sql[] = [];
       for (let j = 0; j <= i; j++) {
         const { field, order } = sortFields[j];
-        let operator = j < i ? '=' : order === 'DESC' ? '<=' : '>=';
+        let operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
         if (j < i) operator = '=';
 
         conditionParts.push(

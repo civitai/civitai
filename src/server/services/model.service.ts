@@ -636,8 +636,9 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
-    const nextItem = models.pop();
-    nextCursor = nextItem?.cursorId || undefined;
+    models.pop(); //Remove excess model
+    // Use final item as cursor to grab next page
+    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
