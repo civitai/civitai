@@ -19,12 +19,12 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
-import { baseModelDescriptions } from '~/components/Training/Form/TrainingSubmit';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { baseModelSets } from '~/server/common/constants';
 import {
   TrainingDetailsBaseModelList,
   trainingDetailsBaseModels15,
+  trainingDetailsBaseModels35,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsXL,
   TrainingDetailsParams,
@@ -39,7 +39,7 @@ import {
   trainingStore,
 } from '~/store/training.store';
 import { stringifyAIR } from '~/utils/string-helpers';
-import { TrainingBaseModelType } from '~/utils/training';
+import { TrainingBaseModelType, trainingModelInfo } from '~/utils/training';
 
 const useStyles = createStyles((theme) => ({
   segControl: {
@@ -63,7 +63,6 @@ const ModelSelector = ({
   selectedRun,
   color,
   name,
-  type,
   value,
   baseType,
   makeDefaultParams,
@@ -73,7 +72,6 @@ const ModelSelector = ({
   selectedRun: TrainingRun;
   color: MantineColor;
   name: string;
-  type: string;
   value: string | null;
   baseType: TrainingBaseModelType;
   makeDefaultParams: (data: TrainingRunUpdate) => void;
@@ -98,8 +96,8 @@ const ModelSelector = ({
       </Indicator>
       {!isCustom ? (
         <SegmentedControl
-          data={Object.entries(baseModelDescriptions)
-            .filter(([, v]) => v.type === type)
+          data={Object.entries(trainingModelInfo)
+            .filter(([, v]) => v.type === baseType)
             .map(([k, v]) => {
               return {
                 label:
@@ -240,6 +238,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsXL as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModel35 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModels35 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelFlux =
     !!formBaseModel &&
     (trainingDetailsBaseModelsFlux as ReadonlyArray<string>).includes(formBaseModel)
@@ -275,7 +278,6 @@ export const ModelSelect = ({
                 selectedRun={selectedRun}
                 color="violet"
                 name="SD 1.5"
-                type="15"
                 value={baseModel15}
                 baseType="sd15"
                 makeDefaultParams={makeDefaultParams}
@@ -284,16 +286,23 @@ export const ModelSelect = ({
                 selectedRun={selectedRun}
                 color="grape"
                 name="SDXL"
-                type="XL"
                 value={baseModelXL}
                 baseType="sdxl"
                 makeDefaultParams={makeDefaultParams}
               />
               <ModelSelector
                 selectedRun={selectedRun}
+                color="pink"
+                name="SD 3.5"
+                value={baseModel35}
+                baseType="sd35"
+                makeDefaultParams={makeDefaultParams}
+                isNew={new Date() < new Date('2024-11-10')}
+              />
+              <ModelSelector
+                selectedRun={selectedRun}
                 color="red"
                 name="Flux"
-                type="Flux"
                 value={baseModelFlux}
                 baseType="flux"
                 makeDefaultParams={makeDefaultParams}
@@ -303,7 +312,6 @@ export const ModelSelect = ({
                 selectedRun={selectedRun}
                 color="cyan"
                 name="Custom"
-                type=""
                 value=""
                 baseType="sdxl" // unused
                 makeDefaultParams={makeDefaultParams}
@@ -317,7 +325,7 @@ export const ModelSelect = ({
                 <Text size="sm">
                   {isCustomModel
                     ? 'Custom model selected.'
-                    : baseModelDescriptions[formBaseModel as TrainingDetailsBaseModelList]
+                    : trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
                 </Text>
                 {blockedModels.includes(formBaseModel) ? (
