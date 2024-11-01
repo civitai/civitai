@@ -116,7 +116,7 @@ export function QueueItem({
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
   const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
-  const cancellable = !!request.steps[0].timeout;
+  const cancellable = orchestratorPendingStatuses.includes(status);
 
   useEffect(() => {
     if (!pendingProcessing || !cancellable) return;

@@ -22,6 +22,7 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { titleCase } from '~/utils/string-helpers';
 import { IconX } from '@tabler/icons-react';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -66,7 +67,7 @@ export function VideoGenerationForm() {
     const totalCost = cost;
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () =>
-      mutate({ type: 'video', data, tags: ['txt2vid'] })
+      mutate({ type: 'video', data, tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO, 'txt2vid'] })
     );
   }
 
