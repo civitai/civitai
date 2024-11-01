@@ -24,7 +24,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     req.body.size,
     s3,
     env.S3_IMAGE_UPLOAD_BUCKET,
-    100 * 1024 * 1024 // 100 MB
+    10 * 1024 * 1024 // 10 MB
   );
 
   if (env.S3_IMAGE_UPLOAD_OVERRIDE) {
