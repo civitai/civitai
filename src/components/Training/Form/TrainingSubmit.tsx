@@ -646,10 +646,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Group spacing="sm" position="apart" noWrap>
               <Text>
                 You have &quot;tagged&quot; images, but{' '}
-                <Badge color="red">
-                  {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
-                    'this model'}
-                </Badge>{' '}
+                {selectedRun.base in trainingModelInfo ? (
+                  <Badge color="red">
+                    {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                      'this model'}
+                  </Badge>
+                ) : (
+                  'this model'
+                )}{' '}
                 works best with &quot;captions&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
@@ -670,10 +674,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             <Group spacing="sm" position="apart" noWrap>
               <Text>
                 You have &quot;captioned&quot; images, but{' '}
-                <Badge color="violet">
-                  {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
-                    'this model'}
-                </Badge>
+                {selectedRun.base in trainingModelInfo ? (
+                  <Badge color="violet">
+                    {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                      'this model'}
+                  </Badge>
+                ) : (
+                  'this model'
+                )}{' '}
                 works best with &quot;tags&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
