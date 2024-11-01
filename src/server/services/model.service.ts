@@ -55,6 +55,8 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
+  removeCollectionItem,
+  saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
@@ -1327,7 +1329,7 @@ export const upsertModel = async (
   }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
-      select: { id: true, nsfwLevel: true },
+      select: { id: true, nsfwLevel: true, meta: true },
       data: {
         ...data,
         status,
@@ -1357,8 +1359,22 @@ export const upsertModel = async (
           : undefined,
       },
     });
+
+    const modelMeta = result.meta as ModelMeta | null;
+    if (modelMeta?.showcaseCollectionId) {
+      await saveItemInCollections({
+        input: {
+          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
+          modelId: result.id,
+          type: 'Model',
+          userId,
+          isModerator,
+        },
+      });
+    }
+
     await preventReplicationLag('model', result.id);
-    return result;
+    return { ...result, meta: modelMeta };
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
@@ -1370,6 +1386,7 @@ export const upsertModel = async (
         minor: true,
         nsfw: true,
         gallerySettings: true,
+        meta: true,
       },
     });
     if (!beforeUpdate) return null;
@@ -1390,6 +1407,7 @@ export const upsertModel = async (
         nsfw: true,
         gallerySettings: true,
         status: true,
+        meta: true,
       },
       where: { id },
       data: {
@@ -1433,6 +1451,9 @@ export const upsertModel = async (
     const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
     const nameChanged = input.name !== beforeUpdate.name;
     const descriptionChanged = input.description !== beforeUpdate.description;
+    const modelMeta = result.meta as ModelMeta | null;
+    const showcaseCollectionChanged =
+      modelMeta?.showcaseCollectionId !== (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId;
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
@@ -1457,6 +1478,48 @@ export const upsertModel = async (
         logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
       );
     }
+
+    if (showcaseCollectionChanged) {
+      if (modelMeta?.showcaseCollectionId) {
+        saveItemInCollections({
+          input: {
+            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
+            modelId: id,
+            type: 'Model',
+            userId,
+            isModerator,
+          },
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
+      } else {
+        saveItemInCollections({
+          input: {
+            collections: [],
+            removeFromCollectionIds: [
+              (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId as number,
+            ],
+            userId,
+            isModerator,
+            modelId: id,
+            type: 'Model',
+          },
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
+      }
+    }
+
     return result;
   }
 };
