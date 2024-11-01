@@ -36,7 +36,8 @@ export const queryClient = new QueryClient({
 const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
     const isAuthed = typeof window !== undefined ? window.isAuthed : false;
-    const input = removeEmpty({ ...(op.input as any), authed: isAuthed || undefined });
+    const authed = removeEmpty({ authed: isAuthed || undefined });
+    const input = { ...(op.input as any), ...authed };
 
     return next({ ...op, input });
   };

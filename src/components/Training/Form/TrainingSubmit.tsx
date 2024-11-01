@@ -71,13 +71,7 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import {
-  discountInfo,
-  getTrainingFields,
-  isInvalidRapid,
-  isValidRapid,
-  rapidEta,
-} from '~/utils/training';
+import { getTrainingFields, isInvalidRapid, isValidRapid, rapidEta } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -100,7 +94,12 @@ export const baseModelDescriptions: {
   pony: {
     label: 'Pony',
     type: 'XL',
-    description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
+    description: 'Tailored to visuals of various anthro, feral, or humanoid species.',
+  },
+  illustrious: {
+    label: 'Illustrious',
+    type: 'XL',
+    description: 'Optimized for illustration and animation.',
   },
   flux_dev: {
     label: 'Dev',

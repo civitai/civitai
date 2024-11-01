@@ -165,7 +165,7 @@ class TipaltiCaller extends HttpCaller {
     return url;
   }
 
-  validateWebhookEvent(signature: string, payload: string) {
+  validateWebhookEvent(signature: string, payload: string | Buffer) {
     if (!env.TIPALTI_WEBTOKEN_SECRET) throw new Error('Missing TIPALTI_WEBTOKEN_SECRET env');
 
     const [t, v] = signature.split(',');

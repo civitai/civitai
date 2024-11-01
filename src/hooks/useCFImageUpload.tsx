@@ -53,7 +53,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     if (!imageData) throw new Error();
 
     const filename = encodeURIComponent(file.name);
-    const res = await fetch('/api/image-upload', {
+    const res = await fetch('/api/v1/image-upload', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

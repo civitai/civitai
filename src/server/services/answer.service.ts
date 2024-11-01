@@ -2,7 +2,6 @@ import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetAnswersInput, UpsertAnswerInput, AnswerVoteInput } from './../schema/answer.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
-import { playfab } from '~/server/playfab/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
   questionId,
@@ -29,13 +28,6 @@ export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { us
         data,
         select: { id: true, questionId: true },
       });
-
-  if (result)
-    await playfab.trackEvent(userId, {
-      eventName: 'user_answer_question',
-      answerId: result.id,
-      questionId: result.questionId,
-    });
 
   return result;
 };

@@ -125,6 +125,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { min: 1 } },
       pony: { all: { min: 1 } },
+      illustrious: { all: { min: 1 } },
       flux_dev: {
         kohya: { default: 5 },
         'x-flux': { default: 5, max: 5, min: 2 },
@@ -161,6 +162,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       realistic: { all: { default: 2, max: 2 } },
       sdxl: { all: { default: 4, max: 4 } },
       pony: { all: { default: 5, max: 5 } },
+      illustrious: { all: { default: 4, max: 4 } },
       flux_dev: {
         'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
@@ -207,6 +209,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
+      illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
     },
   },
   {
@@ -385,6 +388,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { max: 256 } },
       pony: { all: { max: 256 } },
+      illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
       flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
     },
@@ -410,6 +414,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { max: 256 } },
       pony: { all: { max: 256, default: 32 } },
+      illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
       flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
     },
@@ -446,6 +451,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { default: 'Adafactor' } },
       pony: { all: { default: 'Prodigy' } },
+      illustrious: { all: { default: 'Adafactor' } },
       flux_dev: { 'x-flux': { disabled: true } },
     },
   },
@@ -460,6 +466,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { default: optimizerArgMap.Adafactor } },
       pony: { all: { default: optimizerArgMap.Prodigy } },
+      illustrious: { all: { default: optimizerArgMap.Adafactor } },
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
         'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },

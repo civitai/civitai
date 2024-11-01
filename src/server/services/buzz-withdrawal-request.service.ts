@@ -393,7 +393,7 @@ export const updateBuzzWithdrawalRequest = async ({
       metadata.stripeTransferId = transfer.id;
     }
 
-    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti) {
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti && userId !== -1) {
       throw throwBadRequestError(
         'Tipalti is not supported for transfers. Approving the request will create a transfer request in the Tipalti dashboard.'
       );
@@ -490,7 +490,10 @@ export const updateBuzzWithdrawalRequest = async ({
       await dbWrite.buzzWithdrawalRequest.update({
         where: { id: requestId },
         data: {
-          transferId: metadata.stripeTransferId,
+          transferId:
+            request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+              ? undefined
+              : metadata.stripeTransferId,
           transferredAmount: payoutAmount,
           metadata: metadata as any,
         },
