@@ -491,7 +491,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
-  let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
+  let orderBy = `m."lastVersionAt" DESC NULLS LAST, m."id" DESC`;
 
   if (sort === ModelSort.HighestRated)
     orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
@@ -638,8 +638,9 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
-    const nextItem = models.pop();
-    nextCursor = nextItem?.cursorId || undefined;
+    models.pop(); //Remove excess model
+    // Use final item as cursor to grab next page
+    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
