@@ -632,7 +632,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
 
-      {selectedRun.base === 'flux_dev' &&
+      {['flux', 'sd35'].includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -645,14 +645,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;tagged&quot; images, but <Badge color="red">Flux</Badge> works best
-                with &quot;captions&quot;.
+                You have &quot;tagged&quot; images, but{' '}
+                <Badge color="red">
+                  {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                    'this model'}
+                </Badge>{' '}
+                works best with &quot;captions&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>
           </AlertWithIcon>
         )}
-      {selectedRun.base !== 'flux_dev' &&
+      {!['flux', 'sd35'].includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -665,8 +669,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;captioned&quot; images, but <Badge color="violet">SD</Badge> models
-                work best with &quot;tags&quot;.
+                You have &quot;captioned&quot; images, but{' '}
+                <Badge color="violet">
+                  {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                    'this model'}
+                </Badge>
+                works best with &quot;tags&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>

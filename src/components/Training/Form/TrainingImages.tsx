@@ -132,7 +132,8 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text mt="sm">
-        Preferred for <Badge color="violet">SD</Badge> models.
+        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
+        models.
       </Text>
     </Stack>
   ),
@@ -144,7 +145,7 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
         a setting sun.&quot;
       </Text>
       <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge> models.
+        Preferred for <Badge color="red">Flux</Badge> and <Badge color="pink">SD3</Badge> models.
       </Text>
     </Stack>
   ),
