@@ -519,6 +519,14 @@ function formatTextToImageStep({
     .map((x) => x?.id)
     .filter(isDefined);
 
+  const upscale =
+    'upscale' in input
+      ? {
+          upscaleWidth: input.width * (input.upscale as number),
+          upscaleHeight: input.height * (input.upscale as number),
+        }
+      : {};
+
   return {
     $type: 'textToImage' as const,
     timeout: step.timeout,
@@ -544,6 +552,7 @@ function formatTextToImageStep({
       steps: metadata?.params?.steps ?? input.steps,
       cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
       sampler: metadata?.params?.sampler ?? sampler,
+      ...upscale,
 
       fluxMode: metadata?.params?.fluxMode,
     } as TextToImageParams,
@@ -597,11 +606,19 @@ export function formatComfyStep({
 
   const images = Object.values(groupedImages).flat();
 
+  const upscale =
+    params && 'upscale' in params
+      ? {
+          upscaleWidth: params.width * (params.upscale as number),
+          upscaleHeight: params.height * (params.upscale as number),
+        }
+      : {};
+
   return {
     $type: 'comfy' as const,
     timeout: step.timeout,
     name: step.name,
-    params: { ...params! } as TextToImageParams,
+    params: { ...params!, ...upscale } as TextToImageParams,
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,

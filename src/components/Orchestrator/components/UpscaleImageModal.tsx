@@ -12,8 +12,6 @@ import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/gen
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
-// TODO - make sure that past images use their upscale value to map width/height to upscaleWidth/upscaleHeight
-
 const schema = z.object({
   width: z.number(),
   height: z.number(),
