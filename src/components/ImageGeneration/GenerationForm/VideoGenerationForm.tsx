@@ -21,6 +21,7 @@ import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { titleCase } from '~/utils/string-helpers';
 import { IconX } from '@tabler/icons-react';
+import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -150,6 +151,7 @@ export function VideoGenerationForm() {
       </ScrollArea>
       <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
         <DailyBoostRewardClaim />
+        <QueueSnackbar />
         <div className="flex gap-2">
           <SubmitButton loading={isLoading} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
