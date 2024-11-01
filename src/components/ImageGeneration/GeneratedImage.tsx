@@ -1,16 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import {
-  ActionIcon,
-  Checkbox,
-  createStyles,
-  Group,
-  Loader,
-  Menu,
-  Modal,
-  RingProgress,
-  RingProgressProps,
-  Text,
-} from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Group, Menu, Modal } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -30,7 +19,7 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
@@ -54,7 +43,6 @@ import {
 } from '~/server/services/orchestrator';
 import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
@@ -251,22 +239,6 @@ export function GeneratedImage({
     );
   }
 
-  if (image.status === 'processing')
-    return (
-      <div
-        className="flex flex-col items-center justify-center border card"
-        style={{ aspectRatio: image.aspectRatio }}
-      >
-        {image.type === 'video' && image.progress ? (
-          <ProgressIndicator progress={image.progress} />
-        ) : (
-          <Loader size={24} />
-        )}
-        <Text color="dimmed" size="xs" align="center">
-          Generating
-        </Text>
-      </div>
-    );
   if (!available) return <></>;
 
   const isUpscale = step.params.workflow === 'img2img-upscale';
@@ -546,26 +518,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
   };
 });
-
-const ProgressIndicator = ({
-  progress,
-  ...ringProgressProps
-}: Omit<RingProgressProps, 'sections'> & { progress: number }) => {
-  const color = progress >= 1 ? 'green' : 'blue';
-  const value = progress * 100;
-
-  return (
-    <RingProgress
-      {...ringProgressProps}
-      sections={[{ value, color }]}
-      label={
-        <Text color="blue" weight={700} align="center" size="xl">
-          {value}%
-        </Text>
-      }
-    />
-  );
-};
 
 const TRANSITION_DURATION = 200;
 
