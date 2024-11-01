@@ -3,6 +3,7 @@ import { useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
 // import { createSignalWorker, SignalWorker } from '~/utils/signals';
 import { useSignalsWorker, SignalWorker, SignalStatus } from '~/utils/signals/useSignalsWorker';
@@ -51,10 +52,12 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const session = useSession();
   const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
+
   const [status, setStatus] = useState<SignalStatus>();
 
   const { data } = trpc.signals.getToken.useQuery(undefined, {
-    enabled: !!session.data?.user,
+    enabled: !!session.data?.user && features.signal,
   });
 
   const accessToken = data?.accessToken;
@@ -78,7 +81,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
   const connected = status === 'connected' || status === 'reconnected';
 
-  return (
+  return features.signal ? (
     <SignalContext.Provider
       value={{
         connected,
@@ -88,6 +91,10 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     >
       <SignalNotifications />
       <SignalsRegistrar />
+      {children}
+    </SignalContext.Provider>
+  ) : (
+    <SignalContext.Provider value={{ connected: false, worker: null }}>
       {children}
     </SignalContext.Provider>
   );
