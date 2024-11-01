@@ -5,6 +5,8 @@ import {
   Card,
   createStyles,
   Loader,
+  RingProgress,
+  RingProgressProps,
   Text,
   Tooltip,
   TooltipProps,
@@ -304,7 +306,11 @@ export function QueueItem({
                   className="flex flex-col items-center justify-center border card"
                   style={{ aspectRatio: images[0].aspectRatio }}
                 >
-                  <Loader size={24} />
+                  {images[0].type === 'video' && images[0].progress && images[0].progress < 1 ? (
+                    <ProgressIndicator progress={images[0].progress} />
+                  ) : (
+                    <Loader size={24} />
+                  )}
                   <Text color="dimmed" size="xs" align="center">
                     Generating
                   </Text>
@@ -379,6 +385,26 @@ const ResourceBadge = (props: Generation.Resource) => {
   );
 
   return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
+};
+
+const ProgressIndicator = ({
+  progress,
+  ...ringProgressProps
+}: Omit<RingProgressProps, 'sections'> & { progress: number }) => {
+  const color = progress >= 1 ? 'green' : 'blue';
+  const value = progress * 100;
+
+  return (
+    <RingProgress
+      {...ringProgressProps}
+      sections={[{ value, color }]}
+      label={
+        <Text color="blue" weight={700} align="center" size="xl">
+          {value}%
+        </Text>
+      }
+    />
+  );
 };
 
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
