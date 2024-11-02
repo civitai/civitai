@@ -202,6 +202,7 @@ export type GenerationData = {
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
   remixOfId?: number;
+  // runType: 'run' | 'remix' | ''
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
@@ -286,7 +287,9 @@ const getImageGenerationData = async (id: number) => {
   } = imageGenerationSchema.parse(image.meta);
 
   const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
-  const resourceData = await resourceDataCache.fetch(versionIds);
+  const resourceData = await resourceDataCache
+    .fetch(versionIds)
+    .then((result) => result.filter((x) => x.available));
 
   const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
   if (index > -1 && !resourceData[index].available) {
@@ -343,12 +346,14 @@ const getImageGenerationData = async (id: number) => {
   if (meta.seed == 0) meta.seed = undefined;
 
   let aspectRatio = '0';
-  if (image.width && image.height) {
-    const config = getGenerationConfig(baseModel);
-    const ratios = config.aspectRatios.map((x) => x.width / x.height);
-    const closest = findClosest(ratios, image.width / image.height);
-    aspectRatio = `${ratios.indexOf(closest)}`;
-  }
+  try {
+    if (image.width && image.height) {
+      const config = getGenerationConfig(baseModel);
+      const ratios = config.aspectRatios.map((x) => x.width / x.height);
+      const closest = findClosest(ratios, image.width / image.height);
+      aspectRatio = `${ratios.indexOf(closest)}`;
+    }
+  } catch (e) {}
 
   const { prompt, negativePrompt } = cleanPrompt(meta);
 

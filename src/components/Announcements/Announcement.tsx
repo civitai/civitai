@@ -53,7 +53,7 @@ export function Announcement({
         )}
 
         {image && (
-          <div className="relative w-40 @max-md:hidden">
+          <div className="relative min-h-40 w-40 @max-md:hidden">
             <EdgeMedia
               src={image}
               width={200}
@@ -62,7 +62,7 @@ export function Announcement({
             />
           </div>
         )}
-        <div className="flex flex-1 flex-col gap-2 p-3">
+        <div className="flex flex-1 flex-col justify-center gap-2 p-3">
           <div className="flex justify-between gap-2">
             <Title order={4}>{announcement.title}</Title>
             {moderatorActions}

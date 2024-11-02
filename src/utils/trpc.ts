@@ -7,6 +7,7 @@ import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
 import { env } from '~/env/client.mjs';
 import { showErrorNotification } from '~/utils/notifications';
+import { removeEmpty } from '~/utils/object-helpers';
 
 type RequestHeaders = {
   'x-client-date': string;
@@ -35,7 +36,10 @@ export const queryClient = new QueryClient({
 const authedCacheBypassLink: TRPCLink<AppRouter> = () => {
   return ({ next, op }) => {
     const isAuthed = typeof window !== undefined ? window.isAuthed : false;
-    return next({ ...op, input: isAuthed && op.input ? { ...op.input, authed: true } : op.input });
+    const authed = removeEmpty({ authed: isAuthed || undefined });
+    const input = { ...(op.input as any), ...authed };
+
+    return next({ ...op, input });
   };
 };
 

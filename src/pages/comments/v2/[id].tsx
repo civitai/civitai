@@ -8,6 +8,43 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ ctx }) => {
     const { id } = ctx.params as { id: string };
+    const select = {
+      image: {
+        select: {
+          id: true,
+        },
+      },
+      post: {
+        select: {
+          id: true,
+        },
+      },
+      review: {
+        select: {
+          id: true,
+        },
+      },
+      model: {
+        select: {
+          id: true,
+        },
+      },
+      article: {
+        select: {
+          id: true,
+        },
+      },
+      bounty: {
+        select: {
+          id: true,
+        },
+      },
+      bountyEntry: {
+        select: {
+          id: true,
+        },
+      },
+    };
     const commentV2 = await dbRead.commentV2.findUnique({
       where: { id: Number(id) },
       select: {
@@ -15,41 +52,18 @@ export const getServerSideProps = createServerSideProps({
         thread: {
           select: {
             id: true,
-            image: {
+            rootThread: {
+              select: {
+                id: true,
+                ...select,
+              },
+            },
+            comment: {
               select: {
                 id: true,
               },
             },
-            post: {
-              select: {
-                id: true,
-              },
-            },
-            review: {
-              select: {
-                id: true,
-              },
-            },
-            model: {
-              select: {
-                id: true,
-              },
-            },
-            article: {
-              select: {
-                id: true,
-              },
-            },
-            bounty: {
-              select: {
-                id: true,
-              },
-            },
-            bountyEntry: {
-              select: {
-                id: true,
-              },
-            },
+            ...select,
           },
         },
       },
@@ -60,10 +74,7 @@ export const getServerSideProps = createServerSideProps({
     }
 
     const { thread } = commentV2;
-    const {
-      threadType,
-      threadParentId,
-    }: { threadType: string | null; threadParentId: number | null } = (() => {
+    const getThreadDetails = (thread: any) => {
       if (thread.post) {
         return { threadType: 'post', threadParentId: thread.post.id };
       }
@@ -90,17 +101,26 @@ export const getServerSideProps = createServerSideProps({
       }
 
       return { threadType: null, threadParentId: null };
-    })();
+    };
 
-    if (!threadType || !threadParentId) {
+    let threadData: { threadType: string | null; threadParentId: number | null } =
+      getThreadDetails(thread);
+
+    if ((!threadData.threadType || !threadData.threadParentId) && thread.rootThread) {
+      threadData = getThreadDetails(thread.rootThread);
+    }
+
+    if (!threadData.threadType || !threadData.threadParentId) {
       return { notFound: true };
     }
 
     const url = threadUrlMap({
-      threadParentId,
-      threadType,
+      threadParentId: threadData.threadParentId,
+      threadType: threadData.threadType,
       threadId: thread.id,
       commentId: commentV2.id,
+      commentParentType: commentV2.thread.comment?.id ? 'comment' : threadData.threadType,
+      commentParentId: commentV2.thread.comment?.id,
     });
 
     if (url) {

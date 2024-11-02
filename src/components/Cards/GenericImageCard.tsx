@@ -90,24 +90,29 @@ export function GenericImageCard({
                     </>
                   )}
                   {safe ? (
-                    <EdgeMedia2
-                      metadata={image.metadata}
-                      src={image.url}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      type={image.type}
-                      width={
-                        originalAspectRatio > 1
-                          ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                          : DEFAULT_EDGE_IMAGE_WIDTH
-                      }
-                      skip={getSkipValue(image)}
-                      placeholder="empty"
-                      className={sharedClasses.image}
-                      wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                      loading="lazy"
-                      contain
-                    />
+                    <div
+                      className={image.cosmetic ? sharedClasses.frameAdjustment : undefined}
+                      style={{ height: '100%' }}
+                    >
+                      <EdgeMedia2
+                        metadata={image.metadata}
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        width={
+                          originalAspectRatio > 1
+                            ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
+                            : DEFAULT_EDGE_IMAGE_WIDTH
+                        }
+                        skip={getSkipValue(image)}
+                        placeholder="empty"
+                        className={sharedClasses.image}
+                        wrapperProps={{ style: { height: '100%', width: '100%' } }}
+                        loading="lazy"
+                        contain
+                      />
+                    </div>
                   ) : (
                     <MediaHash {...image} />
                   )}

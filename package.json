@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.194",
+  "version": "5.0.230",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -162,7 +162,6 @@
     "p-limit": "^5.0.0",
     "path-to-regexp": "^6.2.1",
     "pg": "^8.11.3",
-    "playfab-sdk": "^2.122.230320",
     "posthog-js": "^1.77.0",
     "prom-client": "^14.2.0",
     "query-string": "^7.1.1",

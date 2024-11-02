@@ -38,7 +38,9 @@ export function Announcements() {
   if (!announcements.length) return null;
 
   return (
-    <div className="mb-3 ">
+    // Required custom class to apply certain styles based on peer elements
+    // eslint-disable-next-line tailwindcss/no-custom-classname
+    <div className="announcements peer mb-3">
       <div className="container">
         <Announcement announcement={announcements[0]} />
       </div>

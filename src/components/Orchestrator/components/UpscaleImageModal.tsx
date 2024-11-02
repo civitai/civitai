@@ -55,6 +55,7 @@ export function UpscaleImageModal({
         requiredBalance
       )}. Buy or earn more buzz to perform this action.`,
     performTransactionOnPurchase: true,
+    type: 'Generation',
   });
 
   function handleSubmit() {

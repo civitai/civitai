@@ -7,8 +7,8 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your account has been approved for the Civitai Creators Program! Setup your stripe account so you can start getting paid!.`,
-      url: `/user/account#stripe`,
+      message: `Your account has been approved for the Civitai Creators Program! Setup your account so you can start getting paid!.`,
+      url: `/user/account#payments`,
     }),
   },
   'creators-program-payments-enabled': {
@@ -16,7 +16,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your stripe account has been verified and approved for payments! You can now start earning money from your content!`,
+      message: `Your account has been verified and approved for payments! You can now start earning money from your content!`,
       url: `/creators-program`,
     }),
   },
@@ -34,7 +34,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your withdrawal request has been approved. Your funds will be transferred to your stripe account soon`,
+      message: `Your withdrawal request has been approved. Your funds will be transferred to your account soon`,
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },
@@ -43,7 +43,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your request has been processed and money has been transfered to your stripe account.`,
+      message: `Your request has been processed and money has been transfered to your account.`,
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },
@@ -61,7 +61,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `We have decided to revert money that was transfered to your stripe account. Please contact us for more information on why we came to this desicion.`,
+      message: `We have decided to revert money that was transfered to your  account. Please contact us for more information on why we came to this desicion.`,
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },

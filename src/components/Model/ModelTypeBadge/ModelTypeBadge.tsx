@@ -26,6 +26,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   'SD 2.1 768': 'SD2',
   'SD 2.1 Unclip': 'SD2',
   'SD 3': 'SD3',
+  'SD 3.5': 'SD3',
   SVD: 'SVD',
   'SVD XT': 'SVD',
   'PixArt E': 'Σ',
@@ -33,6 +34,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   'Hunyuan 1': 'HY',
   Lumina: 'L',
   ODOR: <IconNose size={16} strokeWidth={2} />,
+  Illustrious: 'IL',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

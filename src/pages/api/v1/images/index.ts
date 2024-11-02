@@ -9,8 +9,10 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { usernameSchema } from '~/server/schema/user.schema';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { getAllImages, getAllImagesIndex } from '~/server/services/image.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -74,6 +76,9 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const reqParams = imagesEndpointSchema.safeParse(req.query);
     if (!reqParams.success) return res.status(400).json({ error: reqParams.error });
 
+    const session = await getServerAuthSession({ req, res });
+    const features = getFeatureFlags({ user: session?.user, req });
+
     // Handle pagination
     const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, ...data } = reqParams.data;
     let skip: number | undefined;
@@ -108,6 +113,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const metadata: Metadata = {
       nextCursor,
     };
+
     if (usingPaging) {
       metadata.currentPage = page;
       metadata.pageSize = limit;

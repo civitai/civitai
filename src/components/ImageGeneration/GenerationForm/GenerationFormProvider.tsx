@@ -319,7 +319,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       if (name === 'baseModel') {
-        if (watchedValues.baseModel === 'Flux1') {
+        if (watchedValues.baseModel === 'Flux1' || watchedValues.baseModel === 'SD3') {
           form.setValue('workflow', 'txt2img');
         }
         if (watchedValues.baseModel === 'Flux1' && prevBaseModelRef.current !== 'Flux1') {

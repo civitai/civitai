@@ -32,7 +32,7 @@ const featureFlags = createFeatureFlags({
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: ['mod', 'member'],
+  civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['dev', 'mod', 'member'],
   imageTrainingResults: ['user'],
@@ -65,8 +65,9 @@ const featureFlags = createFeatureFlags({
   },
   profileCollections: ['public'],
   imageSearch: ['dev'],
-  buzz: ['public'],
-  signal: ['user'],
+  buzz: isDev ? ['granted', 'public'] : ['public'],
+  signal: isDev ? ['granted', 'user'] : ['user'],
+  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
@@ -110,6 +111,7 @@ const featureFlags = createFeatureFlags({
   adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
   admin: ['granted'],
+  toolSearch: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

@@ -22,6 +22,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { ImageMetadata } from '~/server/schema/media.schema';
 
 const collectionQueryParamSchema = z
   .object({

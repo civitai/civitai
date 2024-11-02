@@ -79,6 +79,7 @@ export const constants = {
     'Hunyuan 1',
     'Lumina',
     'Kolors',
+    'Illustrious',
     'Other',
   ],
   hiddenBaseModels: [
@@ -421,6 +422,7 @@ export const baseModelSetTypes = [
   'HyDit1',
   'ODOR',
   'Flux1',
+  'Illustrious',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -439,6 +441,7 @@ export const baseModelSets = defineBaseModelSets({
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
+  Illustrious: ['Illustrious'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -457,6 +460,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   SCascade: 'Stable Cascade',
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
+  Illustrious: 'Illustrious',
 });
 
 type LicenseDetails = {
@@ -531,6 +535,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     poweredBy:
       'IN NO EVENT SHALL BLACK FOREST LABS, INC. BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
   },
+  'illustrious license': {
+    url: 'https://freedevproject.org/faipl-1.0-sd/',
+    name: 'Illustrious License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -567,6 +575,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 D': baseLicenses['flux1D'],
   ODOR: undefined,
   Other: undefined,
+  Illustrious: baseLicenses['illustrious license'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -721,6 +730,28 @@ export const generationConfig = {
       available: true,
     } as GenerationResource,
   },
+  Illustrious: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 889818,
+      name: 'v0.1',
+      trainedWords: [],
+      modelId: 795765,
+      modelName: 'Illustrious-XL',
+      modelType: 'Checkpoint',
+      baseModel: 'Illustrious',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
   Flux1: {
     aspectRatios: [
       { label: 'Square', width: 1024, height: 1024 },
@@ -735,6 +766,28 @@ export const generationConfig = {
       modelName: 'FLUX',
       modelType: 'Checkpoint',
       baseModel: 'Flux.1 D',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
+  SD3: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 983602,
+      name: '',
+      trainedWords: [],
+      modelId: 878387,
+      modelName: 'Stable Diffusion 3.5 Large',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 3.5',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
@@ -759,6 +812,7 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
+export const TOOLS_SEARCH_INDEX = 'tools_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

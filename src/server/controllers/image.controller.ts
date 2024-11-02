@@ -316,7 +316,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
     if (versionPinnedPosts.length && !cursor) {
       const { items: pinnedPostsImages } = await fetchFn({
         ...input,
-        limit: limit * 3,
+        limit: limit * 4,
         useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,

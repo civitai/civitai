@@ -663,7 +663,7 @@ export default function ModelDetailsV2({
                     <HowToButton
                       size={30}
                       stroke={1.5}
-                      href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
+                      href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
                     <ToggleModelNotification
