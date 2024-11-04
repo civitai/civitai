@@ -1026,7 +1026,7 @@ export const toggleBan = async ({
   detailsExternal,
   userId,
   isModerator,
-}: ToggleBanUser & { userId: number; isModerator: boolean }) => {
+}: ToggleBanUser & { userId: number; isModerator?: boolean }) => {
   const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
