@@ -212,5 +212,5 @@ function SubmitButton({ loading }: { loading: boolean }) {
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
 const engineText = {
-  haiper: `Haiper is a video and image AI platform building its own powerful foundation model. Haiper's next-gen 2.0 model generates hyper-realistic and stunning images and videos that can be enhanced and extended.`,
+  haiper: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
 };
