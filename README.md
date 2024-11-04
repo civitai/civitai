@@ -108,6 +108,7 @@ Over the course of development, you may need to change the structure of the data
 4. In that file, put your sql changes
    * These are usually simple sql commands like `ALTER TABLE ...`
 5. Run `make run-migrations`
+6. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes
 
 ## Sponsors
 
