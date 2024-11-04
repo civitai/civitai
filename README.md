@@ -83,6 +83,13 @@ First, make sure that you have the following installed on your machine:
   - Use a database editor (like [DataGrip](https://www.jetbrains.com/datagrip/)) or connect directly to the DB (`PGPASSWORD=postgres psql -h localhost -p 15432 -U postgres civitai`)
   - Find your user (by email or username), and change `isModerator` to `true`
 
+### Known limitations
+
+Services that require external input will currently not work locally. These include:
+  - Orchestration (Generation, Training)
+  - Signals (Chat, Notifications, other real-time updates)
+  - Buzz
+
 ## Contributing
 
 Any contributions you make are **greatly appreciated**.
