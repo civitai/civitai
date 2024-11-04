@@ -135,12 +135,10 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     }
 
     const features = ctx.features;
-    const filteredVersions = model.modelVersions.filter((version) => {
-      const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
-      if (isOwner) return true;
-
-      return version.status === ModelStatus.Published;
-    });
+    const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+    const filteredVersions = isOwner
+      ? model.modelVersions
+      : model.modelVersions.filter((version) => version.status === ModelStatus.Published);
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
@@ -512,7 +510,12 @@ export const unpublishModelHandler = async ({
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const meta = (model.meta as ModelMeta | null) || {};
-    const updatedModel = await unpublishModelById({ ...input, meta, user: ctx.user });
+    const updatedModel = await unpublishModelById({
+      ...input,
+      meta,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    });
 
     await ctx.track.modelEvent({
       type: 'Unpublish',

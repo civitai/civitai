@@ -55,6 +55,8 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
+  removeCollectionItem,
+  saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
@@ -489,7 +491,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
   }
 
-  let orderBy = `m."lastVersionAt" DESC NULLS LAST`;
+  let orderBy = `m."lastVersionAt" DESC NULLS LAST, m."id" DESC`;
 
   if (sort === ModelSort.HighestRated)
     orderBy = `mm."thumbsUpCount" DESC, mm."downloadCount" DESC, mm."modelId"`;
@@ -636,8 +638,9 @@ export const getModelsRaw = async ({
 
   let nextCursor: string | bigint | undefined;
   if (take && models.length > take) {
-    const nextItem = models.pop();
-    nextCursor = nextItem?.cursorId || undefined;
+    models.pop(); //Remove excess model
+    // Use final item as cursor to grab next page
+    nextCursor = models[models.length - 1]?.cursorId || undefined;
   }
 
   return {
@@ -1327,7 +1330,7 @@ export const upsertModel = async (
   }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
-      select: { id: true, nsfwLevel: true },
+      select: { id: true, nsfwLevel: true, meta: true },
       data: {
         ...data,
         status,
@@ -1357,8 +1360,22 @@ export const upsertModel = async (
           : undefined,
       },
     });
+
+    const modelMeta = result.meta as ModelMeta | null;
+    if (modelMeta?.showcaseCollectionId) {
+      await saveItemInCollections({
+        input: {
+          collections: [{ collectionId: modelMeta.showcaseCollectionId }],
+          modelId: result.id,
+          type: 'Model',
+          userId,
+          isModerator,
+        },
+      });
+    }
+
     await preventReplicationLag('model', result.id);
-    return result;
+    return { ...result, meta: modelMeta };
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
       where: { id },
@@ -1370,6 +1387,7 @@ export const upsertModel = async (
         minor: true,
         nsfw: true,
         gallerySettings: true,
+        meta: true,
       },
     });
     if (!beforeUpdate) return null;
@@ -1390,6 +1408,7 @@ export const upsertModel = async (
         nsfw: true,
         gallerySettings: true,
         status: true,
+        meta: true,
       },
       where: { id },
       data: {
@@ -1433,6 +1452,9 @@ export const upsertModel = async (
     const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
     const nameChanged = input.name !== beforeUpdate.name;
     const descriptionChanged = input.description !== beforeUpdate.description;
+    const modelMeta = result.meta as ModelMeta | null;
+    const showcaseCollectionChanged =
+      modelMeta?.showcaseCollectionId !== (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId;
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
@@ -1457,6 +1479,48 @@ export const upsertModel = async (
         logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
       );
     }
+
+    if (showcaseCollectionChanged) {
+      if (modelMeta?.showcaseCollectionId) {
+        saveItemInCollections({
+          input: {
+            collections: [{ collectionId: modelMeta.showcaseCollectionId }],
+            modelId: id,
+            type: 'Model',
+            userId,
+            isModerator,
+          },
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
+      } else {
+        saveItemInCollections({
+          input: {
+            collections: [],
+            removeFromCollectionIds: [
+              (beforeUpdate.meta as ModelMeta)?.showcaseCollectionId as number,
+            ],
+            userId,
+            isModerator,
+            modelId: id,
+            type: 'Model',
+          },
+        }).catch((error) =>
+          logToAxiom({
+            type: 'error',
+            name: 'save-model-showcase-collection',
+            error,
+            message: error.message,
+          })
+        );
+      }
+    }
+
     return result;
   }
 };
@@ -1577,12 +1641,14 @@ export const unpublishModelById = async ({
   reason,
   customMessage,
   meta,
-  user,
+  userId,
+  isModerator,
 }: UnpublishModelSchema & {
   meta?: ModelMeta;
-  user: SessionUser;
+  userId: number;
+  isModerator?: boolean;
 }) => {
-  if (!user.isModerator) {
+  if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
       where: { modelId: id },
       select: { id: true, meta: true },
@@ -1614,7 +1680,7 @@ export const unpublishModelById = async ({
             }
           : {}),
         unpublishedAt,
-        unpublishedBy: user.id,
+        unpublishedBy: userId,
       };
       const updatedModel = await tx.model.update({
         where: { id },
@@ -1637,7 +1703,7 @@ export const unpublishModelById = async ({
         SET
           "metadata" = "metadata" || jsonb_build_object(
             'unpublishedAt', ${unpublishedAt},
-            'unpublishedBy', ${user.id},
+            'unpublishedBy', ${userId},
             'prevPublishedAt', "publishedAt"
           ),
           "publishedAt" = NULL
@@ -2474,7 +2540,7 @@ export async function ingestModelById({ id }: GetByIdInput) {
 }
 
 export async function ingestModel(data: IngestModelInput) {
-  if (!isProd || !env.CONTENT_SCAN_ENDPOINT) {
+  if (!env.CONTENT_SCAN_ENDPOINT) {
     console.log('Skipping model ingestion');
     await dbWrite.model.update({
       where: { id: data.id },

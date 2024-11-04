@@ -33,6 +33,7 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -62,14 +63,16 @@ const dateOptions = monthsUntilNow.reverse().map((month) => {
 });
 
 export function DailyCreatorCompReward() {
+  const features = useFeatureFlags();
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery({
-    date: selectedDate,
-  });
+  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate },
+    { enabled: features.buzz }
+  );
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];

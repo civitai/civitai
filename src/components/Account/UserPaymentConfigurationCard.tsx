@@ -322,8 +322,10 @@ const TipaltiConfigurationCard = () => {
 
       <Divider my="xs" />
 
-      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ||
-      userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.InternalValue ? (
+      {userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
+        TipaltiStatus.PendingOnboarding ||
+      userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
+        TipaltiStatus.InternalValue ? (
         <>
           <Stack>
             <Text>
@@ -332,7 +334,7 @@ const TipaltiConfigurationCard = () => {
             </Text>
           </Stack>
         </>
-      ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
+      ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
         <Text>
           Your account is setup and you should be good to withdraw. You can click the button below
           if you need to make any adjustments to your account.

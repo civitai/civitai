@@ -6,17 +6,13 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
+  ModelStatus,
   Prisma,
 } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import {
-  banReasonDetails,
-  CacheTTL,
-  constants,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
-import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { searchClient } from '~/server/meilisearch/client';
@@ -27,7 +23,6 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
-import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -88,6 +83,7 @@ import {
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
+import { unpublishModelById } from '~/server/services/model.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -538,7 +534,6 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
   return true;
 };
 
@@ -569,7 +564,6 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   return true;
 };
 
@@ -1030,7 +1024,9 @@ export const toggleBan = async ({
   reasonCode,
   detailsInternal,
   detailsExternal,
-}: ToggleBanUser) => {
+  userId,
+  isModerator,
+}: ToggleBanUser & { userId: number; isModerator: boolean }) => {
   const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -1057,10 +1053,28 @@ export const toggleBan = async ({
 
   if (!user.bannedAt) {
     // Unpublish their models
-    await dbWrite.model.updateMany({
-      where: { userId: id },
-      data: { publishedAt: null, status: 'Unpublished' },
+    const models = await dbRead.model.findMany({
+      where: { userId: id, status: ModelStatus.Published },
     });
+
+    if (models.length) {
+      for (const model of models) {
+        await unpublishModelById({
+          id: model.id,
+          reason: 'other',
+          customMessage: 'User banned',
+          userId,
+          isModerator,
+        }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-unpublish-model',
+            message: error.message,
+            error,
+          });
+        });
+      }
+    }
 
     // Cancel their subscription
     await cancelSubscriptionPlan({ userId: id }).catch((error) =>

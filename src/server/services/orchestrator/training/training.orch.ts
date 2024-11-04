@@ -17,7 +17,7 @@ import { getTrainingServiceStatus, TrainingRequest } from '~/server/services/tra
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getGetUrl } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
-import { getTrainingFields, isInvalidRapid, modelMap } from '~/utils/training';
+import { getTrainingFields, isInvalidRapid, trainingModelInfo } from '~/utils/training';
 
 async function isSafeTensor(modelVersionId: number) {
   // it's possible we need to modify this if a model somehow has pickle and safetensor
@@ -42,7 +42,7 @@ const checkCustomModel = async (
     }
   | { ok: false; message: string }
 > => {
-  if (model in modelMap) return { ok: true };
+  if (model in trainingModelInfo) return { ok: true };
 
   const mMatch = parseAIRSafe(model);
   if (!mMatch) return { ok: false, message: 'Invalid structure for custom model.' };
@@ -171,7 +171,7 @@ export const createTrainingWorkflow = async ({
 
   const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
 
-  if (!(baseModel in modelMap)) {
+  if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
     if (!customCheck.ok) {
       throw throwBadRequestError(customCheck.message);

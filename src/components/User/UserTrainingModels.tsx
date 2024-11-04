@@ -55,7 +55,7 @@ import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
-import { baseModelPretty } from '~/utils/training';
+import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -350,10 +350,10 @@ export default function UserTrainingModels() {
                     <td>
                       <Text>
                         {isDefined(thisTrainingDetails?.baseModel)
-                          ? thisTrainingDetails.baseModel in baseModelPretty
-                            ? baseModelPretty[
+                          ? thisTrainingDetails.baseModel in trainingModelInfo
+                            ? trainingModelInfo[
                                 thisTrainingDetails.baseModel as TrainingDetailsBaseModelList
-                              ]
+                              ].pretty
                             : 'Custom'
                           : '-'}
                       </Text>
@@ -596,8 +596,8 @@ export default function UserTrainingModels() {
             {
               label: 'Base Model',
               value: isDefined(modalData.baseModel) ? (
-                modalData.baseModel in baseModelPretty ? (
-                  baseModelPretty[modalData.baseModel as TrainingDetailsBaseModelList]
+                modalData.baseModel in trainingModelInfo ? (
+                  trainingModelInfo[modalData.baseModel as TrainingDetailsBaseModelList].pretty
                 ) : isAir(modalData.baseModel) ? (
                   <Link href={getAirModelLink(modalData.baseModel)} passHref>
                     <Anchor>Custom</Anchor>

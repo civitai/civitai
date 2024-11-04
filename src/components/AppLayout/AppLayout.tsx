@@ -87,7 +87,7 @@ export function MainContent({
       {footer}
     </ScrollArea>
   ) : (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
         {subNav && <SubNav>{subNav}</SubNav>}
         {children}
