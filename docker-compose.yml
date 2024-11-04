@@ -75,7 +75,7 @@ services:
 #    depends_on:
 #      - minio
 #    entrypoint: >
-#      /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/settled && /usr/bin/mc policy set public minio/settled && exit 0"
+#      /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/images && /usr/bin/mc policy set public minio/images && exit 0"
 #    restart: unless-stopped
 
   maildev:

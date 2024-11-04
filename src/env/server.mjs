@@ -8,7 +8,7 @@ import { env as clientEnv, formatErrors } from './client.mjs';
 import { serverSchema } from './schema.mjs';
 
 if (process.env.NODE_ENV === 'development') {
-  dotenv.config({ path: ['.env.development.local', '.env.local', '.env.development', '.env'] });
+  dotenv.config({ path: ['.env.development.local', '.env.local', '.env.development', '.env'], override: false });
 }
 
 const _serverEnv = serverSchema.safeParse(process.env);
@@ -33,18 +33,17 @@ if (process.env.NODE_ENV === 'development') {
       console.log('Unknown database connection');
     } else {
       console.log(
-        `Using ${
-          dbUser[1] === 'postgres'
-            ? 'LOCAL'
-            : dbUser[1] === 'doadmin'
+        `Using ${dbUser[1] === 'postgres'
+          ? 'LOCAL'
+          : dbUser[1] === 'doadmin'
             ? 'DEV'
             : dbUser[1] === 'civitai'
-            ? 'PROD'
-            : 'UNKNOWN'
+              ? 'PROD'
+              : 'UNKNOWN'
         } database.`
       );
     }
-  } catch {}
+  } catch { }
 }
 
 export const env = { ..._serverEnv.data, ...clientEnv };
