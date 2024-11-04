@@ -1,7 +1,8 @@
-import { Box, Button, Table, Text, useMantineTheme } from '@mantine/core';
+import { Box, Button, CloseButton, Table, Text, useMantineTheme } from '@mantine/core';
 import { useLocalStorage, useSessionStorage } from '@mantine/hooks';
 import Link from 'next/link';
 import React, {
+  FC,
   Key,
   createContext,
   useCallback,
@@ -23,27 +24,74 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
+import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
-const useClickedStore = create<{
-  clicked: Record<string, boolean>;
-  setClicked: (value: string) => void;
-}>()(
-  persist(
-    immer((set) => ({
-      clicked: {},
-      setClicked: (value) =>
-        set((state) => {
-          state.clicked[value] = true;
-        }),
-    })),
-    { name: 'duplicate-hashes-clicked' }
-  )
-);
+
+const { Slots, Slot } = createSlots(['header', 'footer']);
+
+function Header({
+  children,
+  withCloseButton = true,
+}: {
+  children: React.ReactNode;
+  withCloseButton?: boolean;
+}) {
+  return (
+    <Slot name="header">
+      <div className="flex items-center justify-between bg-red-400 p-2 text-white">
+        <div>{children}</div>
+        {withCloseButton && <CloseButton />}
+      </div>
+    </Slot>
+  );
+}
+
+function Footer({ children }: { children: React.ReactNode }) {
+  return (
+    <Slot name="footer">
+      <div className="bg-green-400 p-2 text-white">{children}</div>
+    </Slot>
+  );
+}
+
+function ComponentWithSlots({ children }: { children: React.ReactNode }) {
+  return (
+    <Slots context={{ test: true }}>
+      {(slots) => (
+        <div className="container flex flex-col">
+          {slots.header}
+          <div className="bg-orange-400 text-white">{children}</div>
+          {slots.footer}
+        </div>
+      )}
+    </Slots>
+  );
+}
+
+function Content() {
+  return (
+    <>
+      <Header>This is my header</Header>
+      This is my content
+      <Footer>This is my Footer</Footer>
+    </>
+  );
+}
 
 export default function Test() {
+  return (
+    <IsClient>
+      <ComponentWithSlots>
+        <Content />
+      </ComponentWithSlots>
+    </IsClient>
+  );
+}
+
+function ViewDuplicateHashLinks() {
   const [state, setState] = useState<Record<string, string[]> | null>();
 
   function handleLoad(files: FileList) {
@@ -107,6 +155,22 @@ export default function Test() {
     </div>
   );
 }
+
+const useClickedStore = create<{
+  clicked: Record<string, boolean>;
+  setClicked: (value: string) => void;
+}>()(
+  persist(
+    immer((set) => ({
+      clicked: {},
+      setClicked: (value) =>
+        set((state) => {
+          state.clicked[value] = true;
+        }),
+    })),
+    { name: 'duplicate-hashes-clicked' }
+  )
+);
 
 function ModelVersionLink({ url }: { url: string }) {
   const clicked = useClickedStore(useCallback((state) => state.clicked[url], [url]));
