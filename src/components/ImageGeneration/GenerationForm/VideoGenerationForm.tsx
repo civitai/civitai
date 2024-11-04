@@ -29,7 +29,7 @@ const defaultValues = {
   prompt: '',
   negativePrompt: '',
   engine: 'haiper',
-  cameraMovement: 'none',
+  // cameraMovement: 'none',
   aspectRatio: '1:1',
   duration: 4,
 } as const;
@@ -128,7 +128,7 @@ export function VideoGenerationForm() {
         />
         <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
         <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
-        <InputSelect
+        {/* <InputSelect
           name="cameraMovement"
           label="Camera Movement"
           data={[
@@ -140,7 +140,7 @@ export function VideoGenerationForm() {
             { label: 'zoom in', value: 'zoomIn' },
             { label: 'zoom out', value: 'zoomOut' },
           ]}
-        />
+        /> */}
         <div className="flex flex-col gap-0.5">
           <Input.Label>Duration</Input.Label>
           <InputSegmentedControl
