@@ -53,7 +53,7 @@ npm-install:
 	npm i
 
 .PHONY: init
-init: copy-env npm-install start bootstrap-db run-migrations bootstrap-metrics
+init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics
 	npm run db:generate
 	npm run dev
 

@@ -26,4 +26,25 @@ for (const key of Object.keys(_serverEnv.data)) {
   }
 }
 
+if (process.env.NODE_ENV === 'development') {
+  try {
+    const dbUser = _serverEnv.data.DATABASE_URL.match(/postgresql:\/\/(\w+):.*/);
+    if (!dbUser) {
+      console.log('Unknown database connection');
+    } else {
+      console.log(
+        `Using ${
+          dbUser[1] === 'postgres'
+            ? 'LOCAL'
+            : dbUser[1] === 'doadmin'
+            ? 'DEV'
+            : dbUser[1] === 'civitai'
+            ? 'PROD'
+            : 'UNKNOWN'
+        } database.`
+      );
+    }
+  } catch {}
+}
+
 export const env = { ..._serverEnv.data, ...clientEnv };
