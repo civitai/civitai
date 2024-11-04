@@ -2,6 +2,7 @@ import { faker } from '@faker-js/faker';
 import { createHash } from 'crypto';
 import fs from 'fs/promises';
 import * as process from 'node:process';
+import { env } from '~/env/server.mjs';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { insertRows } from './gen_seed';
 
@@ -21,7 +22,7 @@ const insertNewMigrations = async (migrations: string[]) => {
     const hash = await getHashForMigration(m);
     migrationData.push([faker.string.uuid(), hash, now, m, null, null, now, 0]);
   }
-  await insertRows('_prisma_migrations', migrationData);
+  await insertRows('_prisma_migrations', migrationData, false);
 };
 
 const initialMigrations = [
@@ -426,11 +427,16 @@ const initialMigrations = [
 ];
 
 async function main() {
+  if (!env.DATABASE_URL.includes('localhost:15432')) {
+    console.error('ERROR: not running with local database server.');
+    process.exit(1);
+  }
+
   const alreadyRunQuery = await pgDbWrite.query<{ migration_name: string }>(
     `SELECT migration_name FROM "_prisma_migrations" where finished_at is not null`
   );
 
-  let alreadyRun: string[] = [];
+  let alreadyRun: string[];
   if (!alreadyRunQuery.rows.length) {
     await insertNewMigrations(initialMigrations);
     alreadyRun = initialMigrations;
@@ -472,6 +478,8 @@ async function main() {
   }
 }
 
-main().then(() => {
-  process.exit(0);
-});
+if (require.main === module) {
+  main().then(() => {
+    process.exit(0);
+  });
+}

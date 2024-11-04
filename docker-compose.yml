@@ -8,7 +8,7 @@ services:
       - POSTGRES_USER=modelshare
       - POSTGRES_DB=postgres
     volumes:
-      - ./postgres/prisma-pit:/var/lib/postgresql/data
+      - prisma_pit:/var/lib/postgresql/data
     restart: unless-stopped
 
   db:
@@ -20,8 +20,8 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=civitai
     volumes:
-       - ./docker-init/postgres:/docker-entrypoint-initdb.d
-#       - ./postgres/db:/var/lib/postgresql/data
+      - ./docker-init/postgres:/docker-entrypoint-initdb.d
+      - postgres:/var/lib/postgresql/data
 
   notif:
     image: postgres:alpine
@@ -33,16 +33,17 @@ services:
       - POSTGRES_DB=postgres
     volumes:
       - ./docker-init/notification:/docker-entrypoint-initdb.d
+      - postgres_notif:/var/lib/postgresql/data
 
   redis:
     image: redis:alpine
     container_name: redis
     command: redis-server --requirepass "redis"
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
-      - ./redis/data:/data
-    restart: unless-stopped
+      - redis:/data
 
   minio:
     image: minio/minio
@@ -54,7 +55,7 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
-      - ./minio/data:/data
+      - minio:/data
     command: minio server /data --console-address ":9001"
     restart: unless-stopped
 
@@ -64,7 +65,7 @@ services:
     ports:
       - "7700:7700"
     volumes:
-      - ./meilisearch/data:/meili_data
+      - meilisearch:/meili_data
     environment:
       - MEILI_MASTER_KEY=meilisearch
 
@@ -89,15 +90,19 @@ services:
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server
+    image: clickhouse/clickhouse-server:24.8.4
     container_name: clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     ports:
       - "18123:8123"
       - "19000:9000"
     volumes:
       - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
-      - ./clickhouse/data:/var/lib/clickhouse
-      - ./clickhouse/logs:/var/log/clickhouse-server
+      - clickhouse:/var/lib/clickhouse
+      - clickhouse_server:/var/log/clickhouse-server
 
 #  ngrok:
 #    image: ngrok/ngrok:latest
@@ -121,3 +126,13 @@ services:
       - "5001:3000"
     environment:
       NODE_ENV: development
+
+volumes:
+  prisma_pit:
+  postgres:
+  postgres_notif:
+  redis:
+  minio:
+  meilisearch:
+  clickhouse:
+  clickhouse_server:

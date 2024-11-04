@@ -24,6 +24,7 @@ import {
 } from '@prisma/client';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
+import { env } from '~/env/server.mjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { CheckpointType, ModelType, NotificationCategory } from '~/server/common/enums';
@@ -51,8 +52,40 @@ const fbool = faker.datatype.boolean;
 
 // TODO fix tables ownership from doadmin to civitai
 
+const setSerial = async (table: string) => {
+  // language=text
+  const query = `SELECT setval(pg_get_serial_sequence('"${table}"', 'id'), coalesce(max(id)+1, 1), false) FROM %I`;
+
+  try {
+    await pgDbWrite.query(format(query, table));
+    console.log(`\t-> ✔️ Set ID sequence`);
+  } catch (error) {
+    const e = error as MixedObject;
+    console.log(`\t-> ❌  Error setting ID sequence`);
+    console.log(`\t-> ${e.message}`);
+    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+  }
+};
+
+const setSerialNotif = async (table: string) => {
+  // language=text
+  const query = `SELECT setval(pg_get_serial_sequence('"${table}"', 'id'), coalesce(max(id)+1, 1), false) FROM %I`;
+
+  try {
+    await notifDbWrite.query(format(query, table));
+    console.log(`\t-> ✔️ Set ID sequence`);
+  } catch (error) {
+    const e = error as MixedObject;
+    console.log(`\t-> ❌  Error setting ID sequence`);
+    console.log(`\t-> ${e.message}`);
+    console.log(`\t-> Detail: ${e.detail}`);
+    if (e.where) console.log(`\t-> where: ${e.where}`);
+  }
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const insertRows = async (table: string, data: any[][]) => {
+export const insertRows = async (table: string, data: any[][], hasId = true) => {
   if (!data.length) {
     console.log(`No rows to insert. Skipping ${table}.`);
     return [];
@@ -62,14 +95,7 @@ export const insertRows = async (table: string, data: any[][]) => {
 
   // language=text
   let query = 'INSERT INTO %I VALUES %L ON CONFLICT DO NOTHING';
-
-  if (
-    !['ImageTool', 'ImageTechnique'].includes(table) &&
-    !table.startsWith('TagsOn') &&
-    !table.endsWith('Engagement')
-  ) {
-    query += ' RETURNING ID';
-  }
+  if (hasId) query += ' RETURNING ID';
 
   try {
     const ret = await pgDbWrite.query<{ id: number }>(format(query, table, data));
@@ -77,6 +103,10 @@ export const insertRows = async (table: string, data: any[][]) => {
     if (ret.rowCount === data.length) console.log(`\t-> ✔️ Inserted ${ret.rowCount} rows`);
     else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
     else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
+
+    if (hasId) {
+      await setSerial(table);
+    }
 
     return ret.rows.map((r) => r.id);
   } catch (error) {
@@ -107,6 +137,8 @@ const insertNotifRows = async (table: string, data: any[][]) => {
     else if (ret.rowCount === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
     else console.log(`\t-> ⚠️ Only inserted ${ret.rowCount} of ${data.length} rows`);
 
+    await setSerialNotif(table);
+
     return ret.rows.map((r) => r.id);
   } catch (error) {
     const e = error as MixedObject;
@@ -130,16 +162,20 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 
   console.log(`Inserting ${data.length} rows into ${table}`);
 
-  // language=text
-  const query = 'INSERT INTO %I VALUES %L';
-
   try {
-    const ret = await clickhouse.$query(format(query, table, data));
-    console.log(ret);
+    const ret = await clickhouse.insert({
+      table,
+      values: data,
+      clickhouse_settings: {
+        date_time_input_format: 'best_effort',
+      },
+    });
 
-    if (ret.length === data.length) console.log(`\t-> ✔️ Inserted ${ret.length} rows`);
-    else if (ret.length === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
-    else console.log(`\t-> ⚠️ Only inserted ${ret.length} of ${data.length} rows`);
+    // TODO how to get the response here?
+    // if (ret.length === data.length) console.log(`\t-> ✔️ Inserted ${ret.length} rows`);
+    // else if (ret.length === 0) console.log(`\t-> ⚠️ Inserted 0 rows`);
+    // else console.log(`\t-> ⚠️ Only inserted ${ret.length} of ${data.length} rows`);
+    console.log(`\t-> ✔️ Inserted ${data.length} rows`);
 
     return ret;
   } catch (error) {
@@ -2559,25 +2595,25 @@ const genRows = async (truncate = true) => {
   await insertRows('CollectionItem', collectionItems);
 
   const imageTools = genImageTools(numRows, imageIds, toolIds);
-  await insertRows('ImageTool', imageTools);
+  await insertRows('ImageTool', imageTools, false);
 
   const imageTechniques = genImageTechniques(numRows, imageIds, techniqueIds);
-  await insertRows('ImageTechnique', imageTechniques);
+  await insertRows('ImageTechnique', imageTechniques, false);
 
   const tags = genTags(numRows);
   const tagIds = await insertRows('Tag', tags);
 
   const tagsOnArticles = genTagsOnArticles(Math.ceil(numRows * 3), tagIds, articleIds);
-  await insertRows('TagsOnArticle', tagsOnArticles);
+  await insertRows('TagsOnArticle', tagsOnArticles, false);
 
   const tagsOnPosts = genTagsOnPosts(Math.ceil(numRows * 3), tagIds, postIds);
-  await insertRows('TagsOnPost', tagsOnPosts);
+  await insertRows('TagsOnPost', tagsOnPosts, false);
 
   const tagsOnImages = genTagsOnImages(Math.ceil(numRows * 3), tagIds, imageIds);
-  await insertRows('TagsOnImage', tagsOnImages);
+  await insertRows('TagsOnImage', tagsOnImages, false);
 
   const tagsOnModels = genTagsOnModels(Math.ceil(numRows * 3), tagIds, modelIds);
-  await insertRows('TagsOnModels', tagsOnModels);
+  await insertRows('TagsOnModels', tagsOnModels, false);
 
   // TODO TagsOnImageVote
   // TODO TagsOnModelsVote
@@ -2637,17 +2673,17 @@ const genRows = async (truncate = true) => {
   await insertRows('ImageResource', resources);
 
   const articleEngage = genArticleEngagements(numRows, userIds, articleIds);
-  await insertRows('ArticleEngagement', articleEngage);
+  await insertRows('ArticleEngagement', articleEngage, false);
   const imageEngage = genImageEngagements(numRows, userIds, imageIds);
-  await insertRows('ImageEngagement', imageEngage);
+  await insertRows('ImageEngagement', imageEngage, false);
   const modelEngage = genModelEngagements(numRows, userIds, modelIds);
-  await insertRows('ModelEngagement', modelEngage);
+  await insertRows('ModelEngagement', modelEngage, false);
   const mvEngage = genModelVersionEngagements(numRows, userIds, mvIds);
-  await insertRows('ModelVersionEngagement', mvEngage);
+  await insertRows('ModelVersionEngagement', mvEngage, false);
   const tagEngage = genTagEngagements(numRows, userIds, tagIds);
-  await insertRows('TagEngagement', tagEngage);
+  await insertRows('TagEngagement', tagEngage, false);
   const userEngage = genUserEngagements(numRows, userIds, userIds);
-  await insertRows('UserEngagement', userEngage);
+  await insertRows('UserEngagement', userEngage, false);
 
   const articleReactions = genArticleReactions(Math.ceil(numRows * 5), userIds, articleIds);
   await insertRows('ArticleReaction', articleReactions);
@@ -2665,7 +2701,7 @@ const genRows = async (truncate = true) => {
   await insertRows('PostReaction', postReactions);
 
   const leaderboards = genLeaderboards();
-  await insertRows('Leaderboard', leaderboards);
+  await insertRows('Leaderboard', leaderboards, false);
 
   const homeblocks = genHomeBlocks(collectionData);
   await insertRows('HomeBlock', homeblocks);
@@ -2959,6 +2995,11 @@ const genRedisSystemFeatures = async () => {
 };
 
 const main = async () => {
+  if (!env.DATABASE_URL.includes('localhost:15432')) {
+    console.error('ERROR: not running with local database server.');
+    process.exit(1);
+  }
+
   await pgDbWrite.query('REASSIGN OWNED BY doadmin, civitai, "civitai-jobs" TO postgres');
   await pgDbWrite.query(
     'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "postgres"'

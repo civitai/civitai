@@ -8,7 +8,6 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 
-
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -195,7 +194,7 @@ export const serverSchema = z.object({
  */
 export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
-  NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
+  NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.string().url() : z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url().optional(),
