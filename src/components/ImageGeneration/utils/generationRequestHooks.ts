@@ -187,24 +187,6 @@ export function useDeleteTextToImageRequest() {
 
 export function useCancelTextToImageRequest() {
   return trpc.orchestrator.cancelWorkflow.useMutation({
-    onSuccess: (_, { workflowId }) => {
-      updateTextToImageRequests((old) => {
-        for (const page of old.pages) {
-          for (const item of page.items.filter((x) => x.id === workflowId)) {
-            for (const step of item.steps) {
-              for (const image of step.images.filter(
-                (x) => !orchestratorCompletedStatuses.includes(x.status)
-              )) {
-                image.status = 'canceled';
-              }
-              if (step.images.some((x) => x.status === 'canceled')) {
-                item.status = 'canceled';
-              }
-            }
-          }
-        }
-      });
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Error cancelling request',

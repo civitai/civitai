@@ -24,7 +24,7 @@ import {
 
 import { Currency } from '@prisma/client';
 import dayjs from 'dayjs';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -57,8 +57,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useRouter } from 'next/router';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
-// const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
-// const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
   'processing',
@@ -67,7 +65,6 @@ const LONG_DELAY_TIME = 5; // minutes
 const EXPIRY_TIME = 10; // minutes
 const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
-// export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({
   request,
   step,
@@ -108,22 +105,28 @@ export function QueueItem({
   }
 
   const cost = request.totalCost;
-  const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const [processing, setProcessing] = useState(status === 'processing');
   useEffect(() => {
     if (!processing && status === 'processing') setProcessing(true);
     else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
   }, [status]);
 
-  const deleteMutation = useDeleteTextToImageRequest();
-  const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
-  const cancellable = orchestratorPendingStatuses.includes(status);
+  const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
   useEffect(() => {
-    if (!pendingProcessing || !cancellable) return;
+    if (!cancellable) return;
+
     const id = request.id.toString();
-    if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+
+    function removeTimeout(id: string) {
+      const timeout = delayTimeouts.get(id);
+      if (timeout) {
+        clearTimeout(timeout);
+        delayTimeouts.delete(id);
+      }
+    }
+
+    removeTimeout(id);
     delayTimeouts.set(
       id,
       setTimeout(() => {
@@ -132,18 +135,13 @@ export function QueueItem({
       }, LONG_DELAY_TIME * 60 * 1000)
     );
     return () => {
-      if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+      removeTimeout(id);
     };
-  }, [request.id, request.createdAt, pendingProcessing, cancellable]);
+  }, [request.id, request.createdAt, cancellable]);
+
   const refundTime = dayjs(request.createdAt)
     .add(step.timeout ? new TimeSpan(step.timeout).minutes : EXPIRY_TIME, 'minute')
     .toDate();
-
-  const handleDeleteQueueItem = () => {
-    deleteMutation.mutate({ workflowId: request.id });
-  };
-
-  const handleCancel = () => cancelMutation.mutate({ workflowId: request.id });
 
   const handleCopy = () => {
     copy(images.map((x) => x.jobId).join('\n'));
@@ -227,26 +225,7 @@ export function QueueItem({
                   </ActionIcon>
                 </ButtonTooltip>
               )}
-              <PopConfirm
-                message={`Are you sure you want to ${
-                  pendingProcessing ? 'cancel' : 'delete'
-                } this job?`}
-                position="bottom-end"
-                onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
-              >
-                <ButtonTooltip
-                  {...tooltipProps}
-                  label={pendingProcessing ? 'Cancel job' : 'Delete job'}
-                >
-                  <ActionIcon
-                    size="md"
-                    disabled={cancellingDeleting || (pendingProcessing && !cancellable)}
-                    color="red"
-                  >
-                    {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
-                  </ActionIcon>
-                </ButtonTooltip>
-              </PopConfirm>
+              <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
             </div>
           </div>
         </Card.Section>
@@ -255,7 +234,7 @@ export function QueueItem({
       {inView && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage && pendingProcessing && (
+            {showDelayedMessage && cancellable && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">
                   <Text size="xs" color="yellow" lh={1}>
@@ -413,3 +392,48 @@ const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   color: 'dark',
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
+
+function CancelOrDeleteWorkflow({
+  workflowId,
+  cancellable,
+}: {
+  workflowId: string;
+  cancellable: boolean;
+}) {
+  // use `cancelling` state so that users don't try to cancel a workflow multiple times
+  const [cancelling, setCancelling] = useState(false);
+  const deleteMutation = useDeleteTextToImageRequest();
+  const cancelMutation = useCancelTextToImageRequest();
+  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+
+  const handleDeleteQueueItem = () => {
+    deleteMutation.mutate({ workflowId });
+  };
+
+  const handleCancel = () => {
+    cancelMutation.mutateAsync({ workflowId }).then(() => {
+      setCancelling(true);
+    });
+  };
+
+  useEffect(() => {
+    if (!cancellable) {
+      setCancelling(false);
+    }
+  }, [cancellable]);
+
+  return (
+    <PopConfirm
+      message={cancellable ? 'Attempt to cancel?' : 'Are you sure?'}
+      position="bottom-end"
+      onConfirm={cancellable ? handleCancel : handleDeleteQueueItem}
+      disabled={cancellingDeleting}
+    >
+      <ButtonTooltip {...tooltipProps} label={cancellable ? 'Cancel' : 'Delete'}>
+        <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+          {cancellable ? <IconBan size={20} /> : <IconTrash size={20} />}
+        </ActionIcon>
+      </ButtonTooltip>
+    </PopConfirm>
+  );
+}
