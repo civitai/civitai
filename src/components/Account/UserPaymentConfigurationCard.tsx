@@ -304,19 +304,6 @@ const TipaltiConfigurationCard = () => {
       <Stack>
         <Group position="apart">
           <Title order={3}>Tipalti Account</Title>
-          <ActionIcon
-            onClick={() => {
-              dialogStore.trigger({
-                component: FeatureIntroductionModal,
-                props: {
-                  feature: 'getting-started',
-                  contentSlug: ['feature-introduction', 'stripe-connect'],
-                },
-              });
-            }}
-          >
-            <IconInfoCircle />
-          </ActionIcon>
         </Group>
       </Stack>
 
@@ -336,8 +323,8 @@ const TipaltiConfigurationCard = () => {
         </>
       ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
         <Text>
-          Your account is setup and you should be good to withdraw. You can click the button below
-          if you need to make any adjustments to your account.
+          Your account is set up and ready for withdrawals. Click below to make any adjustments to
+          your Tipalti account settings.
         </Text>
       ) : (
         <Text>
@@ -358,7 +345,7 @@ const TipaltiConfigurationCard = () => {
           rel="nofollow noreferrer"
           fullWidth
         >
-          Setup my Tipalti Account
+          Set up my Tipalti Account
         </Button>
       )}
     </>
