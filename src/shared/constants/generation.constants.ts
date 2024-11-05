@@ -2,16 +2,13 @@ import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
-import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
+import { BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { AirResourceData } from '~/server/services/orchestrator/common';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { GenerationInputConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
   IMAGE: 'img',
@@ -210,6 +207,13 @@ export const defaultCheckpoints: Record<
     model: 257749,
     version: 290640,
   },
+  Illustrious: {
+    ecosystem: 'sdxl',
+    type: 'model',
+    source: 'civitai',
+    model: 795765,
+    version: 889818,
+  },
 };
 
 // #region [utils]
@@ -238,7 +242,8 @@ export function getIsSdxl(baseModel?: string) {
   return (
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||
-    baseModelSetType === 'SDXLDistilled'
+    baseModelSetType === 'SDXLDistilled' ||
+    baseModelSetType === 'Illustrious'
   );
 }
 
@@ -285,6 +290,8 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Illustrious'))
+    return 'Illustrious';
   else return 'SD1';
 }
 
