@@ -126,7 +126,7 @@ function SelectedCount() {
 function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '600px' });
   const theme = useMantineTheme();
-  const userId = image.user.id;
+  const userId = image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
   const toggleSelected = () => useCsamImageSelectStore.getState().toggle(userId, imageId);
