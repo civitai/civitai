@@ -4153,9 +4153,10 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
 export type ModerationImageModel = AsyncReturnType<typeof getImagesByUserIdForModeration>[number];
 
 export async function getImagesByUserIdForModeration(userId: number) {
+  const { tags, meta, ...select } = imageSelect;
   return await dbRead.image.findMany({
     where: { userId },
-    select: { ...imageSelect, user: { select: simpleUserSelect } },
+    select,
   });
 }
 

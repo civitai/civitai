@@ -60,7 +60,12 @@ function ReportCsamUserPage() {
           </Group>
         </Card>
       )}
-      {currentStep === 1 && <CsamImageSelection onNext={stepperActions.goToNextStep} />}
+      {currentStep === 1 && (
+        <CsamImageSelection
+          onNext={stepperActions.goToNextStep}
+          onMissing={handleStepperComplete}
+        />
+      )}
       {currentStep === 2 && (
         <CsamDetailsForm
           onPrevious={stepperActions.goToPrevStep}

@@ -7,7 +7,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your account has been approved for the Civitai Creators Program! Setup your account so you can start getting paid!.`,
+      message: `Your account is approved for Creator Payouts! Click this notification to set up your payment details to start receiving payments.`,
       url: `/user/account#payments`,
     }),
   },

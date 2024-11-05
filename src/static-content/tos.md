@@ -30,15 +30,17 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.4 **Refund**. As a customer, you are eligible for a refund in the following situations:
   - Recurring Technical Problems: If ongoing technical difficulties hinder your use of the platform.
-  - Failure to Receive Buzz: If Buzz you've bought isn't received or added to your account due to technical Issues.
+  - Failure to Receive Buzz: If Buzz you've purchased isn't received or added to your account due to technical issues.
   - Flawed Resource: If digital products you've trained are substantially flawed beyond what could be reasonably attributed to user error.
 
-  We retain the right to refuse a refund in the event:
-  - You were muted or removed from the platform for breaking content guidelines
-  - You are unable to get results to your satisfaction through no technical fault of the platform.
+  Refunds for expenditures on 3rd party services hosted via API on Civitai will only be granted if Civitai can secure a refund from the respective service provider. Please note that not all API services permit refunds, and Civitai's ability to issue a refund is contingent on this limitation.
+
+  Civitai retains the right to refuse a refund in the following cases:
+  - You were muted or removed from the platform for breaking content guidelines.
+  - You are unable to achieve desired results through no technical fault of the platform.
   - You have changed your mind.
 
-  Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with the applicable requirements under the Digital Millennium Copyright Act. Refunds will be given in Buzz for platform services and credited to your Account upon request or within a reasonable time.
+  Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with applicable requirements under the Digital Millennium Copyright Act. Refunds will be given in Buzz for platform services and credited to your account upon request or within a reasonable time.
 
 - 5.5 **Payment Processing.** Civitai may contract with a third party to process payments submitted through the Service (the “Payment Processor”). Users may be required to provide their payment method details to the Payment Processor. Before you pay for Buzz through the Payment Processor, you will have an opportunity to review the amounts that you will be charged.
 
