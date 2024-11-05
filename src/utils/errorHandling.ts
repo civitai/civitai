@@ -17,11 +17,11 @@ export async function sleep(timeout: number) {
 }
 
 export function withRetries<T>(
-  fn: () => Promise<T>,
+  fn: (currentAttempt: number) => Promise<T>,
   retries = 3,
   retryTimeout?: number
 ): Promise<T> {
-  return fn().catch((error: Error) => {
+  return fn(retries).catch((error: Error) => {
     if (retries > 0) {
       if (retryTimeout) {
         return sleep(retryTimeout).then(() => {

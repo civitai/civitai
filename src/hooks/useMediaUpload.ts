@@ -126,7 +126,11 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
           );
         } else {
           upload(file, UploadType.Image)
-            .then(({ key }) => {
+            .then(({ key, url }) => {
+              if (!url) {
+                throw new Error('Failed to upload image');
+              }
+
               onComplete({ status: 'added', ...data, url: key, index }, context);
             })
             .catch((error) => {
