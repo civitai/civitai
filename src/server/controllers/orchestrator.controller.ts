@@ -1,4 +1,5 @@
 import dayjs from 'dayjs';
+import { string } from 'zod';
 import { env } from '~/env/server.mjs';
 import { generation } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
@@ -10,6 +11,7 @@ import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 
 type Ctx = { token: string; userId: number };
@@ -24,14 +26,20 @@ export async function generate({
 }: GenerationSchema & Ctx) {
   // throw throwBadRequestError(`Your prompt was flagged for: `);
   if ('prompt' in args.data) {
-    const moderationResult = await extModeration.moderatePrompt(args.data.prompt).catch((error) => {
-      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-      return { flagged: false, categories: [] as string[] };
-    });
-    if (moderationResult.flagged) {
-      throw throwBadRequestError(
-        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-      );
+    try {
+      const { blockedFor, success } = auditPrompt(args.data.prompt);
+      if (!success) throw { blockedFor, type: 'regex' };
+
+      const { flagged, categories } = await extModeration
+        .moderatePrompt(args.data.prompt)
+        .catch((error) => {
+          logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+          return { flagged: false, categories: [] as string[] };
+        });
+      if (flagged) throw { blockedFor: categories, type: 'external' };
+    } catch (e) {
+      const error = e as { blockedFor: string[]; type: string };
+      throw throwBadRequestError(`Your prompt was flagged: ${error.blockedFor.join(', ')}`);
     }
   }
 

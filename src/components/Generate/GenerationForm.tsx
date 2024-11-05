@@ -31,6 +31,7 @@ export function GenerationForm() {
 
   return (
     <ScrollArea scrollRestore={{ key: 'generation-form' }} pt={0} className="flex flex-col gap-2">
+      {/* TODO - image remix component */}
       <SegmentedControl
         value={type}
         onChange={generationStore.setType}
