@@ -50,7 +50,7 @@ First, make sure that you have the following installed on your machine:
 
 > We recommend you have installed `nvm` in order to set the right node version to run this project
 > ```sh
-> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
+> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 > ```
 
 ### Installation
