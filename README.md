@@ -59,8 +59,8 @@ First, make sure that you have the following installed on your machine:
 2. Run `make init`
    * This command will do a few things:
      * Creates a starter `env` file
-     * Install npm packages
-     * Spinds up docker containers
+     * Installs npm packages
+     * Spins up docker containers
      * Runs any additional database migrations
      * Creates some dummy seed data
      * Populates metrics and meilisearch
