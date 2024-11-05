@@ -54,6 +54,9 @@ npm-install:
 
 .PHONY: init
 init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics
+
+.PHONY: run
+run:
 	npm run db:generate
 	npm run dev
 
