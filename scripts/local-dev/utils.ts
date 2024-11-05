@@ -11,8 +11,11 @@ export const checkLocalDb = () => {
 };
 
 export const checkLocalMeili = () => {
-  if (env.METRICS_SEARCH_HOST !== 'http://localhost:7700') {
-    console.error('ERROR: not running with local database server.');
+  if (
+    env.METRICS_SEARCH_HOST !== 'http://localhost:7700' ||
+    env.SEARCH_HOST !== 'http://localhost:7700'
+  ) {
+    console.error('ERROR: not running with local meilisearch server.');
     process.exit(1);
   }
 };
