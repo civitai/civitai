@@ -52,13 +52,16 @@ copy-env:
 npm-install:
 	npm i
 
-.PHONY: init
-init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics
-
 .PHONY: run
 run:
 	npm run db:generate
 	npm run dev
+
+.PHONY: init
+init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics run
+
+.PHONY: init-devcontainer
+init-devcontainer: copy-env npm-install run-migrations bootstrap-db bootstrap-metrics
 
 .PHONY: default
 default: start

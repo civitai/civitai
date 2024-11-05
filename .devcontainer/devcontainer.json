@@ -18,6 +18,6 @@
 	// "customizations": {},
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	"remoteUser": "root",
-	"postCreateCommand": "make init",
+	"postCreateCommand": "make init-devcontainer",
 	"postStartCommand": "make run"
 }
