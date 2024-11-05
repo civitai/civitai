@@ -45,7 +45,6 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -77,85 +76,22 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
   GenerationFormOutput,
-  GenerationFormProvider,
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import React, { useEffect, useState, useMemo } from 'react';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
-import {
-  TextToImageWhatIfProvider,
-  useTextToImageWhatIfContext,
-} from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
-import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
-import { generationPanel, useGenerationStore } from '~/store/generation.store';
-import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
 import { useTipStore } from '~/store/tip.store';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
-
-export function GenerationForm2() {
-  const type = useGenerationStore((state) => state.type);
-  // const utils = trpc.useUtils();
-  // const currentUser = useCurrentUser();
-
-  // const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
-  // const handleSetDefinitions = async () => {
-  //   await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
-  //   utils.generation.getWorkflowDefinitions.invalidate();
-  // };
-
-  // !important - this is to move the 'tip' values to its own local storage bucket
-  useEffect(() => {
-    const stored = localStorage.getItem('generation-form-2');
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      if (typeof parsed !== 'object' || !('state' in parsed)) return;
-      const { creatorTip, civitaiTip, ...state } = parsed.state;
-      if (creatorTip !== undefined && civitaiTip !== undefined) {
-        useTipStore.setState({ creatorTip, civitaiTip });
-        localStorage.setItem('generation-form-2', JSON.stringify({ ...parsed, state }));
-      }
-    }
-  }, []);
-
-  return (
-    <IsClient>
-      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
-        <div className="p-3">
-          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-        </div>
-      )} */}
-      <SegmentedControl
-        value={type}
-        onChange={generationPanel.setType}
-        className="-mt-2 overflow-visible px-2"
-        color="blue"
-        data={[
-          { label: 'Image', value: 'image' },
-          { label: 'Video', value: 'video' },
-        ]}
-      />
-
-      {type === 'image' && (
-        <GenerationFormProvider>
-          <TextToImageWhatIfProvider>
-            <GenerationFormContent />
-          </TextToImageWhatIfProvider>
-        </GenerationFormProvider>
-      )}
-      {type === 'video' && <VideoGenerationForm />}
-    </IsClient>
-  );
-}
 
 // #region [form component]
 export function GenerationFormContent() {
@@ -347,7 +283,7 @@ export function GenerationFormContent() {
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
-      className="relative flex h-full flex-1 flex-col overflow-hidden"
+      className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
       <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
         {({ baseModel, fluxMode, draft, model }) => {
@@ -380,20 +316,7 @@ export function GenerationFormContent() {
 
           return (
             <>
-              <ScrollArea
-                scrollRestore={{ key: 'generation-form' }}
-                pt={0}
-                className="flex flex-col gap-2 px-3 pb-3"
-              >
-                {/* <InputSegmentedControl
-                  name="type"
-                  className="overflow-visible"
-                  color="blue"
-                  data={[
-                    { label: 'Image', value: 'image' },
-                    { label: 'Video', value: 'video' },
-                  ]}
-                /> */}
+              <div className="flex flex-col gap-2 px-3">
                 {!isFlux && !isSD3 && (
                   <div className="flex items-start justify-start gap-3">
                     {features.image && image && (
@@ -1044,8 +967,8 @@ export function GenerationFormContent() {
                     </Accordion.Panel>
                   </Accordion.Item>
                 </PersistentAccordion>
-              </ScrollArea>
-              <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
+              </div>
+              <div className="shadow-topper sticky bottom-0 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert

@@ -83,6 +83,7 @@ export const generationPanel = {
 };
 
 export const generationStore = {
+  setType: store.setType,
   setData: store.setData,
   clearData: store.clearData,
 };

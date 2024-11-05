@@ -5,8 +5,7 @@ import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { Form, InputSegmentedControl, InputSelect, InputText, InputTextArea } from '~/libs/form';
+import { Form, InputSegmentedControl, InputText, InputTextArea } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
   videoGenerationSchema,
@@ -87,10 +86,10 @@ export function VideoGenerationForm() {
   return (
     <Form
       form={form}
-      className="relative flex h-full flex-1 flex-col overflow-hidden"
+      className="relative flex h-full flex-1 flex-col justify-between gap-2"
       onSubmit={handleSubmit}
     >
-      <ScrollArea scrollRestore={{ key: 'generation-form' }} className="flex flex-col gap-2 p-2">
+      <div className="flex flex-col gap-2 px-3">
         <div>
           <Title order={2}>{titleCase(engine)}</Title>
           <Text size="sm">{engineText[engine]}</Text>
@@ -149,8 +148,8 @@ export function VideoGenerationForm() {
           />
         </div>
         <InputSeed name="seed" label="Seed" />
-      </ScrollArea>
-      <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
+      </div>
+      <div className="shadow-topper bottom-0 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">
