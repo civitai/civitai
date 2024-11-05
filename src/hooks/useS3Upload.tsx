@@ -194,8 +194,8 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
       const completeUpload = () =>
         withRetries(
-          () =>
-            fetch(completeEndpoint, {
+          async () => {
+            return fetch(completeEndpoint, {
               method: 'POST',
               headers,
               body: JSON.stringify({
@@ -205,7 +205,8 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
                 uploadId,
                 parts,
               }),
-            }),
+            });
+          },
           3,
           50
         );
