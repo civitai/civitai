@@ -1,5 +1,5 @@
 import { Button, Input, Title, Text, ActionIcon } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useFormContext, useFormState } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -18,10 +18,12 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
-import { titleCase } from '~/utils/string-helpers';
+import { hashify, titleCase } from '~/utils/string-helpers';
 import { IconX } from '@tabler/icons-react';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -82,6 +84,11 @@ export function VideoGenerationForm() {
 
   const engine = form.watch('engine');
   const image = form.watch('sourceImageUrl');
+
+  const errorHash = useMemo(
+    () => (error?.message ? hashify(error.message).toString() : null),
+    [error?.message]
+  );
 
   return (
     <Form
@@ -159,6 +166,13 @@ export function VideoGenerationForm() {
           </Button>
         </div>
       </div>
+      {error && errorHash && (
+        <DismissibleAlert color="yellow" title="Failed Generation Request" id={errorHash}>
+          <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+            {error.message}
+          </CustomMarkdown>
+        </DismissibleAlert>
+      )}
     </Form>
   );
 }

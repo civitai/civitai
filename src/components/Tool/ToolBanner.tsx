@@ -55,7 +55,7 @@ export function ToolBanner({
                 <Title order={2} className="font-semibold">
                   {selected.name}
                 </Title>
-                {selected.domain && (
+                {/* {selected.domain && (
                   <Button
                     color="blue"
                     radius="xl"
@@ -67,7 +67,7 @@ export function ToolBanner({
                   >
                     Visit
                   </Button>
-                )}
+                )} */}
               </div>
             </div>
           </div>

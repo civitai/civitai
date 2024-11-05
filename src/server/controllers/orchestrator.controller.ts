@@ -1,20 +1,42 @@
 import dayjs from 'dayjs';
-import { string } from 'zod';
 import { env } from '~/env/server.mjs';
-import { generation } from '~/server/common/constants';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants, generation } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { GenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { createLimiter } from '~/server/utils/rate-limiting';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 
 type Ctx = { token: string; userId: number };
+
+const blockedPromptLimiter = createLimiter({
+  counterKey: REDIS_KEYS.GENERATION.COUNT,
+  limitKey: REDIS_KEYS.GENERATION.LIMITS,
+  fetchCount: async (userKey) => {
+    const res = await clickhouse?.query({
+      query: `
+        SELECT
+          COUNT(*) as count
+        FROM prohibitedRequests
+        WHERE time > subtractHours(now(), 24) AND userId = ${userKey}
+      `,
+      format: 'JSONEachRow',
+    });
+
+    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const count = data[0]?.count ?? 0;
+    return count;
+  },
+});
 
 export async function generate({
   token,
@@ -39,7 +61,21 @@ export async function generate({
       if (flagged) throw { blockedFor: categories, type: 'external' };
     } catch (e) {
       const error = e as { blockedFor: string[]; type: string };
-      throw throwBadRequestError(`Your prompt was flagged: ${error.blockedFor.join(', ')}`);
+
+      const count = (await blockedPromptLimiter.getCount(userId.toString())) ?? 0;
+      await blockedPromptLimiter.increment(userId.toString());
+
+      let message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+      if (count > constants.imageGeneration.requestBlocking.warned)
+        message +=
+          '. If you continue to attempt blocked prompts, your account will be sent for review.';
+      else if (count > constants.imageGeneration.requestBlocking.notified)
+        message +=
+          '. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.';
+      else if (count > constants.imageGeneration.requestBlocking.muted)
+        message += '. Your account has been muted.';
+
+      throw throwBadRequestError(message);
     }
   }
 

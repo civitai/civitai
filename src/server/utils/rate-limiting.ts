@@ -71,5 +71,6 @@ export function createLimiter({
     hasExceededLimit,
     getLimitHitTime,
     increment,
+    getCount,
   };
 }
