@@ -1,6 +1,7 @@
 import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
 import { useFileUploadContext, TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import { withRetries } from '~/utils/errorHandling';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
@@ -192,17 +193,22 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         });
 
       const completeUpload = () =>
-        fetch(completeEndpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            bucket,
-            key,
-            type,
-            uploadId,
-            parts,
-          }),
-        });
+        withRetries(
+          () =>
+            fetch(completeEndpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                bucket,
+                key,
+                type,
+                uploadId,
+                parts,
+              }),
+            }),
+          3,
+          50
+        );
 
       // Prepare part upload
       const partsCount = urls.length;
