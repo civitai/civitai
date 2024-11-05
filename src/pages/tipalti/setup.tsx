@@ -26,11 +26,11 @@ export default function Onboard() {
   return (
     <Container>
       <Stack>
-        <Title order={3}>Setup your Tipalti Account</Title>
+        <Title order={3}>Set up your Tipalti Account</Title>
         <Text size="sm" color="faded">
-          Below iFrame has been directly provided by Tipalti to ensure your account is setup
-          correctly and your data is safe. Please follow the instructions provided by Tipalti to
-          complete, update and modify your account. This is required to receive payments.
+          The iFrame below is provided by Tipalti to ensure secure setup and account accuracy.
+          Please follow Tipalti&rsquo;s instructions to complete or update your account, to be
+          eligible to receive payments.
         </Text>
         <SegmentedControl
           value={type}
