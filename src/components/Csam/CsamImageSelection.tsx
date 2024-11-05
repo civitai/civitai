@@ -9,13 +9,10 @@ import {
   Title,
   Button,
 } from '@mantine/core';
-import { useQueryImages } from '~/components/Image/image.utils';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { ImagesInfiniteModel, ModerationImageModel } from '~/server/services/image.service';
+import { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -24,25 +21,17 @@ import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.st
 import { useCsamContext } from '~/components/Csam/CsamProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { ImageSort } from '~/server/common/enums';
-import { ImageModel } from '~/server/selectors/image.selector';
+
 import { trpc } from '~/utils/trpc';
 
-export function CsamImageSelection({ onNext }: { onNext: () => void }) {
+export function CsamImageSelection({
+  onNext,
+  onMissing,
+}: {
+  onNext: () => void;
+  onMissing: () => void;
+}) {
   const { userId, user } = useCsamContext();
-
-  // TODO - get all images for user, don't use this util unless we provide a way to get all images regardless of ingestion status
-  // const {
-  //   flatData: images,
-  //   isLoading,
-  //   fetchNextPage,
-  //   hasNextPage,
-  //   isRefetching,
-  // } = useQueryImages(
-  //   { username: user?.username ?? undefined, sort: ImageSort.Newest, include: [], pending: true },
-  //   { applyHiddenPreferences: false, enabled: !!user }
-  // );
 
   const { data: images, isLoading } = trpc.image.getImagesByUserIdForModeration.useQuery({
     userId,
@@ -58,7 +47,13 @@ export function CsamImageSelection({ onNext }: { onNext: () => void }) {
         <Loader />
       </Center>
     );
-  if (!images?.length) return <NoContent p="xl" message="No images found for this user" />;
+  if (!images?.length)
+    return (
+      <div className="flex flex-col items-center">
+        <NoContent p="xl" message="No images found for this user" />
+        <Button onClick={onMissing}>Next user</Button>
+      </div>
+    );
 
   return (
     <div className="relative">
