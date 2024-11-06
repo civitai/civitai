@@ -327,6 +327,14 @@ export const updateBuzzWithdrawalRequest = async ({
       select: buzzWithdrawalRequestModerationDetails,
     });
 
+    await createNotification({
+      userId: request.userId as number,
+      type: 'creators-program-withdrawal-updated',
+      category: NotificationCategory.System,
+      key: `creators-program-withdrawal-updated:${uuid()}`,
+      details: {},
+    }).catch();
+
     return updatedRequest;
   }
 
