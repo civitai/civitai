@@ -10,7 +10,6 @@ import {
   LoadingOverlay,
   Modal,
   Pagination,
-  Popover,
   Stack,
   Table,
   Text,
@@ -28,14 +27,7 @@ import {
   Currency,
   UserPaymentConfigurationProvider,
 } from '@prisma/client';
-import {
-  IconCashBanknote,
-  IconExternalLink,
-  IconInfoCircle,
-  IconInfoTriangle,
-  IconInfoTriangleFilled,
-} from '@tabler/icons-react';
-import { IconInfoSquareRounded } from '@tabler/icons-react';
+import { IconCashBanknote, IconExternalLink, IconInfoTriangleFilled } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
@@ -59,7 +51,6 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -79,7 +70,6 @@ const UpdateBuzzWithdrawalRequest = ({
   status: BuzzWithdrawalRequestStatus;
 }) => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
   const handleClose = dialog.onClose;
   const [note, setNote] = useState('');
   const { updateBuzzWithdrawalRequest, updatingBuzzWithdrawalRequest } =
@@ -149,12 +139,11 @@ const UpdateBuzzWithdrawalRequest = ({
 };
 
 export default function ModeratorBuzzWithdrawalRequests() {
-  const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
     useQueryBuzzWithdrawalRequests(debouncedFilters);
 
@@ -348,7 +337,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                         {request.requestedToProvider ===
                           UserPaymentConfigurationProvider.Tipalti && (
                           <Anchor
-                            href={`https://aphub2.tipalti.com/dashboard/payees/information/${request.user.id}/payments`}
+                            href={`https://aphub2.tipalti.com/dashboard/payees/information/${request.user?.id}/payments`}
                             rel="noopener noreferrer"
                             target="_blank"
                           >

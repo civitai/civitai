@@ -130,6 +130,9 @@ export type PostContestCollectionItem = RouterOutput['post']['getContestCollecti
 type BuzzRouter = RouterOutput['buzz'];
 export type GetDailyBuzzCompensation = BuzzRouter['getDailyBuzzCompensation'];
 
+type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
 export type BuzzWithdrawalRequestHistoryRecord =
-  | RouterOutput['buzzWithdrawalRequest']['getPaginatedOwned']['items'][number]['history']
-  | RouterOutput['buzzWithdrawalRequest']['getPaginated']['items'][number]['history'];
+  | BuzzWithdrawalRequestRouter['getPaginatedOwned']['items'][number]['history']
+  | BuzzWithdrawalRequestRouter['getPaginated']['items'][number]['history'];
+export type BuzzWithdrawalGetPaginatedItem =
+  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];
