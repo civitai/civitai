@@ -20,6 +20,7 @@ import {
   Tooltip,
   TooltipProps,
   TextInput,
+  Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -38,6 +39,7 @@ import { IconInfoSquareRounded } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
+import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryBuzzWithdrawalRequests,
@@ -48,7 +50,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
-import type { BuzzWithdrawalRequestForModerator } from '~/server/services/buzz-withdrawal-request.service';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
@@ -144,47 +145,6 @@ const UpdateBuzzWithdrawalRequest = ({
         </Group>
       </Stack>
     </Modal>
-  );
-};
-
-const RequestHistory = ({ request }: { request: BuzzWithdrawalRequestForModerator }) => {
-  return (
-    <Popover width={300} withArrow withinPortal shadow="sm">
-      <Popover.Target>
-        <ActionIcon color="gray">
-          <IconInfoSquareRounded size={20} />
-        </ActionIcon>
-      </Popover.Target>
-      <Popover.Dropdown>
-        <Stack spacing="xs">
-          <Text size="sm" weight={500}>
-            History
-          </Text>
-          {request.history.map((record) => (
-            <Stack key={record.id}>
-              <Group noWrap position="apart">
-                <UserAvatar
-                  user={record.updatedBy}
-                  size="xs"
-                  subText={`Actioned on ${formatDate(record.createdAt)}`}
-                  withUsername
-                />
-
-                <Badge size="xs" color={WithdrawalRequestBadgeColor[record.status]} variant="light">
-                  {getDisplayName(record.status)}
-                </Badge>
-              </Group>
-              {record.note && (
-                <Text size="xs">
-                  <Text weight={500}>Note:</Text> {record.note}
-                </Text>
-              )}
-              <Divider />
-            </Stack>
-          ))}
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
   );
 };
 
@@ -383,7 +343,21 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 return (
                   <tr key={request.id}>
                     <td>
-                      <UserAvatar size="sm" user={request.user} withUsername />
+                      <Stack spacing={0}>
+                        <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
+                        {request.requestedToProvider ===
+                          UserPaymentConfigurationProvider.Tipalti && (
+                          <Anchor
+                            href={`https://aphub2.tipalti.com/dashboard/payees/information/${request.user.id}/payments`}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            <Group spacing={2} noWrap>
+                              <IconExternalLink size={16} /> <Text size="sm">Tipalti Account</Text>
+                            </Group>
+                          </Anchor>
+                        )}
+                      </Stack>
                     </td>
                     <td>{formatDate(request.createdAt)}</td>
                     <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
@@ -433,7 +407,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                     <td align="right">
                       <Group noWrap>
                         {buttons.map((btn) => btn)}
-                        <RequestHistory request={request} />
+                        <BuzzWithdrawalRequestHistory history={request.history} />
                       </Group>
                     </td>
                   </tr>

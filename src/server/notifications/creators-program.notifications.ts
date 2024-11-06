@@ -38,6 +38,15 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },
+  'creators-program-withdrawal-updated': {
+    displayName: 'Creators program - Withdrawal Updated',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your withdrawal request has been updated. You may check the withdrawals' history for more information.`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
   'creators-program-withdrawal-transferred': {
     displayName: 'Creators program - Money transferred',
     category: NotificationCategory.Buzz,
