@@ -13,6 +13,7 @@ export async function getAllTools() {
       domain: true,
       description: true,
       metadata: true,
+      supported: true,
     },
     where: { enabled: true },
   });
