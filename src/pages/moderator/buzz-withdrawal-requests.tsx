@@ -20,6 +20,7 @@ import {
   Tooltip,
   TooltipProps,
   TextInput,
+  Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -342,7 +343,21 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 return (
                   <tr key={request.id}>
                     <td>
-                      <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
+                      <Stack spacing={0}>
+                        <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
+                        {request.requestedToProvider ===
+                          UserPaymentConfigurationProvider.Tipalti && (
+                          <Anchor
+                            href={`https://aphub2.tipalti.com/dashboard/payees/information/${request.user.id}/payments`}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            <Group spacing={2} noWrap>
+                              <IconExternalLink size={16} /> <Text size="sm">Tipalti Account</Text>
+                            </Group>
+                          </Anchor>
+                        )}
+                      </Stack>
                     </td>
                     <td>{formatDate(request.createdAt)}</td>
                     <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
