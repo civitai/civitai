@@ -121,6 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           break;
         }
         case 'paymentCompleted':
+        case 'paymentSubmitted':
         case 'paymentDeferred':
         case 'paymentCanceled': {
           const payment = event.eventData as { refCode: string; paymentStatus: string };
@@ -141,7 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const status =
             event.type === 'paymentCompleted'
               ? BuzzWithdrawalRequestStatus.Transferred
-              : event.type === 'paymentDeferred'
+              : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
               ? BuzzWithdrawalRequestStatus.Approved
               : BuzzWithdrawalRequestStatus.Rejected;
 

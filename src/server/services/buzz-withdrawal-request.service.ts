@@ -153,9 +153,6 @@ export const getPaginatedOwnedBuzzWithdrawalRequests = async (
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
 };
 
-export type BuzzWithdrawalRequestForModerator = AsyncReturnType<
-  typeof getPaginatedBuzzWithdrawalRequests
->['items'][number];
 export const getPaginatedBuzzWithdrawalRequests = async (
   input: GetPaginatedBuzzWithdrawalRequestSchema
 ) => {
