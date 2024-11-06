@@ -102,7 +102,7 @@ export namespace Tipalti {
     amountSubmitted: z.object({
       amount: z.number(),
       currency: z.string(),
-    })
+    }),
     fees: z.array(
       z.object({
         type: z.string(),

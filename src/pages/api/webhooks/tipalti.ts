@@ -53,7 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const buffAsString = buf.toString('utf8');
-
+      const client = await tipaltiCaller();
       const { isValid, ...data } = client.validateWebhookEvent(sig as string, buffAsString);
       const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
         sig as string,
@@ -187,7 +187,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
           }
 
-          const client = await tipaltiCaller();
           const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
 
           if (!paymentRecord) {
