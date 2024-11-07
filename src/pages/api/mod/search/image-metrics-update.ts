@@ -57,7 +57,7 @@ const addFields = async () => {
         SELECT
           i."id",
           p."publishedAt",
-          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+          COALESCE(i."scannedAt", p."publishedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
           i."aiNsfwLevel",
           i."nsfwLevelLocked"

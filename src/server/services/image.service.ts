@@ -1137,7 +1137,7 @@ export const getAllImages = async (
         END
       ) as "onSite",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      COALESCE(i."scannedAt", p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -3339,7 +3339,7 @@ export const getImageModerationReviewQueue = async ({
       i.meta,
       i."hideMeta",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      COALESCE(i."scannedAt", p."publishedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
