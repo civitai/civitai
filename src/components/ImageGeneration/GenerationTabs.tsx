@@ -1,4 +1,4 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
+import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
 import {
   Icon,
   IconArrowsDiagonal,

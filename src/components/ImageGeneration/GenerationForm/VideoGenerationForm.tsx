@@ -24,6 +24,7 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -67,9 +68,10 @@ export function VideoGenerationForm() {
     const { cost } = useCostStore.getState();
     const totalCost = cost;
     // TODO - tips?
-    conditionalPerformTransaction(totalCost, () =>
-      mutate({ type: 'video', data, tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO, 'txt2vid'] })
-    );
+    conditionalPerformTransaction(totalCost, () => {
+      const tag = data.sourceImageUrl ? 'img2vid' : 'txt2vid';
+      mutate({ type: 'video', data, tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO, tag] });
+    });
   }
 
   useEffect(() => {
@@ -85,10 +87,11 @@ export function VideoGenerationForm() {
   const engine = form.watch('engine');
   const image = form.watch('sourceImageUrl');
 
-  const errorHash = useMemo(
-    () => (error?.message ? hashify(error.message).toString() : null),
-    [error?.message]
-  );
+  useEffect(() => {
+    if (!error) return;
+    if (error.message.startsWith('Your prompt was flagged'))
+      form.setError('prompt', { type: 'custom', message: error.message }, { shouldFocus: true });
+  }, [error]);
 
   return (
     <Form
@@ -97,10 +100,10 @@ export function VideoGenerationForm() {
       onSubmit={handleSubmit}
     >
       <div className="flex flex-col gap-2 px-3">
-        <div>
+        <TwCard className="border p-2">
           <Title order={2}>{titleCase(engine)}</Title>
           <Text size="sm">{engineText[engine]}</Text>
-        </div>
+        </TwCard>
         <InputText name="engine" hidden clearable={false} />
         <InputText name="sourceImageUrl" hidden clearable={false} />
         {image && (
@@ -156,7 +159,7 @@ export function VideoGenerationForm() {
         </div>
         <InputSeed name="seed" label="Seed" />
       </div>
-      <div className="shadow-topper bottom-0 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+      <div className="shadow-topper bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">
@@ -166,13 +169,6 @@ export function VideoGenerationForm() {
           </Button>
         </div>
       </div>
-      {error && errorHash && (
-        <DismissibleAlert color="yellow" title="Failed Generation Request" id={errorHash}>
-          <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
-            {error.message}
-          </CustomMarkdown>
-        </DismissibleAlert>
-      )}
     </Form>
   );
 }

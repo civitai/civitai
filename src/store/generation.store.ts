@@ -1,17 +1,19 @@
 import { MediaType } from '@prisma/client';
 import { create } from 'zustand';
-import { devtools } from 'zustand/middleware';
+import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { GenerationData } from '~/server/services/generation/generation.service';
+import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
+import { GenerationResource } from '~/shared/constants/generation.constants';
 import { QS } from '~/utils/qs';
 
-export type RunType = 'run' | 'remix' | 'params' | 'replay';
+export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   opened: boolean;
   view: GenerationPanelView;
   type: MediaType;
+  remixOf?: RemixOfProps;
   data?: GenerationData & { runType: RunType };
   // input?: GetGenerationDataInput;
   // used to populate form with model/image generation data
@@ -19,7 +21,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (args: GenerationData & { view?: GenerationPanelView; type: MediaType }) => void;
+  setData: (args: GenerationData & { type: MediaType }) => void;
   clearData: () => void;
 };
 
@@ -40,9 +42,14 @@ export const useGenerationStore = create<GenerationState>()(
         });
 
         if (input) {
-          const response = await fetchGenerationData(input);
+          const result = await fetchGenerationData(input);
+          if (['media', 'image', 'video'].includes(input.type)) {
+            useRemixStore.setState(result);
+          }
+
+          const { remixOf, ...data } = result;
           set((state) => {
-            state.data = { ...response, runType: input.type === 'image' ? 'remix' : 'run' };
+            state.data = { ...data, runType: input.type === 'image' ? 'remix' : 'run' };
           });
         }
       },
@@ -59,11 +66,12 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ view, type, ...data }) =>
+      setData: ({ type, remixOf, ...data }) =>
         set((state) => {
           state.type = type;
-          state.view = view ?? 'generate';
+          state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
+          if (!location.pathname.includes('generate')) state.view = 'generate';
         }),
       clearData: () =>
         set((state) => {
@@ -86,18 +94,21 @@ export const generationStore = {
   setType: store.setType,
   setData: store.setData,
   clearData: store.clearData,
+  // getSupplementaryFormData() {
+  //   const { remixOf, type } = useGenerationStore.getState();
+  //   return { remixOf, type };
+  // },
 };
 
 const dictionary: Record<string, GenerationData> = {};
 export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
   switch (input.type) {
-    case 'image':
-    case 'modelVersion':
-      key = `${input.type}_${input.id}`;
-      break;
     case 'modelVersions':
       key = `${input.type}_${input.ids.join('_')}`;
+      break;
+    default:
+      key = `${input.type}_${input.id}`;
       break;
   }
 
@@ -110,3 +121,21 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
     return data;
   }
 };
+
+export const useRemixStore = create<{
+  resources?: GenerationResource[];
+  params?: Record<string, unknown>;
+  remixOf?: RemixOfProps;
+}>()(persist(() => ({}), { name: 'remixOf' }));
+
+// const remixStore = {
+//   checkSimilarity: ({
+//     resources,
+//     params,
+//   }: {
+//     resources?: GenerationResource[];
+//     params?: Record<string, unknown>;
+//   }) => {
+//     // TODO
+//   },
+// };

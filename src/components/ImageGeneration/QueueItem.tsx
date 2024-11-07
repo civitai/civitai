@@ -152,7 +152,6 @@ export function QueueItem({
       resources: step.resources ?? [],
       params: { ...step.params, seed: undefined },
       remixOfId: step.metadata?.remixOfId,
-      view: !pathname.includes('generate') ? 'generate' : view,
       type: images[0].type, // TODO - type based off type of media
     });
   };

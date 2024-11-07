@@ -283,7 +283,7 @@ export function GenerationFormContent() {
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
-      className="relative flex h-full flex-1 flex-col justify-between gap-2"
+      className="relative flex flex-1 flex-col justify-between gap-2"
     >
       <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
         {({ baseModel, fluxMode, draft, model }) => {
@@ -968,7 +968,7 @@ export function GenerationFormContent() {
                   </Accordion.Item>
                 </PersistentAccordion>
               </div>
-              <div className="shadow-topper sticky bottom-0 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+              <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert

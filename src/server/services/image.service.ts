@@ -42,6 +42,7 @@ import { leakingContentCounter } from '~/server/prom/client';
 import {
   imageMetaCache,
   imagesForModelVersionsCache,
+  resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
   userContentOverviewCache,
@@ -127,6 +128,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { formatGenerationResources } from '~/shared/constants/generation.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2222,6 +2224,47 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
 
   return resources;
 };
+
+export async function getImageGenerationResources(id: number) {
+  const imageResources = await dbRead.imageResource.findMany({
+    where: { imageId: id },
+    select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+  });
+  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
+  const resourceData = await resourceDataCache
+    .fetch(versionIds)
+    .then((resourceData) => formatGenerationResources(resourceData));
+
+  // TODO - determine a good way to return resources when some resources are unavailable
+  // const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  // if (index > -1 && !resourceData[index].available) {
+  //   const checkpoint = resourceData[index];
+  //   const latestVersion = await dbRead.modelVersion.findFirst({
+  //     where: {
+  //       modelId: checkpoint.model.id,
+  //       availability: { in: ['Public', 'EarlyAccess'] },
+  //       generationCoverage: { covered: true },
+  //     },
+  //     select: { id: true },
+  //     orderBy: { index: 'asc' },
+  //   });
+  //   if (latestVersion) {
+  //     const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+  //     if (newCheckpoint) resourceData[index] = newCheckpoint;
+  //   }
+  // }
+
+  return resourceData
+    .map((resource) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+      return {
+        ...resource,
+        hash: imageResource?.hash ?? undefined,
+        strength: imageResource?.strength ? imageResource.strength / 100 : resource.strength,
+      };
+    })
+    .filter((x) => x.available);
+}
 
 export type ImagesForModelVersions = {
   id: number;

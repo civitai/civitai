@@ -12,3 +12,9 @@ export function useIsMobile(options?: { breakpoint: MantineSize }) {
   //   getInitialValueInEffect: false,
   // });
 }
+
+export function isMobileDevice() {
+  return (
+    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
+  );
+}

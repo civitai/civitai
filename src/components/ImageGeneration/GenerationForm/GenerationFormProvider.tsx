@@ -455,6 +455,10 @@ function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): 
   return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
 }
 
+function objectSimilarity(obj1: Record<string, unknown>, obj2: Record<string, unknown>) {
+  // TODO
+}
+
 // Example usage
 // const prompt1 =
 //   'beautiful lady, (freckles), big smile, brown hazel eyes, Short hair, rainbow color hair, dark makeup, hyperdetailed photography, soft light, head and shoulders portrait, cover';

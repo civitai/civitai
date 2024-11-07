@@ -1,12 +1,15 @@
-import { SegmentedControl } from '@mantine/core';
+import { SegmentedControl, Text } from '@mantine/core';
 import { useEffect } from 'react';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { generationStore, useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 
 export function GenerationForm() {
@@ -32,16 +35,19 @@ export function GenerationForm() {
   return (
     <ScrollArea scrollRestore={{ key: 'generation-form' }} pt={0} className="flex flex-col gap-2">
       {/* TODO - image remix component */}
-      <SegmentedControl
-        value={type}
-        onChange={generationStore.setType}
-        className="mx-3 overflow-visible"
-        color="blue"
-        data={[
-          { label: 'Image', value: 'image' },
-          { label: 'Video', value: 'video' },
-        ]}
-      />
+      <div className="flex flex-col gap-2 px-3">
+        {/* <RemixOfControl /> */}
+        <SegmentedControl
+          value={type}
+          onChange={generationStore.setType}
+          className="overflow-visible"
+          color="blue"
+          data={[
+            { label: 'Image', value: 'image' },
+            { label: 'Video', value: 'video' },
+          ]}
+        />
+      </div>
       {type === 'image' && (
         <GenerationFormProvider>
           <TextToImageWhatIfProvider>
@@ -53,3 +59,30 @@ export function GenerationForm() {
     </ScrollArea>
   );
 }
+
+// function RemixOfControl() {
+//   const remixOf = useRemixStore((state) => state.remixOf);
+//   console.log({ remixOf });
+
+//   if (!remixOf) return null;
+
+//   return (
+//     <TwCard className="border">
+//       <div className="flex">
+//         {remixOf?.url && (
+//           <div className="relative aspect-square w-[100px]">
+//             <EdgeMedia
+//               src={remixOf.url}
+//               type={remixOf.type}
+//               width={DEFAULT_EDGE_IMAGE_WIDTH}
+//               className="absolute object-cover"
+//             />
+//           </div>
+//         )}
+//         <div className="flex flex-1 items-center justify-center p-3">
+//           <Text>Remixing {remixOf.type}</Text>
+//         </div>
+//       </div>
+//     </TwCard>
+//   );
+// }

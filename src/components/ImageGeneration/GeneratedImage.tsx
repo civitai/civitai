@@ -119,7 +119,6 @@ export function GeneratedImage({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
-      view: !pathname.includes('/generate') ? 'generate' : view,
       type: type ?? image.type, // TODO - type based off type of media
     });
   };
@@ -339,11 +338,14 @@ export function GeneratedImage({
                 </>
               )}
               {!isVideo && (
-                <Menu.Item
-                  onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
-                >
-                  Image to Video
-                </Menu.Item>
+                <>
+                  <Menu.Divider />
+                  <Menu.Item
+                    onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
+                  >
+                    Image to Video
+                  </Menu.Item>
+                </>
               )}
               <Menu.Divider />
               <Menu.Label>System</Menu.Label>
