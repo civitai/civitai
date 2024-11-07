@@ -974,7 +974,7 @@ export const toggleBanHandler = async ({
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
 
-  const updatedUser = await toggleBan(input);
+  const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 
   await ctx.track.userActivity({
     type: updatedUser.bannedAt ? 'Banned' : 'Unbanned',

@@ -7,6 +7,7 @@ import {
   MODELS_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
 } from '~/server/common/constants';
 
 const searchIndexes = [
@@ -16,6 +17,7 @@ const searchIndexes = [
   IMAGES_SEARCH_INDEX,
   COLLECTIONS_SEARCH_INDEX,
   BOUNTIES_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
 ] as const;
 export type SearchIndex = (typeof searchIndexes)[number];
 export const SearchIndexEntityTypes = {
@@ -25,6 +27,7 @@ export const SearchIndexEntityTypes = {
   [IMAGES_SEARCH_INDEX]: 'Image',
   [COLLECTIONS_SEARCH_INDEX]: 'Collection',
   [BOUNTIES_SEARCH_INDEX]: 'Bounty',
+  [TOOLS_SEARCH_INDEX]: 'Tool',
 } as const;
 
 export type SearchIndexEntityType =

@@ -202,3 +202,16 @@ export const getPaddleAdjustments = async (params: ListAdjustmentQueryParameters
   const data = await query.next();
   return data;
 };
+
+export const updatePaddleCustomerEmail = async ({
+  customerId,
+  email,
+}: {
+  customerId: string;
+  email: string;
+}) => {
+  const paddle = getPaddle();
+  return paddle.customers.update(customerId, {
+    email,
+  });
+};

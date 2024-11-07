@@ -93,11 +93,25 @@ export namespace Tipalti {
     ),
   });
 
-  export type Payment = z.infer<typeof createPayeeResponseSchema>;
+  export type Payment = z.infer<typeof PaymentResponse>;
   export const PaymentResponse = z.object({
     id: z.string(),
     batchId: z.string().nullish(),
     refCode: z.string().nullish(),
     status: z.enum(paymentStatus),
+    amountSubmitted: z.object({
+      amount: z.number(),
+      currency: z.string(),
+    }),
+    fees: z.array(
+      z.object({
+        type: z.string(),
+        entityType: z.string(),
+        amount: z.object({
+          amount: z.number(),
+          currency: z.string(),
+        }),
+      })
+    ),
   });
 }

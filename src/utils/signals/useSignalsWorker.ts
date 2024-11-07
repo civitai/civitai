@@ -3,6 +3,7 @@ import SharedWorker from '@okikio/sharedworker';
 import type { WorkerOutgoingMessage } from './types';
 import { Deferred, EventEmitter } from './utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export type SignalStatus = 'connected' | 'closed' | 'error' | 'reconnected' | 'reconnecting';
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
@@ -26,6 +27,7 @@ export function useSignalsWorker(
   }
 ) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const { accessToken } = args;
   const { onConnected, onClosed, onError, onReconnected, onReconnecting, onStatusChange } =
     options ?? {};
@@ -39,7 +41,7 @@ export function useSignalsWorker(
 
   // handle init worker
   useEffect(() => {
-    if (worker) return;
+    if (worker || !features.signal) return;
     setReady(false);
     setWorker(
       (worker) =>
@@ -49,7 +51,7 @@ export function useSignalsWorker(
           type: 'module',
         })
     );
-  }, [worker]);
+  }, [features.signal, worker]);
 
   // handle register worker events
   useEffect(() => {

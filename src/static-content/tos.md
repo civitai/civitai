@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 09/10/2024
+Last Updated: 11/6/2024
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -30,15 +30,17 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 5.4 **Refund**. As a customer, you are eligible for a refund in the following situations:
   - Recurring Technical Problems: If ongoing technical difficulties hinder your use of the platform.
-  - Failure to Receive Buzz: If Buzz you've bought isn't received or added to your account due to technical Issues.
+  - Failure to Receive Buzz: If Buzz you've purchased isn't received or added to your account due to technical issues.
   - Flawed Resource: If digital products you've trained are substantially flawed beyond what could be reasonably attributed to user error.
 
-  We retain the right to refuse a refund in the event:
-  - You were muted or removed from the platform for breaking content guidelines
-  - You are unable to get results to your satisfaction through no technical fault of the platform.
+  Refunds for expenditures on 3rd party services hosted via API on Civitai will only be granted if Civitai can secure a refund from the respective service provider. Please note that not all API services permit refunds, and Civitai's ability to issue a refund is contingent on this limitation.
+
+  Civitai retains the right to refuse a refund in the following cases:
+  - You were muted or removed from the platform for breaking content guidelines.
+  - You are unable to achieve desired results through no technical fault of the platform.
   - You have changed your mind.
 
-  Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with the applicable requirements under the Digital Millennium Copyright Act. Refunds will be given in Buzz for platform services and credited to your Account upon request or within a reasonable time.
+  Civitai will grant you a refund if any User Content you purchased through the Service was removed or taken down from the Service by us or by the Creator in compliance with applicable requirements under the Digital Millennium Copyright Act. Refunds will be given in Buzz for platform services and credited to your account upon request or within a reasonable time.
 
 - 5.5 **Payment Processing.** Civitai may contract with a third party to process payments submitted through the Service (the “Payment Processor”). Users may be required to provide their payment method details to the Payment Processor. Before you pay for Buzz through the Payment Processor, you will have an opportunity to review the amounts that you will be charged.
 
@@ -186,7 +188,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 14.4 **Modification of the Service.** Civitai reserves the right to modify or discontinue all or any portion of the Service at any time (including by limiting or discontinuing certain features of the Service), temporarily or permanently, without notice to you. Civitai will have no liability for any change to the Service, including any paid-for functionalities of the Service, or any suspension or termination of your access to or use of the Service. You should retain copies of any User Content you Post to the Service so that you have permanent copies in the event the Service is modified in such a way that you lose access to User Content you Posted to the Service.
 
-15. **Indemnity.** To the fullest extent permitted by law, you are responsible for your use of the Service, and you will defend and indemnify Civitai, its affiliates and their respective shareholders, directors, managers, members, officers, employees, consultants, and agents (together, the “Civitai Entities”) from and against every claim brought by a third party, and any related liability, damage, loss, and expense, including attorneys’ fees and costs, arising out of or connected with: (1) your unauthorized use of, or misuse of, the Service, including User Content of other Users; (2) your violation of any portion of these Terms, any representation, warranty, or agreement referenced in these Terms, or any applicable law or regulation; (3) your violation of any third-party right, including any intellectual property right or publicity, confidentiality, other property, or privacy right; or (4) any dispute or issue between you and any third party. We reserve the right, at our own expense, to assume the exclusive defense and control of any matter otherwise subject to indemnification by you (without limiting your indemnification obligations with respect to that matter), and in that case, you agree to cooperate with our defense of those claims.
+15. **Indemnity.** To the fullest extent permitted by law, you are responsible for your use of the Service, including any third-party API integrations made available through the Service, and you will defend and indemnify Civitai, its affiliates, and their respective shareholders, directors, managers, members, officers, employees, consultants, and agents (together, the “Civitai Entities”) from and against every claim brought by a third party, and any related liability, damage, loss, and expense, including attorneys’ fees and costs, arising out of or connected with: (1) your unauthorized use of, or misuse of, the Service, including User Content of other Users; (2) your use of third-party API services accessible through the Service, including, without limitation, any claims or disputes arising from the performance, accuracy, or legality of such third-party services; (3) your violation of any portion of these Terms, any representation, warranty, or agreement referenced in these Terms, or any applicable law or regulation; (4) your violation of any third-party right, including any intellectual property right or publicity, confidentiality, other property, or privacy right; or (5) any dispute or issue between you and any third party. We reserve the right, at our own expense, to assume the exclusive defense and control of any matter otherwise subject to indemnification by you (without limiting your indemnification obligations with respect to that matter), and in that case, you agree to cooperate with our defense of those claims.
 
 16. **Disclaimers; No Warranties by Civitai**
 
@@ -198,9 +200,9 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 17. **Limitation of Liability**
 
-- 17.1 TO THE FULLEST EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE CIVITAI ENTITIES BE LIABLE TO YOU FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES (INCLUDING DAMAGES FOR LOSS OF PROFITS, GOODWILL, OR ANY OTHER INTANGIBLE LOSS) ARISING OUT OF OR RELATING TO YOUR ACCESS TO OR USE OF, OR YOUR INABILITY TO ACCESS OR USE, THE SERVICE OR ANY MATERIALS OR CONTENT ON THE SERVICE, WHETHER BASED ON WARRANTY, CONTRACT, TORT (INCLUDING NEGLIGENCE), STATUTE, OR ANY OTHER LEGAL THEORY, AND WHETHER OR NOT ANY CIVITAI ENTITY HAS BEEN INFORMED OF THE POSSIBILITY OF DAMAGE.
+- 17.1 TO THE FULLEST EXTENT PERMITTED BY LAW, IN NO EVENT WILL THE CIVITAI ENTITIES BE LIABLE TO YOU FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES (INCLUDING DAMAGES FOR LOSS OF PROFITS, GOODWILL, OR ANY OTHER INTANGIBLE LOSS) ARISING OUT OF OR RELATING TO YOUR ACCESS TO OR USE OF, OR YOUR INABILITY TO ACCESS OR USE, THE SERVICE, ANY MATERIALS OR CONTENT ON THE SERVICE, OR ANY THIRD-PARTY SERVICES OR APIs ACCESSED THROUGH THE SERVICE, WHETHER BASED ON WARRANTY, CONTRACT, TORT (INCLUDING NEGLIGENCE), STATUTE, OR ANY OTHER LEGAL THEORY, AND WHETHER OR NOT ANY CIVITAI ENTITY HAS BEEN INFORMED OF THE POSSIBILITY OF DAMAGE.
 
-- 17.2 EXCEPT AS PROVIDED IN SECTIONS 18.5 (COMMENCING ARBITRATION) AND 18.7 (ARBITRATION RELIEF) AND TO THE FULLEST EXTENT PERMITTED BY LAW, THE AGGREGATE LIABILITY OF THE CIVITAI ENTITIES TO YOU FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE USE OF OR ANY INABILITY TO USE ANY PORTION OF THE SERVICE OR OTHERWISE UNDER THESE TERMS, WHETHER IN CONTRACT, TORT, OR OTHERWISE, IS LIMITED TO THE GREATER OF: (A) THE AMOUNT YOU HAVE PAID TO CIVITAI FOR ACCESS TO AND USE OF THE SERVICE IN THE 12 MONTHS PRIOR TO THE EVENT OR CIRCUMSTANCE GIVING RISE TO THE CLAIM AND (b) US$100.
+- 17.2 EXCEPT AS PROVIDED IN SECTIONS 18.5 (COMMENCING ARBITRATION) AND 18.7 (ARBITRATION RELIEF) AND TO THE FULLEST EXTENT PERMITTED BY LAW, THE AGGREGATE LIABILITY OF THE CIVITAI ENTITIES TO YOU FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE USE OF OR ANY INABILITY TO USE ANY PORTION OF THE SERVICE, ANY THIRD-PARTY SERVICES OR APIs ACCESSED THROUGH THE SERVICE, OR OTHERWISE UNDER THESE TERMS, WHETHER IN CONTRACT, TORT, OR OTHERWISE, IS LIMITED TO THE GREATER OF: (A) THE AMOUNT YOU HAVE PAID TO CIVITAI FOR ACCESS TO AND USE OF THE SERVICE IN THE 12 MONTHS PRIOR TO THE EVENT OR CIRCUMSTANCE GIVING RISE TO THE CLAIM AND (B) US$100.
 
 - 17.3 EACH PROVISION OF THESE TERMS THAT PROVIDES FOR A LIMITATION OF LIABILITY, DISCLAIMER OF WARRANTIES, OR EXCLUSION OF DAMAGES IS INTENDED TO AND DOES ALLOCATE THE RISKS BETWEEN THE PARTIES UNDER THESE TERMS. THIS ALLOCATION IS AN ESSENTIAL ELEMENT OF THE BASIS OF THE BARGAIN BETWEEN THE PARTIES. EACH OF THESE PROVISIONS IS SEVERABLE AND INDEPENDENT OF ALL OTHER PROVISIONS OF THESE TERMS. THE LIMITATIONS IN THIS SECTION 17 (LIMITATION OF LIABILITY) WILL APPLY EVEN IF ANY LIMITED REMEDY FAILS OF ITS ESSENTIAL PURPOSE.
 

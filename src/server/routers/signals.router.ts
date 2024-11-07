@@ -1,6 +1,6 @@
 import { getUserAccountHandler } from '~/server/controllers/signals.controller';
-import { protectedProcedure, router } from '~/server/trpc';
+import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
 export const signalsRouter = router({
-  getToken: protectedProcedure.query(getUserAccountHandler),
+  getToken: protectedProcedure.use(isFlagProtected('signal')).query(getUserAccountHandler),
 });

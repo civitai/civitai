@@ -258,6 +258,10 @@ const PaddlePaymentMethods = () => {
     }
   };
 
+  if (!managementUrls?.updatePaymentMethod && !managementUrls?.freeSubscriptionPriceId) {
+    return null;
+  }
+
   return (
     <Card withBorder>
       <Stack>

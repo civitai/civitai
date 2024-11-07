@@ -1,20 +1,17 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server.mjs';
 import { Readable } from 'node:stream';
-import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { dbRead } from '~/server/db/client';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
+import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 
-async function buffer(readable: Readable) {
-  const chunks = [];
-  for await (const chunk of readable) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
-  }
-
-  return Buffer.concat(chunks);
-}
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
 
 type TipaltiWebhookEvent = {
   id: string;
@@ -26,35 +23,52 @@ type TipaltiWebhookEvent = {
   eventData: Record<string, any>;
 };
 
+async function buffer(readable: Readable) {
+  const chunks = [];
+  for await (const chunk of readable) {
+    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk);
+    console.log('chunk:', chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === 'POST') {
-    const sig = req.headers['tipalti-signature'];
-    const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
-    const buf = await buffer(req);
-    let event: TipaltiWebhookEvent;
+    const sig =
+      req.headers['tipalti-signature'] ??
+      req.headers['x-tipalti-signature'] ??
+      req.headers['Tipalti-Signature'];
 
-    console.log(req.headers, sig);
+    const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
+    let event: TipaltiWebhookEvent;
+    const buf = await buffer(req);
+
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
         return res.status(400).send({
-          error: 'Invalid Request',
+          error: 'Invalid Request. Signature or Secret not found',
+          sig,
         });
       }
 
+      const buffAsString = buf.toString('utf8');
       const client = await tipaltiCaller();
-
-      const isValid = client.validateWebhookEvent(sig as string, JSON.stringify(req.body));
-      if (!isValid) {
+      const { isValid, ...data } = client.validateWebhookEvent(sig as string, buffAsString);
+      const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
+        sig as string,
+        req.body as string
+      );
+      if (!isValid && !isValid2) {
         console.log('❌ Invalid signature');
         return res.status(400).send({
-          error: 'Invalid Request',
+          error: 'Invalid Request. Could not validate Webhook signature',
+          data,
+          data2,
         });
       }
 
-      event = req.body as TipaltiWebhookEvent;
-
-      console.log(event.type);
+      event = JSON.parse(buffAsString) as TipaltiWebhookEvent;
 
       switch (event.type) {
         case 'payeeDetailsChanged':
@@ -107,7 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           break;
         }
         case 'paymentCompleted':
-        case 'paymentError':
+        case 'paymentSubmitted':
         case 'paymentDeferred':
         case 'paymentCanceled': {
           const payment = event.eventData as { refCode: string; paymentStatus: string };
@@ -128,7 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const status =
             event.type === 'paymentCompleted'
               ? BuzzWithdrawalRequestStatus.Transferred
-              : event.type === 'paymentError' || event.type === 'paymentDeferred'
+              : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
               ? BuzzWithdrawalRequestStatus.Approved
               : BuzzWithdrawalRequestStatus.Rejected;
 
@@ -143,8 +157,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const note =
             event.type === 'paymentCompleted'
               ? 'Payment completed'
-              : event.type === 'paymentError'
-              ? `Payment error: ${event.eventData.errorDescription}`
               : event.type === 'paymentDeferred'
               ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
                   .map((r: { reasonDescription: string }) => r.reasonDescription)
@@ -157,6 +169,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             metadata,
             note,
             userId: -1, // Done by Webhook
+          });
+
+          break;
+        }
+        case 'paymentError': {
+          const payment = event.eventData as { refCode: string; paymentStatus: string };
+          const request = await dbRead.buzzWithdrawalRequest.findFirst({
+            where: {
+              transferId: payment.refCode,
+            },
+          });
+
+          if (!request) {
+            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+            return res
+              .status(400)
+              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
+          }
+
+          const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+
+          if (!paymentRecord) {
+            throw new Error('Could not fetch payment record');
+          }
+
+          const feesTotal = paymentRecord?.fees.reduce((acc, fee) => acc + fee.amount.amount, 0);
+          // Update the status of the withdrawal request:
+
+          await updateBuzzWithdrawalRequest({
+            requestId: request.id,
+            status: BuzzWithdrawalRequestStatus.Rejected,
+            metadata: {
+              ...((request.metadata as MixedObject) ?? {}),
+              cancelledDate: event.eventData.cancelledDate,
+              errorDescription: event.eventData.errorDescription,
+              errorCode: event.eventData.errorCode,
+              errorDate: event.eventData.errorDate,
+              deferredReasons: event.eventData.deferredReasons,
+            },
+            note: `Payment error: ${event.eventData.errorDescription}`,
+            userId: -1, // Done by Webhook
+            refundFees: feesTotal * 100,
           });
 
           break;

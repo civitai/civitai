@@ -23,6 +23,8 @@ const sortableAttributes = [
   'collectedCount',
 ] as const;
 
+const rankingRules = ['sort'];
+
 const filterableAttributes = [
   'id',
   'sortAtUnix',
@@ -88,6 +90,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: sortableFieldsAttributesTask created',
       sortableFieldsAttributesTask
     );
+  }
+
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
   if (
@@ -307,9 +314,9 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         p."modelVersionId" as "postedToId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
-        LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"
         WHERE ${Prisma.join(where, ' AND ')}
       `;
+      logger(`PullData Complete :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
       if (images.length === 0) {
         return null;

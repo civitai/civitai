@@ -55,4 +55,5 @@ export const updateBuzzWithdrawalRequestSchema = z.object({
   status: z.nativeEnum(BuzzWithdrawalRequestStatus),
   note: z.string().optional(),
   metadata: buzzWithdrawalRequestHistoryMetadataSchema.optional(),
+  refundFees: z.number().optional(),
 });

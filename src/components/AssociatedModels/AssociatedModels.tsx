@@ -21,6 +21,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export function AssociatedModels({
@@ -37,6 +38,7 @@ export function AssociatedModels({
   versionId?: number;
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const isOwnerOrModerator = currentUser?.isModerator || currentUser?.id === ownerId;
 
   const browsingLevel = useBrowsingLevelDebounced();
@@ -46,7 +48,10 @@ export function AssociatedModels({
     browsingLevel,
   });
   const { data: recommendedResources, isInitialLoading: loadingRecommended } =
-    useQueryRecommendedResources({ modelVersionId: versionId as number }, { enabled: !!versionId });
+    useQueryRecommendedResources(
+      { modelVersionId: versionId as number },
+      { enabled: !!versionId && features.recommenders }
+    );
 
   const combinedData = [...data, ...recommendedResources];
 

@@ -42,7 +42,6 @@ import {
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { getPlans } from '~/server/services/subscriptions.service';
-import { playfab } from '~/server/playfab/client';
 import {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
@@ -346,6 +345,10 @@ export const upsertSubscription = async (
     throw throwNotFoundError('No active subscription product found');
   }
 
+  const subscriptionItemProduct = subscriptionProducts.find(
+    (p) => p.id === mainSubscriptionItem.price?.productId
+  );
+
   log('upsertSubscription :: main subscription item:', mainSubscriptionItem);
 
   if (isUpdatingSubscription) {
@@ -380,6 +383,20 @@ export const upsertSubscription = async (
     (isCreatingSubscription || userSubscription?.product?.provider !== PaymentProvider.Paddle) &&
     userHasSubscription &&
     !isSameSubscriptionItem;
+
+  if (
+    userSubscription &&
+    !isSameSubscriptionItem &&
+    (subscriptionItemProduct?.metadata as SubscriptionProductMetadata)?.tier === 'free' &&
+    userSubscription.status === 'active'
+  ) {
+    // This is a free tier subscription, we should cancel the old one.
+    log(
+      'upsertSubscription :: Free tier subscription, ignoring this event since user has a sub already'
+    );
+
+    return;
+  }
 
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
@@ -461,10 +478,11 @@ export const upsertSubscription = async (
   ]);
 
   if (userSubscription?.status !== data.status && ['active', 'canceled'].includes(data.status)) {
-    await playfab.trackEvent(user.id, {
-      eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
-      productId: data.productId,
-    });
+    // TODO: track with clickhouse
+    // await playfab.trackEvent(user.id, {
+    //   eventName: data.status === 'active' ? 'user_start_membership' : 'user_cancel_membership',
+    //   productId: data.productId,
+    // });
   }
 
   const userVault = await dbRead.vault.findFirst({

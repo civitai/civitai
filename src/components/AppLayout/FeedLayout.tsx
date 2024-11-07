@@ -14,8 +14,9 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
         columnWidth={constants.cardSizes.model}
         maxColumnCount={maxColumnCount}
         maxSingleColumnWidth={450}
-        style={{ margin: 0, flex: 1, zIndex: 10 }}
+        style={{ flex: 1, zIndex: 10 }}
         pb="md"
+        className="m-0 peer-[.announcements]:mt-8"
       >
         {/* <AdUnit keys={['Leaderboard_B']} className="justify-center pb-3" /> */}
         {children}
