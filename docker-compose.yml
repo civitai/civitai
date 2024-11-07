@@ -13,7 +13,6 @@ services:
 
   db:
     image: postgres:alpine
-#    container_name: db
     ports:
       - "15432:5432"
     environment:
@@ -25,7 +24,6 @@ services:
 
   notif:
     image: postgres:alpine
-    container_name: notif
     ports:
       - "15434:5432"
     environment:
@@ -37,7 +35,6 @@ services:
 
   redis:
     image: redis:alpine
-    container_name: redis
     command: redis-server --requirepass "redis"
     restart: unless-stopped
     ports:
@@ -47,7 +44,6 @@ services:
 
   minio:
     image: minio/minio
-    container_name: minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -61,7 +57,6 @@ services:
 
   meilisearch:
     image: getmeili/meilisearch:v1.11
-    container_name: meilisearch
     ports:
       - "7700:7700"
     volumes:
@@ -71,7 +66,6 @@ services:
 
   createbuckets:
     image: minio/mc
-    container_name: createbuckets
     depends_on:
       - minio
     entrypoint: >
@@ -79,7 +73,6 @@ services:
 
   maildev:
     image: maildev/maildev
-    container_name: maildev
     environment:
       - MAILDEV_SMTP_PORT=1025
       - MAILDEV_WEB_PORT=1080
@@ -90,7 +83,6 @@ services:
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8.4
-    container_name: clickhouse
     ulimits:
       nofile:
         soft: 262144

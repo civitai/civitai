@@ -4,7 +4,8 @@ import { env } from '~/env/server.mjs';
 import { pgDbWrite } from '~/server/db/pgDb';
 
 export const checkLocalDb = () => {
-  if (!env.DATABASE_URL.includes('localhost:15432')) {
+  console.log(env.DATABASE_URL);
+  if (!(env.DATABASE_URL.includes('localhost:15432') || env.DATABASE_URL.includes('db:5432'))) {
     console.error('ERROR: not running with local database server.');
     process.exit(1);
   }
@@ -12,8 +13,8 @@ export const checkLocalDb = () => {
 
 export const checkLocalMeili = () => {
   if (
-    env.METRICS_SEARCH_HOST !== 'http://localhost:7700' ||
-    env.SEARCH_HOST !== 'http://localhost:7700'
+    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.METRICS_SEARCH_HOST ?? '') ||
+    !['http://localhost:7700', 'http://meilisearch:7700'].includes(env.SEARCH_HOST ?? '')
   ) {
     console.error('ERROR: not running with local meilisearch server.');
     process.exit(1);
