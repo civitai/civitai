@@ -57,8 +57,8 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
 
     const handleRemove = (id: number) => {
       const filtered = [..._values.filter((x) => x.id !== id)];
-      const emitValue = !!filtered.length ? filtered : undefined;
-      onChange?.(emitValue);
+      // const emitValue = !!filtered.length ? filtered : undefined;
+      onChange?.(filtered);
     };
 
     const handleUpdate = (resource: Generation.Resource) => {

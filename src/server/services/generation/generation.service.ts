@@ -380,7 +380,7 @@ export async function getUnavailableResources() {
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
-  return [...new Set(cachedData)] ?? [];
+  return [...new Set(cachedData ?? [])];
 }
 
 export async function toggleUnavailableResource({

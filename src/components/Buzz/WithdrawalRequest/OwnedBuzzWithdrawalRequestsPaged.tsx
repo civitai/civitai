@@ -38,6 +38,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { StripeConnectStatus } from '~/server/common/enums';
+import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
@@ -158,18 +159,21 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                         </Badge>
                       </td>
                       <td align="right">
-                        {request.status === BuzzWithdrawalRequestStatus.Requested && (
-                          <Button
-                            color="red"
-                            onClick={() => {
-                              handleCancelRequest(request.id);
-                            }}
-                            loading={cancelingBuzzWithdrawalRequest}
-                            size="xs"
-                          >
-                            <Text size="sm">Cancel</Text>
-                          </Button>
-                        )}
+                        <Group>
+                          {request.status === BuzzWithdrawalRequestStatus.Requested && (
+                            <Button
+                              color="red"
+                              onClick={() => {
+                                handleCancelRequest(request.id);
+                              }}
+                              loading={cancelingBuzzWithdrawalRequest}
+                              size="xs"
+                            >
+                              <Text size="sm">Cancel</Text>
+                            </Button>
+                          )}
+                          <BuzzWithdrawalRequestHistory history={request.history} />
+                        </Group>
                       </td>
                     </tr>
                   );
