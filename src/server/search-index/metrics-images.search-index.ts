@@ -23,6 +23,8 @@ const sortableAttributes = [
   'collectedCount',
 ] as const;
 
+const rankingRules = ['sort'];
+
 const filterableAttributes = [
   'id',
   'sortAtUnix',
@@ -88,6 +90,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       'onIndexSetup :: sortableFieldsAttributesTask created',
       sortableFieldsAttributesTask
     );
+  }
+
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
   if (
