@@ -149,8 +149,10 @@ export function usePersistForm<
     };
   }
 
-  return {
-    ...form,
-    clear: () => getStorage().removeItem(storageKey),
-  };
+  return form;
+
+  // return {
+  //   ...form,
+  //   clear: () => getStorage().removeItem(storageKey),
+  // };
 }

@@ -233,7 +233,7 @@ export function QueueItem({
       {inView && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage && cancellable && (
+            {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">
                   <Text size="xs" color="yellow" lh={1}>

@@ -156,13 +156,13 @@ export function useGenerate() {
       });
       updateFromEvents();
     },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to generate',
-        error: new Error(error.message),
-        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-      });
-    },
+    // onError: (error) => {
+    //   showErrorNotification({
+    //     title: 'Failed to generate',
+    //     error: new Error(error.message),
+    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+    //   });
+    // },
   });
 }
 

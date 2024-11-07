@@ -7,10 +7,7 @@ import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/H
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { Form, InputSegmentedControl, InputText, InputTextArea } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import {
-  videoGenerationSchema,
-  haiperVideoGenerationSchema,
-} from '~/server/schema/orchestrator/orchestrator.schema';
+import { haiperVideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import { trpc } from '~/utils/trpc';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -18,13 +15,12 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
-import { hashify, titleCase } from '~/utils/string-helpers';
+import { titleCase } from '~/utils/string-helpers';
 import { IconX } from '@tabler/icons-react';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { showErrorNotification } from '~/utils/notifications';
 
 const schema = haiperVideoGenerationSchema;
 const defaultValues = {
@@ -48,6 +44,8 @@ export function VideoGenerationForm() {
     defaultValues,
     storage: localStorage,
   });
+  // const { setFocus } = form;
+  // const { errors } = useFormState({ control: form.control });
   const { mutate, isLoading, error } = useGenerate();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
@@ -84,13 +82,29 @@ export function VideoGenerationForm() {
     }
   }, [storeData, type]);
 
+  // TODO - determine why this won't work
+  // useEffect(() => {
+  //   const firstError = Object.keys(errors)[0];
+  //   if (firstError) {
+  //     setFocus(firstError as any);
+  //   }
+  // }, [errors, setFocus]);
+
   const engine = form.watch('engine');
   const image = form.watch('sourceImageUrl');
 
   useEffect(() => {
     if (!error) return;
-    if (error.message.startsWith('Your prompt was flagged'))
+    if (error.message.startsWith('Your prompt was flagged')) {
       form.setError('prompt', { type: 'custom', message: error.message }, { shouldFocus: true });
+      const elem = document.getElementById(`input_prompt`);
+      if (elem) elem.scrollIntoView();
+    } else
+      showErrorNotification({
+        title: 'Failed to generate',
+        error: new Error(error.message),
+        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+      });
   }, [error]);
 
   return (
@@ -102,7 +116,11 @@ export function VideoGenerationForm() {
       <div className="flex flex-col gap-2 px-3">
         <TwCard className="border p-2">
           <Title order={2}>{titleCase(engine)}</Title>
-          <Text size="sm">{engineText[engine]}</Text>
+          <Text size="sm">
+            {typeof engines[engine].description === 'function'
+              ? engines[engine].description()
+              : engines[engine].description}
+          </Text>
         </TwCard>
         <InputText name="engine" hidden clearable={false} />
         <InputText name="sourceImageUrl" hidden clearable={false} />
@@ -220,6 +238,30 @@ function SubmitButton({ loading }: { loading: boolean }) {
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
-const engineText = {
-  haiper: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+const engines: Record<string, { label: string; description: string | (() => React.ReactNode) }> = {
+  haiper: {
+    label: 'Haiper',
+    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+  },
+  mochi: {
+    label: 'Mochi',
+    description() {
+      return (
+        <>
+          Mochi 1 preview, by creators{' '}
+          <Text
+            variant="link"
+            component="a"
+            rel="nofollow"
+            href="https://www.genmo.ai/"
+            target="_blank"
+          >
+            https://www.genmo.ai/
+          </Text>
+          , is an open state-of-the-art video generation model with high-fidelity motion and strong
+          prompt adherence in preliminary evaluation.
+        </>
+      );
+    },
+  },
 };

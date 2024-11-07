@@ -7,6 +7,7 @@ const baseVideoSchema = z.object({
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('haiper'),
+  model: z.string().default('v2'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   image: z.string().optional(),
   cameraMovement: z.string().optional(),
@@ -27,10 +28,16 @@ export const klingVideoGenerationSchema = baseVideoSchema.extend({
   // quantity: z.number(),
 });
 
+export const mochiVideoGenerationSchema = baseVideoSchema.extend({
+  engine: z.literal('mochi'),
+  seed: z.number().optional(),
+});
+
 export type VideoGenerationSchema = z.infer<typeof videoGenerationSchema>;
 export const videoGenerationSchema = z.discriminatedUnion('engine', [
   haiperVideoGenerationSchema,
   klingVideoGenerationSchema,
+  mochiVideoGenerationSchema,
 ]);
 
 const baseGenerationSchema = z.object({
