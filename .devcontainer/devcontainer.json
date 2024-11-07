@@ -11,13 +11,16 @@
 	"workspaceFolder": "/workspace",
 	"shutdownAction": "stopCompose",
 	// Features to add to the dev container. More info: https://containers.dev/features.
-	 "features": {"ghcr.io/jungaretti/features/make" : {},},
+	 "features": {"ghcr.io/jungaretti/features/make" : {}},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
 	// Configure tool-specific properties.
 	// "customizations": {},
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	"remoteUser": "root",
+  containerEnv: {
+
+  },
+  "remoteUser": "root",
 	"postCreateCommand": "make init-devcontainer",
 	"postStartCommand": "make run"
 }

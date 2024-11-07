@@ -13,7 +13,7 @@ services:
 
   db:
     image: postgres:alpine
-    container_name: db
+#    container_name: db
     ports:
       - "15432:5432"
     environment:
