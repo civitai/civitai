@@ -591,6 +591,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     engine: 'mochi',
     key: 'mochi-txt2vid',
     defaultValues: {
+      prompt: '',
       sourceImageUrl: undefined,
       duration: 4,
     },

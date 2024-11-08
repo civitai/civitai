@@ -166,8 +166,6 @@ function FormWrapper({
     storage: localStorage,
   });
 
-  console.log(form.getValues());
-
   const { mutate, isLoading, error } = useGenerate();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
