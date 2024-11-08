@@ -75,6 +75,7 @@ export function MediaFiltersDropdown({
   filterType = 'images',
   hideBaseModels = false,
   hideMediaTypes = false,
+  hideTools = false,
   ...buttonProps
 }: Props) {
   const { classes, theme, cx } = useStyles();
@@ -228,7 +229,7 @@ export function MediaFiltersDropdown({
       )}
 
       <Stack spacing="md">
-        {!hideMediaTypes && 'types' in mergedFilters && (
+        {!hideMediaTypes && (
           <>
             <Divider label="Media type" labelProps={{ weight: 'bold', size: 'sm' }} />
             <Chip.Group
@@ -298,12 +299,16 @@ export function MediaFiltersDropdown({
           </>
         )}
 
-        <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <ToolMultiSelect
-          value={mergedFilters.tools ?? []}
-          onChange={(tools) => handleChange({ tools })}
-          placeholder="Created with..."
-        />
+        {!hideTools && (
+          <>
+            <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <ToolMultiSelect
+              value={mergedFilters.tools ?? []}
+              onChange={(tools) => handleChange({ tools })}
+              placeholder="Created with..."
+            />
+          </>
+        )}
 
         <Divider label="Techniques" labelProps={{ weight: 'bold', size: 'sm' }} />
         <TechniqueMultiSelect
@@ -380,4 +385,5 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   filterType?: 'images' | 'videos' | 'modelImages';
   hideBaseModels?: boolean;
   hideMediaTypes?: boolean;
+  hideTools?: boolean;
 };

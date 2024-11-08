@@ -7,8 +7,9 @@ import { SortFilter } from '../SortFilter';
 
 export function ImageFeedFilters({
   hideMediaTypes,
+  hideTools,
   ...groupProps
-}: GroupProps & { hideMediaTypes?: boolean }) {
+}: GroupProps & { hideMediaTypes?: boolean; hideTools?: boolean }) {
   const { classes } = useFeedFiltersStyles();
 
   const currentUser = useCurrentUser();
@@ -35,6 +36,7 @@ export function ImageFeedFilters({
         className={classes.subnavDropdown}
         filterType="images"
         hideMediaTypes={hideMediaTypes}
+        hideTools={hideTools}
         isFeed
         compact
       />

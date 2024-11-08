@@ -1,4 +1,4 @@
-import { Button, Text, Title, useMantineTheme } from '@mantine/core';
+import { Button, Title, useMantineTheme } from '@mantine/core';
 import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

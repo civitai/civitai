@@ -32,7 +32,7 @@ const filtersBySection = {
   posts: <PostFeedFilters ml="auto" />,
   articles: <ArticleFeedFilters ml="auto" />,
   bounties: <BountyFeedFilters ml="auto" />,
-  tools: <ImageFeedFilters ml="auto" hideMediaTypes />,
+  tools: <ImageFeedFilters ml="auto" hideMediaTypes hideTools />,
   events: null,
 } as const;
 type HomeSection = keyof typeof filtersBySection;
