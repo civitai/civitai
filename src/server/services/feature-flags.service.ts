@@ -109,7 +109,7 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
   // Temporarily disabled until we change ads provider -Manuel
-  adsEnabled: ['dev'], // ['public', 'blue', 'green'],
+  adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
   admin: ['granted'],
   toolSearch: ['public'],
