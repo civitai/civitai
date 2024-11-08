@@ -275,7 +275,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
+      },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
       },
     },
   },

@@ -31,7 +31,14 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
-import { TrainingRun, TrainingRunUpdate, trainingStore } from '~/store/training.store';
+import {
+  defaultTrainingState,
+  TrainingRun,
+  TrainingRunUpdate,
+  trainingStore,
+  useTrainingImageStore,
+} from '~/store/training.store';
+import { showInfoNotification } from '~/utils/notifications';
 import { discountInfo, isValidRapid, rapidEta } from '~/utils/training';
 
 export const AdvancedSettings = ({
@@ -46,6 +53,9 @@ export const AdvancedSettings = ({
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
+  const { triggerWord } = useTrainingImageStore(
+    (state) => state[modelId] ?? { ...defaultTrainingState }
+  );
   const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
@@ -142,6 +152,24 @@ export const AdvancedSettings = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);
+
+  // Adjust defaults for keepTokens
+  useEffect(() => {
+    if (
+      triggerWord.length > 0 &&
+      selectedRun.params.shuffleCaption &&
+      selectedRun.params.keepTokens === 0
+    ) {
+      showInfoNotification({
+        title: 'Keep Tokens parameter changed',
+        message:
+          'Using "shuffleCaption" with a trigger word usually requires a keepToken value >1.',
+        autoClose: 10000,
+      });
+      doUpdate({ params: { keepTokens: 1 } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.params.shuffleCaption]);
 
   return (
     <>
