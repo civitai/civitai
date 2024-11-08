@@ -5,7 +5,10 @@ import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDro
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SortFilter } from '../SortFilter';
 
-export function ImageFeedFilters({ ...groupProps }: GroupProps) {
+export function ImageFeedFilters({
+  hideMediaTypes,
+  ...groupProps
+}: GroupProps & { hideMediaTypes?: boolean }) {
   const { classes } = useFeedFiltersStyles();
 
   const currentUser = useCurrentUser();
@@ -31,6 +34,7 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
         w="100%"
         className={classes.subnavDropdown}
         filterType="images"
+        hideMediaTypes={hideMediaTypes}
         isFeed
         compact
       />

@@ -463,98 +463,96 @@ export function GenerationFormContent() {
                               : undefined
                           }
                         />
-                        {!isSD3 && (
-                          <Card.Section
-                            className={cx(
-                              { [classes.formError]: form.formState.errors.resources },
-                              'border-b-0 mt-3'
-                            )}
-                            withBorder
+                        <Card.Section
+                          className={cx(
+                            { [classes.formError]: form.formState.errors.resources },
+                            'border-b-0 mt-3'
+                          )}
+                          withBorder
+                        >
+                          <PersistentAccordion
+                            storeKey="generation-form-resources"
+                            classNames={{
+                              item: classes.accordionItem,
+                              control: classes.accordionControl,
+                              content: classes.accordionContent,
+                            }}
                           >
-                            <PersistentAccordion
-                              storeKey="generation-form-resources"
-                              classNames={{
-                                item: classes.accordionItem,
-                                control: classes.accordionControl,
-                                content: classes.accordionContent,
-                              }}
-                            >
-                              <Accordion.Item value="resources" className="border-b-0">
-                                <Accordion.Control
-                                  className={cx({
-                                    [classes.formError]: form.formState.errors.resources,
-                                  })}
-                                >
-                                  <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-1">
-                                      <Text size="sm" weight={590}>
-                                        Additional Resources
-                                      </Text>
-                                      {resources.length > 0 && (
-                                        <Badge className="font-semibold">
-                                          {resources.length}/{status.limits.resources}
-                                        </Badge>
-                                      )}
-
-                                      <Button
-                                        component="span"
-                                        compact
-                                        variant="light"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          setOpened(true);
-                                        }}
-                                        radius="xl"
-                                        ml="auto"
-                                        disabled={atLimit}
-                                        classNames={{ inner: 'flex gap-1' }}
-                                      >
-                                        <IconPlus size={16} />
-                                        <Text size="sm" weight={500}>
-                                          Add
-                                        </Text>
-                                      </Button>
-                                    </div>
-
-                                    {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                                      <Text size="xs">
-                                        <Link href="/pricing" passHref>
-                                          <Anchor
-                                            color="yellow"
-                                            rel="nofollow"
-                                            onClick={(e) => e.stopPropagation()}
-                                          >
-                                            Become a member
-                                          </Anchor>
-                                        </Link>{' '}
-                                        <Text inherit span>
-                                          to use more resources at once
-                                        </Text>
-                                      </Text>
+                            <Accordion.Item value="resources" className="border-b-0">
+                              <Accordion.Control
+                                className={cx({
+                                  [classes.formError]: form.formState.errors.resources,
+                                })}
+                              >
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <Text size="sm" weight={590}>
+                                      Additional Resources
+                                    </Text>
+                                    {resources.length > 0 && (
+                                      <Badge className="font-semibold">
+                                        {resources.length}/{status.limits.resources}
+                                      </Badge>
                                     )}
+
+                                    <Button
+                                      component="span"
+                                      compact
+                                      variant="light"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setOpened(true);
+                                      }}
+                                      radius="xl"
+                                      ml="auto"
+                                      disabled={atLimit}
+                                      classNames={{ inner: 'flex gap-1' }}
+                                    >
+                                      <IconPlus size={16} />
+                                      <Text size="sm" weight={500}>
+                                        Add
+                                      </Text>
+                                    </Button>
                                   </div>
-                                </Accordion.Control>
-                                <Accordion.Panel>
-                                  <InputResourceSelectMultiple
-                                    name="resources"
-                                    limit={status.limits.resources}
-                                    buttonLabel="Add additional resource"
-                                    modalOpened={opened}
-                                    onCloseModal={() => setOpened(false)}
-                                    options={{
-                                      canGenerate: true,
-                                      resources: resourceTypes.filter(
-                                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
-                                      ),
-                                    }}
-                                    hideButton
-                                  />
-                                </Accordion.Panel>
-                              </Accordion.Item>
-                            </PersistentAccordion>
-                          </Card.Section>
-                        )}
+
+                                  {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                                    <Text size="xs">
+                                      <Link href="/pricing" passHref>
+                                        <Anchor
+                                          color="yellow"
+                                          rel="nofollow"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          Become a member
+                                        </Anchor>
+                                      </Link>{' '}
+                                      <Text inherit span>
+                                        to use more resources at once
+                                      </Text>
+                                    </Text>
+                                  )}
+                                </div>
+                              </Accordion.Control>
+                              <Accordion.Panel>
+                                <InputResourceSelectMultiple
+                                  name="resources"
+                                  limit={status.limits.resources}
+                                  buttonLabel="Add additional resource"
+                                  modalOpened={opened}
+                                  onCloseModal={() => setOpened(false)}
+                                  options={{
+                                    canGenerate: true,
+                                    resources: resourceTypes.filter(
+                                      (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
+                                    ),
+                                  }}
+                                  hideButton
+                                />
+                              </Accordion.Panel>
+                            </Accordion.Item>
+                          </PersistentAccordion>
+                        </Card.Section>
                         {unstableResources.length > 0 && (
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>

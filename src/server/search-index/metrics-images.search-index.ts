@@ -292,7 +292,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."height",
         i."hash",
         i."hideMeta",
-        COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+        GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
         i."type",
         i."userId",
         i."needsReview",
