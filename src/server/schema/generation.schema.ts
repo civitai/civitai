@@ -264,7 +264,6 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
   z.object({ type: z.literal('video'), id: z.coerce.number() }),
   z.object({ type: z.literal('audio'), id: z.coerce.number() }),
-  z.object({ type: z.literal('media'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);

@@ -4,7 +4,14 @@ import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
-import { GenerationResource } from '~/shared/constants/generation.constants';
+import {
+  GenerationResource,
+  generationFormWorkflowConfigurations,
+} from '~/shared/constants/generation.constants';
+import {
+  GenerationWorkflowCategoryConfig,
+  GenerationWorkflowTypeConfig,
+} from '~/shared/types/generation.types';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'replay';
@@ -21,7 +28,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (args: GenerationData & { type: MediaType }) => void;
+  setData: (args: GenerationData & { type: MediaType; workflowConfig?: string }) => void;
   clearData: () => void;
 };
 
@@ -34,6 +41,7 @@ export const useGenerationStore = create<GenerationState>()(
       open: async (input) => {
         set((state) => {
           state.opened = true;
+          ``;
           if (input) {
             state.view = 'generate';
             if (input.type === 'video') state.type = 'video';
@@ -43,7 +51,8 @@ export const useGenerationStore = create<GenerationState>()(
 
         if (input) {
           const result = await fetchGenerationData(input);
-          if (['media', 'image', 'video'].includes(input.type)) {
+          if (['audio', 'image', 'video'].includes(input.type)) {
+            generationFormStore.setType(input.type as MediaType);
             useRemixStore.setState(result);
           }
 
@@ -66,13 +75,15 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, ...data }) =>
+      setData: ({ type, remixOf, workflowConfig, ...data }) => {
+        generationFormStore.setWorkflow(workflowConfig);
         set((state) => {
           state.type = type;
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
           if (!location.pathname.includes('generate')) state.view = 'generate';
-        }),
+        });
+      },
       clearData: () =>
         set((state) => {
           state.data = undefined;
@@ -121,6 +132,42 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
     return data;
   }
 };
+
+export const useGenerationFormStore = create<{
+  type: MediaType;
+  engine?: string;
+  workflow?: string;
+}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form' }));
+
+export const generationFormStore = {
+  setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
+  setWorkflow: (workflow?: string) => {
+    let updatedWorkflow = workflow;
+    let engine: string | undefined;
+    if (workflow) {
+      const configuration = generationFormWorkflowConfigurations.find((x) => x.key === workflow);
+      if (!configuration) updatedWorkflow = undefined;
+      else {
+        if ('engine' in configuration) engine = configuration.engine;
+      }
+    }
+
+    useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
+  },
+  setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
+};
+
+export function useGenerationFormWorkflowConfig(
+  filters: { type: MediaType } & GenerationWorkflowCategoryConfig
+) {
+  const selectedWorkflow = useGenerationFormStore((state) => state.workflow);
+  const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
+    Object.entries(filters).every(([key, value]) => config[key as keyof typeof config] === value)
+  );
+  const workflow =
+    availableWorkflows.find((x) => x.key === selectedWorkflow) ?? availableWorkflows[0];
+  return { workflow, availableWorkflows };
+}
 
 export const useRemixStore = create<{
   resources?: GenerationResource[];

@@ -8,6 +8,7 @@ import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -531,4 +532,46 @@ export function getBaseModelSetTypes({
     })
     .map(([key]) => key) as SupportedBaseModel[];
 }
+// #endregion
+
+// #region [workflows]
+export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'haiper',
+    key: 'haiper-txt2vid',
+    defaultValues: {
+      prompt: '',
+      negativePrompt: '',
+      aspectRatio: '1:1',
+      duration: 4,
+    },
+  },
+  // {
+  //   type: 'video',
+  //   subType: 'img2vid',
+  //   name: 'Image to video',
+  //   category: 'service',
+  //   engine: 'haiper',
+  //   key: 'haiper-img2vid',
+  //   defaultValues: {
+  //     duration: 4,
+  //   },
+  // },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'mochi',
+    key: 'mochi-txt2vid',
+    defaultValues: {
+      sourceImageUrl: undefined,
+      duration: 4,
+    },
+  },
+];
 // #endregion

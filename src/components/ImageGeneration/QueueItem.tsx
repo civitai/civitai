@@ -41,7 +41,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
-import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
@@ -54,7 +54,6 @@ import { orchestratorPendingStatuses } from '~/shared/constants/generation.const
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRouter } from 'next/router';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [

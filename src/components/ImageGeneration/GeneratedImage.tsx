@@ -18,7 +18,6 @@ import {
   IconHeart,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
@@ -46,6 +45,7 @@ import { generationStore, useGenerationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
+import { GenerationWorkflowTypeConfig } from '~/shared/types/generation.types';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -111,13 +111,17 @@ export function GeneratedImage({
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}, type?: MediaType) => {
+  const handleGenerate = (
+    { seed, ...rest }: Partial<TextToImageParams> = {},
+    { type, workflowConfig }: { type: MediaType; workflowConfig?: string } = { type: 'image' }
+  ) => {
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
-      type: type ?? image.type, // TODO - type based off type of media
+      type,
+      workflowConfig,
     });
   };
 
@@ -335,16 +339,21 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
-              {!isVideo && (
+              {/* {!isVideo && (
                 <>
                   <Menu.Divider />
                   <Menu.Item
-                    onClick={() => handleGenerate({ sourceImageUrl: image.url } as any, 'video')}
+                    onClick={() =>
+                      handleGenerate({ sourceImageUrl: image.url } as any, {
+                        type: 'video',
+                        workflowConfig: 'haiper-img2vid',
+                      })
+                    }
                   >
                     Image to Video
                   </Menu.Item>
                 </>
-              )}
+              )} */}
               <Menu.Divider />
               <Menu.Label>System</Menu.Label>
               <Menu.Item

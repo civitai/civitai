@@ -3,8 +3,9 @@ import { generation } from '~/server/common/constants';
 import { getRandomInt } from '~/utils/number-helpers';
 
 const baseVideoSchema = z.object({
+  workflow: z.string(),
   engine: z.string(),
-  prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters'),
+  prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters').default(''),
   seed: z
     .number()
     .min(0)

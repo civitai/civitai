@@ -211,7 +211,6 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
   switch (props.type) {
     case 'image':
     case 'video':
-    case 'media':
       return await getMediaGenerationData(props.id);
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });

@@ -1,19 +1,17 @@
-import { SegmentedControl, Text } from '@mantine/core';
+import { SegmentedControl } from '@mantine/core';
 import { useEffect } from 'react';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { TwCard } from '~/components/TwCard/TwCard';
+
 import { useIsClient } from '~/providers/IsClientProvider';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { generationStore, useGenerationStore, useRemixStore } from '~/store/generation.store';
+import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 
 export function GenerationForm() {
-  const type = useGenerationStore((state) => state.type);
+  const type = useGenerationFormStore((state) => state.type);
   const isClient = useIsClient();
 
   // !important - this is to move the 'tip' values to its own local storage bucket
@@ -39,7 +37,7 @@ export function GenerationForm() {
         {/* <RemixOfControl /> */}
         <SegmentedControl
           value={type}
-          onChange={generationStore.setType}
+          onChange={generationFormStore.setType}
           className="overflow-visible"
           color="blue"
           data={[

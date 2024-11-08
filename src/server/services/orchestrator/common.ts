@@ -390,9 +390,12 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   switch (input.engine) {
     case 'haiper': {
       [width, height] = (input as HaiperVideoGenInput).aspectRatio?.split(':').map(Number) ?? [
-        1, 1,
+        16, 9,
       ];
       aspectRatio = width / height;
+    }
+    case 'mochi': {
+      aspectRatio = 16 / 9;
     }
   }
 
@@ -427,7 +430,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     timeout: step.timeout,
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
-    params: { ...input, workflow: 'sourceImageUrl' in input ? 'img2vid' : 'txt2vid', quantity: 1 },
+    params: { ...input, quantity: 1 },
     images: videos,
     status: step.status,
     metadata,
