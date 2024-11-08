@@ -32,6 +32,7 @@ const filtersBySection = {
   posts: <PostFeedFilters ml="auto" />,
   articles: <ArticleFeedFilters ml="auto" />,
   bounties: <BountyFeedFilters ml="auto" />,
+  tools: <ImageFeedFilters ml="auto" />,
   events: null,
 } as const;
 type HomeSection = keyof typeof filtersBySection;
@@ -44,7 +45,7 @@ export function SubNav() {
   const currentScrollRef = useRef(0);
   const subNavRef = useRef<HTMLDivElement>(null);
 
-  const currentPath = router.pathname.replace('/', '') || 'home';
+  const currentPath = router.pathname.split('/')[1] || 'home';
   const isFeedPage = sections.includes(currentPath as HomeSection);
 
   useScrollAreaRef({
@@ -70,7 +71,6 @@ export function SubNav() {
     >
       <Group spacing={8} position="apart" noWrap={currentPath === 'home'}>
         <HomeTabs />
-
         {isFeedPage && (filtersBySection[currentPath as HomeSection] ?? null)}
       </Group>
     </Paper>
@@ -80,7 +80,7 @@ export function SubNav() {
 export function SubNav2() {
   const router = useRouter();
 
-  const currentPath = router.pathname.replace('/', '') || 'home';
+  const currentPath = router.pathname.split('/')[1] || 'home';
   const isFeedPage = sections.includes(currentPath as HomeSection);
 
   return (

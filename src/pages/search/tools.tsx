@@ -10,6 +10,7 @@ import {
   Image,
   Avatar,
   Badge,
+  Button,
 } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
@@ -32,6 +33,7 @@ import { slugit } from '~/utils/string-helpers';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { generationPanel } from '~/store/generation.store';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -211,6 +213,19 @@ export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
             {data.type}
           </Badge>
           <Text lineClamp={3}>{data.description}</Text>
+          {data.supported && (
+            <Button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // TODO.tool: open the right section in the panel based on the tool type
+                generationPanel.open();
+              }}
+              fullWidth
+            >
+              Generate
+            </Button>
+          )}
         </div>
       </Card>
     </Link>
