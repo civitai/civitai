@@ -80,7 +80,7 @@ export function ToolBanner({
                   >
                     Generate
                   </Button>
-                )} */}
+                )}
               </div>
             </div>
           </div>
