@@ -319,9 +319,9 @@ export const moderateImages = async ({
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
         "ingestion" = 'Scanned',
-        -- if image was created within 24 hrs, set scannedAt to now
+        -- if image was created within 72 hrs, set scannedAt to now
         "scannedAt" = CASE
-          WHEN "createdAt" > NOW() - INTERVAL '1 day' THEN NOW()
+          WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
           ELSE "scannedAt"
         END,
         "nsfwLevel" = CASE
