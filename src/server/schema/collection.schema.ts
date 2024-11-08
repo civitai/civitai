@@ -114,6 +114,7 @@ export const collectionMetadataSchema = z
         maxLength: z.number().optional(),
       })
       .optional(),
+    bannerPosition: z.string().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

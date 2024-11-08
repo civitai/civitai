@@ -131,6 +131,8 @@ export const trainingSettings: TrainingSettingsType[] = [
         'x-flux': { default: 5, max: 5, min: 2 },
         rapid: { default: 1, min: 1, max: 1 },
       },
+      sd3_medium: { all: { default: 5 } },
+      sd3_large: { all: { default: 5 } },
     },
   },
   {
@@ -167,6 +169,8 @@ export const trainingSettings: TrainingSettingsType[] = [
         'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
       },
+      sd3_medium: { all: { default: 4, max: 4 } },
+      sd3_large: { all: { default: 4, max: 4 } },
     },
   },
   {
@@ -243,6 +247,12 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         all: { disabled: true },
       },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
+      },
     },
   },
   {
@@ -252,8 +262,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       <>
         If your training images have tags, you can randomly shuffle them (see &quot;Shuffle
         Tags&quot; option for details). However, if you have words that you want to keep at the
-        beginning, you can use this option to specify &quot;Keep the first 0 words at the
-        beginning&quot;.
+        beginning, you can use this option to specify how many to keep.
         <br />
         This option does nothing if the &quot;Shuffle Tags&quot; option is off.
       </>
@@ -265,7 +274,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
+      },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
       },
     },
   },
@@ -308,6 +323,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         'x-flux': { default: 5e-5 },
       },
+      sd3_medium: { all: { default: 1e-5 } },
+      sd3_large: { all: { default: 1e-5 } },
     },
   },
   {
@@ -322,6 +339,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       anime: { all: { default: 1e-4 } },
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_large: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -391,6 +410,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
       flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
+      sd3_medium: { all: { default: 2 } },
+      sd3_large: { all: { default: 2 } },
     },
   },
   {

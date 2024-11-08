@@ -10,6 +10,7 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { env } from '~/env/client.mjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -34,10 +35,11 @@ function ToolFeedPage() {
 
   const { slug } = router.query;
 
-  const { data = [] } = trpc.tool.getAll.useQuery();
+  const { data = [], isLoading } = trpc.tool.getAll.useQuery();
   const toolId = data.find((tool) => slugit(tool.name) === slug)?.id;
 
-  if (!toolId) return <NotFound />;
+  if (isLoading) return <PageLoader />;
+  if (!isLoading && !toolId) return <NotFound />;
 
   return (
     <>
@@ -55,7 +57,7 @@ function ToolFeedPage() {
             <IsClient>
               <ImageCategories />
               <ImagesInfinite
-                filters={{ tools: toolId ? [toolId] : undefined }}
+                filters={{ tools: toolId ? [toolId] : undefined, types: ['image', 'video'] }}
                 showEof
                 showAds
                 useIndex

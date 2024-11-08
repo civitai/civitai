@@ -19,6 +19,7 @@ import {
   SimpleGrid,
   Stack,
   Text,
+  TextInput,
   ThemeIcon,
   Title,
   Tooltip,
@@ -49,6 +50,7 @@ import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
@@ -61,7 +63,7 @@ import {
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { constants } from '~/server/common/constants';
+import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -132,7 +134,8 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
       <Text>Short, comma-separated descriptions.</Text>
       <Text fs="italic">Ex: &quot;dolphin, ocean, jumping, gorgeous scenery&quot;</Text>
       <Text mt="sm">
-        Preferred for <Badge color="violet">SD</Badge> models.
+        Preferred for <Badge color="violet">SD1</Badge> and <Badge color="grape">SDXL</Badge>{' '}
+        models.
       </Text>
     </Stack>
   ),
@@ -144,7 +147,7 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
         a setting sun.&quot;
       </Text>
       <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge> models.
+        Preferred for <Badge color="red">Flux</Badge> and <Badge color="pink">SD3</Badge> models.
       </Text>
     </Stack>
   ),
@@ -234,9 +237,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setImageList,
     setInitialImageList,
     setLabelType,
+    setTriggerWord,
     setOwnRights,
     setShareDataset,
+    setAttest,
     setInitialLabelType,
+    setInitialTriggerWord,
     setInitialOwnRights,
     setInitialShareDataset,
     setAutoLabeling,
@@ -246,9 +252,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     imageList,
     initialImageList,
     labelType,
+    triggerWord,
     ownRights,
     shareDataset,
+    attested,
     initialLabelType,
+    initialTriggerWord,
     initialOwnRights,
     initialShareDataset,
     autoLabeling,
@@ -261,10 +270,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
-  const [confirmed, setConfirmed] = useState<{ status: boolean; error: string }>({
-    status: false,
-    error: '',
-  });
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -487,6 +492,29 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
+  const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
+    async onSuccess(_response, request) {
+      setInitialTriggerWord(model.id, triggerWord);
+
+      queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
+        if (!old) return old;
+
+        const versionToUpdate = old.modelVersions.find((mv) => mv.id === thisModelVersion.id);
+        if (!versionToUpdate) return old;
+        versionToUpdate.trainedWords = request.trainedWords ?? [];
+
+        return {
+          ...old,
+          modelVersions: [
+            versionToUpdate,
+            ...old.modelVersions.filter((mv) => mv.id !== thisModelVersion.id),
+          ],
+        };
+      });
+
+      await queryUtils.model.getMyTrainingModels.invalidate();
+    },
+  });
   const updateFileMutation = trpc.modelFile.update.useMutation({
     async onSuccess(_response, request) {
       setInitialLabelType(model.id, labelType);
@@ -661,6 +689,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       setShareDataset(model.id, fileShareDataset);
       setInitialShareDataset(model.id, fileShareDataset);
 
+      const thisTrainedWord =
+        thisModelVersion.trainedWords && thisModelVersion.trainedWords.length > 0
+          ? thisModelVersion.trainedWords[0]
+          : '';
+      setTriggerWord(model.id, thisTrainedWord);
+      setInitialTriggerWord(model.id, thisTrainedWord);
+
       if (imageList.length === 0) {
         setLoadingZip(true);
         parseExisting()
@@ -733,12 +768,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
+
     const zip = new JSZip();
 
     await Promise.all(
       imageList.map(async (imgData, idx) => {
         const filenameBase = String(idx).padStart(3, '0');
-        imgData.label.length > 0 && zip.file(`${filenameBase}.txt`, imgData.label);
+
+        let label = imgData.label;
+
+        if (triggerWord.length) {
+          const separator = labelType === 'caption' ? '.' : ',';
+          const regMatch = new RegExp(`^${triggerWord}(${separator}|$)`);
+
+          if (!regMatch.test(label)) {
+            label = label.length > 0 ? [triggerWord, label].join(`${separator} `) : triggerWord;
+          }
+        }
+
+        label.length > 0 && zip.file(`${filenameBase}.txt`, label);
 
         const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 
@@ -757,10 +805,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const blobFile = new File([content], fileName, {
-        type: 'application/zip',
-      });
-
       hideNotification(notificationId);
       showNotification({
         id: notificationId,
@@ -769,6 +813,32 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         disallowClose: true,
         title: 'Creating and uploading archive',
         message: `Packaging ${imageList.length} image${imageList.length !== 1 ? 's' : ''}...`,
+      });
+
+      try {
+        await upsertVersionMutation.mutateAsync({
+          id: thisModelVersion.id,
+          name: thisModelVersion.name,
+          modelId: model.id,
+          baseModel: thisModelVersion.baseModel as BaseModel,
+          trainedWords: triggerWord.length ? [triggerWord] : [],
+        });
+      } catch (e: unknown) {
+        setZipping(false);
+        updateNotification({
+          ...notificationFailBase,
+          message:
+            e instanceof Error
+              ? e.message.startsWith('Unexpected token')
+                ? 'Server error :('
+                : e.message
+              : '',
+        });
+        return;
+      }
+
+      const blobFile = new File([content], fileName, {
+        type: 'application/zip',
       });
 
       try {
@@ -783,7 +853,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               shareDataset,
               numImages: imageList.length,
               numCaptions: imageList.filter((i) => i.label.length > 0).length,
-              asd: 1, // should break
             },
           },
           async ({ meta, size, ...result }) => {
@@ -839,13 +908,17 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleNext = async () => {
-    if (!confirmed.status) {
-      setConfirmed((c) => ({ ...c, error: 'You must agree before proceeding.' }));
+    if (!attested.status) {
+      setAttest(model.id, { ...attested, error: 'You must agree before proceeding.' });
       return;
     }
+    setAttest(model.id, { ...attested, error: '' });
 
-    setConfirmed((c) => ({ ...c, error: '' }));
-    if (isEqual(imageList, initialImageList) && imageList.length !== 0) {
+    if (
+      isEqual(imageList, initialImageList) &&
+      isEqual(triggerWord, initialTriggerWord) &&
+      imageList.length !== 0
+    ) {
       if (
         !isEqual(shareDataset, initialShareDataset) ||
         !isEqual(ownRights, initialOwnRights) ||
@@ -870,7 +943,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     if (imageList.length) {
       // if no labels, warn
-      if (imageList.filter((i) => i.label.length > 0).length === 0) {
+      if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
         return openConfirmModal({
           title: (
             <Group spacing="xs">
@@ -905,7 +978,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       !isEqual(imageList, initialImageList) ||
       !isEqual(shareDataset, initialShareDataset) ||
       !isEqual(ownRights, initialOwnRights) ||
-      !isEqual(labelType, initialLabelType),
+      !isEqual(labelType, initialLabelType) ||
+      !isEqual(triggerWord, initialTriggerWord),
     // message: ``,
   });
 
@@ -926,7 +1000,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             for more info.
           </Text>
         </div>
-        {confirmed.status && (
+        {attested.status && (
           <>
             <ImageDropzone
               mt="md"
@@ -1082,6 +1156,36 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     />
                   )}
                 </Stack>
+              </Paper>
+            )}
+            {imageList.length > 0 && (
+              <Paper px="md" py="xs" shadow="xs" radius="sm" withBorder>
+                <Group>
+                  <Group spacing={4} noWrap>
+                    <Text>Trigger Word</Text>
+                    <InfoPopover size="xs" iconProps={{ size: 16 }}>
+                      Word that serves as an &quot;activator&quot; for your LoRA during generation.
+                      <br />
+                      This will be prepended to all labels.
+                    </InfoPopover>
+                  </Group>
+                  <TextInput
+                    placeholder='Add a trigger word, ex. "unique-word" (optional)'
+                    value={triggerWord}
+                    onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
+                    style={{ flexGrow: 1 }}
+                    rightSection={
+                      <ActionIcon
+                        onClick={() => {
+                          setTriggerWord(model.id, '');
+                        }}
+                        disabled={!triggerWord.length}
+                      >
+                        <IconX size={16} />
+                      </ActionIcon>
+                    }
+                  />
+                </Group>
               </Paper>
             )}
             {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
@@ -1277,9 +1381,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             </div>
             <Checkbox
               label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
-              checked={confirmed.status}
-              error={confirmed.error}
-              onChange={(event) => setConfirmed({ status: event.currentTarget.checked, error: '' })}
+              checked={attested.status}
+              error={attested.error}
+              onChange={(event) =>
+                setAttest(model.id, { status: event.currentTarget.checked, error: '' })
+              }
             />
           </div>
         </Paper>

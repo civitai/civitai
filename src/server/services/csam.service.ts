@@ -124,7 +124,7 @@ export async function createCsamReport({
 export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
   const { take, skip } = getPagination(limit, page);
 
-  const reports = await dbRead.csamReport.findMany({ take, skip });
+  const reports = await dbRead.csamReport.findMany({ take, skip, orderBy: { createdAt: 'desc' } });
   const usersIds = [
     ...new Set(reports.flatMap((x) => [x.reportedById, x.userId]).filter(isDefined)),
   ];

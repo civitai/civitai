@@ -7,7 +7,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     category: NotificationCategory.Buzz,
     toggleable: false,
     prepareMessage: () => ({
-      message: `Your account has been approved for the Civitai Creators Program! Setup your account so you can start getting paid!.`,
+      message: `Your account is approved for Creator Payouts! Click this notification to set up your payment details to start receiving payments.`,
       url: `/user/account#payments`,
     }),
   },
@@ -35,6 +35,15 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `Your withdrawal request has been approved. Your funds will be transferred to your account soon`,
+      url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
+  'creators-program-withdrawal-updated': {
+    displayName: 'Creators program - Withdrawal Updated',
+    category: NotificationCategory.Buzz,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `Your withdrawal request has been updated. You may check the withdrawals' history for more information.`,
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },

@@ -43,6 +43,7 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
             baseModel: true,
             trainingStatus: true,
             trainingDetails: true,
+            trainedWords: true,
             files: {
               select: {
                 id: true,

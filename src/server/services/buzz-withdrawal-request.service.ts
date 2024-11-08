@@ -153,9 +153,6 @@ export const getPaginatedOwnedBuzzWithdrawalRequests = async (
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
 };
 
-export type BuzzWithdrawalRequestForModerator = AsyncReturnType<
-  typeof getPaginatedBuzzWithdrawalRequests
->['items'][number];
 export const getPaginatedBuzzWithdrawalRequests = async (
   input: GetPaginatedBuzzWithdrawalRequestSchema
 ) => {
@@ -280,6 +277,7 @@ export const updateBuzzWithdrawalRequest = async ({
   note,
   userId,
   metadata: updatedMetadata,
+  refundFees,
 }: UpdateBuzzWithdrawalRequestSchema & {
   userId: number;
 }) => {
@@ -329,6 +327,14 @@ export const updateBuzzWithdrawalRequest = async ({
       select: buzzWithdrawalRequestModerationDetails,
     });
 
+    await createNotification({
+      userId: request.userId as number,
+      type: 'creators-program-withdrawal-updated',
+      category: NotificationCategory.System,
+      key: `creators-program-withdrawal-updated:${uuid()}`,
+      details: {},
+    }).catch();
+
     return updatedRequest;
   }
 
@@ -339,9 +345,13 @@ export const updateBuzzWithdrawalRequest = async ({
     const transaction = await createBuzzTransaction({
       fromAccountId: 0, // bank
       toAccountId: request.userId as number,
-      amount: request.requestedBuzzAmount,
+      amount: request.requestedBuzzAmount - (refundFees ?? 0),
       type: TransactionType.Refund,
-      description: 'Refund due to rejection or cancellation of withdrawal request',
+      description: `Refund due to rejection or cancellation of withdrawal request. ${
+        refundFees
+          ? `A total of ${refundFees} BUZZ has not been refunded due to fees by the Payment provider upon issues with the payment`
+          : ''
+      }`,
       externalTransactionId: request.buzzWithdrawalTransactionId,
     });
 
