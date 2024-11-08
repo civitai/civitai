@@ -332,7 +332,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."mimeType",
         p."modelVersionId",
         fl."promptNsfw",
-        COALESCE(i."scannedAt", p."publishedAt", i."createdAt") as "sortAt"
+        GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         LEFT JOIN "ImageFlag" fl ON i.id = fl."imageId"

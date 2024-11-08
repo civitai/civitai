@@ -57,7 +57,7 @@ const addFields = async () => {
         SELECT
           i."id",
           p."publishedAt",
-          COALESCE(i."scannedAt", p."publishedAt", i."createdAt") as "sortAt",
+          GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
           i."aiNsfwLevel",
           i."nsfwLevelLocked"

@@ -372,9 +372,9 @@ export function ImageDetail2() {
                   user={image.user}
                   subText={
                     <Text size="xs" color="dimmed">
-                      {image.sortAt || image.publishedAt ? (
+                      {image.publishedAt || image.sortAt ? (
                         <>
-                          Uploaded <DaysFromNow date={image.sortAt || image.publishedAt} />
+                          Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />
                         </>
                       ) : (
                         'Not published'
