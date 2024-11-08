@@ -210,7 +210,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             },
             note: `Payment error: ${event.eventData.errorDescription}`,
             userId: -1, // Done by Webhook
-            refundFees: feesTotal * 100,
+            refundFees: feesTotal * 1000,
           });
 
           break;

@@ -14,6 +14,15 @@ const INDEX_ID = TOOLS_SEARCH_INDEX;
 const searchableAttributes = ['name', 'domain', 'company', 'description'];
 const sortableAttributes = ['createdAt', 'name'];
 const filterableAttributes = ['id', 'type', 'company'];
+const rankingRules = [
+  'supported:desc',
+  'sort',
+  'words',
+  'typo',
+  'proximity',
+  'attribute',
+  'exactness',
+];
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const index = await getOrCreateIndex(indexName, { primaryKey: 'id' });
@@ -40,6 +49,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
+  if (JSON.stringify(rankingRules) !== JSON.stringify(settings.rankingRules)) {
+    const updateRankingRulesTask = await index.updateRankingRules(rankingRules);
+    console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
+  }
+
   if (
     JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
   ) {
@@ -62,6 +76,7 @@ type BaseTool = {
   icon: string | null;
   createdAt: Date;
   type: ToolType;
+  supported: boolean;
   domain: string | null;
   description: string | null;
   homepage: string | null;
@@ -123,6 +138,7 @@ export const toolsSearchIndex = createSearchIndexUpdateProcessor({
         t."createdAt",
         t.icon,
         t.type,
+        t.supported,
         t.domain,
         t.description,
         t.homepage,

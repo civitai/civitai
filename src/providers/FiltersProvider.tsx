@@ -142,7 +142,6 @@ const clubFilterSchema = z
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
 const videoFilterSchema = imageFilterSchema.omit({
-  types: true,
   excludeCrossPosts: true,
 });
 

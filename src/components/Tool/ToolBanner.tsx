@@ -1,10 +1,12 @@
-import { Button, Text, Title, useMantineTheme } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import { Button, Title, useMantineTheme } from '@mantine/core';
+import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageFilters } from '~/components/Image/image.utils';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { FilterKeys } from '~/providers/FiltersProvider';
+import { generationPanel } from '~/store/generation.store';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -47,7 +49,7 @@ export function ToolBanner({
             : undefined
         }
       >
-        <div className="flex max-w-md flex-col gap-2 py-6">
+        <div className="flex h-full max-w-md flex-col gap-2 py-6">
           <div className="flex justify-between gap-3">
             <div className="flex flex-col gap-2">
               {selected.icon && <EdgeMedia width={120} src={selected.icon} />}
@@ -55,7 +57,7 @@ export function ToolBanner({
                 <Title order={2} className="font-semibold">
                   {selected.name}
                 </Title>
-                {/* {selected.domain && (
+                {/* {/* {selected.domain && (
                   <Button
                     color="blue"
                     radius="xl"
@@ -68,10 +70,29 @@ export function ToolBanner({
                     Visit
                   </Button>
                 )} */}
+                {selected.supported && (
+                  <Button
+                    color="blue"
+                    radius="xl"
+                    rightIcon={<IconBrush size={18} />}
+                    // TODO.tool: Open right section in the panel based on the tool type
+                    onClick={() => generationPanel.open()}
+                  >
+                    Generate
+                  </Button>
+                )} */}
               </div>
             </div>
           </div>
-          <Text className="text-shadow-default">{selected.description}</Text>
+          {selected.description && (
+            <CustomMarkdown
+              allowedElements={['a']}
+              className="text-shadow-default"
+              unwrapDisallowed
+            >
+              {selected.description}
+            </CustomMarkdown>
+          )}
         </div>
       </MasonryContainer>
     </div>

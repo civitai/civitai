@@ -321,6 +321,11 @@ export const moderateImages = async ({
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
         "ingestion" = 'Scanned',
+        -- if image was created within 72 hrs, set scannedAt to now
+        "scannedAt" = CASE
+          WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+          ELSE "scannedAt"
+        END,
         "nsfwLevel" = CASE
           WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
           ELSE "nsfwLevel"
@@ -1139,7 +1144,7 @@ export const getAllImages = async (
         END
       ) as "onSite",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -3382,7 +3387,7 @@ export const getImageModerationReviewQueue = async ({
       i.meta,
       i."hideMeta",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -3950,6 +3955,11 @@ export async function addImageTools({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function removeImageTools({
@@ -3974,6 +3984,11 @@ export async function removeImageTools({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function updateImageTools({
@@ -4013,6 +4028,11 @@ export async function addImageTechniques({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function removeImageTechniques({
@@ -4043,6 +4063,11 @@ export async function removeImageTechniques({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function updateImageTechniques({
@@ -4070,7 +4095,14 @@ export async function updateImageTechniques({
 // #endregion
 
 export function purgeImageGenerationDataCache(id: number) {
-  purgeCache({ tags: [`image-generation-data-${id}`] });
+  purgeCache({ tags: [`image-generation-data-${id}`] }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'purgeImageGenerationDataCache',
+      message: error.message,
+      error,
+    })
+  );
 }
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
@@ -4270,4 +4302,15 @@ export async function getImagesPendingIngestion() {
     },
     orderBy: { id: 'desc' },
   });
+}
+
+export async function queueImageSearchIndexUpdate({
+  ids,
+  action,
+}: {
+  ids: number[];
+  action: SearchIndexUpdateQueueAction;
+}) {
+  await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+  await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 }

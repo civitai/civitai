@@ -61,6 +61,9 @@ export const constants = {
     'SDXL 1.0',
     'SD 3',
     'SD 3.5',
+    'SD 3.5 Medium',
+    'SD 3.5 Large',
+    'SD 3.5 Large Turbo',
     'Pony',
     'Flux.1 S',
     'Flux.1 D',
@@ -80,6 +83,7 @@ export const constants = {
     'Lumina',
     'Kolors',
     'Illustrious',
+    'Mochi',
     'Other',
   ],
   hiddenBaseModels: [
@@ -411,6 +415,7 @@ export const baseModelSetTypes = [
   'SD1',
   'SD2',
   'SD3',
+  'SD3_5M',
   'SDXL',
   'SDXLDistilled',
   'SCascade',
@@ -424,13 +429,15 @@ export const baseModelSetTypes = [
   'Flux1',
   'Illustrious',
   'Other',
+  'Mochi',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
 export const baseModelSets = defineBaseModelSets({
   SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
   SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SD3: ['SD 3', 'SD 3.5'],
+  SD3: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
+  SD3_5M: ['SD 3.5 Medium'],
   Flux1: ['Flux.1 S', 'Flux.1 D'],
   SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
   SDXLDistilled: ['SDXL Distilled'],
@@ -444,6 +451,7 @@ export const baseModelSets = defineBaseModelSets({
   ODOR: ['ODOR'],
   Illustrious: ['Illustrious'],
   Other: ['Other'],
+  Mochi: ['Mochi'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -451,6 +459,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   SD1: 'Stable Diffusion',
   SD2: 'Stable Diffusion',
   SD3: 'Stable Diffusion',
+  SD3_5M: 'Stable Diffusion',
   Flux1: 'Flux',
   SDXL: 'Stable Diffusion XL',
   SDXLDistilled: 'Stable Diffusion XL',
@@ -464,6 +473,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
   Other: 'Other',
+  Mochi: 'Mochi',
 });
 
 type LicenseDetails = {
@@ -556,6 +566,9 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'SD 2.1 Unclip': baseLicenses['openrail'],
   'SD 3': baseLicenses['SAI CLA'],
   'SD 3.5': baseLicenses['SAI CLA'],
+  'SD 3.5 Medium': baseLicenses['SAI CLA'],
+  'SD 3.5 Large': baseLicenses['SAI CLA'],
+  'SD 3.5 Large Turbo': baseLicenses['SAI CLA'],
   'SDXL 0.9': baseLicenses['sdxl 0.9'],
   'SDXL 1.0': baseLicenses['openrail++'],
   'SDXL 1.0 LCM': baseLicenses['openrail++'],
@@ -579,6 +592,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
+  Mochi: baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -784,13 +798,35 @@ export const generationConfig = {
       { label: 'Portrait', width: 832, height: 1216 },
     ],
     checkpoint: {
-      id: 983602,
-      name: '',
+      id: 983309,
+      name: 'Large',
       trainedWords: [],
       modelId: 878387,
       modelName: 'Stable Diffusion 3.5 Large',
       modelType: 'Checkpoint',
       baseModel: 'SD 3.5',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      covered: true,
+      minor: false,
+      available: true,
+    } as GenerationResource,
+  },
+  SD3_5M: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 1003708,
+      name: 'Medium',
+      trainedWords: [],
+      modelId: 896953,
+      modelName: 'Stable Diffusion 3.5 Medium',
+      modelType: 'Checkpoint',
+      baseModel: 'SD 3.5 Medium',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
@@ -833,7 +869,7 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
-export const TOOLS_SEARCH_INDEX = 'tools_v1';
+export const TOOLS_SEARCH_INDEX = 'tools_v2';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

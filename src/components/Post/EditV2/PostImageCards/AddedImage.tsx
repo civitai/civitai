@@ -440,7 +440,8 @@ function EditDetail() {
           // #region [tools]
           */}
 
-            {activeCollection?.mode === CollectionMode.Contest && (
+            {/* Commented out as requested by Max -Manuel */}
+            {/* {activeCollection?.mode === CollectionMode.Contest && (
               <Alert radius="md">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                   Contest tip!
@@ -460,7 +461,7 @@ function EditDetail() {
                   </Text>
                 )}
               </Alert>
-            )}
+            )} */}
 
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
