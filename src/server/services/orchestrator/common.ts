@@ -430,7 +430,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     timeout: step.timeout,
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
-    params: { ...input, quantity: 1 },
+    params: { ...input, workflow: 'workflow' in input ? input.workflow : undefined, quantity: 1 },
     images: videos,
     status: step.status,
     metadata,
