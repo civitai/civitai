@@ -3907,6 +3907,11 @@ export async function addImageTools({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function removeImageTools({
@@ -3931,6 +3936,11 @@ export async function removeImageTools({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function updateImageTools({
@@ -3970,6 +3980,11 @@ export async function addImageTechniques({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function removeImageTechniques({
@@ -4000,6 +4015,11 @@ export async function removeImageTechniques({
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
+
+  await queueImageSearchIndexUpdate({
+    ids: data.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function updateImageTechniques({
@@ -4027,7 +4047,14 @@ export async function updateImageTechniques({
 // #endregion
 
 export function purgeImageGenerationDataCache(id: number) {
-  purgeCache({ tags: [`image-generation-data-${id}`] });
+  purgeCache({ tags: [`image-generation-data-${id}`] }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'purgeImageGenerationDataCache',
+      message: error.message,
+      error,
+    })
+  );
 }
 
 const strengthTypes: ModelType[] = ['TextualInversion', 'LORA', 'DoRA', 'LoCon'];
@@ -4227,4 +4254,15 @@ export async function getImagesPendingIngestion() {
     },
     orderBy: { id: 'desc' },
   });
+}
+
+export async function queueImageSearchIndexUpdate({
+  ids,
+  action,
+}: {
+  ids: number[];
+  action: SearchIndexUpdateQueueAction;
+}) {
+  await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+  await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 }

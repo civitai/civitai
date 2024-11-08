@@ -145,6 +145,7 @@ export function BuzzTransactionButton({
                 maw={250}
                 multiline
                 withArrow
+                withinPortal
               >
                 <IconAlertTriangleFilled
                   color="red"
@@ -159,10 +160,11 @@ export function BuzzTransactionButton({
         {error && !hasCost && (
           <Tooltip
             label={error ?? 'There was an error'}
-            multiline={true}
-            withArrow
             maw={200}
-            opened={true} // Forcefully open becuse button is disabled
+            multiline
+            withArrow
+            withinPortal
+            opened // Forcefully open because button is disabled
             // style={{ whiteSpace: 'normal' }}
           >
             <Badge

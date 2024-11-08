@@ -812,7 +812,7 @@ export const ARTICLES_SEARCH_INDEX = 'articles_v5';
 export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
-export const TOOLS_SEARCH_INDEX = 'tools_v1';
+export const TOOLS_SEARCH_INDEX = 'tools_v2';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';

@@ -29,10 +29,10 @@ export function ImageFeedFilters({ ...groupProps }: GroupProps) {
       <MediaFiltersDropdown
         size="sm"
         w="100%"
-        compact
         className={classes.subnavDropdown}
-        isFeed
         filterType="images"
+        isFeed
+        compact
       />
     </Group>
   );
