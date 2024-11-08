@@ -1,4 +1,4 @@
-import { TypeOf, z, AnyZodObject, ZodEffects } from 'zod';
+import { TypeOf, z, AnyZodObject, ZodEffects, input } from 'zod';
 import {
   Path,
   useForm,
@@ -13,7 +13,7 @@ import { getDeepPartialWithoutChecks } from '~/utils/zod-helpers';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {
-    clear: () => void;
+    // clear: () => void;
   };
 
 export function usePersistForm<
@@ -27,11 +27,11 @@ export function usePersistForm<
     version?: number;
     exclude?: TExclude;
     defaultValues?:
-      | DeepPartial<TypeOf<TSchema>>
-      | ((storageValues: DeepPartial<TypeOf<TSchema>>) => DeepPartial<TypeOf<TSchema>>);
+      | DeepPartial<input<TSchema>>
+      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
     values?:
-      | DeepPartial<TypeOf<TSchema>>
-      | ((storageValues: DeepPartial<TypeOf<TSchema>>) => DeepPartial<TypeOf<TSchema>>);
+      | DeepPartial<input<TSchema>>
+      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
   }
 ) {
   const {
@@ -52,7 +52,7 @@ export function usePersistForm<
       version: z.number().default(version),
     });
 
-  const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
+  // const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
   const _defaultValues = useRef<DeepPartial<TypeOf<TSchema>> | undefined>();
   if (!_defaultValues.current) {
     if (defaultValues)
@@ -142,12 +142,12 @@ export function usePersistForm<
     };
   }, [form, storageKey, version]); // eslint-disable-line
 
-  if (!_formControl.current) {
-    _formControl.current = {
-      ...form,
-      clear: () => getStorage().removeItem(storageKey),
-    };
-  }
+  // if (!_formControl.current) {
+  //   _formControl.current = {
+  //     ...form,
+  //     clear: () => getStorage().removeItem(storageKey),
+  //   };
+  // }
 
   return form;
 

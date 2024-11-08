@@ -10,7 +10,7 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   model: z.string().default('v2'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   image: z.string().optional(),
-  cameraMovement: z.string().optional(),
+  // cameraMovement: z.string().optional(),
   duration: z.number().optional(),
   aspectRatio: z.string().optional(),
   seed: z.number().optional(),
@@ -33,6 +33,7 @@ export const mochiVideoGenerationSchema = baseVideoSchema.extend({
   seed: z.number().optional(),
 });
 
+export type VideoGenerationInput = z.input<typeof videoGenerationSchema>;
 export type VideoGenerationSchema = z.infer<typeof videoGenerationSchema>;
 export const videoGenerationSchema = z.discriminatedUnion('engine', [
   haiperVideoGenerationSchema,

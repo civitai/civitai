@@ -1,5 +1,5 @@
-import { Button, Input, Title, Text, ActionIcon } from '@mantine/core';
-import { useEffect, useMemo, useState } from 'react';
+import { Button, Input, Title, Text, ActionIcon, Select } from '@mantine/core';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useFormContext, useFormState } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -7,7 +7,12 @@ import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/H
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { Form, InputSegmentedControl, InputText, InputTextArea } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { haiperVideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import {
+  VideoGenerationInput,
+  VideoGenerationSchema,
+  haiperVideoGenerationSchema,
+  videoGenerationSchema,
+} from '~/server/schema/orchestrator/orchestrator.schema';
 import { trpc } from '~/utils/trpc';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -21,31 +26,82 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { showErrorNotification } from '~/utils/notifications';
+import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
 
-const schema = haiperVideoGenerationSchema;
-const defaultValues = {
-  prompt: '',
-  negativePrompt: '',
-  engine: 'haiper',
-  // cameraMovement: 'none',
-  aspectRatio: '1:1',
-  duration: 4,
-} as const;
+const schema = videoGenerationSchema;
 
 export function VideoGenerationForm() {
+  const [engine, setEngine] = useState<Engine>('haiper');
+
+  return (
+    <div className="flex flex-1 flex-col gap-2">
+      <div className="px-3">
+        <Select
+          label="Engine"
+          value={engine}
+          onChange={(value) => setEngine(value as Engine)}
+          data={['haiper', 'mochi']}
+        />
+      </div>
+      <EngineForm engine={engine} />
+    </div>
+  );
+}
+
+function EngineForm({ engine }: { engine: Engine }) {
+  switch (engine) {
+    case 'haiper':
+      return <HaiperGenerationForm />;
+    case 'mochi':
+      return <MochiGenerationForm />;
+    default:
+      return null;
+  }
+}
+
+function HaiperGenerationForm() {
+  return (
+    <FormWrapper engine="haiper">
+      <InputImageUrl name="sourceImageUrl" label="Image" />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
+        />
+      </div>
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function MochiGenerationForm() {
+  return (
+    <FormWrapper engine="mochi">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+type Engine = VideoGenerationInput['engine'];
+function FormWrapper({ engine, children }: { engine: Engine; children: React.ReactNode }) {
   const type = useGenerationStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
+  const { defaultValues } = engines[engine] ?? {};
 
-  const form = usePersistForm('video-generation', {
-    schema,
+  const form = usePersistForm(`video-generation-${engine}`, {
+    schema: schema as any,
     version: 1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues,
     storage: localStorage,
   });
-  // const { setFocus } = form;
-  // const { errors } = useFormState({ control: form.control });
+
   const { mutate, isLoading, error } = useGenerate();
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
@@ -67,8 +123,18 @@ export function VideoGenerationForm() {
     const totalCost = cost;
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () => {
-      const tag = data.sourceImageUrl ? 'img2vid' : 'txt2vid';
-      mutate({ type: 'video', data, tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO, tag] });
+      const tags = [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO];
+      if (data.engine === 'haiper') {
+        const tag = data.sourceImageUrl ? 'img2vid' : 'txt2vid';
+        mutate({ type: 'video', data, tags: [...tags, tag] });
+      } else if (data.engine === 'mochi') {
+        const tag = 'txt2vid';
+        mutate({
+          type: 'video',
+          data: { engine: data.engine, prompt: data.prompt, seed: data.seed },
+          tags: [...tags, tag],
+        });
+      }
     });
   }
 
@@ -81,17 +147,6 @@ export function VideoGenerationForm() {
       generationStore.clearData();
     }
   }, [storeData, type]);
-
-  // TODO - determine why this won't work
-  // useEffect(() => {
-  //   const firstError = Object.keys(errors)[0];
-  //   if (firstError) {
-  //     setFocus(firstError as any);
-  //   }
-  // }, [errors, setFocus]);
-
-  const engine = form.watch('engine');
-  const image = form.watch('sourceImageUrl');
 
   useEffect(() => {
     if (!error) return;
@@ -109,79 +164,16 @@ export function VideoGenerationForm() {
 
   return (
     <Form
-      form={form}
-      className="relative flex h-full flex-1 flex-col justify-between gap-2"
+      form={form as any}
       onSubmit={handleSubmit}
+      className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      <div className="flex flex-col gap-2 px-3">
-        <TwCard className="border p-2">
-          <Title order={2}>{titleCase(engine)}</Title>
-          <Text size="sm">
-            {typeof engines[engine].description === 'function'
-              ? engines[engine].description()
-              : engines[engine].description}
-          </Text>
-        </TwCard>
-        <InputText name="engine" hidden clearable={false} />
-        <InputText name="sourceImageUrl" hidden clearable={false} />
-        {image && (
-          <div>
-            <div className="relative inline-block">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={image}
-                alt="image to refine"
-                className="max-w-40 rounded-md shadow-sm shadow-black"
-              />
-              <ActionIcon
-                variant="light"
-                size="sm"
-                color="red"
-                radius="xl"
-                className="absolute -right-2 -top-2"
-                onClick={() => form.setValue('sourceImageUrl', undefined)}
-              >
-                <IconX size={16} strokeWidth={2.5} />
-              </ActionIcon>
-            </div>
-          </div>
-        )}
-        <InputTextArea
-          name="prompt"
-          label="Prompt"
-          placeholder="Your prompt goes here..."
-          autosize
-          required={!image}
-        />
-        <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
-        <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
-        {/* <InputSelect
-          name="cameraMovement"
-          label="Camera Movement"
-          data={[
-            { label: 'none', value: 'none' },
-            { label: 'pan right', value: 'panRight' },
-            { label: 'pan left', value: 'panLeft' },
-            { label: 'tilt up', value: 'tiltUp' },
-            { label: 'tilt down', value: 'tiltDown' },
-            { label: 'zoom in', value: 'zoomIn' },
-            { label: 'zoom out', value: 'zoomOut' },
-          ]}
-        /> */}
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Duration</Input.Label>
-          <InputSegmentedControl
-            name="duration"
-            data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
-          />
-        </div>
-        <InputSeed name="seed" label="Seed" />
-      </div>
+      <div className="flex flex-col gap-2 px-3">{children}</div>
       <div className="shadow-topper bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">
-          <SubmitButton loading={isLoading} />
+          <SubmitButton2 loading={isLoading} engine={engine} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
             Reset
           </Button>
@@ -191,31 +183,32 @@ export function VideoGenerationForm() {
   );
 }
 
-function SubmitButton({ loading }: { loading: boolean }) {
-  const [query, setQuery] = useState<z.infer<typeof schema> | null>(null);
-  const { control, getValues, watch } = useFormContext<z.infer<typeof schema>>();
-  const { isValid } = useFormState({ control });
+function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }) {
+  const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
+  const { getValues, watch } = useFormContext();
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
-    { type: 'video', data: query as z.infer<typeof schema> },
-    { keepPreviousData: false, enabled: isValid && !!query }
+    { type: 'video', data: query as VideoGenerationSchema },
+    { keepPreviousData: false, enabled: !!query }
   );
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
 
   useEffect(() => {
+    const { whatIf = [], defaultValues } = engines[engine] ?? {};
     const subscription = watch(() => {
-      setQuery({
-        ...defaultValues,
-        ...getValues(),
-        prompt: 'whatIf',
-        negativePrompt: undefined,
-        seed: undefined,
-        aspectRatio: '1:1',
-      });
+      const formData = getValues();
+      const whatIfData = whatIf.reduce<Record<string, unknown>>(
+        (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
+        {}
+      );
+
+      const result = schema.safeParse({ ...defaultValues, ...whatIfData });
+      if (!result.success) setQuery(null);
+      else setQuery(result.data);
     });
     return subscription.unsubscribe;
-  }, [isValid]);
+  }, [engine]);
 
   useEffect(() => {
     if (data?.cost?.base) {
@@ -227,7 +220,7 @@ function SubmitButton({ loading }: { loading: boolean }) {
     <GenerateButton
       type="submit"
       className="flex-1"
-      disabled={!data || !isValid}
+      disabled={!data || !query}
       loading={isFetching || loading}
       cost={totalCost}
     >
@@ -238,10 +231,27 @@ function SubmitButton({ loading }: { loading: boolean }) {
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
-const engines: Record<string, { label: string; description: string | (() => React.ReactNode) }> = {
+type EnginesDictionary = Record<
+  string,
+  {
+    label: string;
+    description: string | (() => React.ReactNode);
+    defaultValues: VideoGenerationInput;
+    whatIf?: string[];
+  }
+>;
+const engines: EnginesDictionary = {
   haiper: {
     label: 'Haiper',
     description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+    defaultValues: {
+      engine: 'haiper',
+      prompt: '',
+      negativePrompt: '',
+      aspectRatio: '1:1',
+      duration: 4,
+    },
+    whatIf: ['duration'],
   },
   mochi: {
     label: 'Mochi',
@@ -262,6 +272,10 @@ const engines: Record<string, { label: string; description: string | (() => Reac
           prompt adherence in preliminary evaluation.
         </>
       );
+    },
+    defaultValues: {
+      engine: 'mochi',
+      prompt: '',
     },
   },
 };
