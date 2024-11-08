@@ -1,8 +1,15 @@
 import { z } from 'zod';
+import { generation } from '~/server/common/constants';
+import { getRandomInt } from '~/utils/number-helpers';
 
 const baseVideoSchema = z.object({
   engine: z.string(),
   prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters'),
+  seed: z
+    .number()
+    .min(0)
+    .max(generation.maxValues.seed)
+    .default(getRandomInt(0, generation.maxValues.seed)),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({
@@ -13,7 +20,6 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   // cameraMovement: z.string().optional(),
   duration: z.number().optional(),
   aspectRatio: z.string().optional(),
-  seed: z.number().optional(),
   sourceImageUrl: z.string().optional(),
 });
 
@@ -30,7 +36,6 @@ export const klingVideoGenerationSchema = baseVideoSchema.extend({
 
 export const mochiVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('mochi'),
-  seed: z.number().optional(),
 });
 
 export type VideoGenerationInput = z.input<typeof videoGenerationSchema>;

@@ -127,15 +127,3 @@ export const useRemixStore = create<{
   params?: Record<string, unknown>;
   remixOf?: RemixOfProps;
 }>()(persist(() => ({}), { name: 'remixOf' }));
-
-// const remixStore = {
-//   checkSimilarity: ({
-//     resources,
-//     params,
-//   }: {
-//     resources?: GenerationResource[];
-//     params?: Record<string, unknown>;
-//   }) => {
-//     // TODO
-//   },
-// };

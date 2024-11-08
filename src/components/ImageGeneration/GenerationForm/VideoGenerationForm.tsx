@@ -1,6 +1,6 @@
-import { Button, Input, Title, Text, ActionIcon, Select } from '@mantine/core';
-import React, { useEffect, useMemo, useState } from 'react';
-import { useFormContext, useFormState } from 'react-hook-form';
+import { Button, Input, Text, Select } from '@mantine/core';
+import React, { useEffect, useState } from 'react';
+import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
@@ -10,7 +10,6 @@ import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
   VideoGenerationInput,
   VideoGenerationSchema,
-  haiperVideoGenerationSchema,
   videoGenerationSchema,
 } from '~/server/schema/orchestrator/orchestrator.schema';
 import { trpc } from '~/utils/trpc';
@@ -20,18 +19,21 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { create } from 'zustand';
 import { generationStore, useGenerationStore } from '~/store/generation.store';
-import { titleCase } from '~/utils/string-helpers';
-import { IconX } from '@tabler/icons-react';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { showErrorNotification } from '~/utils/notifications';
 import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
+import { useLocalStorage } from '@mantine/hooks';
+import { Watch } from '~/libs/form/components/Watch';
 
 const schema = videoGenerationSchema;
 
 export function VideoGenerationForm() {
-  const [engine, setEngine] = useState<Engine>('haiper');
+  const [engine, setEngine] = useLocalStorage<Engine>({
+    key: 'engine',
+    defaultValue: 'haiper',
+    getInitialValueInEffect: false,
+  });
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -88,7 +90,13 @@ function MochiGenerationForm() {
 }
 
 type Engine = VideoGenerationInput['engine'];
-function FormWrapper({ engine, children }: { engine: Engine; children: React.ReactNode }) {
+function FormWrapper({
+  engine,
+  children,
+}: {
+  engine: Engine;
+  children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
+}) {
   const type = useGenerationStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
   const { defaultValues } = engines[engine] ?? {};
@@ -140,9 +148,10 @@ function FormWrapper({ engine, children }: { engine: Engine; children: React.Rea
 
   useEffect(() => {
     if (type === 'video' && storeData) {
+      const registered = Object.keys(form.getValues());
       const { params } = storeData;
       for (const [key, value] of Object.entries(params)) {
-        form.setValue(key as any, value);
+        if (registered.includes(key) && key !== 'engine') form.setValue(key as any, value);
       }
       generationStore.clearData();
     }
@@ -168,8 +177,11 @@ function FormWrapper({ engine, children }: { engine: Engine; children: React.Rea
       onSubmit={handleSubmit}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
-      <div className="flex flex-col gap-2 px-3">{children}</div>
-      <div className="shadow-topper bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+      <div className="flex flex-col gap-2 px-3">
+        <InputText type="hidden" name="engine" value={engine} />
+        {typeof children === 'function' ? children(form) : children}
+      </div>
+      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">

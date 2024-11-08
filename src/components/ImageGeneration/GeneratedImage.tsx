@@ -71,8 +71,6 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
-  const { pathname } = useRouter();
-  const view = useGenerationStore((state) => state.view);
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();

@@ -1,4 +1,4 @@
-import { ActionIcon, Input, InputWrapperProps, TextInput } from '@mantine/core';
+import { ActionIcon, Input, InputWrapperProps } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
 import { withController } from '~/libs/form/hoc/withController';
 
@@ -8,7 +8,7 @@ function ImageUrlInput({
   ...inputWrapperProps
 }: {
   value?: string;
-  onChange?: (value: string | null) => void;
+  onChange?: (value?: string) => void;
 } & Omit<InputWrapperProps, 'children'>) {
   if (!value) return <></>;
   return (
@@ -28,7 +28,7 @@ function ImageUrlInput({
             color="red"
             radius="xl"
             className="absolute -right-2 -top-2"
-            onClick={() => onChange?.(null)}
+            onClick={() => onChange?.()}
           >
             <IconX size={16} strokeWidth={2.5} />
           </ActionIcon>

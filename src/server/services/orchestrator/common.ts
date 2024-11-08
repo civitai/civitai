@@ -426,6 +426,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     $type: 'videoGen' as const,
     timeout: step.timeout,
     name: step.name,
+    // workflow and quantity are only here because they are required for other components to function
     params: { ...input, workflow: 'sourceImageUrl' in input ? 'img2vid' : 'txt2vid', quantity: 1 },
     images: videos,
     status: step.status,

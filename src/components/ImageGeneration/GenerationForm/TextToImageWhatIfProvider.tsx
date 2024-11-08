@@ -4,7 +4,7 @@ import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { generation, generationConfig } from '~/server/common/constants';
 import {
-  TextToImageParams,
+  TextToImageInput,
   generateImageWhatIfSchema,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -65,7 +65,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       params: {
         ...params,
         ...whatIfQueryOverrides,
-      } as TextToImageParams,
+      } as TextToImageInput,
     };
   }, [watched, defaultModel.id]);
 

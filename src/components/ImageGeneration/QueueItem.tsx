@@ -78,11 +78,9 @@ export function QueueItem({
 }) {
   const { classes, cx } = useStyle();
   const features = useFeatureFlags();
-  const { pathname } = useRouter();
   const [ref, inView] = useInViewDynamic({ id });
 
   const generationStatus = useGenerationStatus();
-  const view = useGenerationStore((state) => state.view);
   const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();

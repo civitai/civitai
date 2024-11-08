@@ -7,7 +7,7 @@ import { UpscalePicker } from '~/components/ImageGeneration/GenerationForm/Upsca
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -23,7 +23,7 @@ export function UpscaleImageModal({
   params: { aspectRatio, ...params },
 }: {
   resources: GenerationResource[];
-  params: TextToImageParams;
+  params: TextToImageInput;
 }) {
   const dialog = useDialogContext();
 
