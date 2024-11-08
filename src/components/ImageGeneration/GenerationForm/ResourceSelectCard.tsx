@@ -63,8 +63,19 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }:
             </Group>
           </ThemeIcon>
         ) : resource.image ? (
-          <Paper radius="sm" mr={8} style={{ overflow: 'hidden' }} w={64} h={64}>
-            <EdgeMedia type="image" src={resource.image?.url} width={64} />
+          <Paper
+            radius="sm"
+            mr={8}
+            style={{ overflow: 'hidden', flexGrow: 0, flexShrink: 0 }}
+            w={64}
+            h={64}
+          >
+            <EdgeMedia
+              type="image"
+              src={resource.image?.url}
+              width={64}
+              className="h-full object-cover"
+            />
           </Paper>
         ) : null}
         <Stack spacing={2}>
