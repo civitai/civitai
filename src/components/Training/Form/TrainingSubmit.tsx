@@ -385,7 +385,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         name: `V${idx + 1}`,
         modelId: model.id,
         baseModel: baseModelConvert,
-        trainedWords: [],
+        trainedWords: thisModelVersion.trainedWords ?? [],
         // ---
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,

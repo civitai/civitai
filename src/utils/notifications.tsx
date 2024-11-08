@@ -5,6 +5,7 @@ import {
   IconBolt,
   IconCheck,
   IconExclamationMark,
+  IconInfoCircle,
   IconX,
 } from '@tabler/icons-react';
 
@@ -68,6 +69,24 @@ export function showWarningNotification({
   showNotification({
     icon: <IconExclamationMark size={18} />,
     color: 'orange',
+    message,
+    title,
+    autoClose,
+  });
+}
+
+export function showInfoNotification({
+  message,
+  title,
+  autoClose = 3000,
+}: {
+  message: string | React.ReactNode;
+  title?: string;
+  autoClose?: number | false;
+}) {
+  showNotification({
+    icon: <IconInfoCircle size={18} />,
+    color: 'blue',
     message,
     title,
     autoClose,

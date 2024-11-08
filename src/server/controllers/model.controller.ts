@@ -61,9 +61,11 @@ import {
 } from '~/server/selectors/model.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
+import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import { bustMvCache } from '~/server/services/model-version.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -72,7 +74,6 @@ import {
   getModel,
   getModels,
   getModelsRaw,
-  GetModelsWithImagesAndModelVersions,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
   getTrainingModelsByUserId,
@@ -108,7 +109,6 @@ import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
-  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getDownloadUrl } from '~/utils/delivery-worker';
@@ -116,8 +116,6 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
-import { bustMvCache } from '~/server/services/model-version.service';
-import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -946,6 +944,7 @@ export const getMyTrainingModelsHandler = async ({
         id: true,
         trainingDetails: true,
         trainingStatus: true,
+        trainedWords: true,
         name: true,
         createdAt: true,
         updatedAt: true,

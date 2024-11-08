@@ -262,8 +262,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       <>
         If your training images have tags, you can randomly shuffle them (see &quot;Shuffle
         Tags&quot; option for details). However, if you have words that you want to keep at the
-        beginning, you can use this option to specify &quot;Keep the first 0 words at the
-        beginning&quot;.
+        beginning, you can use this option to specify how many to keep.
         <br />
         This option does nothing if the &quot;Shuffle Tags&quot; option is off.
       </>
@@ -275,7 +274,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
+      },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
       },
     },
   },
