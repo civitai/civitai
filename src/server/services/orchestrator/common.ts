@@ -383,21 +383,22 @@ function formatWorkflowStep(args: {
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
 
-  let aspectRatio: number,
-    width: number,
-    height = 1;
+  let width = 16,
+    height = 9;
 
   switch (input.engine) {
     case 'haiper': {
-      [width, height] = (input as HaiperVideoGenInput).aspectRatio?.split(':').map(Number) ?? [
-        16, 9,
-      ];
-      aspectRatio = width / height;
-    }
-    case 'mochi': {
-      aspectRatio = 16 / 9;
+      const haiperAspectRatio = (input as HaiperVideoGenInput).aspectRatio;
+      if (haiperAspectRatio) {
+        const [w, h] = haiperAspectRatio.split(':').map(Number);
+        if (w && h) {
+          width = w;
+          height = h;
+        }
+      }
     }
   }
+  const aspectRatio = width / height;
 
   const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
