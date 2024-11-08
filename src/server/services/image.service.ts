@@ -319,6 +319,11 @@ export const moderateImages = async ({
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
         "ingestion" = 'Scanned',
+        -- if image was created within 72 hrs, set scannedAt to now
+        "scannedAt" = CASE
+          WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+          ELSE "scannedAt"
+        END,
         "nsfwLevel" = CASE
           WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
           ELSE "nsfwLevel"
@@ -1137,7 +1142,7 @@ export const getAllImages = async (
         END
       ) as "onSite",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
@@ -3339,7 +3344,7 @@ export const getImageModerationReviewQueue = async ({
       i.meta,
       i."hideMeta",
       i."createdAt",
-      COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+      GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
       i.type,
       i.metadata,
