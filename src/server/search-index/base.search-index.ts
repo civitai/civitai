@@ -415,6 +415,78 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     async queueUpdate(items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>) {
       await SearchIndexUpdate.queueUpdate({ indexName, items });
     },
+    async processQueues(
+      opts: { processUpdates?: boolean; processDeletes?: boolean } = {},
+      jobContext: JobContext
+    ) {
+      const ctx = {
+        db: dbRead,
+        pg: pgDbRead,
+        indexName,
+        jobContext,
+        logger,
+      };
+
+      if (opts.processUpdates) {
+        const queuedUpdates = await SearchIndexUpdate.getQueue(
+          indexName,
+          SearchIndexUpdateQueueAction.Update,
+          partial ? true : false // readOnly
+        );
+
+        const updatedItems = [...new Set<number>([...queuedUpdates.content])];
+
+        const queue = new TaskQueue('pull', maxQueueSize);
+        const maxUpdateBatchSize = 10000; // To avoid too large batches for postgres
+        const updateItemsTasks = Math.ceil(updatedItems.length / maxUpdateBatchSize);
+
+        for (let i = 0; i < updateItemsTasks; i++) {
+          const batch = {
+            ids: updatedItems.slice(i * maxUpdateBatchSize, (i + 1) * maxUpdateBatchSize),
+          };
+
+          queue.addTask({
+            type: 'pull',
+            mode: 'targeted',
+            steps: processor.pullSteps,
+            currentStep: 0,
+            index: i,
+            total: updateItemsTasks,
+            ...batch,
+          });
+        }
+
+        const workers = Array.from({ length: workerCount }).map(() => {
+          return getTaskQueueWorker(
+            queue,
+            async (task) => processSearchIndexTask(processor, ctx, task),
+            logger
+          );
+        });
+
+        await Promise.all(workers);
+        await queuedUpdates.commit();
+      }
+
+      if (opts.processDeletes) {
+        const queuedDeletes = await SearchIndexUpdate.getQueue(
+          indexName,
+          SearchIndexUpdateQueueAction.Delete,
+          partial ? true : false // readOnly
+        );
+
+        if (queuedDeletes.content.length > 0 && !partial) {
+          await onSearchIndexDocumentsCleanup({
+            indexName,
+            ids: queuedDeletes.content,
+            client: processor.client,
+          });
+        }
+
+        // Commit queues:
+        await queuedDeletes.commit();
+      }
+    },
   };
 }
 
