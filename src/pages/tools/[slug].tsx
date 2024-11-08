@@ -57,7 +57,7 @@ function ToolFeedPage() {
             <IsClient>
               <ImageCategories />
               <ImagesInfinite
-                filters={{ tools: toolId ? [toolId] : undefined }}
+                filters={{ tools: toolId ? [toolId] : undefined, types: ['image', 'video'] }}
                 showEof
                 showAds
                 useIndex
