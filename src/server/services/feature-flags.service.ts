@@ -108,7 +108,8 @@ const featureFlags = createFeatureFlags({
   canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
-  adsEnabled: ['public', 'blue', 'green'],
+  // Temporarily disabled until we change ads provider -Manuel
+  adsEnabled: ['dev'], // ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
   admin: ['granted'],
   toolSearch: ['public'],
