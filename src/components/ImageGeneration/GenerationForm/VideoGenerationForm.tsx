@@ -153,6 +153,7 @@ function FormWrapper({
   engine: Engine;
   children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
 }) {
+  const type = useGenerationFormStore((state) => state.type)
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
   const { defaultValues } = workflow ?? {};
@@ -196,7 +197,7 @@ function FormWrapper({
   }
 
   useEffect(() => {
-    if (storeData) {
+    if (type === 'video' && storeData) {
       const registered = Object.keys(form.getValues());
       const { params } = storeData;
       for (const [key, value] of Object.entries(params)) {
@@ -204,7 +205,7 @@ function FormWrapper({
       }
       generationStore.clearData();
     }
-  }, [storeData]);
+  }, [storeData, type]);
 
   useEffect(() => {
     if (!error) return;
@@ -224,10 +225,12 @@ function FormWrapper({
     <Form
       form={form as any}
       onSubmit={handleSubmit}
+      onError={(error) => console.log({ error, values: form.getValues() })}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
       <div className="flex flex-col gap-2 px-3">
         <InputText type="hidden" name="engine" value={engine} />
+        <InputText type="hidden" name="workflow" value={workflow.key} />
         {typeof children === 'function' ? children(form) : children}
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
@@ -252,7 +255,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
     { keepPreviousData: false, enabled: !!query }
   );
   const { workflow } = useWorkflowContext();
-  console.log({ query, workflow, engine });
+  // console.log({ query, workflow, engine });
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query

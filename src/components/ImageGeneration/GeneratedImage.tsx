@@ -41,11 +41,10 @@ import {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
-import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
-import { GenerationWorkflowTypeConfig } from '~/shared/types/generation.types';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -113,7 +112,7 @@ export function GeneratedImage({
 
   const handleGenerate = (
     { seed, ...rest }: Partial<TextToImageParams> = {},
-    { type, workflowConfig }: { type: MediaType; workflowConfig?: string } = { type: 'image' }
+    { type, workflow: workflow }: { type: MediaType; workflow?: string } = { type: 'image' }
   ) => {
     handleCloseImageLightbox();
     generationStore.setData({
@@ -121,7 +120,7 @@ export function GeneratedImage({
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
       type,
-      workflowConfig,
+      workflow: workflow ?? step.params.workflow,
     });
   };
 

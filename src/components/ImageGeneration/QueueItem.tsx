@@ -145,11 +145,13 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
+    console.log({type: images[0].type})
     generationStore.setData({
       resources: step.resources ?? [],
       params: { ...step.params, seed: undefined },
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
+      workflow: step.params.workflow
     });
   };
 

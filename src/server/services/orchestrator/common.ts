@@ -56,6 +56,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '@prisma/client';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -382,9 +383,12 @@ function formatWorkflowStep(args: {
 
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
+  const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
 
   let width = 16,
     height = 9;
+
+  if ((workflowId = '0-20241108234000287')) console.log(input);
 
   switch (input.engine) {
     case 'haiper': {
@@ -433,7 +437,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
-      workflow: 'workflow' in input ? (input.workflow as string) : undefined,
+      workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
     images: videos,

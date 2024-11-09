@@ -16,5 +16,6 @@ export async function createVideoGenStep(data: VideoGenerationSchema) {
   return {
     $type: 'videoGen',
     input: data,
+    metadata: { params: data },
   };
 }

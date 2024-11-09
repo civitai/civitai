@@ -28,7 +28,7 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (args: GenerationData & { type: MediaType; workflowConfig?: string }) => void;
+  setData: (args: GenerationData & { type: MediaType; workflow?: string }) => void;
   clearData: () => void;
 };
 
@@ -41,18 +41,18 @@ export const useGenerationStore = create<GenerationState>()(
       open: async (input) => {
         set((state) => {
           state.opened = true;
-          ``;
           if (input) {
             state.view = 'generate';
-            if (input.type === 'video') state.type = 'video';
-            else state.type = 'image';
           }
         });
 
         if (input) {
-          const result = await fetchGenerationData(input);
-          if (['audio', 'image', 'video'].includes(input.type)) {
+          const isMedia = ['audio', 'image', 'video'].includes(input.type);
+          if (isMedia) {
             generationFormStore.setType(input.type as MediaType);
+          }
+          const result = await fetchGenerationData(input);
+          if (isMedia) {
             useRemixStore.setState(result);
           }
 
@@ -75,10 +75,11 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, workflowConfig, ...data }) => {
-        generationFormStore.setWorkflow(workflowConfig);
+      setData: ({ type, remixOf, workflow, ...data }) => {
+        generationFormStore.setType(type);
+        generationFormStore.setWorkflow(workflow);
+        console.log({ workflow });
         set((state) => {
-          state.type = type;
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
           if (!location.pathname.includes('generate')) state.view = 'generate';
@@ -98,7 +99,6 @@ export const generationPanel = {
   open: store.open,
   close: store.close,
   setView: store.setView,
-  setType: store.setType,
 };
 
 export const generationStore = {
@@ -146,6 +146,7 @@ export const generationFormStore = {
     let engine: string | undefined;
     if (workflow) {
       const configuration = generationFormWorkflowConfigurations.find((x) => x.key === workflow);
+      console.log({ workflow, configuration });
       if (!configuration) updatedWorkflow = undefined;
       else {
         if ('engine' in configuration) engine = configuration.engine;
