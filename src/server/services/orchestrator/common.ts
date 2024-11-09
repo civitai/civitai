@@ -388,7 +388,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   let width = 16,
     height = 9;
 
-  if ((workflowId = '0-20241108234000287')) console.log(input);
+  // if ((workflowId = '0-20241108234000287')) console.log(input);
 
   switch (input.engine) {
     case 'haiper': {

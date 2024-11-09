@@ -153,7 +153,7 @@ function FormWrapper({
   engine: Engine;
   children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
 }) {
-  const type = useGenerationFormStore((state) => state.type)
+  const type = useGenerationFormStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
   const { defaultValues } = workflow ?? {};
@@ -225,7 +225,7 @@ function FormWrapper({
     <Form
       form={form as any}
       onSubmit={handleSubmit}
-      onError={(error) => console.log({ error, values: form.getValues() })}
+      // onError={(error) => console.log({ error, values: form.getValues() })}
       className="relative flex h-full flex-1 flex-col justify-between gap-2"
     >
       <div className="flex flex-col gap-2 px-3">
