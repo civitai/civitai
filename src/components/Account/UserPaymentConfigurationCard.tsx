@@ -322,10 +322,28 @@ const TipaltiConfigurationCard = () => {
           </Stack>
         </>
       ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
-        <Text>
-          Your account is set up and ready for withdrawals. Click below to make any adjustments to
-          your Tipalti account settings.
-        </Text>
+        <>
+          {userPaymentConfiguration?.tipaltiPaymentsEnabled ? (
+            <Text>
+              Your account is set up and ready for withdrawals. Click below to make any adjustments
+              to your Tipalti account settings.
+            </Text>
+          ) : (
+            <Stack>
+              <Text>
+                Your account has been activated but you are still not able to withdraw. If you had a
+                failed payment, Tipalti will mark the account as not payable until you fix the
+                problem.
+              </Text>
+
+              <Text>
+                If you have not had a failed payment, this might be due to document verification and
+                validation. You will be notified once this changes.
+              </Text>
+              <Text>If you think this is an error, please contact support.</Text>
+            </Stack>
+          )}
+        </>
       ) : (
         <Text>
           We are unable to setup your account so that you can withdraw funds. You may contact
