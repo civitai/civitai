@@ -18,6 +18,7 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   duration: z.number().optional(),
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),
+  resolution: z.number().default(1080),
 });
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
