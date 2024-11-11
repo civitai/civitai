@@ -33,7 +33,6 @@ import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/Hidden
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
-import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { CookiesProvider } from '~/providers/CookiesProvider';
@@ -58,6 +57,8 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
+import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
+import { AppProvider } from '~/providers/AppProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -77,12 +78,13 @@ type CustomAppProps = {
   colorScheme: ColorScheme;
   cookies: ParsedCookies;
   flags?: FeatureAccess;
+  seed: number;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme, cookies, flags, ...pageProps },
+    pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
   } = props;
 
   if (typeof window !== 'undefined' && !window.authChecked) {
@@ -119,78 +121,79 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <>
+    <AppProvider seed={seed}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <IsClientProvider>
-          <ClientHistoryStore />
-          <RegisterCatchNavigation />
-          <RouterTransition />
-          <UpdateRequiredWatcher />
-          {/* <ChadGPT isAuthed={!!session} /> */}
-          <SessionProvider
-            session={session}
-            refetchOnWindowFocus={false}
-            refetchWhenOffline={false}
-          >
-            <FeatureFlagsProvider flags={flags}>
-              <CookiesProvider value={cookies}>
-                <AccountProvider>
-                  <CivitaiSessionProvider>
-                    <BrowserSettingsProvider>
-                      <SignalProvider>
-                        <ActivityReportingProvider>
-                          <ReferralsProvider>
-                            <FiltersProvider>
-                              <AdsProvider>
-                                <PaddleProvider>
-                                  <HiddenPreferencesProvider>
-                                    <CivitaiLinkProvider>
-                                      <NotificationsProvider
-                                        className="notifications-container"
-                                        zIndex={9999}
-                                      >
-                                        <BrowserRouterProvider>
-                                          <GenerationProvider>
-                                            <IntersectionObserverProvider>
-                                              <BaseLayout>
-                                                <TrackPageView />
-                                                <ChatContextProvider>
-                                                  <CustomModalsProvider>
-                                                    {getLayout(<Component {...pageProps} />)}
-                                                    {/* <StripeSetupSuccessProvider /> */}
-                                                    <DialogProvider />
-                                                    <RoutedDialogProvider />
-                                                  </CustomModalsProvider>
-                                                </ChatContextProvider>
-                                              </BaseLayout>
-                                            </IntersectionObserverProvider>
-                                          </GenerationProvider>
-                                        </BrowserRouterProvider>
-                                      </NotificationsProvider>
-                                    </CivitaiLinkProvider>
-                                  </HiddenPreferencesProvider>
-                                </PaddleProvider>
-                              </AdsProvider>
-                            </FiltersProvider>
-                          </ReferralsProvider>
-                        </ActivityReportingProvider>
-                      </SignalProvider>
-                    </BrowserSettingsProvider>
-                  </CivitaiSessionProvider>
-                </AccountProvider>
-              </CookiesProvider>
-            </FeatureFlagsProvider>
-          </SessionProvider>
-        </IsClientProvider>
+        <UpdateRequiredWatcher>
+          <IsClientProvider>
+            <ClientHistoryStore />
+            <RegisterCatchNavigation />
+            <RouterTransition />
+            {/* <ChadGPT isAuthed={!!session} /> */}
+            <SessionProvider
+              session={session}
+              refetchOnWindowFocus={false}
+              refetchWhenOffline={false}
+            >
+              <FeatureFlagsProvider flags={flags}>
+                <CookiesProvider value={cookies}>
+                  <AccountProvider>
+                    <CivitaiSessionProvider>
+                      <BrowserSettingsProvider>
+                        <SignalProvider>
+                          <ActivityReportingProvider>
+                            <ReferralsProvider>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaddleProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider
+                                          className="notifications-container"
+                                          zIndex={9999}
+                                        >
+                                          <BrowserRouterProvider>
+                                            <GenerationProvider>
+                                              <IntersectionObserverProvider>
+                                                <BaseLayout>
+                                                  <TrackPageView />
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </IntersectionObserverProvider>
+                                            </GenerationProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaddleProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
+                          </ActivityReportingProvider>
+                        </SignalProvider>
+                      </BrowserSettingsProvider>
+                    </CivitaiSessionProvider>
+                  </AccountProvider>
+                </CookiesProvider>
+              </FeatureFlagsProvider>
+            </SessionProvider>
+          </IsClientProvider>
+        </UpdateRequiredWatcher>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 
       {isDev && <ReactQueryDevtools />}
-    </>
+    </AppProvider>
   );
 }
 
@@ -223,6 +226,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       cookies: parsedCookies,
       session,
       flags,
+      seed: Date.now(),
     },
     ...appProps,
   };

@@ -11,6 +11,7 @@ import {
 } from '~/components/MasonryColumns/masonry.types';
 import { AdUnit } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
+import clsx from 'clsx';
 
 type Props<TData> = {
   data: TData[];
@@ -36,14 +37,6 @@ export function MasonryColumns<TData>({
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
-  const { classes } = useStyles({
-    columnCount,
-    columnWidth,
-    columnGap,
-    rowGap,
-    maxSingleColumnWidth,
-  });
-
   const columns = useMasonryColumns(
     data,
     columnWidth,
@@ -55,9 +48,13 @@ export function MasonryColumns<TData>({
   );
 
   return (
-    <div className={classes.columns}>
+    <div className="mx-auto flex justify-center gap-4">
       {columns.map((items, colIndex) => (
-        <div key={colIndex} className={classes.column}>
+        <div
+          key={colIndex}
+          className={clsx('flex max-w-[450px] flex-col gap-4', { ['w-full']: columnCount === 1 })}
+          style={columnCount > 1 ? { width: columnWidth } : undefined}
+        >
           {items.map(({ height, data }, index) => {
             const key = data.type === 'data' ? itemId?.(data.data) ?? index : `ad_${index}`;
             const showStaticItem = colIndex === 0 && index === 0 && staticItem;
@@ -82,41 +79,6 @@ export function MasonryColumns<TData>({
     </div>
   );
 }
-
-const useStyles = createStyles(
-  (
-    theme,
-    {
-      columnCount,
-      columnWidth,
-      columnGap,
-      rowGap,
-      maxSingleColumnWidth,
-    }: {
-      columnCount: number;
-      columnWidth: number;
-      columnGap: number;
-      rowGap: number;
-      maxSingleColumnWidth?: number;
-    }
-  ) => {
-    return {
-      columns: {
-        display: 'flex',
-        columnGap,
-        justifyContent: 'center',
-        margin: '0 auto',
-      },
-      column: {
-        display: 'flex',
-        flexDirection: 'column',
-        width: columnCount === 1 ? '100%' : columnWidth,
-        maxWidth: maxSingleColumnWidth,
-        rowGap,
-      },
-    };
-  }
-);
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(
