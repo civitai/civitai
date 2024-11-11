@@ -114,15 +114,15 @@ export const VaultStorageDowngrade = () => {
               <Text component="span" weight="bold">
                 {pagination?.totalItems?.toLocaleString() ?? 0} models
               </Text>{' '}
-              stored on your Vault. After downgrading, your Vault will be freezed from Download.
+              stored on your Vault. After downgrading, your Vault will be frozen.
             </Text>
             <Text color="dimmed" align="center">
-              You will have a 7 days grace period.
+              You will have a 7 day grace period to download models from your Vault.
             </Text>
           </div>
           <Link href="/user/vault" passHref>
             <Button component="a" onClick={handleClose} radius="xl">
-              Go to my vault
+              Go to my Vault
             </Button>
           </Link>
         </div>
