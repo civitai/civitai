@@ -1771,8 +1771,16 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
   const { take, skip } = getPagination(limit, page);
   const where: Prisma.ModelFindManyArgs['where'] = {
     userId,
-    status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
-    uploadType: { equals: ModelUploadType.Created },
+    OR: [
+      {
+        status: { notIn: [ModelStatus.Published, ModelStatus.Deleted] },
+        uploadType: ModelUploadType.Created,
+      },
+      {
+        uploadType: ModelUploadType.Trained,
+        status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+      },
+    ],
   };
 
   const items = await dbRead.model.findMany({
