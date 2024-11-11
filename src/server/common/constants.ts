@@ -675,7 +675,7 @@ export const generation = {
     } as GenerationResource,
   },
   maxValues: {
-    seed: 4294967195,
+    seed: 2147483647,
     clipSkip: 3,
   },
 } as const;

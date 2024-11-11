@@ -6,11 +6,7 @@ const baseVideoSchema = z.object({
   workflow: z.string(),
   engine: z.string(),
   prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters').default(''),
-  seed: z
-    .number()
-    .min(0)
-    .max(generation.maxValues.seed)
-    .default(getRandomInt(0, generation.maxValues.seed)),
+  seed: z.number().min(0).max(4294967195).default(getRandomInt(0, generation.maxValues.seed)),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({

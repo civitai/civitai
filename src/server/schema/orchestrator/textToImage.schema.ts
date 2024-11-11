@@ -24,7 +24,7 @@ export const textToImageParamsSchema = z.object({
   seed: z.coerce
     .number()
     .min(0)
-    .max(generation.maxValues.seed)
+    .max(4294967195)
     .default(getRandomInt(0, generation.maxValues.seed)),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100),
