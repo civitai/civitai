@@ -55,6 +55,7 @@ export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
     'emaciated bodies',
     'weapons',
     // Adding these since Rekognition seems to be tagging anything red...
+    'extremist',
     'hate symbols',
     'nazi party',
     'white supremacy',
