@@ -914,7 +914,8 @@ export async function getTransactionsReport({
       : input.window === 'week'
       ? dayjs().startOf('day').subtract(1, 'month')
       : dayjs().startOf('year');
-  const endDate = dayjs().endOf('day');
+  // End date is always the start of the next day
+  const endDate = dayjs().add(1, 'day').startOf('day');
 
   const query = QS.stringify({
     ...input,
