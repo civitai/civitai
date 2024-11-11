@@ -28,10 +28,11 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
       <MediaFiltersDropdown
         size="sm"
         w="100%"
-        compact
         className={classes.subnavDropdown}
-        isFeed
         filterType="videos"
+        hideMediaTypes
+        compact
+        isFeed
       />
     </Group>
   );

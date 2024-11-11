@@ -1,8 +1,9 @@
-import { Button, Text, Title, useMantineTheme } from '@mantine/core';
+import { Button, Title, useMantineTheme } from '@mantine/core';
 import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageFilters } from '~/components/Image/image.utils';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { FilterKeys } from '~/providers/FiltersProvider';
 import { generationPanel } from '~/store/generation.store';
@@ -83,7 +84,15 @@ export function ToolBanner({
               </div>
             </div>
           </div>
-          <Text className="text-shadow-default">{selected.description}</Text>
+          {selected.description && (
+            <CustomMarkdown
+              allowedElements={['a']}
+              className="text-shadow-default"
+              unwrapDisallowed
+            >
+              {selected.description}
+            </CustomMarkdown>
+          )}
         </div>
       </MasonryContainer>
     </div>

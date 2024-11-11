@@ -376,6 +376,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
         return `/${indexName}/${hit.id}`;
       case 'users':
         return `/user/${hit.username}`;
+      case 'tools':
+        return `/${indexName}/${slugit(hit.name)}`;
       case 'models':
       default:
         return `/${indexName}/${hit.id}/${slugit(hit.name)}`;

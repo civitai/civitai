@@ -455,8 +455,8 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: [...baseModelSets.SD3] },
   ],
   SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: ['SD 3.5', ...baseModelSets.SD3_5M] },
-    { type: ModelType.LORA, baseModels: ['SD 3.5', ...baseModelSets.SD3_5M] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M] },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
