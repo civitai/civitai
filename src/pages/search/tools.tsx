@@ -33,7 +33,8 @@ import { slugit } from '~/utils/string-helpers';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { generationPanel } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
+import { ToolType } from '@prisma/client';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -218,7 +219,15 @@ export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                // TODO.tool: open the right section in the panel based on the tool type
+
+                const isVideo = data.type === ToolType.Video;
+                generationStore.setData({
+                  resources: [],
+                  params: {},
+                  type: isVideo ? 'video' : 'image',
+                  // TODO.gen: have to think this through on how to get the right workflow
+                  workflow: isVideo ? `${data.name.toLowerCase}-txt2vid` : undefined,
+                });
                 generationPanel.open();
               }}
               fullWidth
