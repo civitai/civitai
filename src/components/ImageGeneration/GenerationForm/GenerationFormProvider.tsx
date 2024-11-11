@@ -25,7 +25,12 @@ import {
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import { fetchGenerationData, generationStore, useGenerationStore } from '~/store/generation.store';
+import {
+  fetchGenerationData,
+  generationStore,
+  useGenerationFormStore,
+  useGenerationStore,
+} from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -227,6 +232,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
     (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
@@ -258,7 +264,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   // TODO.Briant - determine a better way to pipe the data into the form
   // #region [effects]
   useEffect(() => {
-    if (storeData) {
+    if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
       switch (runType) {
         case 'replay':
