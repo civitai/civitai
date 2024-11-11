@@ -257,6 +257,10 @@ function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+        if (article.userNsfwLevel && !Flags.intersects(article.userNsfwLevel, browsingLevel)) {
+          hidden.browsingLevel++;
+          return false;
+        }
         if (article.user && hiddenUsers.get(article.user.id)) {
           hidden.users++;
           return false;
@@ -497,6 +501,7 @@ type BaseArticle = {
   id: number;
   user: { id: number };
   nsfwLevel: number;
+  userNsfwLevel: number;
   tags?: {
     id: number;
   }[];

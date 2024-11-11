@@ -97,7 +97,7 @@ export function ToolBanner({
           {selected.description && (
             <CustomMarkdown
               allowedElements={['a']}
-              className="text-shadow-default"
+              className="markdown-content text-shadow-default"
               unwrapDisallowed
             >
               {selected.description}

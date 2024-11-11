@@ -34,6 +34,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationPanel, generationStore } from '~/store/generation.store';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ToolType } from '@prisma/client';
 
 export const getServerSideProps = createServerSideProps({
@@ -213,7 +214,13 @@ export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
           <Badge size="sm" radius="xl">
             {data.type}
           </Badge>
-          <Text lineClamp={3}>{data.description}</Text>
+          {data.description && (
+            <Text lineClamp={3}>
+              <CustomMarkdown allowedElements={[]} unwrapDisallowed>
+                {data.description}
+              </CustomMarkdown>
+            </Text>
+          )}
           {data.supported && (
             <Button
               onClick={(e) => {

@@ -161,6 +161,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
                   .map((r: { reasonDescription: string }) => r.reasonDescription)
                   .join(', ')}`
+              : event.type === 'paymentSubmitted'
+              ? 'Payment submitted'
               : 'Payment canceled';
 
           await updateBuzzWithdrawalRequest({

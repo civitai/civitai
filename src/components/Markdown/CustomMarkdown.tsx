@@ -9,20 +9,20 @@ type CustomOptions = ReactMarkdownOptions & {
 };
 
 /**
- Links for `notranslate` context
- https://stackoverflow.com/a/65110044
- https://github.com/facebook/react/issues/11538
+ * Links for `notranslate` context
+ * https://stackoverflow.com/a/65110044
+ * https://github.com/facebook/react/issues/11538
  */
 export function CustomMarkdown({
   allowExternalVideo,
   components,
-  className = 'markdown-content',
+  className,
   ...options
 }: CustomOptions) {
   return (
     <ReactMarkdown
       {...options}
-      className={clsx(className, 'notranslate')}
+      className={clsx(className, 'markdown-content notranslate')}
       components={{
         ...components,
         a: ({ node, href, ...props }) => {
