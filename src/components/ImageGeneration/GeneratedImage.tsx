@@ -112,7 +112,10 @@ export function GeneratedImage({
 
   const handleGenerate = (
     { seed, ...rest }: Partial<TextToImageParams> = {},
-    { type, workflow: workflow }: { type: MediaType; workflow?: string } = { type: 'image' }
+    { type, workflow: workflow }: { type: MediaType; workflow?: string } = {
+      type: image.type,
+      workflow: step.params.workflow,
+    }
   ) => {
     handleCloseImageLightbox();
     generationStore.setData({
