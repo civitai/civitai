@@ -29,7 +29,6 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
-import { useLocalStorage } from '@mantine/hooks';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { TwCard } from '~/components/TwCard/TwCard';
 
@@ -51,6 +50,11 @@ export function VideoGenerationForm() {
     engine,
   });
 
+  const workflows =
+    workflow.subType === 'txt2vid'
+      ? availableWorkflows.filter((x) => x.subType === 'txt2vid')
+      : availableWorkflows;
+
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
@@ -63,11 +67,11 @@ export function VideoGenerationForm() {
             { label: 'Mochi', value: 'mochi' },
           ]}
         />
-        {availableWorkflows.length > 1 ? (
+        {workflows.length > 1 ? (
           <Select
             label="Workflow"
-            data={availableWorkflows.map((x) => ({ label: x.name, value: x.key }))}
-            value={workflow.key ?? availableWorkflows[0].key}
+            data={workflows.map((x) => ({ label: x.name, value: x.key }))}
+            value={workflow.key ?? workflows[0].key}
             onChange={(workflow) => generationFormStore.setWorkflow(workflow!)}
           />
         ) : (
@@ -115,7 +119,7 @@ function HaiperTxt2VidGenerationForm() {
           data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
-      {/* <InputSeed name="seed" label="Seed" /> */}
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }
@@ -131,7 +135,7 @@ function HaiperImg2VidGenerationForm() {
           data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
-      {/* <InputSeed name="seed" label="Seed" /> */}
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }
@@ -140,7 +144,7 @@ function MochiGenerationForm() {
   return (
     <FormWrapper engine="mochi">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
-      {/* <InputSeed name="seed" label="Seed" /> */}
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }

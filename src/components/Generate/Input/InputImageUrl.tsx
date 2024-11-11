@@ -10,7 +10,6 @@ function ImageUrlInput({
   value?: string;
   onChange?: (value?: string) => void;
 } & Omit<InputWrapperProps, 'children'>) {
-  console.log({ value });
   if (!value) return <></>;
   return (
     <Input.Wrapper {...inputWrapperProps}>

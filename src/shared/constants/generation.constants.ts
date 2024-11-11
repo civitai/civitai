@@ -572,17 +572,17 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       duration: 4,
     },
   },
-  // {
-  //   type: 'video',
-  //   subType: 'img2vid',
-  //   name: 'Image to video',
-  //   category: 'service',
-  //   engine: 'haiper',
-  //   key: 'haiper-img2vid',
-  //   defaultValues: {
-  //     duration: 4,
-  //   },
-  // },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'haiper',
+    key: 'haiper-img2vid',
+    defaultValues: {
+      duration: 4,
+    },
+  },
   {
     type: 'video',
     subType: 'txt2vid',

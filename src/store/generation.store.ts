@@ -78,7 +78,6 @@ export const useGenerationStore = create<GenerationState>()(
       setData: ({ type, remixOf, workflow, ...data }) => {
         generationFormStore.setType(type);
         generationFormStore.setWorkflow(workflow);
-        console.log({ workflow });
         set((state) => {
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
@@ -146,7 +145,6 @@ export const generationFormStore = {
     let engine: string | undefined;
     if (workflow) {
       const configuration = generationFormWorkflowConfigurations.find((x) => x.key === workflow);
-      console.log({ workflow, configuration });
       if (!configuration) updatedWorkflow = undefined;
       else {
         if ('engine' in configuration) engine = configuration.engine;

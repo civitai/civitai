@@ -338,21 +338,21 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
-              {/* {!isVideo && (
+              {!isVideo && (
                 <>
                   <Menu.Divider />
                   <Menu.Item
                     onClick={() =>
                       handleGenerate({ sourceImageUrl: image.url } as any, {
                         type: 'video',
-                        workflowConfig: 'haiper-img2vid',
+                        workflow: 'haiper-img2vid',
                       })
                     }
                   >
                     Image to Video
                   </Menu.Item>
                 </>
-              )} */}
+              )}
               <Menu.Divider />
               <Menu.Label>System</Menu.Label>
               <Menu.Item
