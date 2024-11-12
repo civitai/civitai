@@ -26,7 +26,10 @@ import {
   useGenerationStore,
 } from '~/store/generation.store';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import {
+  WORKFLOW_TAGS,
+  generationFormWorkflowConfigurations,
+} from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
@@ -182,7 +185,11 @@ function FormWrapper({
   });
 
   function handleReset() {
+    for (const workflow of generationFormWorkflowConfigurations) {
+      localStorage.removeItem(workflow.key);
+    }
     form.reset(defaultValues);
+    generationFormStore.setWorkflow('haiper-txt2vid');
   }
 
   function handleSubmit(data: z.infer<typeof schema>) {
