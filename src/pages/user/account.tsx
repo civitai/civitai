@@ -19,12 +19,11 @@ import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCar
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
-import { useRefreshSession } from '~/components/Stripe/memberships.util';
+import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 
 export default function Account({ providers }: Props) {
   const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { refreshSession } = useRefreshSession();
 
   return (
     <>
@@ -51,13 +50,8 @@ export default function Account({ providers }: Props) {
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
           {apiKeys && <ApiKeysCard />}
+          <RefreshSessionCard />
           <DeleteCard />
-          <Divider label="Extras" />
-          <Group spacing="sm">
-            <Button variant="subtle" onClick={refreshSession}>
-              Refresh my session
-            </Button>
-          </Group>
         </Stack>
       </Container>
     </>
