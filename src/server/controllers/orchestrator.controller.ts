@@ -79,7 +79,7 @@ export async function generate({
     }
   }
 
-  if (!('seed' in args.data))
+  if (!('seed' in args.data) || !args.data.seed)
     args.data = { ...args.data, seed: getRandomInt(1, generation.maxValues.seed) };
 
   const step = await createWorkflowStep(args as GenerationSchema);
