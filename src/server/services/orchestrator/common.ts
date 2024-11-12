@@ -385,8 +385,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
 
-  let width = 16,
-    height = 9;
+  let width: number | undefined;
+  let height: number | undefined;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
@@ -401,8 +401,12 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
         }
       }
     }
+    case 'mochi': {
+      width = 848;
+      height = 480;
+    }
   }
-  const aspectRatio = width / height;
+  const aspectRatio = width && height ? width / height : undefined;
 
   const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({

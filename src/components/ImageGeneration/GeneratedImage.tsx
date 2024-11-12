@@ -90,11 +90,11 @@ export function GeneratedImage({
     );
   const { copied, copy } = useClipboard();
 
-  const canClickImage = useDialogStore(
-    (state) => !state.dialogs.some((x) => x.id === 'generated-image')
+  const isLightbox = useDialogStore((state) =>
+    state.dialogs.some((x) => x.id === 'generated-image')
   );
   const handleImageClick = () => {
-    if (!image || !available || !canClickImage) return;
+    if (!image || !available || isLightbox) return;
 
     dialogStore.trigger({
       id: 'generated-image',
@@ -254,12 +254,12 @@ export function GeneratedImage({
   // const canImg2Img = true;
 
   return (
-    <TwCard ref={ref} className={classes.imageWrapper} style={{ aspectRatio: image.aspectRatio }}>
+    <TwCard ref={ref} className="max-h-full max-w-full" style={{ aspectRatio: image.aspectRatio }}>
       {inView && (
         <>
           <div
             className={clsx('relative flex flex-1 flex-col items-center justify-center', {
-              ['cursor-pointer']: canClickImage,
+              ['cursor-pointer']: !isLightbox,
             })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
@@ -271,13 +271,14 @@ export function GeneratedImage({
               type={image.type}
               alt=""
               wrapperProps={{ style: { height: '100%' } }}
+              className="max-h-full w-auto max-w-full"
               // onDragStart={(e) => {
               //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               // }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          {canClickImage && (
+          {!isLightbox && (
             <label className="absolute left-3 top-3 ">
               <Checkbox
                 className={classes.checkbox}
@@ -440,23 +441,25 @@ export function GeneratedImage({
               <IconThumbDown size={16} />
             </ActionIcon>
           </Group>
-          <div className="absolute bottom-2 right-2">
-            <ImageMetaPopover
-              meta={step.params}
-              zIndex={constants.imageGeneration.drawerZIndex + 1}
-              hideSoftware
-            >
-              <ActionIcon variant="transparent" size="md">
-                <IconInfoCircle
-                  color="white"
-                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  opacity={0.8}
-                  strokeWidth={2.5}
-                  size={26}
-                />
-              </ActionIcon>
-            </ImageMetaPopover>
-          </div>
+          {!isLightbox && (
+            <div className="absolute bottom-2 right-2">
+              <ImageMetaPopover
+                meta={step.params}
+                zIndex={constants.imageGeneration.drawerZIndex + 1}
+                hideSoftware
+              >
+                <ActionIcon variant="transparent" size="md">
+                  <IconInfoCircle
+                    color="white"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    opacity={0.8}
+                    strokeWidth={2.5}
+                    size={26}
+                  />
+                </ActionIcon>
+              </ImageMetaPopover>
+            </div>
+          )}
         </>
       )}
     </TwCard>
@@ -598,19 +601,6 @@ export function GeneratedImageLightbox({
                 </Carousel.Slide>
               ))
           )}
-          {/* {images.map((item) => (
-          <Carousel.Slide
-            key={`${item.workflowId}_${item.id}`}
-            style={{
-              height: 'calc(100vh - 84px)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            {item.url && <GeneratedImage image={image} request={request} step={step} />}
-          </Carousel.Slide>
-        ))} */}
         </Carousel>
       </IntersectionObserverProvider>
       <div

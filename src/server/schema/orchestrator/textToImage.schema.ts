@@ -2,7 +2,6 @@ import { z } from 'zod';
 import { isProd } from '~/env/other';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { getRandomInt } from '~/utils/number-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -21,11 +20,7 @@ export const textToImageParamsSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce
-    .number()
-    .min(0)
-    .max(4294967195)
-    .default(getRandomInt(0, generation.maxValues.seed)),
+  seed: z.coerce.number().min(0).max(4294967195).optional(),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce

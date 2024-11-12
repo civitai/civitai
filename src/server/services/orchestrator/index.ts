@@ -16,7 +16,7 @@ interface BaseGeneratedMedia {
   seed?: number;
   completed?: Date;
   url: string;
-  aspectRatio: number;
+  aspectRatio?: number;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {
