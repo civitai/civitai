@@ -48,15 +48,7 @@ export const SupportButton = () => {
   return (
     <HoverCard withArrow openDelay={500}>
       <HoverCard.Target>
-        <Button
-          component={NextLink}
-          compact
-          className="relative z-10 h-[30px] cursor-pointer"
-          px={4}
-          py={2}
-          h={36}
-          {...buttonProps}
-        >
+        <Button component={NextLink} className="relative z-10 cursor-pointer px-2" {...buttonProps}>
           {children}
           <IconChevronRight size={18} strokeWidth={2.5} />
         </Button>
