@@ -4160,6 +4160,7 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       imageId: id,
     },
     select: {
+      id: true,
       imageId: true,
       status: true,
       createdAt: true,
