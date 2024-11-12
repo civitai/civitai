@@ -55,11 +55,6 @@ export function PostImageDropzone({
   // #region [upload images]
   const { files, canAdd, error, upload, progress } = useMediaUpload<{ postId: number }>({
     count: images.length,
-    max,
-    maxSize: [
-      { type: 'image', maxSize: constants.mediaUpload.maxImageFileSize },
-      { type: 'video', maxSize: constants.mediaUpload.maxVideoFileSize },
-    ],
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
@@ -137,7 +132,6 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
-          max={max}
           loading={createPostMutation.isLoading}
           className="rounded-lg"
         />
