@@ -13,7 +13,7 @@ function ImageUrlInput({
   if (!value) return <></>;
   return (
     <Input.Wrapper {...inputWrapperProps}>
-      <input type="hidden" value={value} />
+      <input type="hidden" value={value} className="hidden" />
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={value}

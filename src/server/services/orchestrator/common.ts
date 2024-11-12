@@ -281,6 +281,11 @@ export async function parseGenerateImageInput({
     batchSize = 4;
   }
 
+  if (!params.upscaleHeight || !params.upscaleWidth) {
+    params.upscaleHeight = params.height * 1.5;
+    params.upscaleWidth = params.width * 1.5;
+  }
+
   return {
     resources: [...availableResources, ...resourcesToInject],
     params: {

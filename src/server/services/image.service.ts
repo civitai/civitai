@@ -2875,7 +2875,11 @@ export const getImagesByEntity = async ({
   }));
 };
 
-export async function createImage({ toolIds, ...image }: ImageSchema & { userId: number }) {
+export async function createImage({
+  toolIds,
+  techniqueIds,
+  ...image
+}: ImageSchema & { userId: number }) {
   const result = await dbWrite.image.create({
     data: {
       ...image,
@@ -2885,6 +2889,9 @@ export async function createImage({ toolIds, ...image }: ImageSchema & { userId:
         : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
+        : undefined,
+      techniques: !!techniqueIds?.length
+        ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
     },
     select: { id: true },

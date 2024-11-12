@@ -486,56 +486,6 @@ export const fluxModeOptions = [
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
 ];
 
-// const generationInputConfig: GenerationInputConfig = {
-//   model: { type: 'resourceSelect' },
-//   resources: { type: 'resourceSelect', multiple: true },
-//   vae: { type: 'resourceSelect' },
-//   prompt: {},
-//   negativePrompt: {},
-//   nsfw: {},
-//   draft: {},
-//   sampler: { defaultValue: 'undefined' },
-//   steps: { min: 20, max: 50, defaultValue: 30 },
-//   cfg: { min: 2, max: 20, defaultValue: 3.5 },
-//   workflow: {},
-//   clipSkip: {},
-//   fluxMode: {
-//     type: 'segmentedControl',
-//     options: [
-//       { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
-//       { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
-//       { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
-//     ],
-//   },
-// };
-
-// function getGenerationConfigSettings(baseModel: SupportedBaseModel) {
-//   const config = {
-//     resources: true,
-//     vae: true,
-//     negativePrompt: true,
-//     nsfw: true,
-//     draft: true,
-//     sampler: true,
-//     workflow: true,
-//     clipSkip: true,
-//   };
-
-//   if (baseModel === 'Flux1') {
-//     for (const key in config) {
-//       config[key as keyof typeof config] = false;
-//     }
-//   }
-
-//   return { config };
-// }
-
-// function getStepConfig(baseModel: SupportedBaseModel, draft: boolean, max?: number) {
-//   if(baseModel === 'Flux1') {
-//     return draft ? { min: 4, max: 4, defaultValue: 4 } : { min: 20, max: 50, defaultValue: 30 };
-//   }
-// }
-
 export function getBaseModelSetTypes({
   modelType,
   baseModel,

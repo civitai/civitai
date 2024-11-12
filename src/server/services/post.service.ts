@@ -66,6 +66,8 @@ import {
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getTechniqueByName } from '~/server/services/technique.service';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -808,11 +810,20 @@ export const addPostImage = async ({
     }
   }
 
+  let techniqueId: number | undefined;
+  if (meta && 'workflow' in meta) {
+    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
+    if (workflow) {
+      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+    }
+  }
+
   const partialResult = await createImage({
     ...props,
     meta,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
+    techniqueIds: techniqueId ? [techniqueId] : undefined,
   });
 
   try {
