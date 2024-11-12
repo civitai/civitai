@@ -164,7 +164,6 @@ export function PostImages({
                       )}
                     </RoutedDialogLink>
                     <Reactions
-                      p={4}
                       className={cx(classes.reactions, {
                         [classes.reactionsWithControls]: shouldDisplayHtmlControls(image),
                       })}
@@ -213,6 +212,7 @@ export function PostImages({
 const useStyles = createStyles((theme) => ({
   reactions: {
     position: 'absolute',
+    padding: 4,
     bottom: theme.spacing.sm,
     left: theme.spacing.sm,
     borderRadius: theme.radius.md,
