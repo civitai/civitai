@@ -127,7 +127,7 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
-              Pair with your Civitai Vault to free up local disk space
+              Pair with your Civitai Vault to free-up local disk space
             </Title>
             <Text className={classes.copy}>
               Models saved to Civitai Vault remain accessible, even if removed from Civitai by the creator.
