@@ -236,7 +236,8 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
           className="flex-1"
           leftIcon={<IconBan size="1.25rem" />}
           color="red"
-          disabled={loading && status === CollectionItemStatus.REJECTED}
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.REJECTED}
         >
           Reject
         </Button>
@@ -250,7 +251,8 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
         <Button
           className="flex-1"
           leftIcon={<IconCheck size="1.25rem" />}
-          disabled={loading && status === CollectionItemStatus.ACCEPTED}
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.ACCEPTED}
         >
           Approve
         </Button>
