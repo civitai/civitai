@@ -50,10 +50,10 @@ export function MediaDropzone({
   // #endregion
 
   const maxVideoSize = settings?.maxSize
-    ? typeof settings.maxSize === 'number'
-      ? settings.maxSize
-      : settings.maxSize.find((x) => x.type === 'video')?.maxSize ??
+    ? Array.isArray(settings.maxSize)
+      ? settings.maxSize.find((x) => x.type === 'video')?.maxSize ??
         constants.mediaUpload.maxVideoFileSize
+      : settings.maxSize
     : constants.mediaUpload.maxVideoFileSize;
   // #region [render]
   return (

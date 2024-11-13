@@ -96,7 +96,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               metadata.height > uploadSettings.maxVideoDimensions
             )
               throw new Error(
-                `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image and try again.`
+                `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
               );
           }
           return processing;
