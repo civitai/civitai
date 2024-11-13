@@ -5,6 +5,8 @@ const baseVideoSchema = z.object({
   engine: z.string(),
   prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters').default(''),
   seed: z.number().min(0).max(4294967195).optional(),
+  width: z.number().default(848),
+  height: z.number().default(480),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({
@@ -17,10 +19,14 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),
   resolution: z.number().default(1080),
+  width: z.number().nullish(),
+  height: z.number().nullish(),
 });
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('kling'),
+  width: z.number().nullish(),
+  height: z.number().nullish(),
   // negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   // image: z.string().optional(),
   // cameraMovement: z.string().optional(),

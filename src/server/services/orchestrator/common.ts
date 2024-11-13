@@ -392,15 +392,23 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
 
-  let width: number | undefined;
-  let height: number | undefined;
+  let width = videoMetadata.params?.width;
+  let height = videoMetadata.params?.height;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
-  switch (input.engine) {
-    case 'mochi': {
-      width = 848;
-      height = 480;
+  const { params } = videoMetadata;
+  if (params) {
+    switch (params.engine) {
+      case 'haiper': {
+        const { aspectRatio, resolution } = params;
+        if (aspectRatio && resolution && (!width || !height)) {
+          const [rw, rh] = aspectRatio.split(':').map(Number);
+          width = resolution;
+          const ratio = width / rw;
+          height = ratio * rh;
+        }
+      }
     }
   }
 
@@ -422,8 +430,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
-            width: width ?? image.width ?? 1080,
-            height: height ?? image.height ?? 1080,
+            width: width ?? 1080,
+            height: height ?? 1080,
           })) ?? [],
     }),
     {}
