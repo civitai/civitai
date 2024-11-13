@@ -1,6 +1,6 @@
 import { Box, BoxProps } from '@mantine/core';
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useColumnCount } from '~/components/MasonryColumns/masonry.utils';
+import React, { createContext, useContext, useMemo, useState } from 'react';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useDebouncer } from '~/utils/debouncer';
 
@@ -48,7 +48,7 @@ export function MasonryProvider({
     debouncer(() => setWidth(entry.contentRect.width));
   });
 
-  useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const node = containerRef.current;
     if (node) {
       const style = getComputedStyle(node);
@@ -57,12 +57,13 @@ export function MasonryProvider({
     }
   }, []);
 
-  const [columnCount, combinedWidth] = useColumnCount(
-    width,
-    columnWidth,
-    columnGap,
-    maxColumnCount
-  );
+  const [columnCount, combinedWidth] = useMemo(() => {
+    if (width === 0) return [0, 0];
+    const gap = 16;
+    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) ?? 1;
+    const combinedWidth = count * columnWidth + (count - 1) * gap;
+    return [count, combinedWidth];
+  }, [width, columnWidth, maxColumnCount]);
 
   return (
     <MasonryContext.Provider

@@ -1,18 +1,17 @@
 import {
-  Group,
   Menu,
   Text,
   createStyles,
   useMantineTheme,
   Button,
   Drawer,
-  Stack,
   UnstyledButton,
   ButtonProps,
 } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import clsx from 'clsx';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -32,22 +31,20 @@ export function SelectMenu<T extends string | number>({
   disabled,
   children,
 }: SelectMenu<T>) {
-  const { classes } = useStyles();
   const theme = useMantineTheme();
 
   return (
     <Menu withArrow disabled={disabled}>
       <Menu.Target>
-        <Group
-          spacing={6}
-          className={classes.target}
+        <div
+          className="flex cursor-pointer items-center gap-1.5"
           style={disabled ? { opacity: 0.3, cursor: 'default', userSelect: 'none' } : {}}
         >
           <Text weight={700} transform="uppercase">
             {label}
           </Text>
           <IconChevronDown size={16} stroke={3} />
-        </Group>
+        </div>
       </Menu.Target>
       <Menu.Dropdown>
         <>
@@ -71,26 +68,10 @@ export function SelectMenu<T extends string | number>({
 }
 
 const useStyles = createStyles((theme) => ({
-  target: {
-    cursor: 'pointer',
-  },
   item: {
     '&[data-hovered]': {
       borderRadius: theme.radius.md,
     },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  activeOption: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-  },
-
-  option: {
-    padding: '10px 12px',
   },
 }));
 
@@ -104,7 +85,7 @@ export function SelectMenuV2<T extends string | number>({
   buttonProps,
   icon,
 }: SelectMenu<T> & { icon?: React.ReactNode }) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
   const mobile = useIsMobile();
 
@@ -114,16 +95,21 @@ export function SelectMenuV2<T extends string | number>({
       radius="xl"
       variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       disabled={disabled}
-      rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+      rightIcon={
+        <IconChevronDown
+          className={clsx({ ['rotate-180 transition-transform']: opened })}
+          size={16}
+        />
+      }
       size="sm"
       compact
       {...buttonProps}
       onClick={() => setOpened((o) => !o)}
     >
-      <Group spacing={4} noWrap>
+      <div className="flex items-center gap-1">
         {icon ?? <IconSortDescending size={16} />}
         {label}
-      </Group>
+      </div>
     </Button>
   );
 
@@ -143,38 +129,39 @@ export function SelectMenuV2<T extends string | number>({
           }}
           closeButtonLabel="Close sort menu"
         >
-          <Stack spacing={8}>
+          <div className="flex flex-col gap-2">
             {options.map((option) => {
               const active = option.value === value;
 
               return (
                 <UnstyledButton
                   key={option.value.toString()}
-                  className={cx(classes.option, { [classes.activeOption]: active })}
+                  className={clsx('rounded-md px-2.5 py-3', {
+                    ['bg-gray-0 dark:bg-dark-4']: active,
+                  })}
                   onClick={() => {
                     onClick(option.value);
                     setOpened(false);
                   }}
                 >
-                  <Group position="apart">
+                  <div className="flex justify-between">
                     <Text inline>{option.label}</Text>
                     {active && (
                       <Text color={theme.primaryColor} inline>
                         <IconCheck size={16} color="currentColor" />
                       </Text>
                     )}
-                  </Group>
+                  </div>
                 </UnstyledButton>
               );
             })}
-          </Stack>
+          </div>
         </Drawer>
       </>
     );
 
   return (
     <Menu
-      classNames={classes}
       position="bottom-end"
       shadow="md"
       radius={12}
@@ -201,9 +188,7 @@ export function SelectMenuV2<T extends string | number>({
                   )
                 }
               >
-                <Group position="apart" spacing={8}>
-                  {option.label}
-                </Group>
+                {option.label}
               </Menu.Item>
             );
           })}
