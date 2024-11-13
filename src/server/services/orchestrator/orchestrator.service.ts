@@ -2,6 +2,7 @@ import {
   GenerationSchema,
   VideoGenerationSchema,
 } from '~/server/schema/orchestrator/orchestrator.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export async function createWorkflowStep(args: GenerationSchema) {
   switch (args.type) {
@@ -13,9 +14,21 @@ export async function createWorkflowStep(args: GenerationSchema) {
 }
 
 export async function createVideoGenStep(data: VideoGenerationSchema) {
+  switch (data.engine) {
+    case 'haiper':
+      if (data.sourceImageUrl) {
+        data.prompt = '';
+        data.negativePrompt = undefined;
+      }
+      break;
+    case 'mochi':
+      if ('negativePrompt' in data) data.negativePrompt = undefined;
+      break;
+  }
+
   return {
     $type: 'videoGen',
     input: data,
-    metadata: { params: data },
+    metadata: { params: removeEmpty(data) },
   };
 }

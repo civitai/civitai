@@ -91,6 +91,9 @@ export function usePersistForm<
     const defaults = { state: {}, version };
     if (!_storageSchema.current) return defaults;
 
+    const prompt = localStorage.getItem('generation:prompt') ?? '';
+    const negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+
     const obj = JSON.parse(value);
     const result = _storageSchema.current.safeParse(obj);
     const response = result.success ? result.data : defaults;
@@ -99,7 +102,7 @@ export function usePersistForm<
       return defaults;
     }
     return {
-      state: response.state ?? {},
+      state: { ...response.state, prompt, negativePrompt } ?? {},
       version: response.version,
     };
   }
@@ -134,7 +137,10 @@ export function usePersistForm<
 
   // update storage values on form input update
   useEffect(() => {
-    const subscription = form.watch((watchedValues) => {
+    const subscription = form.watch((watchedValues, { name }) => {
+      if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
+      if (name === 'negativePrompt')
+        localStorage.setItem('generation:negativePrompt', watchedValues[name]);
       updateStorage(watchedValues);
     });
     return () => {
