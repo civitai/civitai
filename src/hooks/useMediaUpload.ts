@@ -1,17 +1,12 @@
-import { MediaType } from '@prisma/client';
 import { useEffect, useRef, useState } from 'react';
-import { useFileUpload } from '~/hooks/useFileUpload';
+import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useS3Upload } from '~/hooks/useS3Upload';
-import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { PreprocessFileReturnType, preprocessFile } from '~/utils/media-preprocessors';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { formatBytes } from '~/utils/number-helpers';
-
-const MAX_VIDEO_DIMENSIONS = constants.mediaUpload.maxVideoDimension;
-const MAX_VIDEO_DURATION = constants.mediaUpload.maxVideoDurationSeconds;
 
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
@@ -27,20 +22,15 @@ export type MediaUploadOnCompleteProps = {
   blockedFor?: string | null;
 } & MediaUploadDataProps;
 
-export type MediaUploadMaxSizeByType = { type: MediaType; maxSize: number }[];
-
 export type UseMediaUploadProps<TContext> = {
   count: number;
-  max: number;
-  maxSize?: number | MediaUploadMaxSizeByType;
   onComplete: (props: MediaUploadOnCompleteProps, context?: TContext) => void;
 };
+
 // #endregion
 
 export function useMediaUpload<TContext extends Record<string, unknown>>({
-  max,
   count,
-  maxSize,
   onComplete,
 }: UseMediaUploadProps<TContext>) {
   // #region [state]
@@ -53,8 +43,10 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   } = useS3Upload({
     endpoint: '/api/v1/image-upload/multipart',
   });
+  const uploadSettings = useMediaUploadSettingsContext();
   const canAdd =
-    max - count > 0 && !files.some((x) => x.status === 'uploading' || x.status === 'pending');
+    uploadSettings.maxItems - count > 0 &&
+    !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
   // #endregion
@@ -66,7 +58,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   ) {
     try {
       const start = count + 1;
-
+      const { maxSize } = uploadSettings;
       // check for files that exceed the max size
       if (maxSize) {
         for (const { file } of data) {
@@ -81,7 +73,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       }
 
       // remove extra files that would exceed the max
-      const sliced = data.slice(0, max - count);
+      const sliced = data.slice(0, uploadSettings.maxItems - count);
 
       // process media metadata
       const mapped = await Promise.all(
@@ -102,13 +94,16 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               );
           } else if (data.type === 'video') {
             const { metadata } = data;
-            if (metadata.duration && metadata.duration > MAX_VIDEO_DURATION)
+            if (metadata.duration && metadata.duration > uploadSettings.maxVideoDuration)
               throw new Error(
-                `Video duration cannot be longer than ${MAX_VIDEO_DURATION} seconds. Please trim your video and try again.`
+                `Video duration cannot be longer than ${uploadSettings.maxVideoDuration} seconds. Please trim your video and try again.`
               );
-            if (metadata.width > MAX_VIDEO_DIMENSIONS || metadata.height > MAX_VIDEO_DIMENSIONS)
+            if (
+              metadata.width > uploadSettings.maxVideoDimensions ||
+              metadata.height > uploadSettings.maxVideoDimensions
+            )
               throw new Error(
-                `Videos cannot be larger than ${MAX_VIDEO_DIMENSIONS}px from either side. Please resize your image and try again.`
+                `Videos cannot be larger than ${uploadSettings.maxVideoDimensions}px from either side. Please resize your image or video and try again.`
               );
           }
           return processing;

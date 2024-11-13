@@ -107,6 +107,14 @@ export const collectionMetadataSchema = z
     submissionEndDate: z.coerce.date().nullish(),
     existingEntriesDisabled: z.coerce.boolean().optional(),
     votingPeriodStart: z.coerce.date().nullish(),
+    uploadSettings: z
+      .object({
+        maxItems: z.number(),
+        maxSize: z.number(),
+        maxVideoDuration: z.number(),
+        maxVideoDimensions: z.number(),
+      })
+      .optional(),
     bannerPosition: z.string().optional(),
   })
   .refine(

@@ -19,7 +19,7 @@ const useStyles = createStyles((theme, _params, getRef) => {
   return {
     section: {
       ref: sectionRef,
-      overflow: 'hidden',
+      // overflow: 'hidden',
       position: 'relative',
 
       [`& + .${sectionRef}`]: {

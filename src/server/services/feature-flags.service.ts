@@ -111,7 +111,8 @@ const featureFlags = createFeatureFlags({
   // Temporarily disabled until we change ads provider -Manuel
   adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
-  admin: ['granted'],
+  announcements: ['granted'],
+  blocklists: ['granted'],
   toolSearch: ['public'],
 });
 

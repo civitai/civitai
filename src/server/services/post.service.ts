@@ -981,6 +981,7 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
       imageId: isImageCollection ? { in: images.map((i) => i.id) } : undefined,
     },
     select: {
+      id: true,
       postId: true,
       imageId: true,
       status: true,

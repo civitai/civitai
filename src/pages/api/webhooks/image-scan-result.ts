@@ -27,7 +27,7 @@ import { signalClient } from '~/utils/signal-client';
 
 const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
 
-const tagCache: Record<string, { id: number; blocked?: true }> = {};
+const tagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -232,7 +232,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     if (!cachedTag) tagsToFind.push(tag.tag);
     else {
       tag.id = cachedTag.id;
-      if (cachedTag.blocked) hasBlockedTag = true;
+      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
     }
   }
 
@@ -247,13 +247,14 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     for (const tag of foundTags) {
       tagCache[tag.name] = { id: tag.id };
       if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
+      if (shouldIgnore(tag.name, source)) tagCache[tag.name].ignored = true;
     }
 
     for (const tag of tags) {
       const cachedTag = tagCache[tag.tag];
       if (!cachedTag) continue;
       tag.id = cachedTag.id;
-      if (cachedTag.blocked) hasBlockedTag = true;
+      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
     }
   }
 

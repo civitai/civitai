@@ -148,8 +148,11 @@ export const ShopItem = ({
   const isUpcoming = item.availableFrom && isFutureDate(item.availableFrom);
   const hasDate = isUpcoming || item.availableTo;
 
-  const isNew = remaining !== 0 &&
-    lastViewed && sectionItemCreatedAt && dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
+  const isNew =
+    remaining !== 0 &&
+    lastViewed &&
+    sectionItemCreatedAt &&
+    dayjs(sectionItemCreatedAt).isAfter(dayjs(lastViewed));
 
   return (
     <Paper
@@ -172,9 +175,26 @@ export const ShopItem = ({
                 {isUpcoming ? (
                   <Text>
                     Available in{' '}
-                    <Countdown endTime={item.availableFrom!} refreshIntervalMs={1000} format="short" />
+                    <Countdown
+                      endTime={item.availableFrom!}
+                      refreshIntervalMs={1000}
+                      format="short"
+                    />
                   </Text>
-                ) : availableTo ? (leavingSoon ? <Text>Leaves in <Countdown endTime={item.availableTo!} refreshIntervalMs={1000} format="short" /></Text> : <Text>Until {availableTo}</Text>) : null}
+                ) : availableTo ? (
+                  leavingSoon ? (
+                    <Text>
+                      Leaves in{' '}
+                      <Countdown
+                        endTime={item.availableTo!}
+                        refreshIntervalMs={1000}
+                        format="short"
+                      />
+                    </Text>
+                  ) : (
+                    <Text>Until {availableTo}</Text>
+                  )
+                ) : null}
                 {hasDate && remaining && <Divider orientation="vertical" color="grape.3" />}
                 {remaining && available && (
                   <Text>
@@ -205,7 +225,7 @@ export const ShopItem = ({
             <div className={classes.cardHeader}>
               <CosmeticSample cosmetic={cosmetic} size="lg" />
               <Text size="xs" color="dimmed" px={6} component="div" className={classes.type}>
-                  {getDisplayName(item.cosmetic.type)}
+                {getDisplayName(item.cosmetic.type)}
               </Text>
             </div>
           </UnstyledButton>
