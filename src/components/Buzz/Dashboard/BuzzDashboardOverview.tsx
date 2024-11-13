@@ -62,10 +62,11 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   });
 
   const isLoadingReport = isLoading || isRefetching;
+  const viewingHourly = reportFilters.window === 'hour';
 
   const labels = useMemo(() => {
-    return report.map((d) => formatDate(d.date, 'MMM-DD'));
-  }, [report]);
+    return report.map((d) => formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD'), true);
+  }, [report, viewingHourly]);
 
   const transactions = useMemo(() => {
     return [...(transactionData?.transactions ?? [])].sort((a, b) => {
@@ -80,7 +81,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         data: report.reduce((acc, d) => {
           return {
             ...acc,
-            [formatDate(d.date, 'MMM-DD')]:
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
               d.accounts.find((a) => a.accountType === 'User')?.gained ?? 0,
           };
         }, {}),
@@ -93,7 +94,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         data: report.reduce((acc, d) => {
           return {
             ...acc,
-            [formatDate(d.date, 'MMM-DD')]:
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
               d.accounts.find((a) => a.accountType === 'Generation')?.gained ?? 0,
           };
         }, {}),
@@ -106,7 +107,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         data: report.reduce((acc, d) => {
           return {
             ...acc,
-            [formatDate(d.date, 'MMM-DD')]:
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
               d.accounts.find((a) => a.accountType === 'User')?.spent ?? 0,
           };
         }, {}),
@@ -119,7 +120,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         data: report.reduce((acc, d) => {
           return {
             ...acc,
-            [formatDate(d.date, 'MMM-DD')]:
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
               d.accounts.find((a) => a.accountType === 'Generation')?.spent ?? 0,
           };
         }, {}),
@@ -128,7 +129,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
         stack: 'spending',
       },
     ],
-    [theme, report]
+    [theme, report, viewingHourly]
   );
 
   return (
@@ -240,14 +241,19 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                 )}
               </Stack>
               {!isLoadingReport && report.length > 0 && (
-                <Bar
-                  key={reportFilters.window}
-                  options={options}
-                  data={{
-                    labels,
-                    datasets,
-                  }}
-                />
+                <>
+                  <Bar
+                    key={reportFilters.window}
+                    options={options}
+                    data={{
+                      labels,
+                      datasets,
+                    }}
+                  />
+                  <Text color="yellow.7" size="xs">
+                    All times are UTC
+                  </Text>
+                </>
               )}
             </Stack>
           </Paper>
