@@ -297,6 +297,9 @@ export function QueueItem({
                   ) : (
                     <Loader size={24} />
                   )}
+                  <Text color="dimmed" size="xs" align="center">
+                    Generating
+                  </Text>
                 </div>
               )}
             </div>
