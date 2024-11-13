@@ -10,7 +10,6 @@ export const CollectionUploadSettingsWrapper = ({
   collectionIds: number[];
   children: React.ReactNode;
 }) => {
-  console.log(collectionIds);
   const { collections = [], isLoading: isLoadingCollections } = useCollectionsForPostCreation({
     collectionIds,
   });
