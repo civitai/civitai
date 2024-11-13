@@ -59,6 +59,7 @@ import { ModelType } from '@prisma/client';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -288,19 +289,23 @@ export async function parseGenerateImageInput({
     params.upscaleWidth = params.width * 1.5;
   }
 
+  const upscale =
+    params.upscaleHeight && params.upscaleWidth
+      ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+      : undefined;
+
   return {
     resources: [...availableResources, ...resourcesToInject],
-    params: {
+    params: removeEmpty({
       ...params,
       quantity,
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       // temp?
-      ...(params.upscaleHeight && params.upscaleWidth
-        ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
-        : {}),
-    },
+      upscaleWidth: upscale?.width,
+      upscaleHeight: upscale?.height,
+    }),
   };
 }
 
