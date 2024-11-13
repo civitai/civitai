@@ -18,8 +18,8 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { useFeatureFlags } from '../../providers/FeatureFlagsProvider';
 import { getDisplayName } from '../../utils/string-helpers';
-import { dialogStore } from '../Dialog/dialogStore';
-import { ManageClubMembershipModal } from './ClubMemberships/ManageClubMembershipModal';
+// import { dialogStore } from '../Dialog/dialogStore';
+// import { ManageClubMembershipModal } from './ClubMemberships/ManageClubMembershipModal';
 import { LoginPopover } from '../LoginPopover/LoginPopover';
 
 export const ClubRequirementNotice = ({
@@ -117,16 +117,16 @@ export const ClubRequirementNotice = ({
                       <LoginPopover>
                         <Anchor
                           onClick={(e) => {
-                            dialogStore.trigger({
-                              component: ManageClubMembershipModal,
-                              props: {
-                                clubId: club.id,
-                                clubTierIds:
-                                  requiredTiers.length > 0
-                                    ? requiredTiers.map((t) => t.id)
-                                    : undefined,
-                              },
-                            });
+                            // dialogStore.trigger({
+                            //   component: ManageClubMembershipModal,
+                            //   props: {
+                            //     clubId: club.id,
+                            //     clubTierIds:
+                            //       requiredTiers.length > 0
+                            //         ? requiredTiers.map((t) => t.id)
+                            //         : undefined,
+                            //   },
+                            // });
                           }}
                           span
                         >
@@ -256,14 +256,14 @@ export const ClubRequirementButton = ({
             <Menu.Item
               key={club.id}
               onClick={(e) => {
-                dialogStore.trigger({
-                  component: ManageClubMembershipModal,
-                  props: {
-                    clubId: club.id,
-                    clubTierIds:
-                      requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
-                  },
-                });
+                // dialogStore.trigger({
+                //   component: ManageClubMembershipModal,
+                //   props: {
+                //     clubId: club.id,
+                //     clubTierIds:
+                //       requiredTiers.length > 0 ? requiredTiers.map((t) => t.id) : undefined,
+                //   },
+                // });
               }}
             >
               <Stack spacing={0}>

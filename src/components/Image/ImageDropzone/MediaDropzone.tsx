@@ -2,12 +2,11 @@ import { Input, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent } from 'react';
+import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
-
-const MAX_IMAGE_SIZE = constants.mediaUpload.maxImageFileSize;
 
 export function MediaDropzone({
   label,
@@ -15,16 +14,15 @@ export function MediaDropzone({
   accept = IMAGE_MIME_TYPE,
   onDrop,
   error,
-  max,
   ...dropzoneProps
 }: Omit<DropzoneProps, 'children' | 'onDropCapture'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
   error?: Error;
-  max?: number;
 }) {
   // #region [state]
+  const settings = useMediaUploadSettingsContext();
   const theme = useMantineTheme();
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
@@ -51,16 +49,22 @@ export function MediaDropzone({
   };
   // #endregion
 
+  const maxVideoSize = settings?.maxSize
+    ? Array.isArray(settings.maxSize)
+      ? settings.maxSize.find((x) => x.type === 'video')?.maxSize ??
+        constants.mediaUpload.maxVideoFileSize
+      : settings.maxSize
+    : constants.mediaUpload.maxVideoFileSize;
   // #region [render]
   return (
-    <div className="flex flex-col w-full gap-1">
+    <div className="flex w-full flex-col gap-1">
       <Dropzone
         {...dropzoneProps}
         onDrop={onDrop}
         onDropCapture={handleDropCapture}
         accept={accept}
       >
-        <div className="flex flex-col justify-center items-center gap-2">
+        <div className="flex flex-col items-center justify-center gap-2">
           <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -78,13 +82,15 @@ export function MediaDropzone({
           <Dropzone.Idle>
             <IconPhoto size={50} stroke={1.5} />
           </Dropzone.Idle>
-          <div className="flex flex-col gap-1 items-center">
+          <div className="flex flex-col items-center gap-1">
             <Text size="xl" inline>
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
             <Text size="sm" color="dimmed" mt={7} inline>
-              {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+              {settings?.maxItems
+                ? `Attach up to ${settings?.maxItems} files`
+                : 'Attach as many files as you like'}
             </Text>
 
             {/* <Text size="sm" color="dimmed" inline>
@@ -92,10 +98,8 @@ export function MediaDropzone({
             </Text> */}
             {allowsVideo && (
               <Text size="sm" color="dimmed" inline>
-                {`Videos cannot exceed ${formatBytes(
-                  constants.mediaUpload.maxVideoFileSize
-                )}, 4k resolution, or ${
-                  constants.mediaUpload.maxVideoDurationSeconds
+                {`Videos cannot exceed ${formatBytes(maxVideoSize)}, 4k resolution, or ${
+                  settings?.maxVideoDuration ?? constants.mediaUpload.maxVideoDurationSeconds
                 } seconds in duration`}
               </Text>
             )}

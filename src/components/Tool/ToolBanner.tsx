@@ -1,21 +1,27 @@
-import { Button, Text, Title, useMantineTheme } from '@mantine/core';
-import { IconExternalLink } from '@tabler/icons-react';
+import { Button, Title, useMantineTheme } from '@mantine/core';
+import { IconBrush, IconExternalLink } from '@tabler/icons-react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageFilters } from '~/components/Image/image.utils';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { FilterKeys } from '~/providers/FiltersProvider';
+import { generationPanel } from '~/store/generation.store';
+import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ToolBanner({
   filterType = 'images',
+  slug,
 }: {
   filterType?: FilterKeys<'images' | 'videos'>;
+  slug?: string;
 }) {
   const { tools: toolIds } = useImageFilters(filterType);
   const selectedId = toolIds?.[0];
 
-  const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length });
-  const selected = data?.find((x) => x.id === selectedId);
+  const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length || !!slug });
+  const selected = data?.find((x) => x.id === selectedId || slugit(x.name) === slug);
   const theme = useMantineTheme();
 
   if (!data || !selected) return null;
@@ -24,25 +30,26 @@ export function ToolBanner({
 
   return (
     <div
-      className="relative -mt-4 mb-4 overflow-hidden bg-gray-1 px-3 py-6 dark:bg-dark-9"
-      style={
-        hasHeader
-          ? {
-              color: theme.white,
-            }
-          : undefined
-      }
+      className="relative -mt-4 mb-4 overflow-hidden bg-gray-1 dark:bg-dark-9"
+      style={hasHeader ? { color: theme.white } : undefined}
     >
-      {hasHeader && (
-        <EdgeMedia
-          src={selected.metadata.header as string}
-          className="absolute left-1/2 top-1/2 h-auto min-h-full	w-full min-w-full -translate-x-1/2 -translate-y-1/2 object-cover opacity-40"
-          fadeIn={false}
-          original
-        />
-      )}
-      <MasonryContainer>
-        <div className="flex max-w-md flex-col gap-2">
+      <MasonryContainer
+        style={
+          hasHeader
+            ? {
+                backgroundImage: `url(${getEdgeUrl(selected.metadata.header as string, {
+                  original: true,
+                })})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                backgroundRepeat: 'no-repeat',
+                backgroundColor: 'rgba(0,0,0,0.6)',
+                backgroundBlendMode: 'darken',
+              }
+            : undefined
+        }
+      >
+        <div className="flex h-full max-w-md flex-col gap-2 py-6">
           <div className="flex justify-between gap-3">
             <div className="flex flex-col gap-2">
               {selected.icon && <EdgeMedia width={120} src={selected.icon} />}
@@ -50,7 +57,7 @@ export function ToolBanner({
                 <Title order={2} className="font-semibold">
                   {selected.name}
                 </Title>
-                {selected.domain && (
+                {/* {selected.domain && (
                   <Button
                     color="blue"
                     radius="xl"
@@ -62,11 +69,30 @@ export function ToolBanner({
                   >
                     Visit
                   </Button>
+                )} */}
+                {selected.supported && (
+                  <Button
+                    color="blue"
+                    radius="xl"
+                    rightIcon={<IconBrush size={18} />}
+                    // TODO.tool: Open right section in the panel based on the tool type
+                    onClick={() => generationPanel.open()}
+                  >
+                    Generate
+                  </Button>
                 )}
               </div>
             </div>
           </div>
-          <Text className="text-shadow-default">{selected.description}</Text>
+          {selected.description && (
+            <CustomMarkdown
+              allowedElements={['a']}
+              className="markdown-content text-shadow-default"
+              unwrapDisallowed
+            >
+              {selected.description}
+            </CustomMarkdown>
+          )}
         </div>
       </MasonryContainer>
     </div>

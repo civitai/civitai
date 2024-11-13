@@ -1,82 +1,30 @@
-import { useEffect, useState } from 'react';
-import { immer } from 'zustand/middleware/immer';
-import { create } from 'zustand';
-import { Modal, Stack, Title, Text, Button, Group } from '@mantine/core';
-import { Badge } from '~/components/Newsroom/Assets/Badge';
+import { useEffect } from 'react';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
-export function UpdateRequiredWatcher() {
-  const updateRequired = useIsUpdatedRequired();
-  const [dismissed, setDismissed] = useState(false);
-  const showAlert = updateRequired && !dismissed;
-
-  if (!showAlert) return null;
-
-  return (
-    <Modal
-      onClose={() => setDismissed(true)}
-      opened={showAlert}
-      withCloseButton={false}
-      closeOnEscape={false}
-      closeOnClickOutside={false}
-    >
-      <Stack align="center">
-        <div className="relative size-[120px]">
-          <Badge />
-        </div>
-        <Title order={3}>New Civitai version available!</Title>
-        <Text>{`It's time to refresh your browser to get the latest features from Civitai. If you don't, things may not work as expected.`}</Text>
-        <Button onClick={() => window.location.reload()} radius="xl" size="lg">
-          Update Now 🎉
-        </Button>
-        <Group spacing={4}>
-          <Text>😬</Text>
-          <Text
-            variant="link"
-            color="yellow"
-            size="xs"
-            onClick={() => setDismissed(true)}
-            style={{ cursor: 'pointer' }}
-          >
-            {`No. I'll continue at my own peril`}
-          </Text>
-          <Text>😱</Text>
-        </Group>
-      </Stack>
-    </Modal>
-  );
-}
-
-type UpdateRequiredStore = {
-  updateRequired: boolean;
-  setUpdateRequired: (value: boolean) => void;
-};
-const useUpdateRequiredStore = create<UpdateRequiredStore>()(
-  immer((set) => ({
-    updateRequired: false,
-    setUpdateRequired: (value: boolean) => {
-      set((state) => {
-        state.updateRequired = value;
-      });
-    },
-  }))
+const UpdateRequiredModal = dynamic(
+  () => import('~/components/UpdateRequiredWatcher/UpdateRequiredModal')
 );
 
+let warned = false;
 let originalFetch: typeof window.fetch | undefined;
-export const useIsUpdatedRequired = () => {
-  const updateRequired = useUpdateRequiredStore((state) => state.updateRequired);
-  const setUpdateRequired = useUpdateRequiredStore((state) => state.setUpdateRequired);
-
+export function UpdateRequiredWatcher({ children }: { children: React.ReactElement }) {
+  // TODO - someday, this kind of logic should probably be stored in an error boundary
   useEffect(() => {
     if (originalFetch || typeof window === 'undefined') return;
     originalFetch = window.fetch;
     window.fetch = async (...args) => {
       const response = await originalFetch!(...args);
-      if (response.headers.has('x-update-required')) {
-        setUpdateRequired(true);
+      if (response.headers.has('x-update-required') && !warned) {
+        dialogStore.trigger({
+          id: 'update-required-modal',
+          component: UpdateRequiredModal,
+        });
+        warned = true;
       }
       return response;
     };
   }, []);
 
-  return updateRequired;
-};
+  return children;
+}

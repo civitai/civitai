@@ -1,5 +1,4 @@
 import { Center, Loader, Stack } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -34,7 +33,6 @@ function EventsPage() {
       />
 
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           {isLoading ? (
             <Center p="xl">
@@ -54,4 +52,4 @@ function EventsPage() {
   );
 }
 
-export default Page(EventsPage, { InnerLayout: FeedLayout });
+export default Page(EventsPage, { InnerLayout: FeedLayout, announcements: true });

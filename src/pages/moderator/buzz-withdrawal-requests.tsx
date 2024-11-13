@@ -10,7 +10,6 @@ import {
   LoadingOverlay,
   Modal,
   Pagination,
-  Popover,
   Stack,
   Table,
   Text,
@@ -20,14 +19,19 @@ import {
   Tooltip,
   TooltipProps,
   TextInput,
+  Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
-import { IconCashBanknote, IconExternalLink } from '@tabler/icons-react';
-import { IconInfoSquareRounded } from '@tabler/icons-react';
+import {
+  BuzzWithdrawalRequestStatus,
+  Currency,
+  UserPaymentConfigurationProvider,
+} from '@prisma/client';
+import { IconCashBanknote, IconExternalLink, IconInfoTriangleFilled } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
+import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
 import {
   useMutateBuzzWithdrawalRequest,
   useQueryBuzzWithdrawalRequests,
@@ -38,7 +42,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
-import type { BuzzWithdrawalRequestForModerator } from '~/server/services/buzz-withdrawal-request.service';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
@@ -48,7 +51,6 @@ import {
   numberWithCommas,
 } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -68,7 +70,6 @@ const UpdateBuzzWithdrawalRequest = ({
   status: BuzzWithdrawalRequestStatus;
 }) => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
   const handleClose = dialog.onClose;
   const [note, setNote] = useState('');
   const { updateBuzzWithdrawalRequest, updatingBuzzWithdrawalRequest } =
@@ -137,54 +138,12 @@ const UpdateBuzzWithdrawalRequest = ({
   );
 };
 
-const RequestHistory = ({ request }: { request: BuzzWithdrawalRequestForModerator }) => {
-  return (
-    <Popover width={300} withArrow withinPortal shadow="sm">
-      <Popover.Target>
-        <ActionIcon color="gray">
-          <IconInfoSquareRounded size={20} />
-        </ActionIcon>
-      </Popover.Target>
-      <Popover.Dropdown>
-        <Stack spacing="xs">
-          <Text size="sm" weight={500}>
-            History
-          </Text>
-          {request.history.map((record) => (
-            <Stack key={record.id}>
-              <Group noWrap position="apart">
-                <UserAvatar
-                  user={record.updatedBy}
-                  size="xs"
-                  subText={`Actioned on ${formatDate(record.createdAt)}`}
-                  withUsername
-                />
-
-                <Badge size="xs" color={WithdrawalRequestBadgeColor[record.status]} variant="light">
-                  {getDisplayName(record.status)}
-                </Badge>
-              </Group>
-              {record.note && (
-                <Text size="xs">
-                  <Text weight={500}>Note:</Text> {record.note}
-                </Text>
-              )}
-              <Divider />
-            </Stack>
-          ))}
-        </Stack>
-      </Popover.Dropdown>
-    </Popover>
-  );
-};
-
 export default function ModeratorBuzzWithdrawalRequests() {
-  const queryUtils = trpc.useContext();
   const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
     useQueryBuzzWithdrawalRequests(debouncedFilters);
 
@@ -195,34 +154,38 @@ export default function ModeratorBuzzWithdrawalRequests() {
     });
   };
 
-  const approveBtn = (requestId: string) => (
-    <Tooltip
-      label="Approve withdrawal request. Money will not be sent by performing this action."
-      key="approve-btn"
-      {...tooltipProps}
-    >
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
-        }}
-        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
+  const approveBtn = (requestId: string) => {
+    return (
+      <Tooltip
+        label="Approve withdrawal request. Money will not be sent by performing this action."
+        key="approve-btn"
+        {...tooltipProps}
       >
-        <IconCheck />
-      </ActionIcon>
-    </Tooltip>
-  );
-  const rejectBtn = (requestId: string) => (
-    <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
-      <ActionIcon
-        onClick={() => {
-          handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
-        }}
-        color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
-      >
-        <IconX />
-      </ActionIcon>
-    </Tooltip>
-  );
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
+          }}
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
+        >
+          <IconCheck />
+        </ActionIcon>
+      </Tooltip>
+    );
+  };
+  const rejectBtn = (requestId: string) => {
+    return (
+      <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
+        <ActionIcon
+          onClick={() => {
+            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
+          }}
+          color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
+        >
+          <IconX />
+        </ActionIcon>
+      </Tooltip>
+    );
+  };
 
   const revertBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
@@ -239,9 +202,14 @@ export default function ModeratorBuzzWithdrawalRequests() {
       </Tooltip>
     ) : null;
 
-  const transferBtn = (requestId: string) =>
-    features.buzzWithdrawalTransfer ? (
-      <Tooltip label="Send requested money through stripe" key="transfer-btn" {...tooltipProps}>
+  const transferBtn = (requestId: string) => {
+    const request = requests.find((r) => r.id === requestId);
+    return features.buzzWithdrawalTransfer ? (
+      <Tooltip
+        label={`Send requested money through ${request?.requestedToProvider ?? 'stripe'}`}
+        key="transfer-btn"
+        {...tooltipProps}
+      >
         <ActionIcon
           onClick={() => {
             handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
@@ -252,6 +220,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
         </ActionIcon>
       </Tooltip>
     ) : null;
+  };
 
   const externallyResolvedBtn = (requestId: string) =>
     features.buzzWithdrawalTransfer ? (
@@ -314,6 +283,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 <th>Dollar Amount Total</th>
                 <th>Application Fee</th>
                 <th>Transfer amount</th>
+                <th>Provider</th>
 
                 <th>Status</th>
                 <th>&nbsp;</th>
@@ -323,20 +293,25 @@ export default function ModeratorBuzzWithdrawalRequests() {
               {requests.map((request) => {
                 const buttons = (
                   request.status === BuzzWithdrawalRequestStatus.Requested
-                    ? [
-                        approveBtn(request.id),
-                        rejectBtn(request.id),
-                        transferBtn(request.id),
-                        externallyResolvedBtn(request.id),
-                      ]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? [
+                          approveBtn(request.id),
+                          rejectBtn(request.id),
+                          externallyResolvedBtn(request.id),
+                        ]
+                      : [approveBtn(request.id), rejectBtn(request.id), transferBtn(request.id)]
                     : request.status === BuzzWithdrawalRequestStatus.Approved
-                    ? [
-                        rejectBtn(request.id),
-                        transferBtn(request.id),
-                        externallyResolvedBtn(request.id),
-                      ]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? [externallyResolvedBtn(request.id)]
+                      : [
+                          rejectBtn(request.id),
+                          transferBtn(request.id),
+                          externallyResolvedBtn(request.id),
+                        ]
                     : request.status === BuzzWithdrawalRequestStatus.Transferred
-                    ? [revertBtn(request.id)]
+                    ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+                      ? []
+                      : [revertBtn(request.id)]
                     : // Reverted,
                       // Rejected,
                       // Canceled,
@@ -357,7 +332,21 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 return (
                   <tr key={request.id}>
                     <td>
-                      <UserAvatar size="sm" user={request.user} withUsername />
+                      <Stack spacing={0}>
+                        <UserAvatar size="sm" user={request.user} withUsername linkToProfile />
+                        {request.requestedToProvider ===
+                          UserPaymentConfigurationProvider.Tipalti && (
+                          <Anchor
+                            href={`https://aphub2.tipalti.com/dashboard/payees/information/${request.user?.id}/payments`}
+                            rel="noopener noreferrer"
+                            target="_blank"
+                          >
+                            <Group spacing={2} noWrap>
+                              <IconExternalLink size={16} /> <Text size="sm">Tipalti Account</Text>
+                            </Group>
+                          </Anchor>
+                        )}
+                      </Stack>
                     </td>
                     <td>{formatDate(request.createdAt)}</td>
                     <td>{numberWithCommas(request.requestedBuzzAmount)}</td>
@@ -381,6 +370,25 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       </Text>
                     </td>
                     <td>
+                      <Group spacing="xs" noWrap>
+                        <Text>{request.requestedToProvider}</Text>
+                        {request.requestedToProvider ===
+                          UserPaymentConfigurationProvider.Tipalti && (
+                          <Tooltip
+                            maw={300}
+                            multiline
+                            withArrow
+                            withinPortal
+                            label="Once approved, Tipalti items must be resolved in the Tipalti dashboard. Resolving them there will update the status here automatically."
+                          >
+                            <ActionIcon color="blue">
+                              <IconInfoTriangleFilled size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Group>
+                    </td>
+                    <td>
                       <Badge variant="light" color={WithdrawalRequestBadgeColor[request.status]}>
                         {getDisplayName(request.status)}
                       </Badge>
@@ -388,7 +396,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                     <td align="right">
                       <Group noWrap>
                         {buttons.map((btn) => btn)}
-                        <RequestHistory request={request} />
+                        <BuzzWithdrawalRequestHistory history={request.history} />
                       </Group>
                     </td>
                   </tr>

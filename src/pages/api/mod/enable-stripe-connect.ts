@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { addSystemPermission } from '~/server/services/system-cache';
-import { createUserStripeConnectAccount } from '~/server/services/user-stripe-connect.service';
+import { createStripeConnectAccount } from '~/server/services/user-payment-configuration.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
@@ -18,7 +18,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   await Promise.all(
     userIds.map(async (userId) => {
-      await createUserStripeConnectAccount({ userId });
+      await createStripeConnectAccount({ userId });
 
       await createNotification({
         userId,

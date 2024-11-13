@@ -125,11 +125,14 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { min: 1 } },
       pony: { all: { min: 1 } },
+      illustrious: { all: { min: 1 } },
       flux_dev: {
         kohya: { default: 5 },
         'x-flux': { default: 5, max: 5, min: 2 },
         rapid: { default: 1, min: 1, max: 1 },
       },
+      sd3_medium: { all: { default: 5 } },
+      sd3_large: { all: { default: 5 } },
     },
   },
   {
@@ -161,10 +164,13 @@ export const trainingSettings: TrainingSettingsType[] = [
       realistic: { all: { default: 2, max: 2 } },
       sdxl: { all: { default: 4, max: 4 } },
       pony: { all: { default: 5, max: 5 } },
+      illustrious: { all: { default: 4, max: 4 } },
       flux_dev: {
         'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
       },
+      sd3_medium: { all: { default: 4, max: 4 } },
+      sd3_large: { all: { default: 4, max: 4 } },
     },
   },
   {
@@ -207,6 +213,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
+      illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
     },
   },
   {
@@ -240,6 +247,12 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         all: { disabled: true },
       },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
+      },
     },
   },
   {
@@ -249,8 +262,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       <>
         If your training images have tags, you can randomly shuffle them (see &quot;Shuffle
         Tags&quot; option for details). However, if you have words that you want to keep at the
-        beginning, you can use this option to specify &quot;Keep the first 0 words at the
-        beginning&quot;.
+        beginning, you can use this option to specify how many to keep.
         <br />
         This option does nothing if the &quot;Shuffle Tags&quot; option is off.
       </>
@@ -262,7 +274,13 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       flux_dev: {
-        'x-flux': { disabled: true },
+        all: { disabled: true },
+      },
+      sd3_medium: {
+        all: { disabled: true },
+      },
+      sd3_large: {
+        all: { disabled: true },
       },
     },
   },
@@ -305,6 +323,8 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         'x-flux': { default: 5e-5 },
       },
+      sd3_medium: { all: { default: 1e-5 } },
+      sd3_large: { all: { default: 1e-5 } },
     },
   },
   {
@@ -319,6 +339,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       anime: { all: { default: 1e-4 } },
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
+      sd3_large: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -385,8 +407,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { max: 256 } },
       pony: { all: { max: 256 } },
+      illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
       flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
+      sd3_medium: { all: { default: 2 } },
+      sd3_large: { all: { default: 2 } },
     },
   },
   {
@@ -410,6 +435,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { max: 256 } },
       pony: { all: { max: 256, default: 32 } },
+      illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
       flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
     },
@@ -446,6 +472,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { default: 'Adafactor' } },
       pony: { all: { default: 'Prodigy' } },
+      illustrious: { all: { default: 'Adafactor' } },
       flux_dev: { 'x-flux': { disabled: true } },
     },
   },
@@ -460,6 +487,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sdxl: { all: { default: optimizerArgMap.Adafactor } },
       pony: { all: { default: optimizerArgMap.Prodigy } },
+      illustrious: { all: { default: optimizerArgMap.Adafactor } },
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
         'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },

@@ -6,6 +6,7 @@ import {
   getBuzzAccountHandler,
   getBuzzAccountTransactionsHandler,
   getDailyCompensationRewardHandler,
+  getTransactionsReportHandler,
   getUserAccountHandler,
   getUserMultipliersHandler,
   getUserTransactionsHandler,
@@ -22,6 +23,7 @@ import {
   getEarnPotentialSchema,
   getDailyBuzzCompensationInput,
   claimWatchedAdRewardSchema,
+  getTransactionsReportSchema,
 } from '~/server/schema/buzz.schema';
 import {
   claimBuzz,
@@ -31,58 +33,54 @@ import {
 } from '~/server/services/buzz.service';
 import { isFlagProtected, protectedProcedure, router } from '~/server/trpc';
 
+const buzzProcedure = protectedProcedure.use(isFlagProtected('buzz'));
+
 export const buzzRouter = router({
-  getUserAccount: protectedProcedure.use(isFlagProtected('buzz')).query(getUserAccountHandler),
-  getBuzzAccount: protectedProcedure
-    .input(getBuzzAccountSchema)
-    .use(isFlagProtected('buzz'))
-    .query(getBuzzAccountHandler),
+  getUserAccount: buzzProcedure.query(getUserAccountHandler),
+  getBuzzAccount: buzzProcedure.input(getBuzzAccountSchema).query(getBuzzAccountHandler),
   // TODO.buzz: add another endpoint only available for mods to fetch transactions from other users
-  getUserTransactions: protectedProcedure
+  getUserTransactions: buzzProcedure
     .input(getUserBuzzTransactionsSchema)
-    .use(isFlagProtected('buzz'))
     .query(getUserTransactionsHandler),
-  tipUser: protectedProcedure
+  tipUser: buzzProcedure
     .input(userBuzzTransactionInputSchema)
-    .use(isFlagProtected('buzz'))
     .mutation(createBuzzTipTransactionHandler),
-  completeStripeBuzzPurchase: protectedProcedure
+  completeStripeBuzzPurchase: buzzProcedure
     .input(completeStripeBuzzPurchaseTransactionInput)
-    .use(isFlagProtected('buzz'))
     .mutation(completeStripeBuzzPurchaseHandler),
-  getAccountTransactions: protectedProcedure
+  getAccountTransactions: buzzProcedure
     .input(getBuzzAccountTransactionsSchema)
-    .use(isFlagProtected('buzz'))
     .query(getBuzzAccountTransactionsHandler),
-  withdrawClubFunds: protectedProcedure
+  withdrawClubFunds: buzzProcedure
     .input(clubTransactionSchema)
-    .use(isFlagProtected('buzz'))
     .use(isFlagProtected('clubs'))
     .mutation(withdrawClubFundsHandler),
-  depositClubFunds: protectedProcedure
+  depositClubFunds: buzzProcedure
     .input(clubTransactionSchema)
-    .use(isFlagProtected('buzz'))
     .use(isFlagProtected('clubs'))
     .mutation(depositClubFundsHandler),
-  getClaimStatus: protectedProcedure
+  getClaimStatus: buzzProcedure
     .input(getByIdStringSchema)
     .query(({ input, ctx }) => getClaimStatus({ ...input, userId: ctx.user.id })),
-  claim: protectedProcedure
+  claim: buzzProcedure
     .input(getByIdStringSchema)
     .mutation(({ input, ctx }) => claimBuzz({ ...input, userId: ctx.user.id })),
-  getUserMultipliers: protectedProcedure.query(getUserMultipliersHandler),
-  claimDailyBoostReward: protectedProcedure.mutation(claimDailyBoostRewardHandler),
-  getEarnPotential: protectedProcedure.input(getEarnPotentialSchema).query(({ input, ctx }) => {
+  getUserMultipliers: buzzProcedure.query(getUserMultipliersHandler),
+  claimDailyBoostReward: buzzProcedure.mutation(claimDailyBoostRewardHandler),
+  getEarnPotential: buzzProcedure.input(getEarnPotentialSchema).query(({ input, ctx }) => {
     if (!ctx.user.isModerator) input.userId = ctx.user.id;
     if (!input.username && !input.userId) input.userId = ctx.user.id;
     return getEarnPotential(input);
   }),
-  getDailyBuzzCompensation: protectedProcedure
+  getDailyBuzzCompensation: buzzProcedure
     .input(getDailyBuzzCompensationInput)
     .query(getDailyCompensationRewardHandler),
-  claimWatchedAdReward: protectedProcedure
+  claimWatchedAdReward: buzzProcedure
     .input(claimWatchedAdRewardSchema)
     .mutation(({ input, ctx }) =>
       claimWatchedAdReward({ ...input, userId: ctx.user.id, ip: ctx.ip })
     ),
+  getTransactionsReport: protectedProcedure
+    .input(getTransactionsReportSchema)
+    .query(getTransactionsReportHandler),
 });

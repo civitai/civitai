@@ -1,4 +1,4 @@
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { GetTransactionsReportSchema, TransactionType } from '~/server/schema/buzz.schema';
 import {
   Center,
   Grid,
@@ -26,7 +26,7 @@ import {
   Tooltip as ChartTooltip,
 } from 'chart.js';
 import { formatDate } from '~/utils/date-helpers';
-import { useBuzzTransactions } from '~/components/Buzz/useBuzz';
+import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/useBuzz';
 import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -50,119 +50,87 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
   const { classes, theme } = useBuzzDashboardStyles();
   // Right now, sadly, we neeed to use two separate queries for user and generation transactions.
   // If this ever changes, that'd be awesome. But for now, we need to do this.
-  const mainBuzzTransactions = useBuzzTransactions(accountId, 'user');
-  const generationBuzzTransactions = useBuzzTransactions(accountId, 'generation');
   const [transactionType, setTransactionType] = React.useState<'user' | 'generation'>('user');
+  const transactionData = useBuzzTransactions(accountId, transactionType);
+  const [reportFilters, setReportFilters] = React.useState<GetTransactionsReportSchema>({
+    window: 'day',
+    accountType: ['User', 'Generation'],
+  });
+
+  const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
+    enabled: true,
+  });
+
+  const isLoadingReport = isLoading || isRefetching;
+  const viewingHourly = reportFilters.window === 'hour';
+
+  const labels = useMemo(() => {
+    return report.map((d) => formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD'), true);
+  }, [report, viewingHourly]);
 
   const transactions = useMemo(() => {
-    const transactions =
-      transactionType === 'user'
-        ? mainBuzzTransactions.transactions
-        : generationBuzzTransactions.transactions;
-
-    return [...transactions].sort((a, b) => {
+    return [...(transactionData?.transactions ?? [])].sort((a, b) => {
       return b.date.getTime() - a.date.getTime();
     });
-  }, [transactionType, mainBuzzTransactions.transactions, generationBuzzTransactions.transactions]);
-
-  const { dates, format } = useMemo(() => {
-    const dailyFormat = 'MMM-DD';
-    const daily = [
-      ...new Set(
-        [...mainBuzzTransactions.transactions, ...generationBuzzTransactions.transactions]
-          .sort((a, b) => {
-            return a.date.getTime() - b.date.getTime();
-          })
-          .map((t) => formatDate(t.date, dailyFormat))
-      ),
-    ]
-      .reverse()
-      .slice(0, 10)
-      .reverse();
-    const hourlyFormat = 'MMM-DD h:00';
-    const hourly = [
-      ...new Set(
-        [...mainBuzzTransactions.transactions, ...generationBuzzTransactions.transactions].map(
-          (t) => formatDate(t.date, hourlyFormat)
-        )
-      ),
-    ]
-      .slice(0, 24)
-      .reverse(); // Max 24 hours
-
-    return daily.length > 3
-      ? { dates: daily, format: dailyFormat }
-      : { dates: hourly, format: hourlyFormat };
-  }, [mainBuzzTransactions.transactions, generationBuzzTransactions.transactions]);
-
-  // Last 7 days of data pretty much.
-
-  const getTransactionTotalByDate = useCallback(
-    (data: { date: Date; amount: number }[], date: string, positive = true) => {
-      return data
-        .filter(
-          (t) => formatDate(t.date, format) === date && (positive ? t.amount > 0 : t.amount < 0)
-        )
-        .reduce((acc, t) => acc + Math.abs(t.amount), 0);
-    },
-    [format]
-  );
+  }, [transactionData.transactions]);
 
   const datasets = useMemo(
     () => [
       {
         label: 'Yellow Gains',
-        data: dates.map((date) => {
-          return getTransactionTotalByDate(mainBuzzTransactions.transactions, date);
-        }),
+        data: report.reduce((acc, d) => {
+          return {
+            ...acc,
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
+              d.accounts.find((a) => a.accountType === 'User')?.gained ?? 0,
+          };
+        }, {}),
         borderColor: theme.colors.yellow[7],
         backgroundColor: theme.colors.yellow[7],
-        stack: 'gains',
+        stack: 'gained',
       },
       {
         label: 'Blue Gains',
-        data: dates.map((date) => {
-          return getTransactionTotalByDate(generationBuzzTransactions.transactions, date);
-        }),
+        data: report.reduce((acc, d) => {
+          return {
+            ...acc,
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
+              d.accounts.find((a) => a.accountType === 'Generation')?.gained ?? 0,
+          };
+        }, {}),
         borderColor: theme.colors.blue[7],
         backgroundColor: theme.colors.blue[7],
-        stack: 'gains',
+        stack: 'gained',
       },
       {
         label: 'Yellow Spent',
-        data: dates.map((date) => {
-          return getTransactionTotalByDate(mainBuzzTransactions.transactions, date, false);
-        }),
+        data: report.reduce((acc, d) => {
+          return {
+            ...acc,
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
+              d.accounts.find((a) => a.accountType === 'User')?.spent ?? 0,
+          };
+        }, {}),
         borderColor: theme.colors.red[7],
         backgroundColor: theme.colors.red[7],
         stack: 'spending',
       },
       {
         label: 'Blue Spent',
-        data: dates.map((date) => {
-          return getTransactionTotalByDate(generationBuzzTransactions.transactions, date, false);
-        }),
+        data: report.reduce((acc, d) => {
+          return {
+            ...acc,
+            [formatDate(d.date, viewingHourly ? 'HH:mm' : 'MMM-DD')]:
+              d.accounts.find((a) => a.accountType === 'Generation')?.spent ?? 0,
+          };
+        }, {}),
         borderColor: theme.colors.violet[7],
         backgroundColor: theme.colors.violet[7],
         stack: 'spending',
       },
     ],
-    [
-      dates,
-      theme,
-      getTransactionTotalByDate,
-      mainBuzzTransactions.transactions,
-      generationBuzzTransactions.transactions,
-    ]
+    [theme, report, viewingHourly]
   );
-
-  if (mainBuzzTransactions.transactionsLoading || generationBuzzTransactions.transactionsLoading) {
-    return (
-      <Center py="xl">
-        <Loader />
-      </Center>
-    );
-  }
 
   return (
     <Grid>
@@ -241,14 +209,52 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                     </Popover.Dropdown>
                   </Popover>
                 </Group>
+                <SegmentedControl
+                  value={reportFilters.window}
+                  onChange={(v) =>
+                    setReportFilters({
+                      ...reportFilters,
+                      window: v as GetTransactionsReportSchema['window'],
+                    })
+                  }
+                  data={[
+                    { label: '24h', value: 'hour' },
+                    { label: '7d', value: 'day' },
+                    { label: 'Weekly', value: 'week' },
+                    { label: '12m', value: 'month' },
+                  ]}
+                  mt="md"
+                  mb="md"
+                />
+                {isLoadingReport && (
+                  <Center>
+                    <Loader />
+                  </Center>
+                )}
+
+                {!isLoadingReport && !report.length && (
+                  <Center>
+                    <Text color="dimmed" mt="md">
+                      We found no data on the provided timeframe.
+                    </Text>
+                  </Center>
+                )}
               </Stack>
-              <Bar
-                options={options}
-                data={{
-                  labels: dates,
-                  datasets,
-                }}
-              />
+              {!isLoadingReport && report.length > 0 && (
+                <>
+                  <Bar
+                    key={reportFilters.window}
+                    options={options}
+                    data={{
+                      labels,
+                      datasets,
+                    }}
+                  />
+                  <Text color="yellow.7" size="xs">
+                    All times are UTC
+                  </Text>
+                </>
+              )}
             </Stack>
           </Paper>
         </Stack>
@@ -281,12 +287,12 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
             {transactions.length ? (
               <ScrollArea.Autosize maxHeight={400} mt="md" key={transactionType}>
                 <Stack spacing={8} mr={14}>
-                  {transactions.map((transaction) => {
+                  {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
                     const isDebit = amount < 0;
 
                     return (
-                      <Stack key={date.toISOString()} spacing={4}>
+                      <Stack key={index + '@' + date.toISOString()} spacing={4}>
                         <Group position="apart" noWrap align="flex-start">
                           <Stack spacing={0}>
                             <Text size="sm" weight="500" lh={1.2}>
@@ -315,6 +321,10 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
                   })}
                 </Stack>
               </ScrollArea.Autosize>
+            ) : transactionData.isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
             ) : (
               <Text color="dimmed" mt="md">
                 No transactions yet.

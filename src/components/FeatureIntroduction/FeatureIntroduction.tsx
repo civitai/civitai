@@ -28,11 +28,11 @@ type Props = {
   modalProps?: Omit<ModalProps, 'opened' | 'onClose'>;
 };
 
-export const FeatureIntroductionModal = ({
+export default function FeatureIntroductionModal({
   feature,
   contentSlug,
   modalProps,
-}: Omit<Props, 'actionButton'>) => {
+}: Omit<Props, 'actionButton'>) {
   const { data: content, isLoading } = trpc.content.get.useQuery({
     slug: contentSlug ?? feature,
   });
@@ -55,7 +55,7 @@ export const FeatureIntroductionModal = ({
       </Center>
     </Modal>
   );
-};
+}
 
 export const FeatureIntroduction = ({
   feature,

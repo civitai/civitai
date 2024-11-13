@@ -1,4 +1,4 @@
-import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { trpc } from '~/utils/trpc';
 import { imageStore } from '~/store/image.store';

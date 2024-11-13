@@ -3,16 +3,13 @@ import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '@prisma/client';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
-import { BaseModel, BaseModelSetType, baseModelSets } from '~/server/common/constants';
+import { BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { AirResourceData } from '~/server/services/orchestrator/common';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { GenerationInputConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 export const WORKFLOW_TAGS = {
   IMAGE: 'img',
@@ -197,6 +194,20 @@ export const defaultCheckpoints: Record<
     model: 4384,
     version: 128713,
   },
+  SD3: {
+    ecosystem: 'sd3',
+    type: 'model',
+    source: 'civitai',
+    model: 878387,
+    version: 983309,
+  },
+  SD3_5M: {
+    ecosystem: 'sd3',
+    type: 'model',
+    source: 'civitai',
+    model: 896953,
+    version: 1003708,
+  },
   SDXL: {
     ecosystem: 'sdxl',
     type: 'model',
@@ -210,6 +221,13 @@ export const defaultCheckpoints: Record<
     source: 'civitai',
     model: 257749,
     version: 290640,
+  },
+  Illustrious: {
+    ecosystem: 'sdxl',
+    type: 'model',
+    source: 'civitai',
+    model: 795765,
+    version: 889818,
   },
 };
 
@@ -239,13 +257,19 @@ export function getIsSdxl(baseModel?: string) {
   return (
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||
-    baseModelSetType === 'SDXLDistilled'
+    baseModelSetType === 'SDXLDistilled' ||
+    baseModelSetType === 'Illustrious'
   );
 }
 
 export function getIsFlux(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'Flux1';
+}
+
+export function getIsSD3(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
 }
 
 export type GenerationResource = MakeUndefinedOptional<
@@ -271,6 +295,7 @@ export function formatGenerationResources(
       minor: resource.model.minor,
       available: resource.available,
       additionalCharge: resource.additionalCharge,
+      fileSizeKB: resource.fileSizeKB,
     };
   });
 }
@@ -283,6 +308,9 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Pony')) return 'Pony';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SDXL')) return 'SDXL';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Illustrious'))
+    return 'Illustrious';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else return 'SD1';
 }
 
@@ -402,9 +430,37 @@ export const baseModelResourceTypes = {
       baseModels: [...baseModelSets.SDXL],
     },
   ],
+  Illustrious: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Illustrious, 'SD 1.5'] },
+    {
+      type: ModelType.LORA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL],
+    },
+  ],
   Flux1: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
     { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
+  ],
+  SD3: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3] },
+  ],
+  SD3_5M: [
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M] },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {

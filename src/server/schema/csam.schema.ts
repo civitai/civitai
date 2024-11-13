@@ -1,6 +1,5 @@
 import { CsamReportType } from '@prisma/client';
 import { z } from 'zod';
-import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 export type CsamCapabilityType = keyof typeof csamCapabilitiesDictionary;
@@ -22,31 +21,19 @@ export const csamContentsDictionary = {
 } as const;
 
 // #region [user input]
-const ncmecUploadResultSchema = z.object({
-  fileId: z.string().optional(),
-  hash: z.string().optional(),
-});
-export type CsamImage = z.output<typeof imageSchema>;
-const imageSchema = ncmecUploadResultSchema.extend({
-  id: z.number(),
-  fileAnnotations: Ncmec.fileAnnotationsSchema.default({}),
-});
-
-const trainingDataSchema = ncmecUploadResultSchema.extend({
-  filename: z.string(),
-});
-
-export type CsamReportDetails = z.infer<typeof csamReportDetails>;
+export type CsamReportFormInput = z.input<typeof csamReportDetails>;
+export type CsamReportFormOutput = z.output<typeof csamReportDetails>;
 export const csamReportDetails = z.object({
   modelVersionIds: z.number().array().optional(),
   minorDepiction: z.enum(['real', 'non-real']).optional(),
   capabilities: zodEnumFromObjKeys(csamCapabilitiesDictionary).array().optional(),
   contents: zodEnumFromObjKeys(csamContentsDictionary).array().optional(),
-  trainingData: trainingDataSchema.array().optional(),
+  // trainingData: trainingDataSchema.array().optional(),
+  // userActivity: userActivitySchema.array().optional(),
 });
 
-export type CsamReportSchema = z.infer<typeof csamReportSchema>;
-export const csamReportSchema = z.object({
+export type CreateCsamReportSchema = z.infer<typeof createCsamReportSchema>;
+export const createCsamReportSchema = z.object({
   userId: z.number(),
   imageIds: z.number().array().optional(),
   details: csamReportDetails.optional(),

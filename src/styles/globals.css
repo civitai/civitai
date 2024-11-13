@@ -389,7 +389,6 @@ div[data-youtube-video] > iframe {
   will-change: transform;
   position: relative;
   scrollbar-width: thin;
-  padding-top: 0;
   display: flex;
   flex-direction: column;
 }

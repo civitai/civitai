@@ -97,7 +97,8 @@ export async function getMultipartPutUrl(
   key: string,
   size: number,
   s3: S3Client | null = null,
-  bucket: string | null = null
+  bucket: string | null = null,
+  chunkSize: number = FILE_CHUNK_SIZE
 ) {
   if (!s3) s3 = getS3Client();
 
@@ -107,7 +108,7 @@ export async function getMultipartPutUrl(
   );
 
   const promises = [];
-  for (let i = 0; i < Math.ceil(size / FILE_CHUNK_SIZE); i++) {
+  for (let i = 0; i < Math.ceil(size / chunkSize); i++) {
     promises.push(
       getSignedUrl(
         s3,

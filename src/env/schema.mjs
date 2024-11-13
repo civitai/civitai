@@ -6,6 +6,8 @@ import {
   commaDelimitedStringObject,
   stringToArray,
 } from '~/utils/zod-helpers';
+import { isProd } from './other';
+
 
 /**
  * Specify your server-side environment variables schema here.
@@ -35,9 +37,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.string().url()
   ),
-  CLICKHOUSE_HOST: z.string().optional(),
-  CLICKHOUSE_USERNAME: z.string().optional(),
-  CLICKHOUSE_PASSWORD: z.string().optional(),
+  CLICKHOUSE_HOST: isProd ? z.string() : z.string().optional(),
+  CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
+  CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_TRACKER_URL: z.string().url().optional(),
   DISCORD_CLIENT_ID: z.string(),
   DISCORD_CLIENT_SECRET: z.string(),
@@ -81,27 +83,23 @@ export const serverSchema = z.object({
   JOB_TOKEN: z.string(),
   WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_TOKEN: z.string(),
-  SCANNING_ENDPOINT: z.string(),
+  SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
   SCANNING_TOKEN: z.string(),
   UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
   UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
   SHOW_SFW_IN_NSFW: zc.booleanString,
   LOGGING: commaDelimitedStringArray(),
-  IMAGE_SCANNING_ENDPOINT: z.string().optional(),
+  IMAGE_SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
   IMAGE_SCANNING_MODEL: z.string().optional(),
   IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
-  PLAYFAB_TITLE_ID: z.string().optional(),
-  PLAYFAB_SECRET_KEY: z.string().optional(),
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
-  CANNY_SECRET: z.string().optional(),
-  ORCHESTRATOR_ENDPOINT: z.string().url().optional(),
+  ORCHESTRATOR_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
   GENERATION_CALLBACK_HOST: z.string().url().optional(),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
-  ORCHESTRATOR_USER_ACCESS_TOKEN: z.string().optional(),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
@@ -115,8 +113,8 @@ export const serverSchema = z.object({
   FEATUREBASE_URL: z.string().url().optional(),
   NEWSLETTER_ID: z.string().optional(),
   NEWSLETTER_KEY: z.string().optional(),
-  BUZZ_ENDPOINT: z.string().url().optional(),
-  SIGNALS_ENDPOINT: z.string().url().optional(),
+  BUZZ_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
+  SIGNALS_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   CSAM_UPLOAD_KEY: z.string().default(''),
@@ -182,9 +180,23 @@ export const serverSchema = z.object({
   CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
   CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
   CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
-  CONTENT_SCAN_ENDPOINT: z.string().optional(),
+  CONTENT_SCAN_ENDPOINT: isProd ? z.string() : z.string().optional(),
   CONTENT_SCAN_CALLBACK_URL: z.string().optional(),
   CONTENT_SCAN_MODEL: z.string().optional(),
+  // TIPALTI. It uses a lot of little env vars, so we group them here.
+  // iFrame Related:
+  TIPALTI_PAYER_NAME: z.string().optional(),
+  TIPALTI_PAYEE_DASHBOARD_URL: z.string().optional(),
+  TIPALTI_IFRAME_KEY: z.string().optional(),
+  TIPALTI_WEBTOKEN_SECRET: z.string().optional(),
+
+  // API Related:
+  TIPALTI_API_URL: z.string().optional(),
+  TIPALTI_API_CLIENT_ID: z.string().optional(),
+  TIPALTI_API_SECRET: z.string().optional(),
+   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
+   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
+   TIPALTI_API_TOKEN_URL: z.string().optional(),
 });
 
 /**
@@ -193,14 +205,10 @@ export const serverSchema = z.object({
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string(),
+  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
-  NEXT_PUBLIC_CIVITAI_LINK: z.string().url(),
+  NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.string().url() : z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
-  NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: z.string().optional(),
-  NEXT_PUBLIC_CANNY_BUG_BOARD: z.string().optional(),
-  NEXT_PUBLIC_CANNY_TOKEN: z.string().optional(),
-  NEXT_PUBLIC_CANNY_APP_ID: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.string().url().optional(),
@@ -243,10 +251,6 @@ export const clientEnv = {
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
-  NEXT_PUBLIC_CANNY_FEEDBACK_BOARD: process.env.NEXT_PUBLIC_CANNY_FEEDBACK_BOARD,
-  NEXT_PUBLIC_CANNY_BUG_BOARD: process.env.NEXT_PUBLIC_CANNY_BUG_BOARD,
-  NEXT_PUBLIC_CANNY_TOKEN: process.env.NEXT_PUBLIC_CANNY_TOKEN,
-  NEXT_PUBLIC_CANNY_APP_ID: process.env.NEXT_PUBLIC_CANNY_APP_ID,
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,

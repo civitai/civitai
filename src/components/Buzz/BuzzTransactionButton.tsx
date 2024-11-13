@@ -62,6 +62,7 @@ export function BuzzTransactionButton({
     hasRequiredAmount,
     hasTypeRequiredAmount,
     getTypeDistribution,
+    isLoadingBalance,
   } = useBuzzTransaction({
     message,
     purchaseSuccessMessage,
@@ -115,7 +116,7 @@ export function BuzzTransactionButton({
       }}
       size={size}
       loading={loading}
-      disabled={buttonProps.disabled || !!error}
+      disabled={buttonProps.disabled || !!error || isLoadingBalance}
     >
       <Group spacing="md" position="apart" noWrap w="100%">
         <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
@@ -144,6 +145,7 @@ export function BuzzTransactionButton({
                 maw={250}
                 multiline
                 withArrow
+                withinPortal
               >
                 <IconAlertTriangleFilled
                   color="red"
@@ -158,10 +160,11 @@ export function BuzzTransactionButton({
         {error && !hasCost && (
           <Tooltip
             label={error ?? 'There was an error'}
-            multiline={true}
-            withArrow
             maw={200}
-            opened={true} // Forcefully open becuse button is disabled
+            multiline
+            withArrow
+            withinPortal
+            opened // Forcefully open because button is disabled
             // style={{ whiteSpace: 'normal' }}
           >
             <Badge

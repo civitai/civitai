@@ -10,11 +10,14 @@ import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
 import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
 
-const schema = z.object({
+const workflowSchema = z.object({
   workflowId: z.string(),
   status: z.nativeEnum(WorkflowStatus),
+  // $type
+  // timestamp
 });
 
 type MetadataType = { modelFileId: number };
@@ -36,7 +39,7 @@ const mapTrainingStatus: { [key in WorkflowStatus]: TrainingStatus } = {
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
     {
-      name: 'resource-training',
+      name: 'resource-training-v2-webhook',
       type: 'error',
       ...data,
     },
@@ -50,7 +53,7 @@ export default WebhookEndpoint(async (req, res) => {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const bodyResults = schema.safeParse(req.body);
+  const bodyResults = workflowSchema.safeParse(req.body);
   if (!bodyResults.success) {
     logWebhook({
       message: 'Could not parse body',
@@ -62,6 +65,7 @@ export default WebhookEndpoint(async (req, res) => {
   const { status, workflowId } = bodyResults.data;
 
   switch (status) {
+    case 'unassigned':
     case 'processing':
     case 'failed':
     case 'expired':
@@ -72,18 +76,17 @@ export default WebhookEndpoint(async (req, res) => {
           token: env.ORCHESTRATOR_ACCESS_TOKEN,
           path: { workflowId },
         });
-        await updateRecords(workflow);
+        await updateRecords(workflow, status);
       } catch (e: unknown) {
         const err = e as Error | undefined;
         logWebhook({
           message: 'Failed to update record',
-          data: { error: err?.message, cause: err?.cause, workflowId },
+          data: { error: err?.message, cause: err?.cause, stack: err?.stack, status, workflowId },
         });
         return res.status(500).json({ ok: false, error: err?.message, workflowId });
       }
 
       break;
-    case 'unassigned':
     case 'preparing':
     case 'scheduled':
       break;
@@ -98,9 +101,8 @@ export default WebhookEndpoint(async (req, res) => {
   return res.status(200).json({ ok: true });
 });
 
-export async function updateRecords(workflow: Workflow) {
-  const { status, transactions, steps } = workflow;
-  const workflowStatus = status!;
+export async function updateRecords(workflow: Workflow, status: WorkflowStatus) {
+  const { transactions, steps, id: workflowId, createdAt } = workflow;
 
   const step = steps?.[0] as CustomImageResourceTrainingStep | undefined;
   if (!step) throw new Error('Missing step data');
@@ -114,7 +116,7 @@ export async function updateRecords(workflow: Workflow) {
     startedAt,
     completedAt,
   } = step;
-  let trainingStatus = mapTrainingStatus[workflowStatus];
+  let trainingStatus = mapTrainingStatus[status];
 
   // TODO is output nullable?
   const epochs = (output ?? {}).epochs ?? [];
@@ -172,18 +174,21 @@ export async function updateRecords(workflow: Workflow) {
   const epochData: TrainingResultsV2['epochs'] = epochs.map((e) => ({
     epochNumber: e.epochNumber ?? -1,
     modelUrl: e.blobUrl,
-    modelSize: e.blobSize,
+    modelSize: e.blobSize ?? 0,
     sampleImages: e.sampleImages ?? [],
   }));
 
   const newTrainingResults: TrainingResultsV2 = {
     ...trainingResults,
+    version: 2,
+    workflowId: trainingResults.workflowId ?? workflowId ?? 'unk',
+    submittedAt: (createdAt ? new Date(createdAt) : new Date()).toISOString(),
+    startedAt: trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null),
+    completedAt: completedAt ? new Date(completedAt).toISOString() : null,
     epochs: epochData,
     history,
     sampleImagesPrompts,
-    startedAt: trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null),
-    completedAt: completedAt ? new Date(completedAt).toISOString() : null,
-    transactionData: transactions?.list ?? trainingResults.transactionData,
+    transactionData: transactions?.list ?? trainingResults.transactionData ?? [],
   };
 
   const newMetadata: FileMetadata = {
@@ -191,22 +196,26 @@ export async function updateRecords(workflow: Workflow) {
     trainingResults: newTrainingResults,
   };
 
-  await dbWrite.modelFile.update({
-    where: { id: modelFile.id },
-    data: {
-      metadata: newMetadata,
-    },
-  });
+  await withRetries(() =>
+    dbWrite.modelFile.update({
+      where: { id: modelFile.id },
+      data: {
+        metadata: newMetadata,
+      },
+    })
+  );
 
-  await dbWrite.modelVersion.update({
-    where: { id: modelVersion.id },
-    data: {
-      trainingStatus,
-    },
-  });
+  await withRetries(() =>
+    dbWrite.modelVersion.update({
+      where: { id: modelVersion.id },
+      data: {
+        trainingStatus,
+      },
+    })
+  );
 
   // trigger webhook alert
-  if (trainingStatus === TrainingStatus.Paused) {
+  if (last?.status !== trainingStatus && trainingStatus === TrainingStatus.Paused) {
     try {
       await queueNewTrainingModerationWebhook(modelVersion.id);
     } catch {}

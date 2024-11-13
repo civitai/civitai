@@ -1,0 +1,133 @@
+import { Button, ColorSwatch, MantineColor, Modal, useMantineTheme } from '@mantine/core';
+import { forwardRef } from 'react';
+import { z } from 'zod';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import {
+  Form,
+  InputCheckbox,
+  InputDatePicker,
+  InputSelect,
+  InputText,
+  InputTextArea,
+  useForm,
+} from '~/libs/form';
+import { UpsertAnnouncementSchema } from '~/server/schema/announcement.schema';
+import { dateWithoutTimezone, endOfDay, startOfDay } from '~/utils/date-helpers';
+import { trpc } from '~/utils/trpc';
+
+const schema = z.object({
+  title: z.string(),
+  content: z.string(),
+  color: z.string(),
+  startsAt: z.date(),
+  endsAt: z.date(),
+  image: z.string().optional(),
+  disabled: z.boolean().optional(),
+  linkText: z.string().optional(),
+  linkUrl: z.string().optional(),
+});
+
+export function AnnouncementEditModal({
+  announcement,
+}: {
+  announcement?: Partial<UpsertAnnouncementSchema>;
+}) {
+  const dialog = useDialogContext();
+
+  const startsAt = announcement?.startsAt ?? new Date();
+  const date = new Date(startsAt);
+  if (!announcement?.endsAt) date.setDate(startsAt.getDate() + 1);
+  const endsAt = announcement?.endsAt ?? date;
+  const action = announcement?.metadata?.actions?.[0];
+  const queryUtils = trpc.useUtils();
+
+  const form = useForm({
+    schema,
+    defaultValues: {
+      ...announcement,
+      startsAt: startOfDay(dateWithoutTimezone(startsAt)),
+      endsAt: startOfDay(dateWithoutTimezone(endsAt)),
+      image: announcement?.metadata?.image,
+      linkText: action?.linkText,
+      linkUrl: action?.link,
+    },
+  });
+  const theme = useMantineTheme();
+  const colors = Object.keys(theme.colors);
+
+  const { mutate, isLoading } = trpc.announcement.upsertAnnouncement.useMutation({
+    onSuccess: () => {
+      dialog.onClose();
+      queryUtils.announcement.getAnnouncementsPaged.invalidate();
+    },
+  });
+
+  function handleSubmit(data: z.infer<typeof schema>) {
+    mutate({
+      ...announcement,
+      ...data,
+      title: data.title.trim(),
+      content: data.content.trim(),
+      startsAt: startOfDay(data.startsAt, { utc: true }),
+      endsAt: endOfDay(data.endsAt, { utc: true }),
+      metadata: {
+        actions:
+          data.linkText && data.linkUrl
+            ? [{ type: 'button', link: data.linkUrl, linkText: data.linkText }]
+            : undefined,
+        image: data.image,
+      },
+    });
+  }
+
+  return (
+    <Modal {...dialog} title={`${announcement?.id ? 'Edit' : 'Save'} Announcement`}>
+      <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
+        <InputText name="title" label="Title" />
+        <InputTextArea name="content" label="Content" autosize />
+
+        <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+          <InputText name="image" label="Image ID" />
+          <InputSelect
+            name="color"
+            label="Color"
+            data={colors.map((color) => ({ value: color, label: color }))}
+            itemComponent={SelectItem}
+            searchable
+            clearable
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+          <InputDatePicker name="startsAt" label="Starts At" />
+          <InputDatePicker name="endsAt" label="Ends At" />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
+          <InputText name="linkText" label="CTA Text" />
+          <InputText name="linkUrl" label="CTA Url" />
+        </div>
+
+        <InputCheckbox name="disabled" label="Disabled" />
+        <Button type="submit" loading={isLoading}>
+          Save
+        </Button>
+      </Form>
+    </Modal>
+  );
+}
+
+const SelectItem = forwardRef<HTMLDivElement, { label: MantineColor }>(
+  ({ label, ...others }, ref) => {
+    const theme = useMantineTheme();
+    return (
+      <div ref={ref} {...others}>
+        <div className="flex items-center gap-2">
+          <span>{label}</span>
+          <ColorSwatch size={18} color={theme.colors[label][4]} />
+        </div>
+      </div>
+    );
+  }
+);
+SelectItem.displayName = 'MantineColorSelect';

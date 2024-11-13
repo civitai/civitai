@@ -999,7 +999,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <Text inherit>{collection.name}</Text>
+                      <Link href={`/collections/${model.meta?.showcaseCollectionId}`} passHref>
+                        <Anchor variant="text" onClick={(e) => e.stopPropagation()} inherit>
+                          {collection.name}
+                        </Anchor>
+                      </Link>
                       <Text size="xs" color="dimmed">
                         Collection
                         {collection.itemCount > 0

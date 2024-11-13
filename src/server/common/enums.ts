@@ -296,6 +296,22 @@ export enum BanReasonCode {
   Other = 'Other',
 }
 
+export enum StripeConnectStatus {
+  PendingOnboarding = 'PendingOnboarding',
+  PendingVerification = 'PendingVerification',
+  Approved = 'Approved',
+  Rejected = 'Rejected',
+}
+
+export enum TipaltiStatus {
+  PendingOnboarding = 'PendingOnboarding',
+  Active = 'ACTIVE',
+  Suspended = 'SUSPENDED',
+  Blocked = 'BLOCKED',
+  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  InternalValue = 'INTERNAL_VALUE',
+}
+
 export enum OrchPriorityTypes {
   High = 'high',
   Normal = 'normal',
@@ -305,4 +321,9 @@ export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
   'X-Flux' = 'x-flux',
+}
+
+export enum BlocklistType {
+  EmailDomain = 'EmailDomain',
+  LinkDomain = 'LinkDomain',
 }

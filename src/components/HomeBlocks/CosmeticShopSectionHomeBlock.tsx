@@ -1,20 +1,16 @@
-import { Grid } from '@mantine/core';
 import { useMemo } from 'react';
 import { HomeBlockHeaderMeta } from '~/components/HomeBlocks/components/HomeBlockHeaderMeta';
 import { useHomeBlockGridStyles } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
 import { ShopItem } from '~/components/Shop/ShopItem';
-import { ShopSection } from '~/components/Shop/ShopSection';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { trpc } from '~/utils/trpc';
 
 export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
-
   if (!props.metadata.cosmeticShopSection) return null;
 
   return (
-    <HomeBlockWrapper py={32} showAds={showAds}>
+    <HomeBlockWrapper py={32}>
       <CosmeticShopSectionHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -58,15 +54,15 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         }}
         htmlMode
       />
-        <div className={cx(classes.grid, `mt-2 py-2`)}>
-          {items.map((item) => {
-            const { shopItem } = item;
-            return (
-              <div>
-                <ShopItem key={shopItem.id} item={shopItem} sectionItemCreatedAt={item.createdAt} />
-              </div>
-            );
-          })}
+      <div className={cx(classes.grid, `mt-2 py-2`)}>
+        {items.map((item) => {
+          const { shopItem } = item;
+          return (
+            <div key={shopItem.id}>
+              <ShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
+            </div>
+          );
+        })}
       </div>
     </>
   );

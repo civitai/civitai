@@ -204,6 +204,7 @@ export type GenerationData = {
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
   remixOfId?: number;
+  // runType: 'run' | 'remix' | ''
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
@@ -356,12 +357,14 @@ const getImageGenerationData = async (id: number) => {
   if (meta.seed == 0) meta.seed = undefined;
 
   let aspectRatio = '0';
-  if (image.width && image.height) {
-    const config = getGenerationConfig(baseModel);
-    const ratios = config.aspectRatios.map((x) => x.width / x.height);
-    const closest = findClosest(ratios, image.width / image.height);
-    aspectRatio = `${ratios.indexOf(closest)}`;
-  }
+  try {
+    if (image.width && image.height) {
+      const config = getGenerationConfig(baseModel);
+      const ratios = config.aspectRatios.map((x) => x.width / x.height);
+      const closest = findClosest(ratios, image.width / image.height);
+      aspectRatio = `${ratios.indexOf(closest)}`;
+    }
+  } catch (e) {}
 
   const { prompt, negativePrompt } = cleanPrompt(meta);
 
@@ -395,7 +398,7 @@ export async function getUnavailableResources() {
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
-  return [...new Set(cachedData)] ?? [];
+  return [...new Set(cachedData ?? [])];
 }
 
 export async function toggleUnavailableResource({

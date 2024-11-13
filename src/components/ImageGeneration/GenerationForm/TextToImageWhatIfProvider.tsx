@@ -10,6 +10,7 @@ import {
 import {
   getBaseModelSetType,
   getIsFlux,
+  getIsSD3,
   getSizeFromAspectRatio,
   whatIfQueryOverrides,
 } from '~/shared/constants/generation.constants';
@@ -52,6 +53,11 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isFlux && watched.fluxMode) {
       const { version } = parseAIR(watched.fluxMode);
       modelId = version;
+    }
+
+    const isSD3 = getIsSD3(watched.baseModel);
+    if (isSD3 && model?.id) {
+      modelId = model.id;
     }
 
     return {

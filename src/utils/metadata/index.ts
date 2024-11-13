@@ -77,7 +77,7 @@ export const getDataFromFile = async (file: File) => {
         metadata.height > constants.mediaUpload.maxVideoDimension
       )
         throw new Error(
-          `Images cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image and try again.`
+          `Images cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image or video and try again.`
         );
     } catch (error: any) {
       showErrorNotification({ error });

@@ -8,6 +8,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
@@ -35,10 +36,12 @@ export default function EarnPotential() {
   const [earlyAccessPrice, setEarlyAccessPrice] = useState<number>(1000);
   const [earlyAccessResources, setEarlyAccessResources] = useState<number>(1);
   const { query } = useRouter();
+  const features = useFeatureFlags();
 
-  const { data: potential, isLoading } = trpc.buzz.getEarnPotential.useQuery({
-    username: query.username as string,
-  });
+  const { data: potential, isLoading } = trpc.buzz.getEarnPotential.useQuery(
+    { username: query.username as string },
+    { enabled: features.buzz }
+  );
 
   const currencyBadgeProps = {
     currency: Currency.BUZZ,

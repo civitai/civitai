@@ -52,11 +52,12 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         loading={isInitialLoading}
         notFound={!user || !user.username || !enabled}
         left={
-          <div className="min-h-full w-[320px] bg-gray-0 @max-sm:hidden dark:bg-dark-6">
+          <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6">
             <ProfileSidebar username={username} />
           </div>
         }
         subNav={<ProfileNavigation username={username} />}
+        announcements={false}
       >
         <div className="px-3">
           {isBlocked ? (

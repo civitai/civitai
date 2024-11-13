@@ -49,7 +49,7 @@ import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
 import { userRouter } from './user.router';
-import { userStripeConnectRouter } from './user-stripe-connect.router';
+import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 import { integrationRouter } from './integration.router';
 import { paypalRouter } from './paypal.router';
@@ -69,6 +69,7 @@ import { gamesRouter } from '~/server/routers/games.router';
 import { recommendersRouter } from './recommenders.router';
 import { paddleRouter } from '~/server/routers/paddle.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
+import { blocklistRouter } from '~/server/routers/blocklist.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -122,7 +123,7 @@ export const appRouter = router({
   cosmetic: cosmeticRouter,
   event: eventRouter,
   csam: csamRouter,
-  userStripeConnect: userStripeConnectRouter,
+  userPaymentConfiguration: userPaymentConfigurationRouter,
   buzzWithdrawalRequest: buzzWithdrawalRequestRouter,
   integration: integrationRouter,
   paypal: paypalRouter,
@@ -140,6 +141,7 @@ export const appRouter = router({
   entityCollaborator: entityCollaboratorRouter,
   games: gamesRouter,
   paddle: paddleRouter,
+  blocklist: blocklistRouter,
 });
 
 // export type definition of API

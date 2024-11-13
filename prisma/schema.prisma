@@ -87,20 +87,19 @@ model UserReferralCode {
   @@index([userId], type: Hash)
 }
 
-enum StripeConnectStatus {
-  PendingOnboarding
-  Approved
-  PendingVerification
-  Rejected
-}
-
-model UserStripeConnect {
-  userId             Int                 @unique
-  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  connectedAccountId String              @unique
-  status             StripeConnectStatus @default(PendingOnboarding)
-  payoutsEnabled     Boolean             @default(false)
-  chargesEnabled     Boolean             @default(false)
+model UserPaymentConfiguration {
+  userId                 Int     @unique
+  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Tipalti
+  tipaltiAccountId       String? @unique
+  tipaltiAccountStatus   String  @default("PendingOnboarding")
+  tipaltiPaymentsEnabled Boolean @default(false)
+  // Stripe, mainly here for safekeeping or in case we ever support this again.
+  stripeAccountId        String? @unique
+  stripeAccountStatus    String  @default("PendingOnboarding")
+  stripePaymentsEnabled  Boolean @default(false)
+  // 
+  meta                   Json    @default("{}")
 }
 
 enum BuzzWithdrawalRequestStatus {
@@ -125,11 +124,18 @@ model BuzzWithdrawalRequestHistory {
   metadata    Json                        @default("{}")
 }
 
+enum UserPaymentConfigurationProvider {
+  Stripe
+  Tipalti
+}
+
 model BuzzWithdrawalRequest {
-  id                          String                         @id @default(cuid())
-  userId                      Int?
-  user                        User?                          @relation(fields: [userId], references: [id])
-  connectedAccountId          String // Keeping this for double safe-measure :)
+  id                  String                           @id @default(cuid())
+  userId              Int?
+  user                User?                            @relation(fields: [userId], references: [id])
+  requestedToProvider UserPaymentConfigurationProvider @default(Stripe)
+  requestedToId       String
+
   buzzWithdrawalTransactionId String // from Buzz Service
   requestedBuzzAmount         Int // 1000
   platformFeeRate             Int // 3000 = 30% so we can do 30.25
@@ -181,12 +187,12 @@ model User {
   customerId              String?               @unique // Stripe
   paddleCustomerId        String?               @unique
 
-  profile          UserProfile?
-  profilePictureId Int?               @unique
-  profilePicture   Image?             @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
-  settings         Json?              @default("{}")
-  publicSettings   Json?              @default("{}")
-  connectedAccount UserStripeConnect?
+  profile              UserProfile?
+  profilePictureId     Int?                      @unique
+  profilePicture       Image?                    @relation("profilePicture", fields: [profilePictureId], references: [id], onDelete: SetNull)
+  settings             Json?                     @default("{}")
+  publicSettings       Json?                     @default("{}")
+  paymentConfiguration UserPaymentConfiguration?
 
   accounts             Account[]
   sessions             Session[]
@@ -273,6 +279,7 @@ model User {
   collaboratingOn            EntityCollaborator[]           @relation("entityCollaboratorParticipant")
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
+  ratingRequests             ImageRatingRequest[]
 }
 
 model CustomerSubscription {
@@ -1288,6 +1295,7 @@ model Image {
   techniques          ImageTechnique[]
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
+  ratingRequests      ImageRatingRequest[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1379,10 +1387,13 @@ model ImageMetric {
 
 model ImageRatingRequest {
   userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   imageId   Int
+  image     Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
   createdAt DateTime     @default(now())
   nsfwLevel Int
   status    ReportStatus @default(Pending)
+  weight    Int          @default(1)
 
   @@id([imageId, userId])
 }
@@ -2024,6 +2035,7 @@ model Announcement {
   startsAt  DateTime?
   endsAt    DateTime?
   metadata  Json?
+  disabled  Boolean   @default(false)
 }
 
 enum CosmeticType {
@@ -2146,36 +2158,51 @@ model UserCosmeticShopPurchases {
   refunded          Boolean
 }
 
+enum BuzzAccountType {
+  user
+  generation
+  club
+}
+
 model BuzzClaim {
-  key                String    @id
+  key                String          @id
   title              String
   description        String
   transactionIdQuery String
   amount             Int
   availableStart     DateTime?
   availableEnd       DateTime?
+  accountType        BuzzAccountType @default(user)
+  useMultiplier      Boolean         @default(false)
+}
+
+enum ArticleStatus {
+  Draft
+  Published
+  Unpublished
 }
 
 model Article {
-  id               Int          @id @default(autoincrement())
-  createdAt        DateTime?    @default(now())
-  updatedAt        DateTime?    @updatedAt
-  nsfw             Boolean      @default(false)
-  tosViolation     Boolean      @default(false)
+  id               Int           @id @default(autoincrement())
+  createdAt        DateTime?     @default(now())
+  updatedAt        DateTime?     @updatedAt
+  nsfw             Boolean       @default(false)
+  tosViolation     Boolean       @default(false)
   metadata         Json?
   title            String
   content          String
   cover            String?
-  coverId          Int?         @unique
-  coverImage       Image?       @relation(fields: [coverId], references: [id], onDelete: NoAction)
+  coverId          Int?          @unique
+  coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: NoAction)
   publishedAt      DateTime?
   userId           Int
-  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  availability     Availability @default(Public)
-  unlisted         Boolean      @default(false)
-  nsfwLevel        Int          @default(0)
-  userNsfwLevel    Int          @default(0)
-  lockedProperties String[]     @default([])
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  availability     Availability  @default(Public)
+  unlisted         Boolean       @default(false)
+  nsfwLevel        Int           @default(0)
+  userNsfwLevel    Int           @default(0)
+  lockedProperties String[]      @default([])
+  status           ArticleStatus @default(Draft)
 
   thread          Thread?
   reactions       ArticleReaction[]
@@ -3123,6 +3150,7 @@ model Tool {
   imageTools  ImageTool[]
   priority    Int?
   description String?
+  supported   Boolean     @default(false)
   metadata    Json        @default("{}")
 }
 
@@ -3191,6 +3219,14 @@ model Donation {
   buzzTransactionId String
   notes             String?
   createdAt         DateTime     @default(now())
+}
+
+model Blocklist {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  type      String
+  data      String[]
 }
 
 /// @view

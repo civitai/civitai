@@ -3,7 +3,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import {
   GetPaddleAdjustmentsSchema,
-  TransactionCreateInput,
   TransactionWithSubscriptionCreateInput,
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
@@ -18,8 +17,8 @@ export const useMutatePaddle = () => {
   const purchaseBuzzWithSubscription = trpc.paddle.purchaseBuzzWithSubscription.useMutation();
   const getOrCreateCustomerIdMutation = trpc.paddle.getOrCreateCustomer.useMutation();
   const refreshSubscriptionMutation = trpc.paddle.refreshSubscription.useMutation({
-    onSuccess: () => {
-      queryUtils.subscriptions.getUserSubscription.invalidate(undefined);
+    onSuccess: async () => {
+      await queryUtils.subscriptions.getUserSubscription.invalidate();
     },
   });
 

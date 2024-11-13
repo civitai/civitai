@@ -27,7 +27,7 @@ import {
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { CSSProperties, useState } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -470,12 +470,12 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
-  const { classes } = useStyles();
   const [opened, setOpened] = useState(false);
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
 
+  const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
 
@@ -737,8 +737,10 @@ export function Collection({
   );
 }
 
-const useStyles = createStyles(() => ({
-  coverImage: {
-    objectPosition: 'top center',
-  },
-}));
+const useStyles = createStyles<string, { bannerPosition?: CSSProperties['objectPosition'] }>(
+  (_theme, params) => ({
+    coverImage: {
+      objectPosition: params.bannerPosition ?? 'top center',
+    },
+  })
+);

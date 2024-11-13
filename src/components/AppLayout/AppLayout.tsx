@@ -8,6 +8,7 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { Announcements } from '~/components/Announcements/Announcements';
 
 export function AppLayout({
   children,
@@ -19,6 +20,7 @@ export function AppLayout({
   footer = <AppFooter />,
   loading,
   notFound,
+  announcements,
 }: {
   children: React.ReactNode;
   renderSearchComponent?: (opts: RenderSearchComponentProps) => React.ReactElement;
@@ -30,6 +32,7 @@ export function AppLayout({
   footer?: React.ReactNode | null;
   loading?: boolean;
   notFound?: boolean;
+  announcements?: boolean;
 }) {
   return (
     <>
@@ -40,12 +43,13 @@ export function AppLayout({
         <NotFound />
       ) : (
         <div className="flex flex-1 overflow-hidden">
-          {left && (
-            <aside className="scroll-area relative border-r border-gray-3 dark:border-dark-4">
-              {left}
-            </aside>
-          )}
-          <MainContent subNav={subNav} scrollable={scrollable} footer={footer}>
+          {left}
+          <MainContent
+            subNav={subNav}
+            scrollable={scrollable}
+            footer={footer}
+            announcements={announcements}
+          >
             {children}
           </MainContent>
           {right && (
@@ -64,23 +68,26 @@ export function MainContent({
   subNav = <SubNav2 />,
   footer = <AppFooter />,
   scrollable = true,
+  announcements,
   ...props
 }: {
   children: React.ReactNode;
   subNav?: React.ReactNode | null;
   scrollable?: boolean;
   footer?: React.ReactNode | null;
+  announcements?: boolean;
 } & ScrollAreaProps) {
   return scrollable ? (
     <ScrollArea {...props}>
       <main className="flex-1">
         {subNav && <SubNav>{subNav}</SubNav>}
+        {announcements && <Announcements />}
         {children}
       </main>
       {footer}
     </ScrollArea>
   ) : (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
         {subNav && <SubNav>{subNav}</SubNav>}
         {children}

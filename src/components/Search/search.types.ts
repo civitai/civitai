@@ -4,6 +4,7 @@ import {
   COLLECTIONS_SEARCH_INDEX,
   IMAGES_SEARCH_INDEX,
   MODELS_SEARCH_INDEX,
+  TOOLS_SEARCH_INDEX,
   USERS_SEARCH_INDEX,
 } from '~/server/common/constants';
 
@@ -16,6 +17,7 @@ export const searchIndexMap = {
   users: USERS_SEARCH_INDEX,
   collections: COLLECTIONS_SEARCH_INDEX,
   bounties: BOUNTIES_SEARCH_INDEX,
+  tools: TOOLS_SEARCH_INDEX,
 } as const;
 
 export type ReverseSearchIndexKey = keyof typeof reverseSearchIndexMap;
@@ -26,6 +28,7 @@ export const reverseSearchIndexMap = {
   [USERS_SEARCH_INDEX]: 'users',
   [COLLECTIONS_SEARCH_INDEX]: 'collections',
   [BOUNTIES_SEARCH_INDEX]: 'bounties',
+  [TOOLS_SEARCH_INDEX]: 'tools',
 } as const;
 // #endregion
 
@@ -36,4 +39,5 @@ export const searchIndexProps: Record<SearchIndexKey, { label: string }> = {
   users: { label: 'Users' },
   collections: { label: 'Collections' },
   bounties: { label: 'Bounties' },
+  tools: { label: 'Tools' },
 } as const;

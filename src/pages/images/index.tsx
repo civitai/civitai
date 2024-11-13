@@ -1,5 +1,4 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
@@ -23,9 +22,9 @@ export default Page(
           description="See the latest art created by the generative AI art community and delve into the inspirations and prompts behind their work"
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
         />
-        <ToolBanner />
+        {/* <ToolBanner /> */}
         <MasonryContainer>
-          <Announcements />
+          {/* <Announcements /> */}
           {hidden && <Title>Your Hidden Images</Title>}
           <Stack spacing="xs">
             <IsClient>
@@ -37,5 +36,5 @@ export default Page(
       </>
     );
   },
-  { InnerLayout: FeedLayout }
+  { InnerLayout: FeedLayout, announcements: true }
 );

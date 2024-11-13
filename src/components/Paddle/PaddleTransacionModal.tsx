@@ -55,13 +55,13 @@ const Error = ({ error, onClose }: { error: string; onClose: () => void }) => (
   </Stack>
 );
 
-export const PaddleTransacionModal = ({
+export default function PaddleTransactionModal({
   unitAmount,
   currency,
   onSuccess,
   message,
   successMessage,
-}: Props) => {
+}: Props) {
   const dialog = useDialogContext();
   const theme = useMantineTheme();
   const {
@@ -334,7 +334,7 @@ export const PaddleTransacionModal = ({
       </Stack>
     </Modal>
   );
-};
+}
 
 type Props = {
   unitAmount: number;

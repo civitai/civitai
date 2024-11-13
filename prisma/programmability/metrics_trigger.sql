@@ -37,3 +37,6 @@ CREATE OR REPLACE TRIGGER add_metrics_after_insert
 AFTER INSERT ON "Model"
 FOR EACH ROW
 EXECUTE FUNCTION add_model_metrics();
+---
+
+DROP TRIGGER IF EXISTS add_metrics_after_insert ON "Image";

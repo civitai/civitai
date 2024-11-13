@@ -17,6 +17,8 @@ import {
   GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
+  GetTransactionsReportResultSchema,
+  GetTransactionsReportSchema,
   GetUserBuzzAccountResponse,
   GetUserBuzzAccountSchema,
   getUserBuzzTransactionsResponse,
@@ -32,15 +34,16 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { stripTime } from '~/utils/date-helpers';
+import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
 // import { adWatchedReward } from '~/server/rewards';
-import { generateSecretHash } from '~/server/utils/key-generator';
 
 type AccountType = 'User';
 
 export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzzAccountSchema) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   return withRetries(
     async () => {
       if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
@@ -89,6 +92,8 @@ export async function getUserBuzzTransactions({
   accountType,
   ...query
 }: GetUserBuzzTransactionsSchema & { accountId: number; accountType?: BuzzAccountType }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const queryString = QS.stringify({
     ...query,
     start: query.start?.toISOString(),
@@ -162,6 +167,8 @@ export async function createBuzzTransaction({
   fromAccountType?: BuzzAccountType;
   insufficientFundsErrorMsg?: string;
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbRead.$queryRawUnsafe<
       [{ userId?: number }]
@@ -318,6 +325,7 @@ export async function createBuzzTransactionMany(
     externalTransactionId: string;
   })[]
 ) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
@@ -361,6 +369,8 @@ export async function completeStripeBuzzTransaction({
 }: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
   transactionId: string;
 }> {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
@@ -458,6 +468,8 @@ export async function refundTransaction(
   description?: string,
   details?: MixedObject
 ) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const body = JSON.stringify({
     description,
     details,
@@ -509,6 +521,8 @@ export async function getAccountSummary({
   end?: Date;
   window?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
   const queryParams: [string, string][] = [['descending', 'false']];
   if (start) queryParams.push(['start', stripTime(start)]);
@@ -550,6 +564,8 @@ export async function getTopContributors({
   end?: Date;
   limit?: number;
 }) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   if (!Array.isArray(accountIds)) accountIds = [accountIds];
   const queryParams: [string, string][] = [['limit', limit.toString()]];
   if (start) queryParams.push(['start', start.toISOString()]);
@@ -578,6 +594,8 @@ export async function getTopContributors({
 }
 
 export async function pingBuzzService() {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   try {
     const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
     return response.ok;
@@ -589,6 +607,8 @@ export async function pingBuzzService() {
 }
 
 export async function getTransactionByExternalId(externalId: string) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions/${externalId}`);
   if (!response.ok) {
     switch (response.status) {
@@ -610,6 +630,8 @@ type BuzzClaimDetails = {
   title: string;
   description: string;
   amount: number;
+  accountType: BuzzAccountType;
+  useMultiplier?: boolean;
 };
 export type BuzzClaimResult =
   | {
@@ -629,6 +651,8 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     title: claimable?.title ?? 'Unknown',
     description: claimable?.description ?? 'Unknown',
     amount: claimable?.amount ?? 0,
+    accountType: claimable?.accountType ?? 'user',
+    useMultiplier: claimable?.useMultiplier ?? false,
   } as BuzzClaimDetails;
 
   function unavailable(reason: string) {
@@ -676,13 +700,22 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
   const claimStatus = await getClaimStatus({ id, userId });
   if (claimStatus.status !== 'available') return claimStatus;
 
+  const { rewardsMultiplier } = await getMultipliersForUser(userId);
+
   await createBuzzTransaction({
-    amount: claimStatus.details.amount,
+    amount: claimStatus.details.useMultiplier
+      ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
+      : claimStatus.details.amount,
     externalTransactionId: claimStatus.claimId,
     fromAccountId: 0,
     toAccountId: userId,
     type: TransactionType.Reward,
-    description: `Claimed reward: ${claimStatus.details.title}`,
+    description: `Claimed reward: ${claimStatus.details.title}. ${
+      claimStatus.details.useMultiplier
+        ? `Original amount: ${claimStatus.details.amount}. Multiplier: ${rewardsMultiplier}x`
+        : ''
+    }`,
+    toAccountType: claimStatus.details.accountType ?? 'user',
   });
 
   return {
@@ -867,4 +900,49 @@ export async function claimWatchedAdReward({
   // });
 
   // return true;
+}
+
+export async function getTransactionsReport({
+  userId,
+  ...input
+}: GetTransactionsReportSchema & { userId: number }) {
+  const startDate =
+    input.window === 'hour'
+      ? dayjs().startOf('day')
+      : input.window === 'day'
+      ? dayjs().startOf('day').subtract(7, 'day')
+      : input.window === 'week'
+      ? dayjs().startOf('day').subtract(1, 'month')
+      : dayjs().startOf('year');
+  // End date is always the start of the next day
+  const endDate = dayjs().add(1, 'day').startOf('day');
+
+  const query = QS.stringify({
+    ...input,
+    start: startDate.format('YYYY-MM-DD'),
+    end: endDate.format('YYYY-MM-DD'),
+  });
+
+  const response = await fetch(`${env.BUZZ_ENDPOINT}/user/${userId}/transactions/report?${query}`);
+
+  if (!response.ok) {
+    switch (response.status) {
+      case 400:
+        throw throwBadRequestError();
+      case 404:
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
+      default:
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'An unexpected error ocurred, please try again later',
+        });
+    }
+  }
+
+  const data = (await response.json()) as GetTransactionsReportResultSchema;
+
+  return data.map((record) => ({
+    ...record,
+    date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
+  }));
 }

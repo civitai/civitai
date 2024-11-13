@@ -57,7 +57,6 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 import {
@@ -547,7 +546,6 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <Container size="xl">
-          <Announcements />
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>
@@ -665,7 +663,7 @@ export default function ModelDetailsV2({
                     <HowToButton
                       size={30}
                       stroke={1.5}
-                      href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
+                      href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
                     <ToggleModelNotification

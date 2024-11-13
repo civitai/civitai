@@ -30,7 +30,6 @@ import { NotificationToggle } from '~/components/Notifications/NotificationToggl
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
-import { isEmpty } from 'lodash-es';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 
 export const getServerSideProps = createServerSideProps({

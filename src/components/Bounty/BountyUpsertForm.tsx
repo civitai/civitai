@@ -631,9 +631,9 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                 <Stack spacing={4}>
                   <Divider label="Bounty rewards" />
                   <Text size="xs" color="dimmed">
-                    Learn more about rewards and buzz system{' '}
+                    Learn more about the rewards and Buzz system{' '}
                     <Anchor
-                      href="https://education.civitai.com/civitais-guide-to-buzz"
+                      href="https://education.civitai.com/civitais-guide-to-on-site-currency-buzz-%e2%9a%a1/"
                       target="_blank"
                       rel="nofollow noreferrer"
                       span

@@ -59,6 +59,8 @@ import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { logToAxiom } from '~/server/logging/client';
+import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -167,6 +169,7 @@ export const upsertModelVersion = async ({
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
 }) => {
+  if (data.description) await throwOnBlockedLinkDomain(data.description);
   // const model = await dbWrite.model.findUniqueOrThrow({ where: { id: data.modelId } });
   if (
     updatedEarlyAccessConfig?.timeframe &&
@@ -1363,4 +1366,33 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
   await resourceDataCache.bust(ids);
   await bustOrchestratorModelCache(ids, userId);
   await modelVersionAccessCache.bust(ids);
+};
+
+export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
+  const modelVersion = await dbRead.modelVersion.findFirst({
+    where: {
+      id,
+    },
+    select: {
+      id: true,
+      files: {
+        select: {
+          id: true,
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  if (!modelVersion) return null;
+
+  const modelFile = modelVersion.files?.[0];
+  if (!modelFile) return null;
+
+  const metadata = modelFile.metadata as ModelFileMetadata;
+  if (!metadata) return null;
+
+  const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
+
+  return trainingResults.workflowId ?? null;
 };

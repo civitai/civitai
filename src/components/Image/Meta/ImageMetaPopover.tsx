@@ -25,7 +25,7 @@ export function ImageMetaPopover2({
     <Popover className="relative flex items-center">
       <PopoverButton>{children}</PopoverButton>
       <PopoverPanel
-        className="z-10"
+        className="z-[201]"
         anchor="top end"
         onClick={(e) => {
           e.preventDefault();

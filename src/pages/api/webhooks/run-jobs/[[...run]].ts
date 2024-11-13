@@ -8,6 +8,7 @@ import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
+import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
@@ -30,7 +31,6 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
-import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
@@ -97,7 +97,6 @@ export const jobs: Job[] = [
   rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
-  processCreatorProgramEarlyAccessRewards,
   processCreatorProgramImageGenerationRewards,
   processVaultItems,
   clearVaultItems,
@@ -115,6 +114,7 @@ export const jobs: Job[] = [
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
+  checkProcessingResourceTrainingV2,
 ];
 
 const log = createLogger('jobs', 'green');

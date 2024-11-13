@@ -1,0 +1,32 @@
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
+import { trpc } from '~/utils/trpc';
+
+export const useUserPaymentConfiguration = () => {
+  const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const { data: userPaymentConfiguration, isLoading } = trpc.userPaymentConfiguration.get.useQuery(
+    undefined,
+    {
+      enabled: !!features.creatorsProgram && !!currentUser,
+    }
+  );
+
+  return {
+    userPaymentConfiguration,
+    isLoading,
+  };
+};
+
+export const useTipaltiConfigurationUrl = (
+  input: GetTipaltiDashbordUrlSchema,
+  enabled: boolean
+) => {
+  const { data: tipaltiConfigurationUrl, ...rest } =
+    trpc.userPaymentConfiguration.getTipaltiDashboardUrl.useQuery(input, {
+      enabled,
+    });
+
+  return { tipaltiConfigurationUrl, ...rest };
+};

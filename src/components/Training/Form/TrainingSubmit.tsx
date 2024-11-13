@@ -72,42 +72,14 @@ import { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
-  discountInfo,
   getTrainingFields,
   isInvalidRapid,
   isValidRapid,
   rapidEta,
+  trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-
-export const baseModelDescriptions: {
-  [key in TrainingDetailsBaseModelList]: { label: string; type: string; description: string };
-} = {
-  sd_1_5: { label: 'Standard', type: '15', description: 'Useful for all purposes.' },
-  anime: { label: 'Anime', type: '15', description: 'Results will have an anime aesthetic.' },
-  semi: {
-    label: 'Semi-realistic',
-    type: '15',
-    description: 'Results will be a blend of anime and realism.',
-  },
-  realistic: {
-    label: 'Realistic',
-    type: '15',
-    description: 'Results will be extremely realistic.',
-  },
-  sdxl: { label: 'Standard', type: 'XL', description: 'Useful for all purposes, and uses SDXL.' },
-  pony: {
-    label: 'Pony',
-    type: 'XL',
-    description: 'Results tailored to visuals of various anthro, feral, or humanoid species.',
-  },
-  flux_dev: {
-    label: 'Dev',
-    type: 'Flux',
-    description: 'High quality images and accurate text.',
-  },
-};
 
 const maxRuns = 5;
 // TODO check override
@@ -166,6 +138,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Text>
       </Stack>
     ),
+    type: 'Generation',
   });
 
   const thisStep = 3;
@@ -400,13 +373,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       const baseModelConvert: BaseModel =
         (customModel?.baseModel as BaseModel | undefined) ??
-        (base === 'sdxl'
-          ? 'SDXL 1.0'
-          : base === 'pony'
-          ? 'Pony'
-          : base === 'flux_dev'
-          ? 'Flux.1 D'
-          : 'SD 1.5');
+        trainingModelInfo[base as TrainingDetailsBaseModelList]?.baseModel ??
+        'SD 1.5';
 
       // TODO there is a bug here where if >1 fails and then get resubmitted, the idx will be 0
       //  and thus overwrites the first version...
@@ -417,7 +385,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         name: `V${idx + 1}`,
         modelId: model.id,
         baseModel: baseModelConvert,
-        trainedWords: [],
+        trainedWords: thisModelVersion.trainedWords ?? [],
         // ---
         epochs: paramData.maxTrainEpochs,
         steps: paramData.targetSteps,
@@ -646,13 +614,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             label: `Run #${idx + 1} (${
               !!run.customModel
                 ? 'Custom'
-                : run.base === 'sdxl'
-                ? 'SDXL'
-                : run.base === 'semi'
-                ? 'Semi'
-                : run.base === 'flux_dev'
-                ? 'Flux'
-                : baseModelDescriptions[run.base as TrainingDetailsBaseModelList].label ?? 'Unknown'
+                : trainingModelInfo[run.base as TrainingDetailsBaseModelList]?.pretty ?? 'Unknown'
             })`,
             // value: run.id.toString(),
             value: idx.toString(),
@@ -670,7 +632,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
 
-      {selectedRun.base === 'flux_dev' &&
+      {['flux', 'sd35'].includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -683,14 +645,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;tagged&quot; images, but <Badge color="red">Flux</Badge> works best
-                with &quot;captions&quot;.
+                You have &quot;tagged&quot; images, but{' '}
+                {selectedRun.base in trainingModelInfo ? (
+                  <Badge color="red">
+                    {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                      'this model'}
+                  </Badge>
+                ) : (
+                  'this model'
+                )}{' '}
+                works best with &quot;captions&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>
           </AlertWithIcon>
         )}
-      {selectedRun.base !== 'flux_dev' &&
+      {!['flux', 'sd35'].includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -703,8 +673,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           >
             <Group spacing="sm" position="apart" noWrap>
               <Text>
-                You have &quot;captioned&quot; images, but <Badge color="violet">SD</Badge> models
-                work best with &quot;tags&quot;.
+                You have &quot;captioned&quot; images, but{' '}
+                {selectedRun.base in trainingModelInfo ? (
+                  <Badge color="violet">
+                    {trainingModelInfo[selectedRun.base as TrainingDetailsBaseModelList]?.pretty ??
+                      'this model'}
+                  </Badge>
+                ) : (
+                  'this model'
+                )}{' '}
+                works best with &quot;tags&quot;.
               </Text>
               <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
             </Group>

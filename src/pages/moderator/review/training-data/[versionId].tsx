@@ -21,7 +21,7 @@ function ReviewTrainingData() {
   const requestedRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [urls, setUrls] = useState<string[]>([]);
-  const [error, setError] = useState();
+  const [error, setError] = useState<Error>();
   const [currentStep, actions] = useStepper(2);
   const utils = trpc.useUtils();
 
@@ -87,6 +87,8 @@ function ReviewTrainingData() {
     },
   ];
 
+  useEffect(() => console.log({ currentStep }), [currentStep]);
+
   return loading || isLoading ? (
     <div className="p-3">
       <Loader className="mx-auto" />
@@ -97,21 +99,19 @@ function ReviewTrainingData() {
     </div>
   ) : error ? (
     <div className="p-3">
-      <pre className="mx-auto">{JSON.stringify(error)}</pre>
+      <pre className="mx-auto">{JSON.stringify(error.message)}</pre>
     </div>
   ) : (
     <>
-      <div className="flex size-full flex-col">
-        <div className="container flex max-w-lg justify-end gap-3 p-3">
-          <Popover width={300} withArrow withinPortal shadow="sm">
-            <Popover.Target>
-              <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
-            </Popover.Target>
-            <Popover.Dropdown>
-              <DescriptionTable items={details} />
-            </Popover.Dropdown>
-          </Popover>
-        </div>
+      <div className="container flex max-w-lg justify-end gap-3 p-3">
+        <Popover width={300} withArrow withinPortal shadow="sm">
+          <Popover.Target>
+            <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
+          </Popover.Target>
+          <Popover.Dropdown>
+            <DescriptionTable items={details} />
+          </Popover.Dropdown>
+        </Popover>
       </div>
       {currentStep === 1 && (
         <ReviewImages
@@ -121,7 +121,7 @@ function ReviewTrainingData() {
           onModerate={handleSuccess}
         />
       )}
-      {currentStep === 2 && (
+      {currentStep !== 1 && (
         <CsamDetailsForm
           onPrevious={actions.goToPrevStep}
           onSuccess={handleSuccess}

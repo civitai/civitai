@@ -256,7 +256,10 @@ export function stringifyAIR({
     source,
     id: String(modelId),
     version: String(id),
-  })?.replace('pony', 'sdxl');
+  })
+    ?.replace('pony', 'sdxl')
+    ?.replace('illustrious', 'sdxl')
+    ?.replace('sd3_5m', 'sd3');
 }
 
 export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {

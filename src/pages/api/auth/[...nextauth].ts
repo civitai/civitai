@@ -22,6 +22,7 @@ import { verificationEmail } from '~/server/email/templates';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
+import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createUserReferral,
@@ -29,7 +30,6 @@ import {
   updateAccountScope,
 } from '~/server/services/user.service';
 import { deleteEncryptedCookie } from '~/server/utils/cookie-encryption';
-import blockedDomains from '~/server/utils/email-domain-blocklist.json';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { invalidateSession, invalidateToken, refreshToken } from '~/server/utils/session-helpers';
@@ -332,9 +332,9 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
     const landingPage = req.cookies['ref_landing_page'] as string;
     const loginRedirectReason = req.cookies['ref_login_redirect_reason'] as string;
 
+    const tracker = new Tracker(req, res);
     if (context.isNewUser) {
       newUserCounter?.inc();
-      const tracker = new Tracker(req, res);
       await tracker.userActivity({
         type: 'Registration',
         targetUserId: context.user.id,
@@ -363,6 +363,12 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
       }).catch();
     } else {
       loginCounter?.inc();
+      await tracker.userActivity({
+        type: 'Login',
+        targetUserId: context.user.id,
+        source,
+        landingPage,
+      });
     }
   };
 
@@ -382,6 +388,7 @@ async function sendVerificationRequest({
   theme,
 }: SendVerificationRequestParams) {
   const emailDomain = to.split('@')[1];
+  const blockedDomains = await getBlockedEmailDomains();
   if (blockedDomains.includes(emailDomain)) {
     throw new Error(`Email domain ${emailDomain} is not allowed`);
   }

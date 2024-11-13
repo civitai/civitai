@@ -1,5 +1,7 @@
 import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
+import { useFileUploadContext, TrackedFile } from '~/components/FileUpload/FileUploadProvider';
+import { withRetries } from '~/utils/errorHandling';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
 
@@ -19,18 +21,6 @@ const CivFileInput = forwardRef<HTMLInputElement, FileInputProps>(
     return <input onChange={handleChange} {...restOfProps} ref={forwardedRef} type="file" />;
   }
 );
-
-type TrackedFile = {
-  file: File;
-  progress: number;
-  uploaded: number;
-  size: number;
-  speed: number;
-  timeRemaining: number;
-  status: UploadStatus;
-  abort: () => void;
-  name: string;
-};
 
 type UseS3UploadOptions = {
   endpoint?: string;
@@ -70,11 +60,10 @@ type UseS3UploadTools = {
   uploadToS3: UploadToS3;
   files: TrackedFile[];
   resetFiles: () => void;
+  removeFile: (file: File, abort?: boolean) => void;
 };
 
 type UseS3Upload = (options?: UseS3UploadOptions) => UseS3UploadTools;
-
-type UploadStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
 
 const pendingTrackedFile = {
   progress: 0,
@@ -85,11 +74,14 @@ const pendingTrackedFile = {
   status: 'pending',
   abort: () => undefined,
   name: '',
+  url: '',
 };
 
 export const useS3Upload: UseS3Upload = (options = {}) => {
   const ref = useRef<HTMLInputElement>();
-  const [files, setFiles] = useState<TrackedFile[]>([]);
+  const state = useState<TrackedFile[]>([]);
+  const fileUploadContext = useFileUploadContext();
+  const [files, setFiles] = fileUploadContext ?? state;
 
   const openFileDialog = () => {
     if (ref.current) {
@@ -101,6 +93,14 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
   const resetFiles = () => {
     setFiles([]);
   };
+
+  function removeFile(file: File, abort?: boolean) {
+    if (abort) {
+      const toAbort = files.find((x) => x.file === file);
+      if (toAbort) toAbort.abort();
+    }
+    setFiles((state) => state.filter((x) => x.file !== file));
+  }
 
   const endpoint = options.endpoint ?? '/api/upload';
   const completeEndpoint = options.endpointComplete ?? '/api/upload/complete';
@@ -193,22 +193,34 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         });
 
       const completeUpload = () =>
-        fetch(completeEndpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify({
-            bucket,
-            key,
-            type,
-            uploadId,
-            parts,
-          }),
-        });
+        withRetries(
+          async (currentAttempt) => {
+            const res = await fetch(completeEndpoint, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({
+                bucket,
+                key,
+                type,
+                uploadId,
+                parts,
+              }),
+            });
+
+            if (!res.ok && currentAttempt > 0) {
+              throw new Error('Failed to complete upload');
+            }
+
+            return res;
+          },
+          3,
+          200
+        );
 
       // Prepare part upload
       const partsCount = urls.length;
       const uploadPart = (url: string, i: number) =>
-        new Promise<UploadStatus>((resolve, reject) => {
+        new Promise<TrackedFile['status']>((resolve, reject) => {
           let eTag: string;
           const start = (i - 1) * FILE_CHUNK_SIZE;
           const end = i * FILE_CHUNK_SIZE;
@@ -239,7 +251,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       // Make part requests
       const parts: { ETag: string; PartNumber: number }[] = [];
       for (const { url, partNumber } of urls as { url: string; partNumber: number }[]) {
-        let uploadStatus: UploadStatus = 'pending';
+        let uploadStatus: TrackedFile['status'] = 'pending';
 
         // Retry up to 3 times
         let retryCount = 0;
@@ -280,5 +292,6 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
     uploadToS3,
     files,
     resetFiles,
+    removeFile,
   };
 };

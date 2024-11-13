@@ -105,7 +105,8 @@ export const imageMetrics = createMetricProcessor({
         ("ageGroup" = 'Year' AND "createdAt" < now() - interval '1 year') OR
         ("ageGroup" = 'Month' AND "createdAt" < now() - interval '1 month') OR
         ("ageGroup" = 'Week' AND "createdAt" < now() - interval '1 week') OR
-        ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day');
+        ("ageGroup" = 'Day' AND "createdAt" < now() - interval '1 day')
+      ORDER BY "imageId";
     `);
     ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
     const ageGroupUpdates = await ageGroupUpdatesQuery.result();
@@ -122,7 +123,8 @@ export const imageMetrics = createMetricProcessor({
               WHEN "createdAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
               ELSE 'AllTime'::"MetricTimeframe"
           END
-          WHERE "imageId" IN (${ids});
+          WHERE "imageId" IN (${ids})
+            AND "imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]};
         `;
         await sleep(2000);
         log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
@@ -229,6 +231,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
     FROM "Thread" t
     JOIN "CommentV2" c ON c."threadId" = t.id
     WHERE t."imageId" IS NOT NULL AND c."createdAt" > '${ctx.lastUpdate}'
+    ORDER BY t."imageId"
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -244,6 +247,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."imageId" IN (${ids})
+        AND t."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
       GROUP BY t."imageId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -258,6 +262,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
     SELECT "imageId" as id
     FROM "CollectionItem"
     WHERE "imageId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
+    ORDER BY "imageId"
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -272,6 +277,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
       FROM "CollectionItem" ci
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."imageId" IN (${ids})
+        AND ci."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
       GROUP BY ci."imageId", tf.timeframe
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
@@ -286,6 +292,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
     SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
     WHERE "entityType" = 'Image' AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
+    ORDER BY "entityId"
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -301,6 +308,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
       FROM "BuzzTip" bt
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE "entityId" IN (${ids}) AND "entityType" = 'Image'
+        AND "entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY "entityId", tf.timeframe
     `;
     log('getBuzzTasks', i + 1, 'of', tasks.length, 'done');

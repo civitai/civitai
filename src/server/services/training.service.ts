@@ -21,6 +21,7 @@ export type TrainingRequest = {
   fileId: number;
   userId: number;
   fileMetadata: FileMetadata | null;
+  modelVersionId: number;
 };
 
 async function getSubmittedAt(modelVersionId: number, userId: number) {

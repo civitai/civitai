@@ -17,14 +17,13 @@ import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
-import { StripeConnectCard } from '~/components/Account/StripeConnectCard';
+import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
-import { useRefreshSession } from '~/components/Stripe/memberships.util';
+import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 
 export default function Account({ providers }: Props) {
   const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const { refreshSession } = useRefreshSession();
 
   return (
     <>
@@ -45,19 +44,14 @@ export default function Account({ providers }: Props) {
           <ContentControlsCard />
           {canViewNsfw && <ModerationCard />}
           <AccountsCard providers={providers} />
-          <StripeConnectCard />
+          <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />
           {apiKeys && <ApiKeysCard />}
+          <RefreshSessionCard />
           <DeleteCard />
-          <Divider label="Extras" />
-          <Group spacing="sm">
-            <Button variant="subtle" onClick={refreshSession}>
-              Refresh my session
-            </Button>
-          </Group>
         </Stack>
       </Container>
     </>

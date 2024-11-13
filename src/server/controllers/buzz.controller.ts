@@ -11,6 +11,7 @@ import {
   GetBuzzAccountSchema,
   GetBuzzAccountTransactionsSchema,
   GetDailyBuzzCompensationInput,
+  GetTransactionsReportSchema,
   GetUserBuzzTransactionsSchema,
   TransactionType,
   UserBuzzTransactionInputSchema,
@@ -21,6 +22,7 @@ import {
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
   getMultipliersForUser,
+  getTransactionsReport,
   getUserBuzzAccount,
   getUserBuzzTransactions,
   upsertBuzzTip,
@@ -186,6 +188,18 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('You cannot send buzz to the same account');
     }
 
+    if (targetUserIds.length > 0) {
+      // Confirm none of the target users are banned:
+      const bannedUsers = await dbRead.user.findMany({
+        where: { id: { in: targetUserIds }, bannedAt: { not: null } },
+        select: { id: true },
+      });
+
+      if (bannedUsers.length > 0) {
+        throw throwBadRequestError('One or more target users are banned');
+      }
+    }
+
     const amount = Math.floor(input.amount / targetUserIds.length);
     const finalAmount = amount * targetUserIds.length;
 
@@ -197,7 +211,7 @@ export async function createBuzzTipTransactionHandler({
       throw throwBadRequestError('Could not split the amount between users');
     }
     // Confirm user funds:
-    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId });
+    const userAccount = await getUserBuzzAccount({ accountId: fromAccountId, accountType: 'user' });
     if ((userAccount.balance ?? 0) < finalAmount) {
       throw throwInsufficientFundsError();
     }
@@ -421,6 +435,20 @@ export function getDailyCompensationRewardHandler({
 
   try {
     return getDailyCompensationRewardByUser({ userId: ctx.user.id, ...input });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+}
+
+export function getTransactionsReportHandler({
+  input,
+  ctx,
+}: {
+  input: GetTransactionsReportSchema;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    return getTransactionsReport({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

@@ -297,9 +297,14 @@ export default function TrainingSelectFile({
   if (!trainingResults) {
     epochs = [];
     samplePrompts = [];
-  } else if (trainingResults.version === 2) {
-    epochs = trainingResults.epochs ?? [];
-    samplePrompts = trainingResults.sampleImagesPrompts ?? [];
+  } else if (
+    trainingResults.version === 2 ||
+    !!(trainingResults as unknown as TrainingResultsV2).transactionData
+  ) {
+    // TODO this and the above is a hack for when version is missing when it shouldn't be
+    const tResults = trainingResults as unknown as TrainingResultsV2;
+    epochs = tResults.epochs ?? [];
+    samplePrompts = tResults.sampleImagesPrompts ?? [];
   } else {
     epochs =
       trainingResults.epochs?.map((e) => ({

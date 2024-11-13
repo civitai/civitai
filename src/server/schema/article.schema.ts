@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { ArticleStatus, MetricTimeframe } from '@prisma/client';
 import { z } from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -66,4 +66,5 @@ export const upsertArticleInput = z.object({
   publishedAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
+  status: z.nativeEnum(ArticleStatus).optional(),
 });
