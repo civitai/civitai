@@ -141,6 +141,10 @@ export function usePersistForm<
       if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
       if (name === 'negativePrompt')
         localStorage.setItem('generation:negativePrompt', watchedValues[name]);
+      if (!name) {
+        localStorage.setItem('generation:prompt', watchedValues.prompt);
+        localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
+      }
       updateStorage(watchedValues);
     });
     return () => {
