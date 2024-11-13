@@ -254,7 +254,11 @@ export function GeneratedImage({
   // const canImg2Img = true;
 
   return (
-    <TwCard ref={ref} className="max-h-full max-w-full" style={{ aspectRatio: image.aspectRatio }}>
+    <TwCard
+      ref={ref}
+      className="max-h-full max-w-full"
+      style={{ aspectRatio: image.width / image.height }}
+    >
       {inView && (
         <>
           <div

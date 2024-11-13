@@ -6,6 +6,8 @@ import {
   ImageJobNetworkParams,
   TextToImageInput,
   TextToImageStep,
+  VideoBlob,
+  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
@@ -396,28 +398,17 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
   switch (input.engine) {
-    case 'haiper': {
-      const haiperAspectRatio = (input as HaiperVideoGenInput).aspectRatio;
-      if (haiperAspectRatio) {
-        const [w, h] = haiperAspectRatio.split(':').map(Number);
-        if (w && h) {
-          width = w;
-          height = h;
-        }
-      }
-    }
     case 'mochi': {
       width = 848;
       height = 480;
     }
   }
-  const aspectRatio = width && height ? width / height : undefined;
 
   const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
       ...acc,
       [job.id]:
-        [output?.video]
+        [output?.video as VideoBlob]
           ?.filter(isDefined)
           .filter((x) => x.jobId === job.id)
           .map((image) => ({
@@ -431,7 +422,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
-            aspectRatio,
+            width: width ?? image.width ?? 1080,
+            height: height ?? image.height ?? 1080,
           })) ?? [],
     }),
     {}
@@ -529,7 +521,8 @@ function formatTextToImageStep({
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            aspectRatio: input.width / input.height,
+            height: input.height,
+            width: input.width,
           })) ?? [],
     }),
     {}
@@ -620,7 +613,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            aspectRatio: (params?.width ?? 1) / (params?.height ?? 1),
+            height: params?.height ?? 512,
+            width: params?.width ?? 512,
           })) ?? [],
     }),
     {}

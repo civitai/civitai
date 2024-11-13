@@ -28,7 +28,7 @@ export function ImageMetaPopover2({
     <Popover className="relative flex items-center">
       <PopoverButton>{children}</PopoverButton>
       <PopoverPanel
-        className="z-[201]"
+        className="z-[500]"
         anchor="top end"
         onClick={(e) => {
           e.preventDefault();
@@ -76,7 +76,7 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
     );
   }
 
-  const { meta, canRemix } = data ?? {};
+  const { meta, canRemix, type = 'image' } = data ?? {};
 
   return (
     <>
@@ -89,7 +89,7 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
             data-activity="remix:image-meta"
             // @ts-ignore eslint-disable-next-line
             onClick={() => {
-              generationPanel.open({ type: 'image', id: imageId ?? 0 });
+              generationPanel.open({ type, id: imageId ?? 0 });
             }}
             className="flex-1"
           >

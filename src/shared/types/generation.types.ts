@@ -18,6 +18,7 @@ interface BaseGenerationWorkflowConfig {
   message?: string;
   /** default values used for generation */
   defaultValues?: Record<string, any>;
+  metadataDisplayProps?: string[];
 }
 
 interface ImageGenerationWorkflowConfig {

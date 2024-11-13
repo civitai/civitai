@@ -4,7 +4,10 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { trpc } from '~/utils/trpc';
 import React from 'react';
 import { isDefined } from '~/utils/type-guards';
-import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
+import {
+  generationFormWorkflowConfigurations,
+  getBaseModelFromResources,
+} from '~/shared/constants/generation.constants';
 import { BaseModelSetType } from '~/server/common/constants';
 
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -19,19 +22,13 @@ const simpleMetaProps = {
 
 export function ImageMeta({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
-  const { meta, generationProcess, resources = [] } = data ?? {};
+  const { meta, resources = [], onSite, process } = data ?? {};
   const baseModel = getBaseModelFromResources(resources);
 
   if (!meta) return null;
   const { comfy } = meta;
 
-  const onSite = 'civitaiResources' in meta;
   const software = meta.software ?? (onSite ? 'Civitai Generator' : 'External Generator');
-
-  let hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
-  if (meta.comfy) {
-    hasControlNet = !!meta.controlNets?.length;
-  }
 
   function getSimpleMetaContent(key: SimpleMetaPropsKey) {
     if (!meta) return null;
@@ -55,25 +52,47 @@ export function ImageMeta({ imageId }: { imageId: number }) {
           </CopyButton>
         ) : null;
       default:
-        return <Text className="leading-snug">{meta[key]}</Text>;
+        return <span>{meta[key]}</span>;
     }
   }
 
-  const metaRemoved = removeUnrelated(baseModel, meta);
-  const simpleMeta = Object.entries(simpleMetaProps)
-    .filter(([key]) => metaRemoved[key as SimpleMetaPropsKey])
-    .map(([key, label]) => {
-      const content = getSimpleMetaContent(key as SimpleMetaPropsKey);
-      if (!content) return null;
-      return { label, content };
-    })
-    .filter(isDefined);
+  const { prompt, negativePrompt, ...restMeta } = meta;
+
+  function getSimpleMeta() {
+    if (!data) return [];
+    if (data.type === 'image') {
+      const metaRemoved = removeUnrelated(baseModel, restMeta);
+      return Object.entries(simpleMetaProps)
+        .filter(([key]) => metaRemoved[key as SimpleMetaPropsKey])
+        .map(([key, label]) => {
+          const content = getSimpleMetaContent(key as SimpleMetaPropsKey);
+          if (!content) return null;
+          return { label, content };
+        })
+        .filter(isDefined);
+    } else if (data.type === 'video') {
+      const workflow = generationFormWorkflowConfigurations.find(
+        (x) => x.key === (meta as any).workflow
+      );
+      if (!workflow) return [];
+      return (
+        workflow.metadataDisplayProps?.map((key) => ({
+          label: key,
+          content: getSimpleMetaContent(key as SimpleMetaPropsKey),
+        })) ?? []
+      );
+    } else {
+      return [];
+    }
+  }
+
+  const simpleMeta = getSimpleMeta();
 
   const hasSimpleMeta = !!simpleMeta.length;
 
   return (
     <>
-      {meta.prompt && (
+      {prompt ? (
         <div className="flex flex-col">
           <div className="flex items-center justify-between">
             <div className="flex flex-wrap items-center gap-1">
@@ -82,15 +101,10 @@ export function ImageMeta({ imageId }: { imageId: number }) {
                 {software}
               </Badge>
               <Badge size="xs" radius="sm">
-                {meta.comfy
-                  ? 'Comfy'
-                  : generationProcess === 'txt2imgHiRes'
-                  ? 'txt2img + Hi-Res'
-                  : generationProcess}
-                {hasControlNet && ' + ControlNet'}
+                {process}
               </Badge>
             </div>
-            <CopyButton value={meta.prompt}>
+            <CopyButton value={prompt}>
               {({ copy, Icon, color }) => (
                 <ActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
@@ -99,15 +113,24 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </CopyButton>
           </div>
           <LineClamp color="dimmed" className="text-sm">
-            {meta.prompt}
+            {prompt}
           </LineClamp>
         </div>
+      ) : (
+        <div className="flex gap-1">
+          <Badge size="xs" radius="sm">
+            {software}
+          </Badge>
+          <Badge size="xs" radius="sm">
+            {process}
+          </Badge>
+        </div>
       )}
-      {meta.negativePrompt && (
+      {negativePrompt && (
         <div className="flex flex-col">
           <div className="flex items-center justify-between">
             <Text className="font-semibold">Negative prompt</Text>
-            <CopyButton value={meta.negativePrompt}>
+            <CopyButton value={negativePrompt}>
               {({ copy, Icon, color }) => (
                 <ActionIcon onClick={copy} color={color}>
                   <Icon size={16} />
@@ -116,20 +139,20 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </CopyButton>
           </div>
           <LineClamp color="dimmed" className="text-sm">
-            {meta.negativePrompt}
+            {negativePrompt}
           </LineClamp>
         </div>
       )}
       {hasSimpleMeta && (
         <>
-          {(meta.prompt || meta.negativePrompt) && <Divider />}
+          <Divider />
           <div className="flex flex-col">
             <div className="flex items-center justify-between">
               <Text className="font-semibold">Other metadata</Text>
             </div>
             <div className="flex flex-wrap gap-2">
               {simpleMeta.map(({ label, content }) => (
-                <Badge key={label} classNames={{ inner: 'flex gap-1 items-center' }}>
+                <Badge key={label} classNames={{ inner: 'flex gap-1 items-center leading-snug' }}>
                   <span>{label}:</span>
                   {content}
                 </Badge>

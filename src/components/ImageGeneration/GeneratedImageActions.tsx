@@ -1,6 +1,6 @@
-import { ActionIcon, Text, Tooltip, MantineNumberSize, Button, Checkbox } from '@mantine/core';
+import { ActionIcon, Tooltip, MantineNumberSize, Button, Checkbox } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconDownload, IconInfoCircle, IconSquareOff, IconTrash } from '@tabler/icons-react';
+import { IconDownload, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {

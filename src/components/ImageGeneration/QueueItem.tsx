@@ -280,7 +280,7 @@ export function QueueItem({
               {processing && (
                 <div
                   className="flex flex-col items-center justify-center border card"
-                  style={{ aspectRatio: images[0].aspectRatio ?? 1 }}
+                  style={{ aspectRatio: images[0].width / images[0].height }}
                 >
                   {images[0].type === 'video' && images[0].progress && images[0].progress < 1 ? (
                     <ProgressIndicator progress={images[0].progress} />

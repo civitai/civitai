@@ -521,6 +521,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       aspectRatio: '1:1',
       duration: 4,
     },
+    metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
   },
   {
     type: 'video',
@@ -532,6 +533,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     defaultValues: {
       duration: 4,
     },
+    metadataDisplayProps: ['duration', 'seed', 'resolution'],
   },
   {
     type: 'video',
@@ -542,9 +544,8 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     key: 'mochi-txt2vid',
     defaultValues: {
       prompt: '',
-      sourceImageUrl: undefined,
-      duration: 4,
     },
+    metadataDisplayProps: ['seed'],
   },
 ];
 // #endregion
