@@ -172,7 +172,7 @@ export default function LinkApp(props: ServerSideProps) {
               Keep track of your activities
             </Title>
             <Text className={classes.copy}>
-              View the history of all models you've added to your local model library.
+              View the history of all models you&apos;ve added to your local model library.
             </Text>
           </Grid.Col>
         </Grid>
