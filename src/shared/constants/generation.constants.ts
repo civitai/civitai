@@ -520,6 +520,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       negativePrompt: '',
       aspectRatio: '1:1',
       duration: 4,
+      seed: undefined,
     },
     metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
   },
@@ -533,6 +534,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     defaultValues: {
       prompt: '',
       duration: 4,
+      seed: undefined,
     },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],
   },
@@ -545,6 +547,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     key: 'mochi-txt2vid',
     defaultValues: {
       prompt: '',
+      seed: undefined,
     },
     metadataDisplayProps: ['seed'],
   },
