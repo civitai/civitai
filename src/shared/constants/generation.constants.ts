@@ -531,6 +531,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     engine: 'haiper',
     key: 'haiper-img2vid',
     defaultValues: {
+      prompt: '',
       duration: 4,
     },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],

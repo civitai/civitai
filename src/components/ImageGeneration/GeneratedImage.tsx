@@ -256,7 +256,7 @@ export function GeneratedImage({
   return (
     <TwCard
       ref={ref}
-      className="max-h-full max-w-full"
+      className={clsx('max-h-full max-w-full', classes.imageWrapper)}
       style={{ aspectRatio: image.width / image.height }}
     >
       {inView && (
@@ -384,7 +384,12 @@ export function GeneratedImage({
             </Menu.Dropdown>
           </Menu>
 
-          <Group spacing={4} className={clsx(classes.actionsWrapper, 'absolute bottom-2 left-2')}>
+          <div
+            className={clsx(
+              classes.actionsWrapper,
+              'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
+            )}
+          >
             <ActionIcon
               size="md"
               className={buttonState.favorite ? classes.favoriteButton : undefined}
@@ -395,7 +400,7 @@ export function GeneratedImage({
               <IconHeart size={16} />
             </ActionIcon>
 
-            {!!img2imgWorkflows?.length && canImg2Img && (
+            {/* {!!img2imgWorkflows?.length && canImg2Img && (
               <Menu
                 zIndex={400}
                 trigger="hover"
@@ -425,7 +430,7 @@ export function GeneratedImage({
                   ))}
                 </Menu.Dropdown>
               </Menu>
-            )}
+            )} */}
 
             <ActionIcon
               size="md"
@@ -444,7 +449,7 @@ export function GeneratedImage({
             >
               <IconThumbDown size={16} />
             </ActionIcon>
-          </Group>
+          </div>
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
@@ -489,35 +494,34 @@ const useStyles = createStyles((theme, _params, getRef) => {
       },
     },
     imageWrapper: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: buttonBackground,
-      [`&:hover .${thumbActionRef} button`]: {
+      [`&:hover .${thumbActionRef}`]: {
         opacity: 1,
-        transition: 'opacity .3s',
       },
     },
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      padding: 4,
       transition: 'opacity .3s',
+      ...buttonBackground,
+      opacity: 0,
 
       [`@container (max-width: 420px)`]: {
-        ...buttonBackground,
         width: 68,
+        opacity: 1,
       },
 
-      ['button']: {
-        opacity: 0,
+      // ['button']: {
+      //   opacity: 0,
 
-        [`&.${favoriteButtonRef}`]: {
-          opacity: 1,
-        },
+      //   [`&.${favoriteButtonRef}`]: {
+      //     opacity: 1,
+      //   },
 
-        [`@container (max-width: 420px)`]: {
-          opacity: 1,
-        },
-      },
+      //   [`@container (max-width: 420px)`]: {
+      //     opacity: 1,
+      //   },
+      // },
     },
     favoriteButton: {
       ref: favoriteButtonRef,

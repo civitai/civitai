@@ -123,6 +123,7 @@ export function GeneratedImageActions({
           if (!image.url) return;
           const blob = await fetchBlob(image.url);
           if (!blob) return;
+          console.log({ image });
           const file = new File([blob], image.id);
           zip.file(image.type === 'video' ? `${image.id}.mp4` : `${image.id}.jpg`, file);
         })

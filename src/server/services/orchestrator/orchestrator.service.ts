@@ -17,7 +17,6 @@ export async function createVideoGenStep(data: VideoGenerationSchema) {
   switch (data.engine) {
     case 'haiper':
       if (data.sourceImageUrl) {
-        data.prompt = '';
         data.negativePrompt = undefined;
       }
       break;

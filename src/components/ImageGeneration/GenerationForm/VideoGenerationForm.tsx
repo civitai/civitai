@@ -131,6 +131,7 @@ function HaiperImg2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
       <InputImageUrl name="sourceImageUrl" label="Image" />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
@@ -202,7 +203,7 @@ function FormWrapper({
       mutate({
         type: 'video',
         data: { ...data, engine, workflow: workflow.key },
-        tags: [WORKFLOW_TAGS.IMAGE, WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
+        tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
   }

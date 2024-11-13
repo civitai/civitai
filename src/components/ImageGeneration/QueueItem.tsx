@@ -174,6 +174,11 @@ export function QueueItem({
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
+  const engine: string | undefined =
+    step.metadata.params && 'engine' in step.metadata.params
+      ? step.metadata.params.engine
+      : undefined;
+
   return (
     <Card ref={ref} withBorder px="xs" id={id}>
       {inView && (
@@ -261,6 +266,11 @@ export function QueueItem({
                   {workflowDefinition.label}
                 </Badge>
               )}
+              {engine && (
+                <Badge radius="sm" color="violet" size="sm">
+                  {engine}
+                </Badge>
+              )}
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
 
@@ -287,9 +297,6 @@ export function QueueItem({
                   ) : (
                     <Loader size={24} />
                   )}
-                  <Text color="dimmed" size="xs" align="center">
-                    Generating
-                  </Text>
                 </div>
               )}
             </div>
@@ -373,9 +380,11 @@ const ProgressIndicator = ({
   return (
     <RingProgress
       {...ringProgressProps}
+      size={100}
+      thickness={8}
       sections={[{ value, color }]}
       label={
-        <Text color="blue" weight={700} align="center" size="xl">
+        <Text color="blue" weight={700} align="center">
           {value.toFixed(0)}%
         </Text>
       }

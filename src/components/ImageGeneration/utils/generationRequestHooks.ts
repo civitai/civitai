@@ -48,7 +48,7 @@ export function useGetTextToImageRequests(
   const currentUser = useCurrentUser();
   const { tags = [] } = input ?? {};
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
-    { ...input, tags: [WORKFLOW_TAGS.IMAGE, ...tags] },
+    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       enabled: !!currentUser,
