@@ -174,9 +174,9 @@ export function QueueItem({
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
 
-  const engine: string | undefined =
+  const engine =
     step.metadata.params && 'engine' in step.metadata.params
-      ? step.metadata.params.engine
+      ? (step.metadata.params.engine as string)
       : undefined;
 
   return (
