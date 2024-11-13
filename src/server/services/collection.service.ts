@@ -956,6 +956,7 @@ export const getCollectionItemsByCollectionId = async ({
     cursor,
     forReview,
     reviewSort,
+    collectionTagId,
   } = input;
 
   const skip = page && limit ? (page - 1) * limit : undefined;
@@ -985,10 +986,9 @@ export const getCollectionItemsByCollectionId = async ({
     // Ensure we only show images that have been scanned
     image:
       collection.type === CollectionType.Image
-        ? {
-            ingestion: ImageIngestionStatus.Scanned,
-          }
+        ? { ingestion: ImageIngestionStatus.Scanned }
         : undefined,
+    tagId: collectionTagId,
   };
 
   const orderBy: Prisma.CollectionItemFindManyArgs['orderBy'] = [];

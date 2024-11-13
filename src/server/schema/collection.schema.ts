@@ -187,6 +187,7 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   statuses: z.array(z.nativeEnum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
   reviewSort: z.nativeEnum(CollectionReviewSort).optional(),
+  collectionTagId: z.number().optional(),
 });
 
 export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
