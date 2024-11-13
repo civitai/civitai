@@ -59,6 +59,7 @@ import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { AppProvider } from '~/providers/AppProvider';
+import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -139,6 +140,7 @@ function MyApp(props: CustomAppProps) {
               refetchWhenOffline={false}
             >
               <FeatureFlagsProvider flags={flags}>
+                <GoogleAnalytics />
                 <CookiesProvider value={cookies}>
                   <AccountProvider>
                     <CivitaiSessionProvider>
