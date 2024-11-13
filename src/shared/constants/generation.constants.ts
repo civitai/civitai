@@ -34,8 +34,8 @@ export function getRoundedUpscaleSize({ width, height }: { width: number; height
   const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
   const ratio = Math.min(maxWidth / width, maxHeight / height);
   return {
-    width: Math.ceil((width * ratio) / 64) * 64,
-    height: Math.ceil((height * ratio) / 64) * 64,
+    upscaleWidth: Math.ceil((width * ratio) / 64) * 64,
+    upscaleHeight: Math.ceil((height * ratio) / 64) * 64,
   };
 }
 
