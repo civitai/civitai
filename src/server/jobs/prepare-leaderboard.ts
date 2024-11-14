@@ -279,7 +279,7 @@ type ImageScores = {
   score: number;
   metrics: Record<string, number>;
 };
-const IMAGE_SCORE_BATCH_SIZE = 10000;
+const IMAGE_SCORE_BATCH_SIZE = 100000;
 const IMAGE_SCORE_FALLOFF = 120;
 const IMAGE_SCORE_MULTIPLIER = 100;
 async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [number, number]) {
@@ -363,7 +363,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       '${ctx.id}' as "leaderboardId",
       current_date + interval '${ctx.addDays} days' as date,
       (s->>'userId')::int,
-      COALESCE((s->>'score')::int, 0),
+      (s->>'score')::int,
       (s->>'metrics')::jsonb,
       row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
