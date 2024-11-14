@@ -30,7 +30,12 @@
     "typeRoots": [
       "./types"
     ],
-    "noErrorTruncation": true
+    "noErrorTruncation": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
   "include": [
     // "next-env.d.ts",
@@ -38,7 +43,8 @@
     // "**/*.tsx",
     // "**/*.cjs",
     "**/*.mjs",
-    "src"
+    "src",
+    ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

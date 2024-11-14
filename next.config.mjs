@@ -46,6 +46,7 @@ export default defineNextConfig(withAxiom({
     //   'image.civitai.com',
     // ],
   },
+  transpilePackages: ['lodash', 'lodash-es', 'prisma'],
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
