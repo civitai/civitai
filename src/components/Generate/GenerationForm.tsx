@@ -21,7 +21,9 @@ export function GenerationForm() {
       const parsed = JSON.parse(stored);
       if (typeof parsed !== 'object' || !('state' in parsed)) return;
       const { creatorTip, civitaiTip, ...state } = parsed.state;
+      console.log({ creatorTip, civitaiTip });
       if (creatorTip !== undefined && civitaiTip !== undefined) {
+        console.log('fire');
         useTipStore.setState({ creatorTip, civitaiTip });
         localStorage.setItem('generation-form-2', JSON.stringify({ ...parsed, state }));
       }

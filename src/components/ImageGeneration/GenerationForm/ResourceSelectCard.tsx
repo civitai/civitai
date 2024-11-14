@@ -159,7 +159,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
         </Group>
         {/* LORA */}
         {hasStrength && onUpdate && !unavailable && (
-          <Group spacing="xs" align="center">
+          <div className="flex w-full items-center gap-2">
             <NumberSlider
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength })}
@@ -169,7 +169,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
               sx={{ flex: 1 }}
               reverse
             />
-          </Group>
+          </div>
         )}
       </Stack>
       {onRemove && (
