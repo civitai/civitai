@@ -301,12 +301,13 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       if (isClickhouseQuery) {
         if (!clickhouse) return;
 
-        const scores = (
-          await clickhouse.$query<ImageScores & { metrics: string }>(ctx.query, {
-            from: startIndex,
-            to: endIndex,
-          })
-        ).map((s) => ({
+        const response = await clickhouse.query({
+          query: ctx.query,
+          query_params: { from: startIndex, to: endIndex },
+          format: 'JSONEachRow',
+        });
+
+        const scores = (await response?.json<(ImageScores & { metrics: string })[]>()).map((s) => ({
           ...s,
           metrics: JSON.parse(s.metrics) as Record<string, number>,
         }));

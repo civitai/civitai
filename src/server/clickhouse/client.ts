@@ -23,7 +23,6 @@ import { Session } from 'next-auth';
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
     query: TemplateStringsArray | string,
-    params?: Record<string, any>,
     ...values: any[]
   ) => Promise<T[]>;
 };
@@ -50,7 +49,6 @@ function getClickHouse() {
 
   client.$query = async function <T extends object>(
     query: TemplateStringsArray | string,
-    params?: Record<string, any>,
     ...values: any[]
   ) {
     if (typeof query !== 'string') {
@@ -61,7 +59,6 @@ function getClickHouse() {
 
     const response = await client.query({
       query,
-      query_params: params,
       format: 'JSONEachRow',
     });
     const data = await response?.json<T>();
