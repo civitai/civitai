@@ -82,161 +82,154 @@ type CustomAppProps = {
   seed: number;
 }>;
 
-function MyApp(props: CustomAppProps) {
-  const {
-    Component,
-    pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
-  } = props;
-
-  console.log(props);
-
-  if (typeof window !== 'undefined' && !window.authChecked) {
-    window.authChecked = true;
-    window.isAuthed = !!session;
+class MyApp extends App {
+  static async getInitialProps(appContext: AppContext) {
+    const initialProps = await App.getInitialProps(appContext);
+    if (!appContext.ctx.req) return initialProps;
+  
+    // const url = appContext.ctx?.req?.url;
+    // const isClient = !url || url?.startsWith('/_next/data');
+  
+    let { pageProps, ...appProps } = initialProps;
+    const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
+    const cookies = getCookies(appContext.ctx);
+    const parsedCookies = parseCookies(cookies);
+  
+    // const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+    const session = await getSession(appContext.ctx);
+    const flags = appContext.ctx?.req
+      ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
+      : undefined;
+  
+    // Pass this via the request so we can use it in SSR
+    if (session) {
+      (appContext.ctx.req as any)['session'] = session;
+      // (appContext.ctx.req as any)['flags'] = flags;
+    }
+  
+    if (appContext.Component.getInitialProps) {
+      const componentPageProps = await appContext.Component.getInitialProps(appContext.ctx);
+      pageProps = { ...pageProps, ...componentPageProps };
+    }
+  
+    return {
+      pageProps: {
+        ...pageProps,
+        colorScheme,
+        cookies: parsedCookies,
+        cookieKeys: Object.keys(cookies),
+        session,
+        flags,
+        seed: Date.now(),
+      },
+      ...appProps,
+    };
   }
 
-  // const getLayout =
-  //   Component.getLayout ??
-  //   ((page: ReactElement) => {
-  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-  //     return (
-  //       <FeatureLayout conditional={Component.options?.features}>
-  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
-  //       </FeatureLayout>
-  //     );
-  //   });
+  render() {
+    const {
+      Component,
+      pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
+    } = this.props;
 
-  const getLayout = (page: ReactElement) => (
-    <FeatureLayout conditional={Component?.features}>
-      {Component.getLayout?.(page) ?? (
-        <AppLayout
-          left={Component.left}
-          right={Component.right}
-          subNav={Component.subNav}
-          scrollable={Component.scrollable}
-          footer={Component.footer}
-          announcements={Component.announcements}
-        >
-          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-        </AppLayout>
-      )}
-    </FeatureLayout>
-  );
+    if (typeof window !== 'undefined' && !window.authChecked) {
+      window.authChecked = true;
+      window.isAuthed = !!session;
+    }
 
-  return (
-    <AppProvider seed={seed}>
-      <Head>
-        <title>Civitai | Share your models</title>
-      </Head>
-      <ThemeProvider colorScheme={colorScheme}>
-        {/* <ErrorBoundary> */}
-        <UpdateRequiredWatcher>
-          <IsClientProvider>
-            <ClientHistoryStore />
-            <RegisterCatchNavigation />
-            <RouterTransition />
-            {/* <ChadGPT isAuthed={!!session} /> */}
-            <SessionProvider
-              session={session}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
-              <FeatureFlagsProvider flags={flags}>
-                <GoogleAnalytics />
-                <CookiesProvider value={cookies}>
-                  <AccountProvider>
-                    <CivitaiSessionProvider>
-                      <BrowserSettingsProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaddleProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <GenerationProvider>
-                                              <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  <TrackPageView />
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </IntersectionObserverProvider>
-                                            </GenerationProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaddleProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </BrowserSettingsProvider>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </CookiesProvider>
-              </FeatureFlagsProvider>
-            </SessionProvider>
-          </IsClientProvider>
-        </UpdateRequiredWatcher>
-        {/* </ErrorBoundary> */}
-      </ThemeProvider>
+    const getLayout = (page: ReactElement) => (
+      <FeatureLayout conditional={Component?.features}>
+        {Component.getLayout?.(page) ?? (
+          <AppLayout
+            left={Component.left}
+            right={Component.right}
+            subNav={Component.subNav}
+            scrollable={Component.scrollable}
+            footer={Component.footer}
+            announcements={Component.announcements}
+          >
+            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+          </AppLayout>
+        )}
+      </FeatureLayout>
+    );
+    return (
+      <AppProvider seed={seed}>
+        <Head>
+          <title>Civitai | Share your models</title>
+        </Head>
+        <ThemeProvider colorScheme={colorScheme}>
+          {/* <ErrorBoundary> */}
+          <UpdateRequiredWatcher>
+            <IsClientProvider>
+              <ClientHistoryStore />
+              <RegisterCatchNavigation />
+              <RouterTransition />
+              {/* <ChadGPT isAuthed={!!session} /> */}
+              <SessionProvider
+                session={session}
+                refetchOnWindowFocus={false}
+                refetchWhenOffline={false}
+              >
+                <FeatureFlagsProvider flags={flags}>
+                  <GoogleAnalytics />
+                  <CookiesProvider value={cookies}>
+                    <AccountProvider>
+                      <CivitaiSessionProvider>
+                        <BrowserSettingsProvider>
+                          <SignalProvider>
+                            <ActivityReportingProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
+                                            <BrowserRouterProvider>
+                                              <GenerationProvider>
+                                                <IntersectionObserverProvider>
+                                                  <BaseLayout>
+                                                    <TrackPageView />
+                                                    <ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </ChatContextProvider>
+                                                  </BaseLayout>
+                                                </IntersectionObserverProvider>
+                                              </GenerationProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaddleProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </ActivityReportingProvider>
+                          </SignalProvider>
+                        </BrowserSettingsProvider>
+                      </CivitaiSessionProvider>
+                    </AccountProvider>
+                  </CookiesProvider>
+                </FeatureFlagsProvider>
+              </SessionProvider>
+            </IsClientProvider>
+          </UpdateRequiredWatcher>
+          {/* </ErrorBoundary> */}
+        </ThemeProvider>
 
-      {isDev && <ReactQueryDevtools />}
-    </AppProvider>
-  );
+        {isDev && <ReactQueryDevtools />}
+      </AppProvider>
+    );
+  }
 }
-
-MyApp.getInitialProps = async (appContext: AppContext) => {
-  const initialProps = await App.getInitialProps(appContext);
-  if (!appContext.ctx.req) return initialProps;
-
-  // const url = appContext.ctx?.req?.url;
-  // const isClient = !url || url?.startsWith('/_next/data');
-
-  const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
-  const cookies = getCookies(appContext.ctx);
-  const parsedCookies = parseCookies(cookies);
-
-  // const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = await getSession(appContext.ctx);
-  const flags = appContext.ctx?.req
-    ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
-    : undefined;
-
-  // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
-
-  return {
-    pageProps: {
-      ...pageProps,
-      colorScheme,
-      cookies: parsedCookies,
-      cookieKeys: Object.keys(cookies),
-      session,
-      flags,
-      seed: Date.now(),
-    },
-    ...appProps,
-  };
-};
 
 export default trpc.withTRPC(MyApp);
