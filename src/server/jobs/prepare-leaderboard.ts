@@ -297,14 +297,32 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
       // console.time(key);
-      const batchScores = await pgDbReadLong.query<ImageScores>(
-        `${ctx.query} SELECT * FROM image_scores`,
-        [startIndex, endIndex]
-      );
-      // console.timeEnd(key);
-      appendScore(userScores, batchScores.rows);
+      const isClickhouseQuery = ctx.query.includes('ch_image_scores');
+      if (isClickhouseQuery) {
+        if (!clickhouse) return;
+
+        const scores = (
+          await clickhouse.$query<ImageScores & { metrics: string }>(ctx.query, {
+            from: startIndex,
+            to: endIndex,
+          })
+        ).map((s) => ({
+          ...s,
+          metrics: JSON.parse(s.metrics) as Record<string, number>,
+        }));
+
+        appendScore(userScores, scores);
+      } else {
+        const batchScores = await pgDbReadLong.query<ImageScores>(
+          `${ctx.query} SELECT * FROM image_scores`,
+          [startIndex, endIndex]
+        );
+        // console.timeEnd(key);
+        appendScore(userScores, batchScores.rows);
+      }
     });
   }
+
   await limitConcurrency(tasks, 2);
 
   // Add up scores
@@ -344,7 +362,7 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       '${ctx.id}' as "leaderboardId",
       current_date + interval '${ctx.addDays} days' as date,
       (s->>'userId')::int,
-      (s->>'score')::int,
+      COALESCE((s->>'score')::int, 0),
       (s->>'metrics')::jsonb,
       row_number() OVER (ORDER BY (s->>'score')::int DESC) as position
     FROM jsonb_array_elements('${userScoresJson}'::jsonb) s
