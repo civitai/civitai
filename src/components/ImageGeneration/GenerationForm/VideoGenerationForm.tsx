@@ -1,4 +1,4 @@
-import { Button, Input, Text, Select } from '@mantine/core';
+import { Button, Input, Text, Select, Alert } from '@mantine/core';
 import React, { createContext, useEffect, useState, useContext } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
@@ -61,6 +61,18 @@ export function VideoGenerationForm() {
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
+        <Alert className="flex justify-center">
+          Learn more about{' '}
+          <Text
+            component="a"
+            variant="link"
+            href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
+            target="blank"
+            inline
+          >
+            video generation
+          </Text>
+        </Alert>
         <Select
           label="Tool"
           value={engine}
@@ -246,6 +258,7 @@ function FormWrapper({
       <div className="flex flex-col gap-2 px-3">
         <InputText type="hidden" name="engine" value={engine} className="hidden" />
         <InputText type="hidden" name="workflow" value={workflow.key} className="hidden" />
+
         {typeof children === 'function' ? children(form) : children}
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
