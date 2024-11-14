@@ -1,4 +1,4 @@
-import { Tooltip, ActionIcon, CloseButton, SegmentedControl, Text } from '@mantine/core';
+import { Tooltip, ActionIcon, CloseButton, SegmentedControl } from '@mantine/core';
 import {
   Icon,
   IconArrowsDiagonal,
@@ -15,9 +15,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
-import { GenerationForm2 } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { GenerationForm } from '~/components/Generate/GenerationForm';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -120,7 +120,7 @@ const tabs: Tabs = {
   generate: {
     Icon: IconBrush,
     label: 'Generate',
-    Component: GenerationForm2,
+    Component: GenerationForm,
   },
   queue: {
     Icon: IconClockHour9,

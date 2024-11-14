@@ -94,15 +94,13 @@ export default function MetadataTester() {
                 ))}
               </Card>
             )}
-            <ImageMeta meta={meta} />
+            {/* <ImageMeta meta={meta} /> */}
           </>
         )}
         {nodeJson && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>
-                Node JSON
-              </Text>
+              <Text weight={500}>Node JSON</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(nodeJson, null, 2)}</pre>
@@ -112,9 +110,7 @@ export default function MetadataTester() {
         {exif && (
           <Card withBorder p="sm">
             <Card.Section p="sm" py="xs" withBorder>
-              <Text weight={500}>
-                EXIF
-              </Text>
+              <Text weight={500}>EXIF</Text>
             </Card.Section>
             <Card.Section p="sm">
               <pre className="text-xs">{JSON.stringify(exif, null, 2)}</pre>

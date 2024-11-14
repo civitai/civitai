@@ -247,7 +247,10 @@ export default function TrainingSelectFile({
             ?.sample_images?.map((si) => si.image_url);
 
     if (publishImages?.length) {
-      orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, publishImages);
+      orchestratorMediaTransmitter.setUrls(
+        TRANSMITTER_KEY,
+        publishImages.map((url) => ({ url }))
+      );
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
         shallow: true,
         scroll: false,

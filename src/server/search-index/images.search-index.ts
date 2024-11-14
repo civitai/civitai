@@ -178,7 +178,7 @@ const transformData = async ({
 
   const records = images
     .map(({ userId, id, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
-      const user = userId ? users[userId] ?? null : null;
+      const user = userId ? users?.[userId] ?? null : null;
 
       if (!user || !userId) {
         return null;

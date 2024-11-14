@@ -394,9 +394,12 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
             type: 'pull',
             mode: 'targeted',
             ids: updateIds,
+            steps: processor.pullSteps,
+            currentStep: 0,
           });
         }
       }
+
       const workers = Array.from({ length: 5 }).map(() => {
         return getTaskQueueWorker(
           queue,

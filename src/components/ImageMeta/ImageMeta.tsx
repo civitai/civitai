@@ -122,7 +122,7 @@ export function ImageMeta({
                   {label}
                 </Text>
 
-                {label === 'Prompt' && (
+                {/* {label === 'Prompt' && (
                   <>
                     {!hideSoftware && (
                       <Badge size="xs" radius="sm">
@@ -138,7 +138,7 @@ export function ImageMeta({
                       {metas.hasControlNet && ' + ControlNet'}
                     </Badge>
                   </>
-                )}
+                )} */}
                 {(label === 'Prompt' || label === 'Negative prompt') && (
                   <CopyButton value={value as string}>
                     {({ copied, copy }) => (

@@ -42,6 +42,7 @@ import { leakingContentCounter } from '~/server/prom/client';
 import {
   imageMetaCache,
   imagesForModelVersionsCache,
+  resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
   userContentOverviewCache,
@@ -127,6 +128,10 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import {
+  formatGenerationResources,
+  generationFormWorkflowConfigurations,
+} from '~/shared/constants/generation.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -2228,6 +2233,47 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return resources;
 };
 
+export async function getImageGenerationResources(id: number) {
+  const imageResources = await dbRead.imageResource.findMany({
+    where: { imageId: id },
+    select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+  });
+  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
+  const resourceData = await resourceDataCache
+    .fetch(versionIds)
+    .then((resourceData) => formatGenerationResources(resourceData));
+
+  // TODO - determine a good way to return resources when some resources are unavailable
+  // const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  // if (index > -1 && !resourceData[index].available) {
+  //   const checkpoint = resourceData[index];
+  //   const latestVersion = await dbRead.modelVersion.findFirst({
+  //     where: {
+  //       modelId: checkpoint.model.id,
+  //       availability: { in: ['Public', 'EarlyAccess'] },
+  //       generationCoverage: { covered: true },
+  //     },
+  //     select: { id: true },
+  //     orderBy: { index: 'asc' },
+  //   });
+  //   if (latestVersion) {
+  //     const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+  //     if (newCheckpoint) resourceData[index] = newCheckpoint;
+  //   }
+  // }
+
+  return resourceData
+    .map((resource) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+      return {
+        ...resource,
+        hash: imageResource?.hash ?? undefined,
+        strength: imageResource?.strength ? imageResource.strength / 100 : resource.strength,
+      };
+    })
+    .filter((x) => x.available);
+}
+
 export type ImagesForModelVersions = {
   id: number;
   userId: number;
@@ -2832,7 +2878,11 @@ export const getImagesByEntity = async ({
   }));
 };
 
-export async function createImage({ toolIds, ...image }: ImageSchema & { userId: number }) {
+export async function createImage({
+  toolIds,
+  techniqueIds,
+  ...image
+}: ImageSchema & { userId: number }) {
   const result = await dbWrite.image.create({
     data: {
       ...image,
@@ -2842,6 +2892,9 @@ export async function createImage({ toolIds, ...image }: ImageSchema & { userId:
         : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
+        : undefined,
+      techniques: !!techniqueIds?.length
+        ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
     },
     select: { id: true },
@@ -4134,7 +4187,40 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
+  console.log(data);
+
+  let onSite = false;
+  let process: string | null = null;
+  let hasControlNet = false;
+  if (meta) {
+    if ('civitaiResources' in meta) onSite = true;
+    else if ('workflow' in meta) {
+      const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
+      if (workflow) {
+        onSite = true;
+        process = workflow.subType;
+      }
+    }
+
+    if (meta.comfy) {
+      hasControlNet = !!meta.controlNets?.length;
+    } else {
+      hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
+    }
+
+    if (!process) {
+      if (meta.comfy) process = 'comfy';
+      else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
+      else process = image.generationProcess;
+
+      if (process && hasControlNet) process += ' + ControlNet';
+    }
+  }
+
   return {
+    type: image.type,
+    onSite,
+    process,
     meta,
     resources: resources.map((resource) => ({
       ...resource,
@@ -4147,7 +4233,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
     techniques,
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
-    generationProcess: image.generationProcess,
   };
 }
 

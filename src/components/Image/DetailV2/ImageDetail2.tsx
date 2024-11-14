@@ -161,7 +161,7 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+          onClick={() => generationPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
           <Group spacing={4} noWrap>

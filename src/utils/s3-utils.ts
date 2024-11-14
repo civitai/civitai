@@ -98,13 +98,14 @@ export async function getMultipartPutUrl(
   size: number,
   s3: S3Client | null = null,
   bucket: string | null = null,
+  mimeType?: string,
   chunkSize: number = FILE_CHUNK_SIZE
 ) {
   if (!s3) s3 = getS3Client();
 
   if (!bucket) bucket = await getBucket();
   const { UploadId } = await s3.send(
-    new CreateMultipartUploadCommand({ Bucket: bucket, Key: key })
+    new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: mimeType })
   );
 
   const promises = [];

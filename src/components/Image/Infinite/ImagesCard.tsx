@@ -110,7 +110,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           e.preventDefault();
                           e.stopPropagation();
                           generationPanel.open({
-                            type: 'image',
+                            type: image.type,
                             id: image.id,
                           });
                         }}
@@ -173,7 +173,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         className={classes.reactions}
                       />
                       {data.hasMeta && (
-                        <ImageMetaPopover2 imageId={data.id}>
+                        <ImageMetaPopover2 imageId={data.id} type={data.type}>
                           <ActionIcon variant="transparent" size={30} component="span">
                             <IconInfoCircle
                               color="white"
