@@ -30,7 +30,7 @@ export const PostContestCollectionInfoAlert = ({
     <>
       {' '}
       for the{' '}
-      <Text component="span" tt="capitalize" weight="bold">
+      <Text tt="capitalize" weight="bold" span>
         {collectionItem?.tag.name}
       </Text>{' '}
       category
@@ -89,7 +89,9 @@ export const PostContestCollectionInfoAlert = ({
       <Stack>
         <Text>
           This {itemLabel} is an entry in the{' '}
-          <Anchor href={`/collections/${collectionItem.collection.id}`}>{collectionName}</Anchor>{' '}
+          <Link href={`/collections/${collectionItem.collection.id}`} passHref>
+            <Anchor>{collectionName}</Anchor>
+          </Link>{' '}
           contest{tagDisplay}.
         </Text>
       </Stack>

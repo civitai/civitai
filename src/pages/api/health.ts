@@ -81,12 +81,12 @@ const checkFns = {
         })) ?? true
     );
   },
-  async buzz() {
-    return await pingBuzzService().catch((e) => {
-      logError({ error: e, name: 'buzz', details: null });
-      return false;
-    });
-  },
+  // async buzz() {
+  //   return await pingBuzzService().catch((e) => {
+  //     logError({ error: e, name: 'buzz', details: null });
+  //     return false;
+  //   });
+  // },
 } as const;
 type CheckKey = keyof typeof checkFns;
 const counters = (() =>

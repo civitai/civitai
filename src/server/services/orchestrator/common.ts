@@ -22,6 +22,7 @@ import {
   getBaseModelSetType,
   getInjectablResources,
   getIsFlux,
+  getIsSD3,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -41,7 +42,7 @@ import {
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { generation, getGenerationConfig } from '~/server/common/constants';
+import { generation } from '~/server/common/constants';
 import { SessionUser } from 'next-auth';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { z } from 'zod';
@@ -125,6 +126,17 @@ export async function parseGenerateImageInput({
     }
   } else {
     originalParams.fluxMode = undefined;
+  }
+
+  const isSD3 = getIsSD3(originalParams.baseModel);
+  if (isSD3) {
+    originalParams.sampler = 'undefined';
+    originalParams.nsfw = true; // No nsfw helpers in SD3
+    originalParams.draft = false;
+    if (originalResources.find((x) => x.id === 983611)) {
+      originalParams.steps = 4;
+      originalParams.cfgScale = 1;
+    }
   }
 
   let params = { ...originalParams };
@@ -216,7 +228,7 @@ export async function parseGenerateImageInput({
   params.nsfw ??= isPromptNsfw !== false;
 
   const injectable: InjectableResource[] = [];
-  if (!isFlux) {
+  if (!isFlux && !isSD3) {
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
@@ -447,6 +459,7 @@ export function formatTextToImageStep({
 
   return {
     $type: 'textToImage' as const,
+    timeout: step.timeout,
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
@@ -500,6 +513,7 @@ export function formatComfyStep({
           .map((image) => ({
             workflowId,
             stepName: step.name ?? '$0',
+
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
@@ -521,6 +535,7 @@ export function formatComfyStep({
 
   return {
     $type: 'comfy' as const,
+    timeout: step.timeout,
     name: step.name,
     params: { ...params! } as TextToImageParams,
     images,

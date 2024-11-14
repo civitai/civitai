@@ -9,10 +9,10 @@ import { useClubContributorStatus, useMutateClub } from '~/components/Club/club.
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+// import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
-import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
+// import { StripePaymentMethodSetupModal } from '~/components/Modals/StripePaymentMethodSetupModal';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
@@ -246,43 +246,43 @@ export const ClubTierItem = ({ clubTier }: { clubTier: ClubTier }) => {
           });
 
           if (userPaymentMethods.length === 0 && clubTier.unitAmount > 0 && !clubTier.oneTimeFee) {
-            dialogStore.trigger({
-              component: StripePaymentMethodSetupModal,
-              props: {
-                redirectUrl: router.asPath,
-                title: (
-                  <Text size="lg" weight={700}>
-                    You are now a member of this club! Enjoy your stay
-                  </Text>
-                ),
-                message: (
-                  <Stack>
-                    <Text>
-                      Your membership to this club is a subscription, meaning{' '}
-                      <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
-                      will be debited from your account on the specified billing date. To ensure you
-                      have enough buzz on your next renewal, it&apos;s recommended that you add a
-                      payment method. Doing so is the ideal way to keep supporting the creators you
-                      care about.
-                    </Text>
-                    <Text weight="bold">
-                      Your card will only be charged if you do not have the amount of buzz at the
-                      time of renewal to continue your membership. A minimum of{' '}
-                      <CurrencyBadge
-                        unitAmount={constants.clubs.minStripeCharge / 10}
-                        currency={Currency.USD}
-                      />{' '}
-                      will be charged to your card only in the case that you do not have enough buzz
-                      to cover the membership fee.
-                    </Text>
-                    <Text>
-                      You can always add a payment method later in your{' '}
-                      <Anchor href="/user/account#payment-methods">account settings.</Anchor>
-                    </Text>
-                  </Stack>
-                ),
-              },
-            });
+            // dialogStore.trigger({
+            //   component: StripePaymentMethodSetupModal,
+            //   props: {
+            //     redirectUrl: router.asPath,
+            //     title: (
+            //       <Text size="lg" weight={700}>
+            //         You are now a member of this club! Enjoy your stay
+            //       </Text>
+            //     ),
+            //     message: (
+            //       <Stack>
+            //         <Text>
+            //           Your membership to this club is a subscription, meaning{' '}
+            //           <CurrencyBadge unitAmount={clubTier.unitAmount} currency={Currency.BUZZ} />{' '}
+            //           will be debited from your account on the specified billing date. To ensure you
+            //           have enough buzz on your next renewal, it&apos;s recommended that you add a
+            //           payment method. Doing so is the ideal way to keep supporting the creators you
+            //           care about.
+            //         </Text>
+            //         <Text weight="bold">
+            //           Your card will only be charged if you do not have the amount of buzz at the
+            //           time of renewal to continue your membership. A minimum of{' '}
+            //           <CurrencyBadge
+            //             unitAmount={constants.clubs.minStripeCharge / 10}
+            //             currency={Currency.USD}
+            //           />{' '}
+            //           will be charged to your card only in the case that you do not have enough buzz
+            //           to cover the membership fee.
+            //         </Text>
+            //         <Text>
+            //           You can always add a payment method later in your{' '}
+            //           <Anchor href="/user/account#payment-methods">account settings.</Anchor>
+            //         </Text>
+            //       </Stack>
+            //     ),
+            //   },
+            // });
           }
         } catch (err) {
           // Do nothing, alert is handled in the hook

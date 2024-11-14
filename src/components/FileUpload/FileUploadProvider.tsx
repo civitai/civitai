@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
 // #region [types]
-type Status = 'pending' | 'error' | 'success' | 'uploading';
+
+type Status = 'pending' | 'error' | 'success' | 'uploading' | 'aborted';
 export type TrackedFile = {
   file: File;
   progress: number;
@@ -12,6 +13,7 @@ export type TrackedFile = {
   status: Status;
   abort: () => void;
   url: string;
+  name: string;
 };
 
 type State = [files: TrackedFile[], setFiles: React.Dispatch<React.SetStateAction<TrackedFile[]>>];

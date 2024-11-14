@@ -26,6 +26,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       reasonCode,
       detailsExternal,
       detailsInternal,
+      userId: -1, // using civitai user for banning using webhook
     });
 
     const tracker = new Tracker(req, res);

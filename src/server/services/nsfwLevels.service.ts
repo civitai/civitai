@@ -327,24 +327,61 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   if (!collectionIds.length) return;
   const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
-    UPDATE "Collection" c
-    SET "nsfwLevel" = (
-      CASE WHEN c.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-      ELSE (
-        SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel",0)), 0)
-        FROM "CollectionItem" ci
-        LEFT JOIN "Image" i on i.id = ci."imageId" AND c.type = 'Image'
-        LEFT JOIN "Post" p on p.id = ci."postId" AND c.type = 'Post' AND p."publishedAt" IS NOT NULL
-        LEFT JOIN "Model" m on m.id = ci."modelId" AND c.type = 'Model' AND m."status" = 'Published'
-        LEFT JOIN "Article" a on a.id = ci."articleId" AND c.type = 'Article' AND a."publishedAt" IS NOT NULL
-        WHERE ci."collectionId" = c.id AND ci.status = ${
-          CollectionItemStatus.ACCEPTED
-        }::"CollectionItemStatus"
-      )
-      END
-    )
-    WHERE c.id IN (${Prisma.join(collectionIds)})
-    RETURNING c.id;
+    WITH collection_items AS (
+      SELECT * FROM "CollectionItem" WHERE status = ${
+        CollectionItemStatus.ACCEPTED
+      }::"CollectionItemStatus" AND "collectionId" in (${Prisma.join(collectionIds)})
+    ),
+    collection_levels AS (
+      SELECT
+        c.id,
+        c.type,
+        c."nsfwLevel",
+        (
+          CASE
+            WHEN c.nsfw is true
+            THEN ${nsfwBrowsingLevelsFlag}
+            WHEN c.type = 'Image'
+            THEN (
+              SELECT COALESCE(bit_or(COALESCE(i."nsfwLevel", 0)), 0)
+                FROM collection_items ci
+              JOIN "Image" i ON ci."imageId" = i.id
+              WHERE ci."collectionId" = c.id
+            )
+            WHEN c.type = 'Post'
+            THEN (
+              SELECT COALESCE(bit_or(COALESCE(p."nsfwLevel", 0)), 0)
+                FROM collection_items ci
+              JOIN "Post" p ON ci."postId" = p.id
+              WHERE ci."collectionId" = c.id
+              AND p."publishedAt" IS NOT NULL
+            )
+            WHEN c.type = 'Article'
+            THEN (
+              SELECT COALESCE(bit_or(COALESCE(a."nsfwLevel", 0)), 0)
+                FROM collection_items ci
+              JOIN "Article" a ON ci."articleId" = a.id
+              WHERE ci."collectionId" = c.id
+              AND a."publishedAt" IS NOT NULL
+            )
+            WHEN c.type = 'Model'
+            THEN (
+              SELECT COALESCE(bit_or(COALESCE(m."nsfwLevel", 0)), 0)
+                FROM collection_items ci
+              JOIN "Model" m ON ci."modelId" = m.id
+              WHERE ci."collectionId" = c.id
+              AND m."status" = 'Published'
+            )
+          END
+        ) AS "updatedNsfwLevel"
+      FROM "Collection" c WHERE id IN (90510, 1064011)
+    ),
+    collections AS (select id, "updatedNsfwLevel" from collection_levels WHERE "nsfwLevel" != "updatedNsfwLevel")
+    UPDATE "Collection" c SET
+      "nsfwLevel" = c2."updatedNsfwLevel"
+    FROM (SELECT * FROM collections) AS c2
+    WHERE c2.id = c.id
+    RETURNING c.id, c."nsfwLevel";
   `);
   await collectionsSearchIndex.queueUpdate(
     collections.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Update }))

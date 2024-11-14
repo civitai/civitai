@@ -2,6 +2,7 @@ import { createBuzzEvent } from '../base.reward';
 
 export const firstDailyPostReward = createBuzzEvent({
   type: 'firstDailyPost',
+  toAccountType: 'generation',
   description: 'You made your first post of the day',
   triggerDescription: 'For the first image post you make each day',
   awardAmount: 25,

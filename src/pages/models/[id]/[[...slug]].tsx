@@ -56,7 +56,6 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { Announcements } from '~/components/Announcements/Announcements';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
 import {
@@ -546,7 +545,6 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <Container size="xl">
-          <Announcements />
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>
@@ -555,26 +553,35 @@ export default function ModelDetailsV2({
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
                     </Title>
-                    <LoginRedirect reason="favorite-model">
-                      <IconBadge
-                        radius="sm"
-                        color={isFavorite ? 'green' : 'gray'}
-                        size="lg"
-                        icon={
-                          <ThumbsUpIcon
-                            size={18}
-                            color={isFavorite ? 'green' : undefined}
-                            filled={isFavorite}
-                          />
-                        }
-                        sx={{ cursor: 'pointer' }}
-                        onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
-                      >
-                        <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
-                        </Text>
-                      </IconBadge>
-                    </LoginRedirect>
+                    <Tooltip
+                      label={`${(
+                        model.rank?.thumbsUpCountAllTime ?? 0
+                      ).toLocaleString()} unique positive reviews`}
+                      withinPortal
+                    >
+                      <div>
+                        <LoginRedirect reason="favorite-model">
+                          <IconBadge
+                            radius="sm"
+                            color={isFavorite ? 'green' : 'gray'}
+                            size="lg"
+                            icon={
+                              <ThumbsUpIcon
+                                size={18}
+                                color={isFavorite ? 'green' : undefined}
+                                filled={isFavorite}
+                              />
+                            }
+                            sx={{ cursor: 'pointer' }}
+                            onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                          >
+                            <Text className={classes.modelBadgeText}>
+                              {abbreviateNumber(model.rank?.thumbsUpCountAllTime ?? 0)}
+                            </Text>
+                          </IconBadge>
+                        </LoginRedirect>
+                      </div>
+                    </Tooltip>
                     <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
                       <Text className={classes.modelBadgeText}>
                         {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
@@ -655,7 +662,7 @@ export default function ModelDetailsV2({
                     <HowToButton
                       size={30}
                       stroke={1.5}
-                      href="https://education.civitai.com/civitais-100-beginners-guide-to-generative-ai-art/#heading-77"
+                      href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
                     <ToggleModelNotification

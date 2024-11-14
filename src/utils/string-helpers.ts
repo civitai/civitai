@@ -1,4 +1,6 @@
+import { Air } from '@civitai/client';
 import { ModelType } from '@prisma/client';
+import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import {
@@ -7,8 +9,6 @@ import {
   baseModelSets,
   BaseModelSetType,
 } from '~/server/common/constants';
-import { Air } from '@civitai/client';
-import he from 'he';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -198,6 +198,24 @@ export function parseAIR(identifier: string) {
   return { ...value, model: Number(id), version: Number(version) };
 }
 
+export function parseAIRSafe(identifier: string) {
+  const match = Air.parseSafe(identifier);
+  if (!match) return match;
+
+  const { id, version, ...value } = match;
+  return { ...value, model: Number(id), version: Number(version) };
+}
+
+export function isAir(identifier: string) {
+  return Air.isAir(identifier);
+}
+
+export function getAirModelLink(identifier: string) {
+  const parsed = parseAIRSafe(identifier);
+  if (!parsed) return '/';
+  return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
+}
+
 const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.AestheticGradient]: 'ag',
   [ModelType.Checkpoint]: 'checkpoint',
@@ -238,7 +256,10 @@ export function stringifyAIR({
     source,
     id: String(modelId),
     version: String(id),
-  })?.replace('pony', 'sdxl');
+  })
+    ?.replace('pony', 'sdxl')
+    ?.replace('illustrious', 'sdxl')
+    ?.replace('sd3_5m', 'sd3');
 }
 
 export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {

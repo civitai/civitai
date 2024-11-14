@@ -14,9 +14,10 @@ import {
 import { Flags } from '~/shared/utils';
 import { useCookies } from '~/providers/CookiesProvider';
 import { deleteCookie } from 'cookies-next';
-const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
-  ssr: false,
-});
+// const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
+// const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
+//   ssr: false,
+// });
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
   const { data, update } = useSession();
@@ -66,19 +67,21 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     deleteCookie('nsfw');
   }, []);
 
-  useEffect(() => {
-    const onboarding = data?.user?.onboarding;
-    if (onboarding !== undefined) {
-      const shouldOnboard = !onboardingSteps.every((step) => Flags.hasFlag(onboarding, step));
-      if (shouldOnboard) {
-        dialogStore.trigger({
-          component: OnboardingModal,
-          id: 'onboarding',
-          props: { onComplete: () => dialogStore.closeById('onboarding') },
-        });
-      }
-    }
-  }, [data?.user?.onboarding]);
+  // useEffect(() => {
+  //   const onboarding = data?.user?.onboarding;
+  //   if (onboarding !== undefined) {
+  //     const shouldOnboard = !onboardingSteps.every((step) => Flags.hasFlag(onboarding, step));
+  //     if (shouldOnboard) {
+  //       dialogStore.trigger({
+  //         component: OnboardingModal,
+  //         id: 'onboarding',
+  //         props: { onComplete: () => dialogStore.closeById('onboarding') },
+  //       });
+  //     }
+  //   }
+  // }, [data?.user?.onboarding]);
+
+  // const isBanned = sessionUser.type === 'authed' ? !!sessionUser.bannedAt : false;
 
   return (
     <CivitaiSessionContext.Provider value={sessionUser}>{children}</CivitaiSessionContext.Provider>

@@ -59,6 +59,24 @@ export async function requestScannerTasks({
   tasks = ['Scan', 'Hash', 'ParseMetadata'],
   lowPriority = false,
 }: ScannerRequest) {
+  if (!env.SCANNING_ENDPOINT) {
+    console.log('Skipping file scanning');
+    const today = new Date();
+    // Mark as scanned
+    await dbWrite.modelFile.update({
+      where: { id: fileId },
+      data: {
+        scanRequestedAt: today,
+        scannedAt: today,
+        virusScanResult: ScanResultCode.Success,
+        pickleScanResult: ScanResultCode.Success,
+      },
+    });
+    // Create fake hash
+    await dbWrite.modelFileHash.create({ data: { fileId, type: 'SHA256', hash: '0'.repeat(64) } });
+    return true;
+  }
+
   if (!Array.isArray(tasks)) tasks = [tasks];
 
   const callbackUrl =

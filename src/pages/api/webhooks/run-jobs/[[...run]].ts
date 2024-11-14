@@ -8,6 +8,7 @@ import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
+import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
@@ -21,7 +22,6 @@ import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-c
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
 import * as eventEngineJobs from '~/server/jobs/event-engine-work';
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
-import { handleLongTrainings } from '~/server/jobs/handle-long-trainings';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
@@ -31,7 +31,6 @@ import { nextauthCleanup } from '~/server/jobs/next-auth-cleanup';
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
 import { leaderboardJobs } from '~/server/jobs/prepare-leaderboard';
 import { processClubMembershipRecurringPayments } from '~/server/jobs/process-club-membership-recurring-payments';
-import { processCreatorProgramEarlyAccessRewards } from '~/server/jobs/process-creator-program-early-access-rewards';
 import { processCreatorProgramImageGenerationRewards } from '~/server/jobs/process-creator-program-image-generation-rewards';
 import { csamJobs } from '~/server/jobs/process-csam';
 import { processingEngingEarlyAccess } from '~/server/jobs/process-ending-early-access';
@@ -84,7 +83,6 @@ export const jobs: Job[] = [
   // refreshImageGenerationCoverage,
   cleanImageResources,
   deleteOldTrainingData,
-  handleLongTrainings,
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
@@ -99,7 +97,6 @@ export const jobs: Job[] = [
   rewardsAbusePrevention,
   nextauthCleanup,
   applyTagRules,
-  processCreatorProgramEarlyAccessRewards,
   processCreatorProgramImageGenerationRewards,
   processVaultItems,
   clearVaultItems,
@@ -117,6 +114,7 @@ export const jobs: Job[] = [
   collectionGameProcessing,
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
+  checkProcessingResourceTrainingV2,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -178,12 +176,12 @@ async function isLocked(name: string, noCheck?: boolean) {
 
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
-  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks');
+  logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
   await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
 }
 
 async function unlock(name: string, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
-  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks');
+  logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
   await redis?.del(`job:${name}`);
 }

@@ -32,14 +32,16 @@ import { WithdrawalRequestBadgeColor, useBuzzDashboardStyles } from '../buzz.sty
 import { IconCloudOff } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
-import { BuzzWithdrawalRequestStatus, Currency, StripeConnectStatus } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { StripeConnectStatus } from '~/server/common/enums';
+import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
-  const { userStripeConnect } = useUserStripeConnect();
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { classes } = useBuzzDashboardStyles();
   const [filters, setFilters] = useState<
     Omit<GetPaginatedOwnedBuzzWithdrawalRequestSchema, 'limit'>
@@ -78,7 +80,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
     });
   };
 
-  if (!userStripeConnect || userStripeConnect.status !== StripeConnectStatus.Approved) {
+  if (!userPaymentConfiguration || !userPaymentConfiguration.tipaltiPaymentsEnabled) {
     return null;
   }
 
@@ -157,18 +159,21 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
                         </Badge>
                       </td>
                       <td align="right">
-                        {request.status === BuzzWithdrawalRequestStatus.Requested && (
-                          <Button
-                            color="red"
-                            onClick={() => {
-                              handleCancelRequest(request.id);
-                            }}
-                            loading={cancelingBuzzWithdrawalRequest}
-                            size="xs"
-                          >
-                            <Text size="sm">Cancel</Text>
-                          </Button>
-                        )}
+                        <Group>
+                          {request.status === BuzzWithdrawalRequestStatus.Requested && (
+                            <Button
+                              color="red"
+                              onClick={() => {
+                                handleCancelRequest(request.id);
+                              }}
+                              loading={cancelingBuzzWithdrawalRequest}
+                              size="xs"
+                            >
+                              <Text size="sm">Cancel</Text>
+                            </Button>
+                          )}
+                          <BuzzWithdrawalRequestHistory history={request.history} />
+                        </Group>
                       </td>
                     </tr>
                   );

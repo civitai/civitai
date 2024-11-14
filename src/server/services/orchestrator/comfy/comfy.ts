@@ -1,4 +1,4 @@
-import { ComfyStepTemplate } from '@civitai/client';
+import { ComfyStepTemplate, TimeSpan } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
@@ -55,6 +55,10 @@ export async function createComfyStep(
     remixOfId: input.remixOfId,
   });
 
+  const timeSpan = new TimeSpan(0, 10, 0);
+  // add one minute for each additional resource minus the checkpoint
+  timeSpan.addMinutes(Object.keys(resources).length - 1);
+
   return {
     $type: 'comfy',
     input: {
@@ -62,7 +66,7 @@ export async function createComfyStep(
       comfyWorkflow,
       imageMetadata,
     },
-    timeout: '00:10:00',
+    timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
       params: input.params,
@@ -89,7 +93,7 @@ export async function createComfy(
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
-      experimental,
+      experimental: false,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

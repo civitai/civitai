@@ -24,7 +24,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import React, { createContext, useContext, useState } from 'react';
-import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -352,8 +352,8 @@ function EditDetail() {
                     position="right"
                     iconProps={{ size: 20 }}
                   >
-                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
-                    create this image.
+                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
+                    used to create this image.
                   </InfoPopover>
                 </div>
                 {resources
@@ -414,8 +414,8 @@ function EditDetail() {
                       position="right"
                       iconProps={{ size: 20 }}
                     >
-                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
-                      create this image.
+                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
+                      used to create this image.
                     </InfoPopover>
                   </div>
                   <Text>
@@ -440,7 +440,8 @@ function EditDetail() {
           // #region [tools]
           */}
 
-            {activeCollection?.mode === CollectionMode.Contest && (
+            {/* Commented out as requested by Max -Manuel */}
+            {/* {activeCollection?.mode === CollectionMode.Contest && (
               <Alert radius="md">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
                   Contest tip!
@@ -460,7 +461,7 @@ function EditDetail() {
                   </Text>
                 )}
               </Alert>
-            )}
+            )} */}
 
             <CustomCard className="flex flex-col gap-2">
               <div className="flex items-center justify-between">

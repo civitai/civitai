@@ -2,7 +2,7 @@ import { Group, Modal, Stack, UnstyledButton, Text, createStyles } from '@mantin
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
 import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
-import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
+// import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
 import { ClubAdminPermission } from '@prisma/client';
 import { useClubContributorStatus } from './club.utils';
@@ -42,12 +42,12 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
             <UnstyledButton
               className={classes.button}
               onClick={() => {
-                dialogStore.trigger({
-                  component: ClubPostUpsertFormModal,
-                  props: {
-                    clubId,
-                  },
-                });
+                // dialogStore.trigger({
+                //   component: ClubPostUpsertFormModal,
+                //   props: {
+                //     clubId,
+                //   },
+                // });
 
                 handleClose();
               }}

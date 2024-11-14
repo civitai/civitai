@@ -67,6 +67,7 @@ type CollectionRouter = RouterOutput['collection'];
 export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
 export type CollectionByIdModel = CollectionRouter['getById']['collection'];
 export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
+export type CollectionGetAllItems = CollectionRouter['getAllCollectionItems'];
 
 type TrainingRouter = RouterOutput['training'];
 export type TrainingModelData = TrainingRouter['getModelBasic'];
@@ -129,3 +130,10 @@ export type PostContestCollectionItem = RouterOutput['post']['getContestCollecti
 
 type BuzzRouter = RouterOutput['buzz'];
 export type GetDailyBuzzCompensation = BuzzRouter['getDailyBuzzCompensation'];
+
+type BuzzWithdrawalRequestRouter = RouterOutput['buzzWithdrawalRequest'];
+export type BuzzWithdrawalRequestHistoryRecord =
+  | BuzzWithdrawalRequestRouter['getPaginatedOwned']['items'][number]['history']
+  | BuzzWithdrawalRequestRouter['getPaginated']['items'][number]['history'];
+export type BuzzWithdrawalGetPaginatedItem =
+  BuzzWithdrawalRequestRouter['getPaginated']['items'][number];

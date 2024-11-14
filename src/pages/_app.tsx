@@ -12,7 +12,6 @@ import utc from 'dayjs/plugin/utc';
 import { init as linkifyInit, registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
-import PlausibleProvider from 'next-plausible';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -20,9 +19,9 @@ import React, { ReactElement } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
-import { CustomNextPage } from '~/components/AppLayout/createPage';
+import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import ChadGPT from '~/components/ChadGPT/ChadGPT';
+// import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
@@ -33,9 +32,7 @@ import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/Hidden
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
-import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { CookiesProvider } from '~/providers/CookiesProvider';
@@ -60,6 +57,9 @@ import { IntersectionObserverProvider } from '~/components/IntersectionObserver/
 import { PaddleProvider } from '~/providers/PaddleProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
+import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
+import { AppProvider } from '~/providers/AppProvider';
+import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -72,11 +72,6 @@ registerCustomProtocol('civitai', true);
 // TODO fix this from initializing again in dev
 linkifyInit();
 
-// type CustomNextPage = NextPage & {
-//   getLayout?: (page: ReactElement) => ReactNode;
-//   options?: InnerLayoutOptions;
-// };
-
 type CustomAppProps = {
   Component: CustomNextPage;
 } & AppProps<{
@@ -84,12 +79,13 @@ type CustomAppProps = {
   colorScheme: ColorScheme;
   cookies: ParsedCookies;
   flags?: FeatureAccess;
+  seed: number;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme, cookies, flags, ...pageProps },
+    pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
   } = props;
 
   // console.log(props);
@@ -99,53 +95,54 @@ function MyApp(props: CustomAppProps) {
     window.isAuthed = !!session;
   }
 
-  const getLayout =
-    Component.getLayout ??
-    ((page: ReactElement) => {
-      const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-      const withScrollArea = Component.options?.withScrollArea ?? true;
-      return (
-        <FeatureLayout conditional={Component.options?.features}>
-          <AppLayout withFooter={Component.options?.withFooter}>
-            {/* <InnerLayout>
-            {withScrollArea ? <ScrollAreaMain>{page}</ScrollAreaMain> : page}
-          </InnerLayout> */}
-            {InnerLayout ? (
-              <InnerLayout>{page}</InnerLayout>
-            ) : withScrollArea ? (
-              <ScrollAreaMain>{page}</ScrollAreaMain>
-            ) : (
-              page
-            )}
-          </AppLayout>
-        </FeatureLayout>
-      );
-    });
+  // const getLayout =
+  //   Component.getLayout ??
+  //   ((page: ReactElement) => {
+  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
+  //     return (
+  //       <FeatureLayout conditional={Component.options?.features}>
+  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
+  //       </FeatureLayout>
+  //     );
+  //   });
+
+  const getLayout = (page: ReactElement) => (
+    <FeatureLayout conditional={Component?.features}>
+      {Component.getLayout?.(page) ?? (
+        <AppLayout
+          left={Component.left}
+          right={Component.right}
+          subNav={Component.subNav}
+          scrollable={Component.scrollable}
+          footer={Component.footer}
+          announcements={Component.announcements}
+        >
+          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+        </AppLayout>
+      )}
+    </FeatureLayout>
+  );
 
   return (
-    <>
+    <AppProvider seed={seed}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <PlausibleProvider
-          domain="civitai.com"
-          customDomain="https://analytics.civitai.com"
-          selfHosted
-        >
+        <UpdateRequiredWatcher>
           <IsClientProvider>
             <ClientHistoryStore />
             <RegisterCatchNavigation />
             <RouterTransition />
-            <UpdateRequiredWatcher />
-            <ChadGPT isAuthed={!!session} />
+            {/* <ChadGPT isAuthed={!!session} /> */}
             <SessionProvider
               session={session}
               refetchOnWindowFocus={false}
               refetchWhenOffline={false}
             >
               <FeatureFlagsProvider flags={flags}>
+                <GoogleAnalytics />
                 <CookiesProvider value={cookies}>
                   <AccountProvider>
                     <CivitaiSessionProvider>
@@ -195,12 +192,12 @@ function MyApp(props: CustomAppProps) {
               </FeatureFlagsProvider>
             </SessionProvider>
           </IsClientProvider>
-        </PlausibleProvider>
+        </UpdateRequiredWatcher>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 
       {isDev && <ReactQueryDevtools />}
-    </>
+    </AppProvider>
   );
 }
 
@@ -236,6 +233,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       cookieKeys: Object.keys(cookies),
       session,
       flags,
+      seed: Date.now(),
     },
     ...appProps,
   };

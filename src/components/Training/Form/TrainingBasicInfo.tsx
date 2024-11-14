@@ -144,7 +144,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         baseModel: thisModelVersion
           ? (thisModelVersion.baseModel as BaseModel)
           : ('SD 1.5' as const), // this is not really correct, but it needs something there
-        trainedWords: [],
+        trainedWords: thisModelVersion ? thisModelVersion.trainedWords : [],
         trainingStatus: TrainingStatus.Pending,
         trainingDetails: { type: trainingModelType as tmTypes },
         uploadType: ModelUploadType.Trained,
@@ -186,6 +186,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                     baseModel: vResponse.baseModel,
                     trainingDetails: vResponse.trainingDetails,
                     trainingStatus: vResponse.trainingStatus,
+                    trainedWords: vResponse.trainedWords,
                     // uploadType?
                     files: [],
                   },

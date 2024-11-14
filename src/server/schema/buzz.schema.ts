@@ -65,6 +65,7 @@ export const getUserBuzzTransactionsSchema = z.object({
   end: z.date().nullish(),
   limit: z.number().min(1).max(200).optional(),
   descending: z.boolean().optional(),
+  accountType: z.enum(buzzAccountTypes).optional(),
 });
 
 export const buzzTransactionDetails = z
@@ -160,7 +161,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
 
 export const getBuzzAccountSchema = z.object({
   accountId: z.number(),
-  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).default('user')),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
 });
 
 export type GetBuzzAccountSchema = z.infer<typeof getBuzzAccountSchema>;
@@ -184,3 +185,23 @@ export const getDailyBuzzCompensationInput = z.object({
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;
 export const claimWatchedAdRewardSchema = z.object({ key: z.string() });
+
+export type GetTransactionsReportSchema = z.infer<typeof getTransactionsReportSchema>;
+export const getTransactionsReportSchema = z.object({
+  accountType: z.array(z.enum(['User', 'Generation'])).optional(),
+  window: z.enum(['hour', 'day', 'week', 'month']).default('hour'),
+});
+
+export type GetTransactionsReportResultSchema = z.infer<typeof getTransactionsReportResultSchema>;
+export const getTransactionsReportResultSchema = z.array(
+  z.object({
+    date: z.date(),
+    accounts: z.array(
+      z.object({
+        accountType: z.enum(['User', 'Generation']),
+        spent: z.number(),
+        gained: z.number(),
+      })
+    ),
+  })
+);

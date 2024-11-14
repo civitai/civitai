@@ -1,14 +1,19 @@
-import { Title, Text, Button, Loader } from '@mantine/core';
+import { Button, Loader, Text, Title } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import { createPage } from '~/components/AppLayout/createPage';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { Meta } from '~/components/Meta/Meta';
+import FourOhFour from '~/pages/404';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-function TrainingDataReviewPage() {
+export default function ReviewTrainingDataPage() {
+  const features = useFeatureFlags();
   const router = useRouter();
+
+  // TODO maybe hook into orchestrator and pull Gate
   const { data, isFetching, hasNextPage, fetchNextPage } =
     trpc.moderator.modelVersions.query.useInfiniteQuery(
       {
@@ -22,35 +27,38 @@ function TrainingDataReviewPage() {
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => x.items), [data]);
 
+  if (!features.reviewTrainingData) return <FourOhFour />;
+
   return (
-    <div className="container max-w-sm p-3">
-      <Title order={1}>Review training data</Title>
-      <div className="flex flex-col gap-3">
-        {flatData?.map((item) => (
-          <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
-            <div className="flex flex-col">
-              <Text lineClamp={1}>{item.name}</Text>
-              <Text color="dimmed" size="xs">
-                Created: {formatDate(item.createdAt)}
-              </Text>
+    <>
+      <Meta title="Moderator | Review Training Data" deIndex />
+      <div className="container max-w-sm p-3">
+        <Title order={1}>Review training data</Title>
+        <div className="flex flex-col gap-3">
+          {flatData?.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 p-3 card">
+              <div className="flex flex-col">
+                <Text lineClamp={1}>
+                  {item.model.name} - {item.name}
+                </Text>
+                <Text color="dimmed" size="xs">
+                  Created: {formatDate(item.createdAt)}
+                </Text>
+              </div>
+              <Button compact component={Link} href={`${router.asPath}/${item.id}`}>
+                Review
+              </Button>
             </div>
-            <Button compact component={Link} href={`${router.asPath}/${item.id}`}>
-              Review
-            </Button>
-          </div>
-        ))}
+          ))}
+        </div>
+        {hasNextPage && (
+          <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
+            <div className="mt-3 flex justify-center p-3">
+              <Loader />
+            </div>
+          </InViewLoader>
+        )}
       </div>
-      {hasNextPage && (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetching}>
-          <div className="mt-3 flex justify-center p-3">
-            <Loader />
-          </div>
-        </InViewLoader>
-      )}
-    </div>
+    </>
   );
 }
-
-export default createPage(TrainingDataReviewPage, {
-  features: (features) => !!features.reviewTrainingData,
-});

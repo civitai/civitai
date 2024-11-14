@@ -24,7 +24,6 @@ import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { trpc } from '~/utils/trpc';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
@@ -34,9 +33,6 @@ import {
   IconInfoTriangleFilled,
   IconRotateClockwise,
 } from '@tabler/icons-react';
-import { constants } from '~/server/common/constants';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
@@ -53,6 +49,7 @@ import { PaymentProvider } from '@prisma/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { CancelMembershipMenuItem } from '~/components/Subscriptions/CancelMembershipMenuItem';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -330,18 +327,7 @@ export default function UserMembership() {
                                 <Menu.Item>View Details</Menu.Item>
                               </StripeManageSubscriptionButton>
                             )}
-                            {!subscription?.canceledAt && !isFree && (
-                              <Menu.Item
-                                onClick={() => {
-                                  dialogStore.trigger({
-                                    component: CancelMembershipFeedbackModal,
-                                  });
-                                }}
-                                closeMenuOnClick={true}
-                              >
-                                Cancel Membership
-                              </Menu.Item>
-                            )}
+                            {!subscription?.canceledAt && !isFree && <CancelMembershipMenuItem />}
                           </Menu.Dropdown>
                         </Menu>
                       </Group>

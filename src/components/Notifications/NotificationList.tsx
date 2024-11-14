@@ -27,10 +27,13 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
     <SimpleGrid cols={1} spacing={0}>
       {items.map((notification) => {
         const notificationDetails = notification.details as MixedObject;
-        const details = getNotificationMessage({
-          type: notification.type,
-          details: notificationDetails,
-        });
+        const details =
+          notificationDetails.type !== 'announcement'
+            ? getNotificationMessage({
+                type: notification.type,
+                details: notificationDetails,
+              })
+            : notificationDetails;
         if (!details) return null;
 
         const systemNotification = notification.type === 'system-announcement';
@@ -64,8 +67,8 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
         };
 
         return (
-          <Paper
-            component="a"
+          <Paper<'a'>
+            component={(details.url ? 'a' : 'div') as any}
             href={details.url ?? ''}
             key={notification.id}
             onClick={handleClick}
@@ -84,7 +87,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
                   <ThemeIcon variant="light" size="xl" radius="xl" color="green">
                     <IconAward stroke={1.5} />
                   </ThemeIcon>
-                ) : notificationDetails && notificationDetails.actor ? (
+                ) : notificationDetails?.actor ? (
                   <UserAvatar user={notificationDetails.actor} size="md" />
                 ) : (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="yellow">

@@ -1,6 +1,6 @@
 import { AdUnitDetail, AdUnitKey, getAdUnitDetails } from '~/components/Ads/ads.utils';
 import { Text } from '@mantine/core';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import clsx from 'clsx';
@@ -157,12 +157,16 @@ export function AdUnit({
   const ref = useRef<HTMLDivElement | null>(null);
   const details = getAdUnitDetails(keys);
   const [width, setWidth] = useState<number>();
-  const item = width
-    ? details.find((x) => {
-        // don't change this logic without consulting Briant
-        return x.width <= width;
-      })
-    : undefined;
+  const item = useMemo(
+    () =>
+      width
+        ? details.find((x) => {
+            // don't change this logic without consulting Briant
+            return x.width <= width;
+          })
+        : undefined,
+    [keys.join(','), width]
+  );
   const debouncer = useDebouncer(300);
   const prevWidthRef = useRef<number | null>(null);
   const browsingLevel = useBrowsingLevelDebounced();

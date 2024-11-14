@@ -1,7 +1,7 @@
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { Availability, Prisma } from '@prisma/client';
+import { ArticleStatus, Availability, Prisma } from '@prisma/client';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
@@ -100,6 +100,11 @@ const transformData = async ({
         tags: tags.map((articleTag) => articleTag.tag),
         coverImage: {
           ...coverImage,
+          // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
+          nsfwLevel:
+            articleRecord.nsfwLevel === articleRecord.userNsfwLevel
+              ? articleRecord.nsfwLevel
+              : coverImage.nsfwLevel,
           meta: coverImage.meta as ImageMetaProps,
           tags: coverImage.tags.map((x) => x.tag),
         },
@@ -163,22 +168,11 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     const articles = await db.article.findMany({
       select: articleSelect,
       where: {
-        publishedAt: {
-          not: null,
-        },
+        publishedAt: { not: null },
+        status: ArticleStatus.Published,
         tosViolation: false,
-        availability: {
-          not: Availability.Unsearchable,
-        },
-        id:
-          batch.type === 'update'
-            ? {
-                in: batch.ids,
-              }
-            : {
-                gte: batch.startId,
-                lte: batch.endId,
-              },
+        availability: { not: Availability.Unsearchable },
+        id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },
       },
     });
 
@@ -197,7 +191,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
     };
   },
   transformData,
-  pushData: async ({ indexName, jobContext }, records) => {
+  pushData: async ({ indexName }, records) => {
     await updateDocs({
       indexName,
       documents: records as any[],

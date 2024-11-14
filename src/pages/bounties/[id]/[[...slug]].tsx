@@ -72,7 +72,6 @@ import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { ImageViewer, useImageViewerCtx } from '~/components/ImageViewer/ImageViewer';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -93,11 +92,11 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { ScrollAreaMain } from '~/components/ScrollArea/ScrollAreaMain';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { useDidUpdate } from '@mantine/hooks';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
+import { Page } from '~/components/AppLayout/Page';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -121,9 +120,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function BountyDetailsPage({
-  id,
-}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes, theme } = useStyles();
   const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useUtils();
@@ -996,11 +993,9 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   );
 };
 
-setPageOptions(BountyDetailsPage, {
-  withScrollArea: false,
-  innerLayout: ({ children }: { children: React.ReactNode }) => (
-    <ImageViewer>
-      <ScrollAreaMain>{children}</ScrollAreaMain>
-    </ImageViewer>
+export default Page(BountyDetailsPage, {
+  // withScrollArea: false,
+  InnerLayout: ({ children }: { children: React.ReactNode }) => (
+    <ImageViewer>{children}</ImageViewer>
   ),
 });

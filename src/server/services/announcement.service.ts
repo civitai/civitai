@@ -1,20 +1,104 @@
-import { Prisma } from '@prisma/client';
-import { SessionUser } from 'next-auth';
-import { dbRead } from '~/server/db/client';
+import { CacheTTL } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import {
   AnnouncementMetaSchema,
   GetAnnouncementsInput,
-  GetLatestAnnouncementInput,
+  GetAnnouncementsPagedSchema,
+  UpsertAnnouncementSchema,
 } from '~/server/schema/announcement.schema';
+import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 
-export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementSelect>({
+export async function upsertAnnouncement(data: UpsertAnnouncementSchema) {
+  const result = data.id
+    ? await dbWrite.announcement.update({ where: { id: data.id }, data })
+    : await dbWrite.announcement.create({ data });
+
+  await redis.del(REDIS_KEYS.CACHES.ANNOUNCEMENTS);
+  return result;
+}
+
+export async function deleteAnnouncement(id: number) {
+  await dbWrite.announcement.delete({ where: { id } });
+  await redis.del(REDIS_KEYS.CACHES.ANNOUNCEMENTS);
+}
+
+export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
+  const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
+  const { take, skip } = getPagination(limit, page);
+
+  const items = await dbRead.announcement.findMany({
+    skip,
+    take,
+    select: {
+      id: true,
+      createdAt: true,
+      startsAt: true,
+      endsAt: true,
+      title: true,
+      content: true,
+      color: true,
+      disabled: true,
+      metadata: true,
+      emoji: true,
+    },
+    orderBy: { id: 'desc' },
+  });
+
+  const count = await dbRead.announcement.count();
+  return getPagingData(
+    {
+      items: items.map((item) => ({
+        ...item,
+        startsAt: item.startsAt ?? new Date(),
+        metadata: (item.metadata ?? {}) as AnnouncementMetaSchema,
+      })),
+      count,
+    },
+    limit,
+    page
+  );
+}
+
+export async function getCurrentAnnouncements({
   dismissed,
-  select,
-}: GetLatestAnnouncementInput & { select: TSelect }) => {
+  limit,
+  ids,
+  userId,
+}: GetAnnouncementsInput & { userId?: number }) {
+  const announcements = await getAnnouncementsCached();
+  const now = Date.now();
+
+  return announcements.filter((announcement) => {
+    if (ids && !ids.includes(announcement.id)) return false;
+    if (!userId && announcement.metadata.targetAudience === 'authenticated') return false;
+    if (!!userId && announcement.metadata.targetAudience === 'unauthenticated') return false;
+    const startsAt = new Date(announcement.startsAt ?? now).getTime();
+    const endsAt = new Date(announcement.endsAt ?? '2100-12-31').getTime();
+    if (startsAt <= now && now <= endsAt) return true;
+    return false;
+  });
+}
+
+async function getAnnouncementsCached() {
+  const cached = await redis.get(REDIS_KEYS.CACHES.ANNOUNCEMENTS);
+  if (cached) return JSON.parse(cached) as AnnouncementDTO[];
+
+  const announcements = await getAnnouncements();
+
+  await redis.set(REDIS_KEYS.CACHES.ANNOUNCEMENTS, JSON.stringify(announcements), {
+    EX: CacheTTL.day,
+  });
+
+  return announcements;
+}
+
+export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
+async function getAnnouncements() {
   const now = new Date();
-  return await dbRead.announcement.findFirst({
+  const announcements = await dbRead.announcement.findMany({
     where: {
-      id: { notIn: dismissed },
+      disabled: false,
       AND: [
         {
           OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
@@ -24,55 +108,10 @@ export const getLatestAnnouncement = async <TSelect extends Prisma.AnnouncementS
         },
       ],
     },
-    orderBy: { id: 'desc' },
-    select,
-  });
-};
-
-export type GetAnnouncement = Awaited<ReturnType<typeof getAnnouncements>>[number];
-export const getAnnouncements = async ({
-  dismissed,
-  limit,
-  ids,
-  user,
-}: GetAnnouncementsInput & { user?: SessionUser }) => {
-  const now = new Date();
-  const AND: Prisma.Enumerable<Prisma.AnnouncementWhereInput> = [
-    {
-      OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-    },
-    {
-      OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-    },
-    {
-      OR: [
-        { metadata: { path: ['targetAudience'], equals: Prisma.AnyNull } },
-        { metadata: { path: ['targetAudience'], equals: 'all' } },
-        // Add targeted announcements.
-        user
-          ? { metadata: { path: ['targetAudience'], equals: 'authenticated' } }
-          : { metadata: { path: ['targetAudience'], equals: 'unauthenticated' } },
-      ],
-    },
-  ];
-
-  if (ids) {
-    AND.push({ id: { in: ids } });
-  }
-
-  if (dismissed) {
-    AND.push({
-      OR: [{ id: { notIn: dismissed } }, { metadata: { path: ['dismissible'], equals: false } }],
-    });
-  }
-
-  const announcements = await dbRead.announcement.findMany({
-    take: limit,
-    where: {
-      AND,
-    },
-    orderBy: { id: 'desc' },
     select: {
+      createdAt: true,
+      startsAt: true,
+      endsAt: true,
       id: true,
       title: true,
       content: true,
@@ -80,10 +119,55 @@ export const getAnnouncements = async ({
       emoji: true,
       metadata: true,
     },
+    orderBy: { endsAt: 'asc' },
   });
 
-  return announcements.map(({ metadata, ...announcement }) => ({
-    ...announcement,
-    metadata: metadata as AnnouncementMetaSchema,
+  return announcements.map(({ createdAt, metadata, startsAt, ...x }) => ({
+    ...x,
+    createdAt,
+    startsAt: startsAt ?? createdAt,
+    metadata: (metadata ?? {}) as AnnouncementMetaSchema,
   }));
-};
+}
+// export const announcementsCache = createCachedArray({
+//   key: REDIS_KEYS.CACHES.ANNOUNCEMENTS,
+//   idKey: 'id',
+//   lookupFn: async () => {
+//     const now = new Date();
+//     const announcements = await dbRead.announcement.findMany({
+//       where: {
+//         AND: [
+//           {
+//             OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
+//           },
+//           {
+//             OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
+//           },
+//         ],
+//       },
+//       select: {
+//         createdAt: true,
+//         startsAt: true,
+//         endsAt: true,
+//         id: true,
+//         title: true,
+//         content: true,
+//         color: true,
+//         emoji: true,
+//         metadata: true,
+//       },
+//     });
+
+//     return Object.fromEntries(
+//       announcements.map(({ createdAt, metadata, startsAt, ...x }) => [
+//         x.id,
+//         {
+//           ...x,
+//           startsAt: startsAt ?? createdAt,
+//           metadata: (metadata ?? {}) as AnnouncementMetaSchema,
+//         },
+//       ])
+//     );
+//   },
+//   ttl: CacheTTL.day,
+// });

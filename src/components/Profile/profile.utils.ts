@@ -63,7 +63,7 @@ export const shouldDisplayUserNullState = ({
   overview,
   userWithProfile,
 }: {
-  overview: UserOverview;
+  overview?: Partial<UserOverview>;
   userWithProfile: UserWithProfile;
 }) => {
   const userSections = (userWithProfile?.profile?.profileSectionsSettings ??
@@ -82,9 +82,9 @@ export const shouldDisplayUserNullState = ({
 
   return (
     (showcaseItems.length === 0 || !someSectionEnabled(['showcase'])) &&
-    (overview.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
-    (overview.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
-    (overview.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&
-    (!overview.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
+    (overview?.modelCount === 0 || !someSectionEnabled(['modelsOverview', 'popularModels'])) &&
+    (overview?.imageCount === 0 || !someSectionEnabled(['imagesOverview'])) &&
+    (overview?.articleCount === 0 || !someSectionEnabled(['popularArticles'])) &&
+    (!overview?.hasReceivedReviews || !someSectionEnabled(['recentReviews']))
   );
 };

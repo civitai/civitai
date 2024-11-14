@@ -33,7 +33,8 @@ import { Bar } from 'react-chartjs-2';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { formatDate, getDatesAsList } from '~/utils/date-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -48,33 +49,35 @@ ChartJS.register(
   TimeScale
 );
 
-const now = dayjs.utc();
-const startDate = dayjs.utc('2024-08-01').toDate();
+const now = dayjs();
+const startDate = dayjs('2024-08-01').toDate();
 const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
 const dateOptions = monthsUntilNow.reverse().map((month) => {
-  const date = dayjs.utc(month).startOf('month');
+  const date = dayjs(month).startOf('month').add(15, 'day');
   return {
-    value: date.toISOString(),
+    value: stripTime(date.toDate()),
     label: date.format('MMMM YYYY'),
   };
 });
 
 export function DailyCreatorCompReward() {
+  const features = useFeatureFlags();
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
-  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery({
-    date: selectedDate,
-  });
+  const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate },
+    { enabled: features.buzz }
+  );
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
-  const minSelectedDate = dayjs.utc(selectedDate).startOf('month').toDate();
-  const maxSelectedDate = dayjs.utc(selectedDate).endOf('month').toDate();
+  const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
+  const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
   const options = useMemo<ChartOptions<'bar'>>(
     () => ({

@@ -34,7 +34,7 @@ import {
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import Lottie from 'react-lottie';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useGameSounds } from '~/hooks/useGameSounds';
@@ -133,7 +133,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function Rater() {
+function Rater() {
   const { classes } = useStyles();
 
   // Image Ref
@@ -800,4 +800,8 @@ const fillEffect = keyframes({
   },
 });
 
-setPageOptions(Rater, { withScrollArea: false });
+export default Page(Rater, {
+  // withScrollArea: false
+  scrollable: false,
+  subNav: null,
+});

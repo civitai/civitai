@@ -1,69 +1,34 @@
-import {
-  ActionIcon,
-  Center,
-  CloseButton,
-  Drawer,
-  Group,
-  Indicator,
-  Loader,
-  Paper,
-  ScrollArea,
-  Stack,
-  Switch,
-  Text,
-  Tooltip,
-} from '@mantine/core';
-import { useClickOutside, useLocalStorage } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconBell, IconListCheck, IconSettings } from '@tabler/icons-react';
+import { ActionIcon, Indicator } from '@mantine/core';
+
+import { IconBell } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import { NotificationList } from '~/components/Notifications/NotificationList';
-import {
-  getCategoryDisplayName,
-  useMarkReadNotification,
-  useQueryNotifications,
-  useQueryNotificationsCount,
-} from '~/components/Notifications/notifications.utils';
-import { NotificationTabs } from '~/components/Notifications/NotificationTabs';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { NotificationCategory } from '~/server/common/enums';
-
-const notifLimit = 30;
+const NotificationsDrawer = dynamic(() => import('~/components/Notifications/NotificationsDrawer'));
 
 export function NotificationBell() {
-  const mobile = useIsMobile();
-
-  const [hideRead, setHideRead] = useLocalStorage<boolean>({
-    key: 'notifications-hide-read',
-    defaultValue: false,
-  });
-
-  const [opened, setOpened] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<NotificationCategory | null>(null);
+  const router = useRouter();
+  const hideBell = router.asPath.startsWith('/user/notifications');
   const [toggle, setToggle] = useState<HTMLDivElement | null>(null);
-  const [drawer, setDrawer] = useState<HTMLDivElement | null>(null);
-  useClickOutside(() => setOpened(false), null, [toggle, drawer]);
 
   const count = useQueryNotificationsCount();
-  const {
-    notifications,
-    isLoading: loadingNotifications,
-    hasNextPage,
-    fetchNextPage,
-    isRefetching,
-  } = useQueryNotifications(
-    { limit: notifLimit, category: selectedCategory, unread: hideRead ? true : undefined },
-    { enabled: opened, keepPreviousData: false }
-  );
 
-  const readNotificationMutation = useMarkReadNotification();
-  const categoryName = !selectedCategory ? 'all' : getCategoryDisplayName(selectedCategory);
+  function toggleDrawer() {
+    dialogStore.toggle({
+      component: NotificationsDrawer,
+      props: { toggleNode: toggle },
+      id: 'notifications-drawer',
+    });
+  }
+
+  if (hideBell) return null;
 
   return (
     <>
-      <div onClick={() => setOpened((val) => !val)} ref={setToggle} style={{ height: '28px' }}>
+      <div onClick={toggleDrawer} ref={setToggle} style={{ height: '28px' }}>
         <Indicator
           color="red"
           overflowCount={99}
@@ -91,99 +56,6 @@ export function NotificationBell() {
           </ActionIcon>
         </Indicator>
       </div>
-      <Drawer
-        position={mobile ? 'bottom' : 'right'}
-        size={mobile ? '100dvh' : '710px'}
-        styles={(theme) => ({
-          root: {
-            [theme.fn.largerThan('xs')]: {
-              top: 'var(--mantine-header-height)',
-              height: `calc(100% - var(--mantine-header-height))`,
-            },
-          },
-          drawer: {
-            [theme.fn.largerThan('xs')]: {
-              top: 'var(--mantine-header-height)',
-              height: `calc(100% - var(--mantine-header-height))`,
-            },
-          },
-        })}
-        shadow="lg"
-        opened={opened}
-        onClose={() => setOpened(false)}
-        closeOnClickOutside={false}
-        withCloseButton={false}
-        withOverlay={mobile}
-        withinPortal
-      >
-        <Stack spacing="xl" h="100%" p="md" ref={setDrawer}>
-          <Group position="apart">
-            <Text size="xl" weight="bold">
-              Notifications
-            </Text>
-            <Group spacing={8}>
-              <Switch
-                label="Hide Read"
-                labelPosition="left"
-                checked={hideRead}
-                onChange={(e) => setHideRead(e.currentTarget.checked)}
-              />
-              <Tooltip label={`Mark ${categoryName} as read`} position="bottom">
-                <ActionIcon
-                  size="lg"
-                  onClick={() =>
-                    readNotificationMutation.mutate({
-                      all: true,
-                      category: selectedCategory,
-                    })
-                  }
-                >
-                  <IconListCheck />
-                </ActionIcon>
-              </Tooltip>
-              <Tooltip label="Notification settings" position="bottom">
-                <ActionIcon component={Link} size="lg" href="/user/account#notification-settings">
-                  <IconSettings />
-                </ActionIcon>
-              </Tooltip>
-              <CloseButton size="lg" onClick={() => setOpened(false)} />
-            </Group>
-          </Group>
-          <NotificationTabs
-            onTabChange={(value: NotificationCategory | null) => setSelectedCategory(value)}
-          />
-          {loadingNotifications ? (
-            <Center p="sm">
-              <Loader />
-            </Center>
-          ) : notifications && notifications.length > 0 ? (
-            <Paper radius="md" withBorder sx={{ overflow: 'hidden' }} component={ScrollArea}>
-              <NotificationList
-                items={notifications}
-                onItemClick={(notification, keepOpened) => {
-                  if (!notification.read)
-                    readNotificationMutation.mutate({
-                      id: notification.id,
-                      category: notification.category,
-                    });
-                  setOpened(keepOpened);
-                }}
-              />
-              {hasNextPage && (
-                <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching}>
-                  <Center p="xl" sx={{ height: 36 }} mt="md">
-                    <Loader />
-                  </Center>
-                </InViewLoader>
-              )}
-            </Paper>
-          ) : (
-            <Center p="sm">
-              <Text>All caught up! Nothing to see here</Text>
-            </Center>
-          )}
-        </Stack>
-      </Drawer>
     </>
   );
 }

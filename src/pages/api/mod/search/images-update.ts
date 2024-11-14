@@ -163,7 +163,7 @@ const updateDateFields = (idOffset: number) =>
     const records = await dbRead.$queryRaw<ImageForSearchIndex[]>`
         SELECT
           i."id",
-          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+          GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
           p."publishedAt" as "publishedAt"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -232,7 +232,7 @@ async function updateNsfw() {
         SELECT
           i."id",
           p."publishedAt",
-          COALESCE(p."publishedAt", i."createdAt") as "sortAt",
+          GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
           i."aiNsfwLevel",
           i."nsfwLevelLocked"

@@ -1,4 +1,5 @@
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import PersonalizedHomepage from '~/pages/home';
 import ModelsPage from '~/pages/models';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -26,4 +27,4 @@ function Home() {
   );
 }
 
-export default Home;
+export default Page(Home, { announcements: true });

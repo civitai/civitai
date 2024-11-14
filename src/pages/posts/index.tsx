@@ -1,7 +1,6 @@
 import { Stack } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
@@ -11,7 +10,7 @@ import { usePostQueryParams } from '~/components/Post/post.utils';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-export default function PostsPage() {
+function PostsPage() {
   const currentUser = useCurrentUser();
   const { query } = usePostQueryParams();
 
@@ -25,7 +24,6 @@ export default function PostsPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts`, rel: 'canonical' }]}
       />
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           <IsClient>
             <PostCategories />
@@ -37,4 +35,4 @@ export default function PostsPage() {
   );
 }
 
-setPageOptions(PostsPage, { innerLayout: FeedLayout });
+export default Page(PostsPage, { InnerLayout: FeedLayout, announcements: true });

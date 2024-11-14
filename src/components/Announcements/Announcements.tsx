@@ -1,154 +1,49 @@
-/* eslint-disable react-hooks/rules-of-hooks */
-import { Alert, createStyles, Group, MantineColor, Stack, Sx, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
-import { useEffect, useMemo, useRef } from 'react';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import useIsClient from '~/hooks/useIsClient';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import {
+  dismissAnnouncements,
+  useAnnouncementsStore,
+} from '~/components/Announcements/announcements.utils';
+import React, { useEffect, useMemo } from 'react';
+import { Announcement } from '~/components/Announcements/Announcement';
 import { trpc } from '~/utils/trpc';
 
-export const Announcements = (props: AnnouncementsProps) => {
-  const isClient = useIsClient();
-  const isIndex = isClient && window.location.pathname === '/';
-
-  const dismissed: number[] = useMemo(() => {
-    if (!isClient) return [];
-
-    const dismissedIds = Object.keys(localStorage)
-      .filter((key) => key.startsWith('announcement-'))
-      .map((key) => Number(key.replace('announcement-', '')));
-
-    if (dismissedIds.length === 0 && localStorage.getItem('welcomeAlert') === 'false')
-      dismissedIds.push(0);
-
-    return dismissedIds;
-  }, [isClient]);
-
-  const { data: latestAnnouncement, isFetching } = trpc.announcement.getLatest.useQuery(
-    { dismissed },
-    { enabled: isClient && (dismissed.length > 0 || !isIndex) }
-  );
-
-  if (!isClient) return null;
-  if (!dismissed.length && isIndex) return <WelcomeAnnouncement {...props} />;
-  if (isFetching || !latestAnnouncement) return null;
-
-  return <Announcement {...latestAnnouncement} {...props} />;
-};
-
-type AnnouncementsProps = {
-  className?: string;
-  sx?: Sx;
-};
-
-const WelcomeAnnouncement = (props: AnnouncementsProps) => (
-  <Announcement
-    id={0}
-    emoji="👋"
-    title="Welcome to Civitai!"
-    content="Browse, share, and review custom AI art models, [learn more...](/content/guides/what-is-civitai)"
-    {...props}
-  />
-);
-
-const Announcement = ({
-  id,
-  title,
-  content,
-  color = 'blue',
-  emoji = '👋',
-  className = '',
-  sx,
-}: AnnouncementProps) => {
-  const { classes, cx } = useStyles({ color });
-  const [dismissed, setDismissed] = useLocalStorage({
-    key: `announcement-${id}`,
-    defaultValue: false,
-  });
-  const alertRef = useRef<HTMLDivElement>(null);
+export function Announcements() {
+  const { data } = trpc.announcement.getAnnouncements.useQuery();
+  const dismissed = useAnnouncementsStore((state) => state.dismissed);
 
   useEffect(() => {
-    alertRef.current?.style?.setProperty(
-      'margin-bottom',
-      `${-1 * Math.ceil(alertRef.current?.offsetHeight ?? 35)}px`
-    );
-  }, [alertRef.current?.offsetHeight]);
+    if (!data?.length) return;
+    const legacyKeys = Object.keys(localStorage).filter((key) => key.startsWith('announcement-'));
+    const legacyIds = legacyKeys.map((key) => Number(key.replace('announcement-', '')));
+    const announcementIds = data.map(({ id }) => id);
 
-  if (dismissed) return null;
+    // remove legacy announcment id storage
+    if (legacyIds) {
+      dismissAnnouncements(legacyIds.filter((id) => announcementIds.includes(id)));
+      for (const key of legacyKeys) {
+        localStorage.removeItem(key);
+      }
+    }
+
+    // remove old announcementIds from storage
+    if (dismissed.some((id) => !announcementIds.includes(id))) {
+      dismissAnnouncements(dismissed.filter((id) => announcementIds.includes(id)));
+    }
+  }, [data]); // eslint-disable-line
+
+  const announcements = useMemo(
+    () => data?.filter((announcement) => !dismissed.includes(announcement.id)) ?? [],
+    [data, dismissed]
+  );
+
+  if (!announcements.length) return null;
 
   return (
-    <Alert
-      ref={alertRef}
-      color={color}
-      py={8}
-      className={cx(className, classes.announcement)}
-      onClose={() => setDismissed(true)}
-      sx={sx}
-      withCloseButton
-    >
-      <Group spacing="xs" noWrap>
-        {emoji && (
-          <Text size={36} p={0} sx={{ lineHeight: 1.2 }}>
-            {emoji}
-          </Text>
-        )}
-        <Stack spacing={0}>
-          <Text size="md" weight={500} className={classes.title} mb={4}>
-            {title}
-          </Text>
-          <Text size="sm" className={classes.text}>
-            <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-              {content}
-            </CustomMarkdown>
-          </Text>
-        </Stack>
-      </Group>
-    </Alert>
+    // Required custom class to apply certain styles based on peer elements
+    // eslint-disable-next-line tailwindcss/no-custom-classname
+    <div className="announcements peer mb-3">
+      <div className="container">
+        <Announcement announcement={announcements[0]} />
+      </div>
+    </div>
   );
-};
-
-type AnnouncementProps = {
-  id: number;
-  title: string;
-  content: string;
-  emoji?: string | null;
-  color?: MantineColor;
-  className?: string;
-  sx?: Sx;
-};
-
-const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
-  announcement: {
-    minWidth: 300,
-    maxWidth: 600,
-    // top: 'calc(var(--mantine-header-height,0) + 16px)',
-    top: 8,
-    position: 'sticky',
-    margin: '0 auto',
-    alignSelf: 'center',
-    zIndex: 11,
-    boxShadow: theme.shadows.md,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors[color][9] : theme.colors[color][2]
-    }`,
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.darken(theme.colors[color][8], 0.5)
-        : theme.colors[color][1],
-    [containerQuery.smallerThan('md')]: {
-      marginLeft: -5,
-      marginRight: -5,
-    },
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][0] : theme.colors[color][7],
-    lineHeight: 1.1,
-  },
-  text: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][2] : theme.colors[color][9],
-    lineHeight: 1.15,
-    '& > div > a': {
-      color: theme.colorScheme === 'dark' ? theme.colors[color][1] : theme.colors[color][8],
-    },
-  },
-}));
+}

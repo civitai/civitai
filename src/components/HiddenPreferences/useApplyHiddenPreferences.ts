@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { CivitaiSessionUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import {
   HiddenPreferencesState,
   useHiddenPreferencesContext,
@@ -257,6 +256,10 @@ function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+        if (article.userNsfwLevel && !Flags.intersects(article.userNsfwLevel, browsingLevel)) {
+          hidden.browsingLevel++;
+          return false;
+        }
         if (article.user && hiddenUsers.get(article.user.id)) {
           hidden.users++;
           return false;
@@ -467,6 +470,9 @@ function filterPreferences<
         hidden,
       };
     }
+    case 'tools':
+      // No need to apply hidden preferences to tools
+      return { items: value, hidden };
     default:
       throw new Error('unhandled hidden user preferences filter type');
   }
@@ -494,6 +500,7 @@ type BaseArticle = {
   id: number;
   user: { id: number };
   nsfwLevel: number;
+  userNsfwLevel: number;
   tags?: {
     id: number;
   }[];
@@ -564,6 +571,10 @@ type BaseTag = {
   name?: string | null;
 };
 
+type BaseTool = {
+  id: number;
+};
+
 export type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
@@ -573,4 +584,5 @@ export type BaseDataTypeMap = {
   bounties: BaseBounty[];
   posts: BasePost[];
   tags: BaseTag[];
+  tools: BaseTool[];
 };

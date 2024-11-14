@@ -11,21 +11,21 @@ const notificationConfig: Partial<
 > = {
   generation: (updated) => ({
     color: 'blue.4',
-    title: 'Generation Buzz Update',
+    title: 'User Buzz Update',
     message:
       updated.delta > 0 ? (
         <Text>
           <Text weight="bold" span>
             {updated.delta.toLocaleString()} Buzz
           </Text>{' '}
-          has been added to your generation credit
+          has been added to your buzz account
         </Text>
       ) : (
         <Text>
           <Text weight="bold" span>
             {Math.abs(updated.delta).toLocaleString()} Buzz
           </Text>{' '}
-          has been debited from your generation credit
+          has been debited from your buzz account
         </Text>
       ),
   }),

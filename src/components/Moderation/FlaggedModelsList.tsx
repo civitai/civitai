@@ -7,7 +7,7 @@ import {
   MRT_SortingState,
   MRT_TableInstance,
 } from 'mantine-react-table';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';

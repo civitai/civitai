@@ -3,7 +3,7 @@ import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
-import { ConfirmDialog } from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

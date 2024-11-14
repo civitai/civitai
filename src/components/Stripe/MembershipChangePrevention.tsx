@@ -140,7 +140,7 @@ export const DowngradeFeedbackModal = ({
 
 const cancelReasons = ['Too expensive', 'I found another service', 'I no longer need it', 'Others'];
 
-export const CancelMembershipFeedbackModal = () => {
+export function CancelMembershipFeedbackModal() {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const [cancelReason, setCancelReason] = useState('Others');
@@ -200,7 +200,7 @@ export const CancelMembershipFeedbackModal = () => {
       )}
     </Modal>
   );
-};
+}
 
 export const StripeCancelMembershipButton = ({
   onClose,
@@ -387,10 +387,10 @@ export const VaultStorageDowngrade = ({
               <Text component="span" weight="bold">
                 {pagination?.totalItems ?? 0} models
               </Text>{' '}
-              stored on your Vault. After downgrading, your Vault will be freezed from Download.
+              stored on your Vault. After downgrading, your Vault will be frozen.
             </Text>
             <Text color="dimmed" align="center">
-              You will have a 7 days grace period.
+              You will have a 7 day grace period to download models from your Vault.
             </Text>
           </Stack>
           <Group grow>

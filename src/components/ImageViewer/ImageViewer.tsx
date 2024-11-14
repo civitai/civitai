@@ -47,6 +47,7 @@ export interface ImageProps {
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
   tags?: Array<{ id: number }> | number[];
   metadata?: MixedObject | null;
+  publishedAt?: Date | null;
 }
 
 type ImageViewerState = {

@@ -15,9 +15,10 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { createPage } from '~/components/AppLayout/createPage';
+import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
+import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
@@ -28,6 +29,7 @@ import {
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -47,8 +49,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default createPage(
-  function PostCreate() {
+export default Page(
+  function () {
     const currentUser = useCurrentUser();
     const router = useRouter();
     const params = postEditQuerySchema.parse(router.query);
@@ -81,11 +83,14 @@ export default createPage(
       { id: tagId ?? 0 },
       { enabled: !!tagId }
     );
+
     const { data: currentUserReview, isLoading: loadingCurrentUserReview } =
       trpc.resourceReview.getUserResourceReview.useQuery(
         { modelVersionId: modelVersionId ?? 0 },
         { enabled: !!currentUser && displayReview }
       );
+
+    const collectionIdsAggregate = [collectionId, ...(collectionIds ?? [])].filter(isDefined);
 
     let backButtonUrl = modelId ? `/models/${modelId}` : '/';
 
@@ -115,127 +120,129 @@ export default createPage(
       );
 
     return (
-      <Container size="xs" className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <BackButton url={backButtonUrl} />
-            <Title>
-              {displayReview
-                ? 'Create a Review'
-                : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
-            </Title>
+      <CollectionUploadSettingsWrapper collectionIds={collectionIdsAggregate}>
+        <Container size="xs" className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <BackButton url={backButtonUrl} />
+              <Title>
+                {displayReview
+                  ? 'Create a Review'
+                  : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
+              </Title>
+            </div>
+            <FeatureIntroductionHelpButton
+              feature="post-create"
+              contentSlug={['feature-introduction', 'post-images']}
+            />
           </div>
-          <FeatureIntroductionHelpButton
-            feature="post-create"
-            contentSlug={['feature-introduction', 'post-images']}
-          />
-        </div>
-        {tagId && (tag || tagLoading) && (
-          <Group spacing="xs">
-            {tagLoading && <Loader size="sm" />}
-            <Text size="sm" color="dimmed">
-              Posting to{' '}
-              <Text component="span" td="underline">
-                {tag?.name}
+          {tagId && (tag || tagLoading) && (
+            <Group spacing="xs">
+              {tagLoading && <Loader size="sm" />}
+              <Text size="sm" color="dimmed">
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {tag?.name}
+                </Text>
               </Text>
-            </Text>
-          </Group>
-        )}
-        {modelVersionId && (version || loading) && (
-          <Group spacing="xs">
-            {loading && <Loader size="sm" />}
-            <Text size="sm" color="dimmed">
-              Posting to{' '}
-              <Text component="span" td="underline">
-                {version?.model.name} - {version?.name}
+            </Group>
+          )}
+          {modelVersionId && (version || loading) && (
+            <Group spacing="xs">
+              {loading && <Loader size="sm" />}
+              <Text size="sm" color="dimmed">
+                Posting to{' '}
+                <Text component="span" td="underline">
+                  {version?.model.name} - {version?.name}
+                </Text>
               </Text>
-            </Text>
-          </Group>
-        )}
-        {versions && !reviewing && (
-          <Select
-            description="Select a resource to ensure that all uploaded images receive correct resource attribution"
-            placeholder="Select a resource"
-            value={modelVersionId ? String(modelVersionId) : undefined}
-            nothingFound={versionsLoading ? 'Loading...' : 'No resources found'}
-            data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
-            onChange={(value) =>
-              router.replace({ query: { ...params, modelVersionId: value } }, undefined, {
-                shallow: true,
-              })
-            }
-          />
-        )}
-        {displayReview && version && (
-          <UserResourceReviewComposite
-            modelId={version.model.id}
-            modelVersionId={version.id}
-            modelName={version.model.name}
-          >
-            {({ modelId, modelVersionId, modelName, userReview }) => (
-              <>
-                <Card p="sm" withBorder>
-                  <Stack spacing={8}>
-                    <Text size="md" weight={600}>
-                      What did you think of this resource?
-                    </Text>
-                    <ResourceReviewThumbActions
-                      modelId={modelId}
-                      modelVersionId={modelVersionId}
-                      userReview={userReview}
-                      withCount
-                    />
-                  </Stack>
-                  {userReview && (
-                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewV2
+            </Group>
+          )}
+          {versions && !reviewing && (
+            <Select
+              description="Select a resource to ensure that all uploaded images receive correct resource attribution"
+              placeholder="Select a resource"
+              value={modelVersionId ? String(modelVersionId) : undefined}
+              nothingFound={versionsLoading ? 'Loading...' : 'No resources found'}
+              data={versions.map(({ id, name }) => ({ label: name, value: id.toString() }))}
+              onChange={(value) =>
+                router.replace({ query: { ...params, modelVersionId: value } }, undefined, {
+                  shallow: true,
+                })
+              }
+            />
+          )}
+          {displayReview && version && (
+            <UserResourceReviewComposite
+              modelId={version.model.id}
+              modelVersionId={version.id}
+              modelName={version.model.name}
+            >
+              {({ modelId, modelVersionId, modelName, userReview }) => (
+                <>
+                  <Card p="sm" withBorder>
+                    <Stack spacing={8}>
+                      <Text size="md" weight={600}>
+                        What did you think of this resource?
+                      </Text>
+                      <ResourceReviewThumbActions
+                        modelId={modelId}
                         modelVersionId={modelVersionId}
-                        modelName={modelName}
                         userReview={userReview}
-                        innerRef={reviewEditRef}
+                        withCount
                       />
-                    </Card.Section>
+                    </Stack>
+                    {userReview && (
+                      <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                        <EditUserResourceReviewV2
+                          modelVersionId={modelVersionId}
+                          modelName={modelName}
+                          userReview={userReview}
+                          innerRef={reviewEditRef}
+                        />
+                      </Card.Section>
+                    )}
+                  </Card>
+
+                  {userReview && (
+                    <Text size="sm" color="dimmed">
+                      {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
+                    </Text>
                   )}
-                </Card>
+                </>
+              )}
+            </UserResourceReviewComposite>
+          )}
+          <AlertWithIcon icon={<IconAlertCircle />}>
+            There may be a short delay before your uploaded media appears in the Model Gallery and
+            Image Feeds. Please allow a few minutes for your media to become visible after posting.
+          </AlertWithIcon>
+          {!displayReview && (
+            <Text size="xs" color="dimmed">
+              Our site is mostly used for sharing AI generated content. You can start generating
+              images using our{' '}
+              <Link legacyBehavior href="/generate" passHref>
+                <Anchor>onsite generator</Anchor>
+              </Link>{' '}
+              or train your model using your own images by using our{' '}
+              <Link legacyBehavior href="/models/train" passHref>
+                <Anchor>onsite LoRA trainer</Anchor>
+              </Link>
+              .
+            </Text>
+          )}
 
-                {userReview && (
-                  <Text size="sm" color="dimmed">
-                    {`We've saved your review. Now, consider adding images below to create a post showcasing the resource.`}
-                  </Text>
-                )}
-              </>
-            )}
-          </UserResourceReviewComposite>
-        )}
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          There may be a short delay before your uploaded media appears in the Model Gallery and
-          Image Feeds. Please allow a few minutes for your media to become visible after posting.
-        </AlertWithIcon>
-        {!displayReview && (
-          <Text size="xs" color="dimmed">
-            Our site is mostly used for sharing AI generated content. You can start generating
-            images using our{' '}
-            <Link legacyBehavior href="/generate" passHref>
-              <Anchor>onsite generator</Anchor>
-            </Link>{' '}
-            or train your model using your own images by using our{' '}
-            <Link legacyBehavior href="/models/train" passHref>
-              <Anchor>onsite LoRA trainer</Anchor>
-            </Link>
-            .
-          </Text>
-        )}
-
-        <PostImageDropzone
-          showProgress={false}
-          onCreatePost={async (post) => {
-            await router.replace({
-              pathname: `/posts/${post.id}/edit`,
-              query: { ...params },
-            });
-          }}
-        />
-      </Container>
+          <PostImageDropzone
+            showProgress={false}
+            onCreatePost={async (post) => {
+              await router.replace({
+                pathname: `/posts/${post.id}/edit`,
+                query: { ...params },
+              });
+            }}
+          />
+        </Container>
+      </CollectionUploadSettingsWrapper>
     );
   },
   { InnerLayout: PostEditLayout }

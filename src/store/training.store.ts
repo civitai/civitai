@@ -98,6 +98,8 @@ export type AutoLabelType = {
   fails: string[];
 };
 
+type Attest = { status: boolean; error: string };
+
 //
 
 export type TrainingRun = {
@@ -110,15 +112,19 @@ export type TrainingRun = {
   highPriority: boolean;
   staging: boolean;
   buzzCost: number;
+  hasIssue: boolean;
 };
 
 type TrainingDataState = {
   imageList: ImageDataType[];
   initialImageList: ImageDataType[];
   labelType: LabelTypes;
+  triggerWord: string;
   ownRights: boolean;
   shareDataset: boolean;
+  attested: Attest;
   initialLabelType: LabelTypes;
+  initialTriggerWord: string;
   initialOwnRights: boolean;
   initialShareDataset: boolean;
   autoLabeling: AutoLabelType;
@@ -138,9 +144,12 @@ type TrainingImageStore = {
   setImageList: (modelId: number, data: ImageDataType[]) => void;
   setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
   setLabelType: (modelId: number, data: LabelTypes) => void;
+  setTriggerWord: (modelId: number, data: string) => void;
   setOwnRights: (modelId: number, data: boolean) => void;
   setShareDataset: (modelId: number, data: boolean) => void;
+  setAttest: (modelId: number, data: Attest) => void;
   setInitialLabelType: (modelId: number, data: LabelTypes) => void;
+  setInitialTriggerWord: (modelId: number, data: string) => void;
   setInitialOwnRights: (modelId: number, data: boolean) => void;
   setInitialShareDataset: (modelId: number, data: boolean) => void;
   setAutoLabeling: (modelId: number, data: Partial<AutoLabelType>) => void;
@@ -173,15 +182,19 @@ export const defaultRun = {
   staging: false,
   highPriority: false,
   buzzCost: 0,
+  hasIssue: false,
 };
 
 export const defaultTrainingState: TrainingDataState = {
   imageList: [] as ImageDataType[],
   initialImageList: [] as ImageDataType[],
   labelType: 'tag',
+  triggerWord: '',
   ownRights: false,
   shareDataset: false,
+  attested: { status: false, error: '' },
   initialLabelType: 'tag',
+  initialTriggerWord: '',
   initialOwnRights: false,
   initialShareDataset: false,
   autoLabeling: {
@@ -262,6 +275,12 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         state[modelId]!.labelType = v;
       });
     },
+    setTriggerWord: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        state[modelId]!.triggerWord = v;
+      });
+    },
     setOwnRights: (modelId, v) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
@@ -274,10 +293,22 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         state[modelId]!.shareDataset = v;
       });
     },
+    setAttest: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        state[modelId]!.attested = v;
+      });
+    },
     setInitialLabelType: (modelId, v) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         state[modelId]!.initialLabelType = v;
+      });
+    },
+    setInitialTriggerWord: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        state[modelId]!.initialTriggerWord = v;
       });
     },
     setInitialOwnRights: (modelId, v) => {
@@ -353,6 +384,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;
           run.buzzCost = data.buzzCost ?? run.buzzCost;
+          run.hasIssue = data.hasIssue ?? run.hasIssue;
           run.params = { ...run.params, ...data.params };
         }
       });
@@ -366,9 +398,12 @@ export const trainingStore = {
   setImageList: store.setImageList,
   setInitialImageList: store.setInitialImageList,
   setLabelType: store.setLabelType,
+  setTriggerWord: store.setTriggerWord,
   setOwnRights: store.setOwnRights,
   setShareDataset: store.setShareDataset,
+  setAttest: store.setAttest,
   setInitialLabelType: store.setInitialLabelType,
+  setInitialTriggerWord: store.setInitialTriggerWord,
   setInitialOwnRights: store.setInitialOwnRights,
   setInitialShareDataset: store.setInitialShareDataset,
   setAutoLabeling: store.setAutoLabeling,

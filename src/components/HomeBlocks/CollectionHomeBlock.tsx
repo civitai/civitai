@@ -51,7 +51,7 @@ const icons = {
 
 export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   return (
-    <HomeBlockWrapper py={32} showAds={showAds}>
+    <HomeBlockWrapper py={32}>
       <CollectionHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -63,6 +63,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
   );
+
   const rows = metadata.collection?.rows ?? 2;
   const { classes, cx } = useHomeBlockGridStyles({
     count: homeBlock?.collection?.items.length ?? 0,
@@ -86,10 +87,13 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     type: `${type}s`,
     data: shuffledData,
   });
+
   const items = useMemo(() => {
     const itemsToShow = ITEMS_PER_ROW * rows;
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
+
+  useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
   // useEffect(() => console.log('items'), [items]);
 
@@ -236,15 +240,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         <div className={classes.grid}>
           <ImagesProvider
             hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={
-              // items
-              //   .map((x) => {
-              //     if (x.type === 'image') return x.data;
-              //     return null;
-              //   })
-              //   .filter(isDefined) as any
-              type === 'image' ? (items as any) : undefined
-            }
+            images={type === 'image' ? (items as any) : undefined}
           >
             <ReactionSettingsProvider
               settings={{

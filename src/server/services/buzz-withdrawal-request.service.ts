@@ -1,12 +1,17 @@
-import { BuzzWithdrawalRequestStatus, Prisma } from '@prisma/client';
+import {
+  BuzzWithdrawalRequestStatus,
+  Prisma,
+  UserPaymentConfigurationProvider,
+} from '@prisma/client';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory } from '~/server/common/enums';
+import { GenerationRequestStatus, NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
   payToStripeConnectAccount,
+  payToTipaltiAccount,
   revertStripeConnectTransfer,
-} from '~/server/services/user-stripe-connect.service';
+} from '~/server/services/user-payment-configuration.service';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
@@ -29,18 +34,29 @@ import { createBuzzTransaction, getUserBuzzAccount } from './buzz.service';
 export const createBuzzWithdrawalRequest = async ({
   amount,
   userId,
-}: CreateBuzzWithdrawalRequestSchema & {
+  provider,
+}: // Update schema to take target provider if needed.
+CreateBuzzWithdrawalRequestSchema & {
   userId: number;
 }) => {
-  const userStripeConnect = await dbRead.userStripeConnect.findFirst({
+  if (provider === UserPaymentConfigurationProvider.Stripe) {
+    throw throwBadRequestError('We have disabled Stripe payments for the time being.');
+  }
+
+  const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
     where: { userId },
   });
 
-  if (!userStripeConnect) {
+  if (!userPaymentConfiguration) {
     throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
   }
 
-  if (!userStripeConnect.payoutsEnabled) {
+  // Update here to support another provider.
+  const requirements =
+    provider === UserPaymentConfigurationProvider.Tipalti
+      ? userPaymentConfiguration.tipaltiPaymentsEnabled && userPaymentConfiguration.tipaltiAccountId
+      : userPaymentConfiguration.stripePaymentsEnabled && userPaymentConfiguration.stripeAccountId;
+  if (!requirements) {
     throw throwBadRequestError('Your account has not been approved yet and cannot withdraw funds');
   }
 
@@ -74,14 +90,27 @@ export const createBuzzWithdrawalRequest = async ({
   });
 
   try {
+    const providerData: {
+      requestedToProvider: UserPaymentConfigurationProvider;
+      requestedToId: string;
+    } =
+      provider === UserPaymentConfigurationProvider.Tipalti
+        ? {
+            requestedToProvider: UserPaymentConfigurationProvider.Tipalti,
+            requestedToId: userPaymentConfiguration.tipaltiAccountId as string,
+          }
+        : {
+            requestedToProvider: UserPaymentConfigurationProvider.Stripe,
+            requestedToId: userPaymentConfiguration.stripeAccountId as string,
+          };
     // Create the withdrawal request:
     const request = await dbWrite.buzzWithdrawalRequest.create({
       data: {
         userId,
-        connectedAccountId: userStripeConnect.connectedAccountId,
         buzzWithdrawalTransactionId: transaction.transactionId,
         requestedBuzzAmount: amount,
         platformFeeRate: constants.buzz.platformFeeRate,
+        ...providerData,
       },
       select: buzzWithdrawalRequestDetails,
     });
@@ -124,9 +153,6 @@ export const getPaginatedOwnedBuzzWithdrawalRequests = async (
   return getPagingData({ items, count: (count as number) ?? 0 }, limit, page);
 };
 
-export type BuzzWithdrawalRequestForModerator = AsyncReturnType<
-  typeof getPaginatedBuzzWithdrawalRequests
->['items'][number];
 export const getPaginatedBuzzWithdrawalRequests = async (
   input: GetPaginatedBuzzWithdrawalRequestSchema
 ) => {
@@ -250,6 +276,8 @@ export const updateBuzzWithdrawalRequest = async ({
   status,
   note,
   userId,
+  metadata: updatedMetadata,
+  refundFees,
 }: UpdateBuzzWithdrawalRequestSchema & {
   userId: number;
 }) => {
@@ -260,14 +288,55 @@ export const updateBuzzWithdrawalRequest = async ({
 
   const possibleStates = BuzzWithdrawalStatusStateMap[request.status];
 
-  if (!possibleStates.includes(status)) {
+  if (!possibleStates.includes(status) && request.status !== status) {
     throw throwBadRequestError(
       `You cannot change the status of a withdrawal request from ${request.status} to ${status}`
     );
   }
 
   // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
-  const metadata: BuzzWithdrawalRequestHistoryMetadataSchema = {};
+  let metadata: BuzzWithdrawalRequestHistoryMetadataSchema = (request.metadata ??
+    {}) as BuzzWithdrawalRequestHistoryMetadataSchema;
+
+  metadata = {
+    ...metadata,
+    ...(updatedMetadata ?? {}),
+  };
+
+  if (status === request.status) {
+    // Update metadata and move on
+    await dbWrite.buzzWithdrawalRequestHistory.create({
+      data: {
+        updatedById: userId,
+        requestId,
+        status,
+        metadata: metadata as any,
+        note,
+      },
+    });
+
+    await dbWrite.buzzWithdrawalRequest.update({
+      where: { id: requestId },
+      data: {
+        metadata: metadata as any,
+      },
+    });
+
+    const updatedRequest = await dbWrite.buzzWithdrawalRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: buzzWithdrawalRequestModerationDetails,
+    });
+
+    await createNotification({
+      userId: request.userId as number,
+      type: 'creators-program-withdrawal-updated',
+      category: NotificationCategory.System,
+      key: `creators-program-withdrawal-updated:${uuid()}`,
+      details: {},
+    }).catch();
+
+    return updatedRequest;
+  }
 
   if (
     status === BuzzWithdrawalRequestStatus.Rejected ||
@@ -275,10 +344,14 @@ export const updateBuzzWithdrawalRequest = async ({
   ) {
     const transaction = await createBuzzTransaction({
       fromAccountId: 0, // bank
-      toAccountId: userId,
-      amount: request.requestedBuzzAmount,
+      toAccountId: request.userId as number,
+      amount: request.requestedBuzzAmount - (refundFees ?? 0),
       type: TransactionType.Refund,
-      description: 'Refund due to rejection or cancellation of withdrawal request',
+      description: `Refund due to rejection or cancellation of withdrawal request. ${
+        refundFees
+          ? `A total of ${refundFees} BUZZ has not been refunded due to fees by the Payment provider upon issues with the payment`
+          : ''
+      }`,
       externalTransactionId: request.buzzWithdrawalTransactionId,
     });
 
@@ -303,30 +376,68 @@ export const updateBuzzWithdrawalRequest = async ({
       );
     }
     // Transfer the funds to the user's stripe account:
-    const userStripeConnect = await dbRead.userStripeConnect.findFirst({
+    const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
       where: { userId: request.userId },
     });
 
-    if (!userStripeConnect) {
+    if (!userPaymentConfiguration) {
+      throw throwBadRequestError('We could not find a payment configuration for the provided user');
+    }
+
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Stripe) {
+      const transfer = await payToStripeConnectAccount({
+        toUserId: request.userId as number, // Ofcs, user should exist for one.
+        amount: payoutAmount, // Tipalti doesn't use cents like 99% of other payment processors.
+        description: `Payment for withdrawal request ${requestId}`,
+        byUserId: userId,
+        metadata: {
+          requestId,
+          platformFee,
+          paymentBy: userId,
+          platformFeeRate: request.platformFeeRate,
+          requestedBuzzAmount: request.requestedBuzzAmount,
+          buzzTransactionId: request.buzzWithdrawalTransactionId,
+        },
+      });
+
+      metadata.stripeTransferId = transfer.id;
+    }
+
+    if (request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti && userId !== -1) {
+      throw throwBadRequestError(
+        'Tipalti is not supported for transfers. Approving the request will create a transfer request in the Tipalti dashboard.'
+      );
+    }
+  }
+
+  if (
+    status === BuzzWithdrawalRequestStatus.Approved &&
+    request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+  ) {
+    if (!request.userId) {
+      throw throwBadRequestError(
+        'The user you are trying to transfer to has been deleted or a problem caused the withdrawal request to be orphaned.'
+      );
+    }
+    // Transfer the funds to the user's stripe account:
+    const userPaymentConfiguration = await dbRead.userPaymentConfiguration.findFirst({
+      where: { userId: request.userId },
+    });
+
+    if (!userPaymentConfiguration) {
       throw throwBadRequestError('You must have a connected stripe account to withdraw funds');
     }
 
-    const transfer = await payToStripeConnectAccount({
+    const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
+      requestId,
       toUserId: request.userId as number, // Ofcs, user should exist for one.
-      amount: payoutAmount,
+      amount: payoutAmount / 100, // Tipalti doesn't use cents like 99% of other payment processors.
       description: `Payment for withdrawal request ${requestId}`,
       byUserId: userId,
-      metadata: {
-        requestId,
-        platformFee,
-        paymentBy: userId,
-        platformFeeRate: request.platformFeeRate,
-        requestedBuzzAmount: request.requestedBuzzAmount,
-        buzzTransactionId: request.buzzWithdrawalTransactionId,
-      },
     });
 
-    metadata.stripeTransferId = transfer.id;
+    metadata.tipaltiPaymentBatchId = paymentBatchId;
+    metadata.tipaltiPaymentRefCode = paymentRefCode;
   }
 
   if (status === BuzzWithdrawalRequestStatus.Reverted) {
@@ -363,11 +474,13 @@ export const updateBuzzWithdrawalRequest = async ({
 
     metadata.buzzTransactionId = transaction.transactionId;
 
-    const revesal = await revertStripeConnectTransfer({
-      transferId: transferRecordMetadata.stripeTransferId as string,
-    });
+    if (request.requestedToProvider === 'Stripe') {
+      const revesal = await revertStripeConnectTransfer({
+        transferId: transferRecordMetadata.stripeTransferId as string,
+      });
 
-    metadata.stripeReversalId = revesal.id;
+      metadata.stripeReversalId = revesal.id;
+    }
   }
 
   try {
@@ -377,7 +490,7 @@ export const updateBuzzWithdrawalRequest = async ({
         updatedById: userId,
         requestId,
         status,
-        metadata,
+        metadata: metadata as any,
         note,
       },
     });
@@ -387,8 +500,27 @@ export const updateBuzzWithdrawalRequest = async ({
       await dbWrite.buzzWithdrawalRequest.update({
         where: { id: requestId },
         data: {
-          transferId: metadata.stripeTransferId,
+          transferId:
+            request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+              ? undefined
+              : metadata.stripeTransferId,
           transferredAmount: payoutAmount,
+          metadata: metadata as any,
+        },
+      });
+    }
+
+    if (
+      status === BuzzWithdrawalRequestStatus.Approved &&
+      request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
+    ) {
+      // Ensure we update the main request details:
+      await dbWrite.buzzWithdrawalRequest.update({
+        where: { id: requestId },
+        data: {
+          transferId: metadata.tipaltiPaymentRefCode,
+          transferredAmount: payoutAmount,
+          metadata: metadata as any,
         },
       });
     }

@@ -13,7 +13,13 @@ import {
   ScrollArea,
   ButtonProps,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter, IconThumbUpFilled, IconThumbDownFilled, IconHeartFilled } from '@tabler/icons-react';
+import {
+  IconChevronDown,
+  IconFilter,
+  IconThumbUpFilled,
+  IconThumbDownFilled,
+  IconHeartFilled,
+} from '@tabler/icons-react';
 import { useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
@@ -27,16 +33,14 @@ export function MarkerFiltersDropdown(props: Props) {
     setFilters: state.setMarkerFilters,
   }));
 
-  return (
-    <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />
-  );
+  return <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
 }
 
 const ICONS = {
   default: IconFilter,
   liked: IconThumbUpFilled,
   disliked: IconThumbDownFilled,
-  favorited: IconHeartFilled
+  favorited: IconHeartFilled,
 };
 
 function getIcon(type: MarkerType | undefined) {
@@ -47,7 +51,7 @@ export function DumbMarkerFiltersDropdown({
   filters,
   setFilters,
   filterMode = 'local',
-  position = 'bottom-end',
+  position = 'bottom-start',
   isFeed,
   ...buttonProps
 }: Props & {
@@ -120,7 +124,8 @@ export function DumbMarkerFiltersDropdown({
                   setMarker(checked ? marker : undefined);
                   setFilters({ marker: checked ? marker : undefined });
                 }}
-                {...chipProps}>
+                {...chipProps}
+              >
                 <Group spacing={4} noWrap>
                   <Icon size={16} /> {marker}
                 </Group>
@@ -129,43 +134,43 @@ export function DumbMarkerFiltersDropdown({
           })}
         </Group>
       </Stack>
-    </Stack >
+    </Stack>
   );
 
-  if (mobile)
-    return (
-      <IsClient>
-        {target}
-        <Drawer
-          opened={opened}
-          onClose={() => setOpened(false)}
-          size="90%"
-          position="bottom"
-          styles={{
-            drawer: {
-              height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
-            },
-            body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-            header: { padding: '4px 8px' },
-            closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
-          }}
-        >
-          {dropdown}
-        </Drawer>
-      </IsClient>
-    );
+  // if (mobile)
+  //   return (
+  //     <IsClient>
+  //       {target}
+  //       <Drawer
+  //         opened={opened}
+  //         onClose={() => setOpened(false)}
+  //         size="90%"
+  //         position="bottom"
+  //         styles={{
+  //           drawer: {
+  //             height: 'auto',
+  //             maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+  //           },
+  //           body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
+  //           header: { padding: '4px 8px' },
+  //           closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
+  //         }}
+  //       >
+  //         {dropdown}
+  //       </Drawer>
+  //     </IsClient>
+  //   );
 
   return (
     <IsClient>
       <Popover
-        zIndex={200}
+        zIndex={300}
         position={position}
         shadow="md"
         onClose={() => setOpened(false)}
-        middlewares={{ flip: true, shift: true }}
+        // middlewares={{ flip: true, shift: true }}
         withinPortal
-        withArrow
+        // withArrow
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} w="100%">

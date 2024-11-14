@@ -1,7 +1,6 @@
 import { Stack, Title } from '@mantine/core';
-import { Announcements } from '~/components/Announcements/Announcements';
-import { setPageOptions } from '~/components/AppLayout/AppLayout';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -23,7 +22,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function ArticlesPage() {
+function ArticlesPage() {
   const { query } = useArticleQueryParams();
 
   return (
@@ -35,7 +34,6 @@ export default function ArticlesPage() {
       />
 
       <MasonryContainer>
-        <Announcements />
         <Stack spacing="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
           <ArticleCategories />
@@ -46,4 +44,4 @@ export default function ArticlesPage() {
   );
 }
 
-setPageOptions(ArticlesPage, { innerLayout: FeedLayout });
+export default Page(ArticlesPage, { InnerLayout: FeedLayout, announcements: true });

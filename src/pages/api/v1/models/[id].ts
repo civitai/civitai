@@ -35,6 +35,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
         sort: ModelSort.HighestRated,
         favorites: false,
         hidden: false,
+        archived: true,
         period: 'AllTime',
         periodMode: 'published',
         browsingLevel: allBrowsingLevelsFlag,

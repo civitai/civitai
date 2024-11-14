@@ -22,9 +22,6 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 export default function UserSearch() {
   return (
     <SearchLayout.Root>
-      <SearchLayout.Filters>
-        <RenderFilters />
-      </SearchLayout.Filters>
       <SearchLayout.Content>
         <SearchHeader />
         <UserHitList />
@@ -180,5 +177,16 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
 }
 
 UserSearch.getLayout = function getLayout(page: React.ReactNode) {
-  return <SearchLayout indexName={USERS_SEARCH_INDEX}>{page}</SearchLayout>;
+  return (
+    <SearchLayout
+      indexName={USERS_SEARCH_INDEX}
+      leftSidebar={
+        <SearchLayout.Filters>
+          <RenderFilters />
+        </SearchLayout.Filters>
+      }
+    >
+      {page}
+    </SearchLayout>
+  );
 };

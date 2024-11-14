@@ -23,8 +23,8 @@ import { IconTrash } from '@tabler/icons-react';
 import { formatDate } from '../../../utils/date-helpers';
 import { getDisplayName } from '../../../utils/string-helpers';
 import { IconPencil } from '@tabler/icons-react';
-import { dialogStore } from '../../Dialog/dialogStore';
-import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
+// import { dialogStore } from '../../Dialog/dialogStore';
+// import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '../../../utils/notifications';
 import { IconClipboard } from '@tabler/icons-react';
@@ -113,13 +113,13 @@ export function ClubAdminInvitesPaged({ clubId }: Props) {
                           variant="transparent"
                           aria-label="Update invite"
                           onClick={() => {
-                            dialogStore.trigger({
-                              component: ClubAdminInviteUpsertModal,
-                              props: {
-                                clubId,
-                                clubAdminInvite: invite,
-                              },
-                            });
+                            // dialogStore.trigger({
+                            //   component: ClubAdminInviteUpsertModal,
+                            //   props: {
+                            //     clubId,
+                            //     clubAdminInvite: invite,
+                            //   },
+                            // });
                           }}
                         >
                           <IconPencil />

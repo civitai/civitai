@@ -17,9 +17,12 @@ export const EmailLogin = ({ returnUrl }: { returnUrl: string }) => {
   const handleEmailLogin = async ({ email }: z.infer<typeof schema>) => {
     setStatus('loading');
     const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
-
-    if (result && result.error) {
+    if (result?.error === 'AccessDenied') {
       router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
+      setStatus('idle');
+      return;
+    } else if (result?.error) {
+      router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
       setStatus('idle');
       return;
     }

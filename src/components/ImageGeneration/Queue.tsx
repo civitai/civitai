@@ -34,7 +34,7 @@ export function Queue() {
       break;
   }
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError } =
     useGetTextToImageRequests({
       tags: workflowTagsFilter,
     });
@@ -90,11 +90,7 @@ export function Queue() {
     );
 
   return (
-    <ScrollArea
-      scrollRestore={{ key: 'queue' }}
-      className="flex flex-col gap-2 px-3"
-      id="generator-queue"
-    >
+    <div className="flex flex-col gap-2 px-3">
       <Text size="xs" color="dimmed" mt="xs">
         <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
         Images are kept in the generator for 30 days.
@@ -117,13 +113,16 @@ export function Queue() {
         )}
       </div>
       {hasNextPage ? (
-        <InViewLoader loadFn={fetchNextPage} loadCondition={!!data.length && !isRefetching}>
+        <InViewLoader
+          loadFn={fetchNextPage}
+          loadCondition={!isFetching && !isRefetching && hasNextPage}
+        >
           <Center sx={{ height: 60 }}>
             <Loader />
           </Center>
         </InViewLoader>
       ) : null}
-    </ScrollArea>
+    </div>
   );
 }
 

@@ -4,7 +4,6 @@ import { MetricTimeframe } from '@prisma/client';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect } from 'react';
-import { IntersectionOptions } from 'react-intersection-observer';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
@@ -31,7 +30,6 @@ type ImagesInfiniteProps = {
   filterType?: 'images' | 'videos';
   showAds?: boolean;
   showEmptyCta?: boolean;
-  nextPageLoaderOptions?: IntersectionOptions;
   useIndex?: boolean;
 };
 
@@ -51,7 +49,6 @@ export function ImagesInfiniteContent({
   filterType = 'images',
   showAds,
   showEmptyCta,
-  nextPageLoaderOptions,
   useIndex,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
@@ -99,10 +96,9 @@ export function ImagesInfiniteContent({
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
-              loadCondition={!isFetching && hasNextPage}
+              loadCondition={!isFetching}
               // Forces a re-render whenever the amount of images fetched changes. Forces load-more if available.
               style={{ gridColumn: '1/-1' }}
-              inViewOptions={nextPageLoaderOptions}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">
                 <Loader />

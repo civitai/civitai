@@ -8,20 +8,21 @@ import {
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
-import { useUserStripeConnect } from '~/components/Stripe/stripe.utils';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { BuzzWithdrawalGetPaginatedItem } from '~/types/router';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
   filters?: Partial<GetPaginatedOwnedBuzzWithdrawalRequestSchema>,
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const currentUser = useCurrentUser();
-  const { userStripeConnect } = useUserStripeConnect();
+  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data, ...rest } = trpc.buzzWithdrawalRequest.getPaginatedOwned.useQuery(
     {
       ...filters,
     },
     {
-      enabled: !!currentUser && !!userStripeConnect,
+      enabled: !!currentUser && !!userPaymentConfiguration,
       ...options,
     }
   );
@@ -122,5 +123,5 @@ export const useQueryBuzzWithdrawalRequests = (
     return { requests, pagination, ...rest };
   }
 
-  return { requests: [], pagination: null, ...rest };
+  return { requests: [] as BuzzWithdrawalGetPaginatedItem[], pagination: null, ...rest };
 };

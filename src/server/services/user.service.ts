@@ -6,17 +6,13 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelEngagementType,
+  ModelStatus,
   Prisma,
 } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
-import {
-  banReasonDetails,
-  CacheTTL,
-  constants,
-  USERS_SEARCH_INDEX,
-} from '~/server/common/constants';
-import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { searchClient } from '~/server/meilisearch/client';
@@ -27,7 +23,6 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
-import { playfab } from '~/server/playfab/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -87,6 +82,8 @@ import {
 } from '~/server/services/paddle.service';
 import { logToAxiom } from '~/server/logging/client';
 import { getUserBanDetails } from '~/utils/user-helpers';
+import { updatePaddleCustomerEmail } from '~/server/paddle/client';
+import { unpublishModelById } from '~/server/services/model.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -161,7 +158,11 @@ export const getUserCreator = async ({
   });
   if (!user) return null;
 
-  const modelCount = dbRead.model.count({
+  /**
+   * TODO: seems to be deprecated, we are getting model count from the stats
+   * though it might be bugged since we are not updating stats if user deletes/unpublishes models
+   */
+  const modelCount = await dbRead.model.count({
     where: {
       userId: user?.id,
       status: 'Published',
@@ -170,10 +171,7 @@ export const getUserCreator = async ({
 
   return {
     ...user,
-
-    _count: {
-      models: Number(modelCount),
-    },
+    _count: { models: modelCount },
   };
 };
 
@@ -322,6 +320,14 @@ export const updateUserById = async ({
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
+  }
+
+  if (data.email && user.paddleCustomerId) {
+    // Update the email in Paddle
+    await updatePaddleCustomerEmail({
+      customerId: user.paddleCustomerId,
+      email: data.email as string,
+    });
   }
 
   return user;
@@ -528,7 +534,6 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_follow_user', userId: targetUserId });
   return true;
 };
 
@@ -559,7 +564,6 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
-  await playfab.trackEvent(userId, { eventName: 'user_hide_user', userId: targetUserId });
   return true;
 };
 
@@ -1020,7 +1024,9 @@ export const toggleBan = async ({
   reasonCode,
   detailsInternal,
   detailsExternal,
-}: ToggleBanUser) => {
+  userId,
+  isModerator,
+}: ToggleBanUser & { userId: number; isModerator?: boolean }) => {
   const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
@@ -1047,10 +1053,28 @@ export const toggleBan = async ({
 
   if (!user.bannedAt) {
     // Unpublish their models
-    await dbWrite.model.updateMany({
-      where: { userId: id },
-      data: { publishedAt: null, status: 'Unpublished' },
+    const models = await dbRead.model.findMany({
+      where: { userId: id, status: ModelStatus.Published },
     });
+
+    if (models.length) {
+      for (const model of models) {
+        await unpublishModelById({
+          id: model.id,
+          reason: 'other',
+          customMessage: 'User banned',
+          userId,
+          isModerator,
+        }).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'ban-user-unpublish-model',
+            message: error.message,
+            error,
+          });
+        });
+      }
+    }
 
     // Cancel their subscription
     await cancelSubscriptionPlan({ userId: id }).catch((error) =>

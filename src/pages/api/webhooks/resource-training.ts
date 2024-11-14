@@ -5,11 +5,14 @@ import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
+import { TrainingResultsV1 } from '~/server/schema/model-file.schema';
 import { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { refundTransaction } from '~/server/services/buzz.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
+
+// TODO delete this file when all v1 jobs have drained
 
 export type EpochSchema = z.infer<typeof epochSchema>;
 const epochSchema = z.object({
@@ -205,7 +208,7 @@ export async function updateRecords(
 
   const needsReview = !!maybeNeedsReview;
   const thisMetadata = (modelFile.metadata ?? {}) as FileMetadata;
-  const trainingResults = thisMetadata.trainingResults || {};
+  const trainingResults = (thisMetadata.trainingResults ?? {}) as TrainingResultsV1;
   const history = trainingResults.history || [];
 
   const last = history[history.length - 1];
