@@ -57,19 +57,21 @@ First, make sure that you have the following installed on your machine:
 ### Installation
 
 1. Clone the repository to your local machine.
-2. Run `make init`
-   * This command will do a few things:
-     * Creates a starter `env` file
-     * Installs npm packages
-     * Spins up docker containers
-     * Runs any additional database migrations
-     * Creates some dummy seed data
-     * Populates metrics and meilisearch
-     * Initializes prisma
-     * Runs the server
-   * Please report any issues with these commands to us on [discord][discord-url]
-   * If you see an error about `cross-env` not being found, make sure `node_modules/.bin` is added to your path:
-     * `export PATH="$PATH:$(realpath node_modules/.bin)"`
+2. Choose one:
+   * Run `make init`
+      * This command will do a few things:
+        * Creates a starter `env` file
+        * Installs npm packages
+        * Spins up docker containers
+        * Runs any additional database migrations
+        * Creates some dummy seed data
+        * Populates metrics and meilisearch
+        * Initializes prisma
+        * Runs the server
+      * Please report any issues with these commands to us on [discord][discord-url]
+      * If you see an error about `cross-env` not being found, make sure `node_modules/.bin` is added to your path:
+        * `export PATH="$PATH:$(realpath node_modules/.bin)"`
+   * Use devcontainers
 3. Edit the `.env.development` file
     * Most default values are configured to work out of the box, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
     * Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
