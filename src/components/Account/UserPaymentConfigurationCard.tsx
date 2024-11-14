@@ -304,19 +304,6 @@ const TipaltiConfigurationCard = () => {
       <Stack>
         <Group position="apart">
           <Title order={3}>Tipalti Account</Title>
-          <ActionIcon
-            onClick={() => {
-              dialogStore.trigger({
-                component: FeatureIntroductionModal,
-                props: {
-                  feature: 'getting-started',
-                  contentSlug: ['feature-introduction', 'stripe-connect'],
-                },
-              });
-            }}
-          >
-            <IconInfoCircle />
-          </ActionIcon>
         </Group>
       </Stack>
 
@@ -335,10 +322,28 @@ const TipaltiConfigurationCard = () => {
           </Stack>
         </>
       ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
-        <Text>
-          Your account is setup and you should be good to withdraw. You can click the button below
-          if you need to make any adjustments to your account.
-        </Text>
+        <>
+          {userPaymentConfiguration?.tipaltiPaymentsEnabled ? (
+            <Text>
+              Your account is set up and ready for withdrawals. Click below to make any adjustments
+              to your Tipalti account settings.
+            </Text>
+          ) : (
+            <Stack>
+              <Text>
+                Your account has been activated but you are still not able to withdraw. If you had a
+                failed payment, Tipalti will mark the account as not payable until you fix the
+                problem.
+              </Text>
+
+              <Text>
+                If you have not had a failed payment, this might be due to document verification and
+                validation. You will be notified once this changes.
+              </Text>
+              <Text>If you think this is an error, please contact support.</Text>
+            </Stack>
+          )}
+        </>
       ) : (
         <Text>
           We are unable to setup your account so that you can withdraw funds. You may contact
@@ -358,7 +363,7 @@ const TipaltiConfigurationCard = () => {
           rel="nofollow noreferrer"
           fullWidth
         >
-          Setup my Tipalti Account
+          Set up my Tipalti Account
         </Button>
       )}
     </>

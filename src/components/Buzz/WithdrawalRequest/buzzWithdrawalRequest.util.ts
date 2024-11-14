@@ -9,6 +9,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { BuzzWithdrawalGetPaginatedItem } from '~/types/router';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
   filters?: Partial<GetPaginatedOwnedBuzzWithdrawalRequestSchema>,
@@ -122,5 +123,5 @@ export const useQueryBuzzWithdrawalRequests = (
     return { requests, pagination, ...rest };
   }
 
-  return { requests: [], pagination: null, ...rest };
+  return { requests: [] as BuzzWithdrawalGetPaginatedItem[], pagination: null, ...rest };
 };

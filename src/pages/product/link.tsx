@@ -52,7 +52,7 @@ export default function LinkApp(props: ServerSideProps) {
     <>
       <Meta
         title="Civitai Link | One-click install Stable Diffusion & Flux models"
-        description="Directly download any models from Civitai to your Stable Diffusion & Flux model library."
+        description="Directly download any resource from Civitai to your local model library."
       />
       <Container>
         <Flex
@@ -64,6 +64,9 @@ export default function LinkApp(props: ServerSideProps) {
             <Title className={classes.heroTitle} order={1}>
               Civitai Link App
             </Title>
+            <Text className={classes.copy}>
+              For Windows, Linux, and MacOS.
+            </Text>  
             {!isMember ? (
               <Text className={classes.heroText}>
                 ❤️ Civitai Link is only available to Supporters
@@ -84,10 +87,10 @@ export default function LinkApp(props: ServerSideProps) {
 
         <Stack spacing={12} mb={40}>
           <Title className={classes.heading} order={2}>
-            Add models to your library with one click
+            Add models to your local library with one click
           </Title>
           <Text className={classes.copy}>
-            Directly add any models from Civitai to your Stable Diffusion & Flux model library with just one
+            Directly add any resource from Civitai to your local model library with just one
             click.
           </Text>
         </Stack>
@@ -107,7 +110,7 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading}>
-              See at a glance any model installed while browsing the site
+              See instantly which models you have stored in your local library as you browse the site
             </Title>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -124,11 +127,10 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
-              Pair with your Vault so you can easily free up space
+              Pair with your Civitai Vault to free-up local disk space
             </Title>
             <Text className={classes.copy}>
-              Models added to Vault will not be deleted even if the creator removed them from
-              Civitai.
+              Models saved to Civitai Vault remain accessible, even if removed from Civitai by the creator.
             </Text>
           </Grid.Col>
         </Grid>
@@ -147,10 +149,10 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
-              Manage files
+              Manage your files
             </Title>
             <Text className={classes.copy}>
-              Directly add or remove any models from Civitai to your Stable Diffusion & Flux model library.
+              Sync your local model library to Civitai for image previews, trigger words, and more.
             </Text>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -167,10 +169,10 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading} order={3}>
-              Keep track of activities
+              Keep track of your activities
             </Title>
             <Text className={classes.copy}>
-              See the history of all the models you have added to your Stable Diffusion & Flux model library.
+              View the history of all models you&apos;ve added to your local model library.
             </Text>
           </Grid.Col>
         </Grid>

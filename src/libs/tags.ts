@@ -50,5 +50,14 @@ export function getTagDisplayName(name: string) {
 
 export const tagsNeedingReview = ['child', 'teen', 'baby', 'girl', 'boy'];
 export const tagsToIgnore: Partial<Record<TagSource, string[]>> = {
-  Rekognition: ['baby', 'emaciated bodies', 'weapons'],
+  Rekognition: [
+    'baby',
+    'emaciated bodies',
+    'weapons',
+    // Adding these since Rekognition seems to be tagging anything red...
+    'extremist',
+    'hate symbols',
+    'nazi party',
+    'white supremacy',
+  ],
 };

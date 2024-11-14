@@ -65,9 +65,9 @@ const featureFlags = createFeatureFlags({
   },
   profileCollections: ['public'],
   imageSearch: ['dev'],
-  buzz: isDev ? ['granted'] : ['public'],
-  signal: isDev ? ['granted'] : ['user'],
-  recommenders: isDev ? ['granted'] : ['dev', 'mod'],
+  buzz: isDev ? ['granted', 'public'] : ['public'],
+  signal: isDev ? ['granted', 'user'] : ['user'],
+  recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
     default: true,
@@ -108,9 +108,11 @@ const featureFlags = createFeatureFlags({
   canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
+  // Temporarily disabled until we change ads provider -Manuel
   adsEnabled: ['public', 'blue', 'green'],
   paddleAdjustments: ['granted'],
-  admin: ['granted'],
+  announcements: ['granted'],
+  blocklists: ['granted'],
   toolSearch: ['public'],
 });
 

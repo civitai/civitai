@@ -1,11 +1,11 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server.mjs';
 import { Readable } from 'node:stream';
-import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { dbRead } from '~/server/db/client';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
+import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 
 export const config = {
   api: {
@@ -52,9 +52,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      const client = await tipaltiCaller();
       const buffAsString = buf.toString('utf8');
-
+      const client = await tipaltiCaller();
       const { isValid, ...data } = client.validateWebhookEvent(sig as string, buffAsString);
       const { isValid: isValid2, ...data2 } = client.validateWebhookEvent(
         sig as string,
@@ -122,7 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           break;
         }
         case 'paymentCompleted':
-        case 'paymentError':
+        case 'paymentSubmitted':
         case 'paymentDeferred':
         case 'paymentCanceled': {
           const payment = event.eventData as { refCode: string; paymentStatus: string };
@@ -143,7 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const status =
             event.type === 'paymentCompleted'
               ? BuzzWithdrawalRequestStatus.Transferred
-              : event.type === 'paymentError' || event.type === 'paymentDeferred'
+              : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
               ? BuzzWithdrawalRequestStatus.Approved
               : BuzzWithdrawalRequestStatus.Rejected;
 
@@ -158,12 +157,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const note =
             event.type === 'paymentCompleted'
               ? 'Payment completed'
-              : event.type === 'paymentError'
-              ? `Payment error: ${event.eventData.errorDescription}`
               : event.type === 'paymentDeferred'
               ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
                   .map((r: { reasonDescription: string }) => r.reasonDescription)
                   .join(', ')}`
+              : event.type === 'paymentSubmitted'
+              ? 'Payment submitted'
               : 'Payment canceled';
 
           await updateBuzzWithdrawalRequest({
@@ -172,6 +171,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             metadata,
             note,
             userId: -1, // Done by Webhook
+          });
+
+          break;
+        }
+        case 'paymentError': {
+          const payment = event.eventData as { refCode: string; paymentStatus: string };
+          const request = await dbRead.buzzWithdrawalRequest.findFirst({
+            where: {
+              transferId: payment.refCode,
+            },
+          });
+
+          if (!request) {
+            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+            return res
+              .status(400)
+              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
+          }
+
+          const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+
+          if (!paymentRecord) {
+            throw new Error('Could not fetch payment record');
+          }
+
+          const feesTotal = paymentRecord?.fees.reduce((acc, fee) => acc + fee.amount.amount, 0);
+          // Update the status of the withdrawal request:
+
+          await updateBuzzWithdrawalRequest({
+            requestId: request.id,
+            status: BuzzWithdrawalRequestStatus.Rejected,
+            metadata: {
+              ...((request.metadata as MixedObject) ?? {}),
+              cancelledDate: event.eventData.cancelledDate,
+              errorDescription: event.eventData.errorDescription,
+              errorCode: event.eventData.errorCode,
+              errorDate: event.eventData.errorDate,
+              deferredReasons: event.eventData.deferredReasons,
+            },
+            note: `Payment error: ${event.eventData.errorDescription}`,
+            userId: -1, // Done by Webhook
+            refundFees: feesTotal * 1000,
           });
 
           break;

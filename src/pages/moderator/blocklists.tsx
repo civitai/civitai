@@ -151,4 +151,4 @@ const AddOrRemoveItems = forwardRef<
 
 AddOrRemoveItems.displayName = 'AddOrRemoveItems';
 
-export default Page(BlocklistsPage, { features: (features) => features.admin });
+export default Page(BlocklistsPage, { features: (features) => features.blocklists });

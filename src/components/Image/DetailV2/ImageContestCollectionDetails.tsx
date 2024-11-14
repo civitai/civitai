@@ -1,9 +1,17 @@
 import { Anchor, Button, Card, Divider, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '@prisma/client';
-import { IconTournament } from '@tabler/icons-react';
+import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
+import { InfiniteData } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import produce from 'immer';
+import React from 'react';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { trpc, queryClient } from '~/utils/trpc';
 
 export const ImageContestCollectionDetails = ({
   imageId,
@@ -49,6 +57,23 @@ export const ImageContestCollectionDetails = ({
               category
             </>
           ) : null;
+          const inReview = item.status === CollectionItemStatus.REVIEW;
+
+          if (isModerator && inReview) {
+            return (
+              <div key={item.collection.id} className="flex flex-col gap-3">
+                <Divider />
+                <Text>
+                  This image is part of the{' '}
+                  <Text weight="bold" component="span">
+                    {item.collection.name}
+                  </Text>{' '}
+                  contest{tagDisplay}.{' '}
+                </Text>
+                <ReviewActions itemId={item.id} collectionId={item.collection.id} />
+              </div>
+            );
+          }
 
           if (isOwnerOrMod) {
             return (
@@ -93,7 +118,7 @@ export const ImageContestCollectionDetails = ({
                       title="Share now"
                       collect={{ type: CollectionType.Image, imageId }}
                     >
-                      <Button radius="xl" color="gray" size="sm" compact className="center">
+                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
                         <Text size="xs">Share Now</Text>
                       </Button>
                     </ShareButton>
@@ -146,3 +171,92 @@ export const ImageContestCollectionDetails = ({
     </Card>
   );
 };
+
+function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId: number }) {
+  const queryUtils = trpc.useUtils();
+
+  const updateCollectionItemsStatusMutation =
+    trpc.collection.updateCollectionItemsStatus.useMutation({
+      async onMutate({ collectionItemIds, status }) {
+        await queryUtils.collection.getAllCollectionItems.cancel();
+
+        const queryKey = getQueryKey(trpc.collection.getAllCollectionItems);
+        queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+          produce(state, (old?: InfiniteData<CollectionGetAllItems>) => {
+            if (!old?.pages?.length) return;
+
+            for (const page of old.pages)
+              for (const item of page.collectionItems) {
+                if (collectionItemIds.includes(item.id)) {
+                  item.status = status;
+                }
+              }
+          })
+        );
+      },
+      onSuccess(_, { status }) {
+        showSuccessNotification({ message: `The items have been ${status.toLowerCase()}` });
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Failed to review items',
+          error: new Error(error.message),
+        });
+      },
+    });
+
+  const handleApproveSelected = () => {
+    updateCollectionItemsStatusMutation.mutate({
+      collectionItemIds: [itemId],
+      status: CollectionItemStatus.ACCEPTED,
+      collectionId,
+    });
+  };
+
+  const handleRejectSelected = () => {
+    updateCollectionItemsStatusMutation.mutate({
+      collectionItemIds: [itemId],
+      status: CollectionItemStatus.REJECTED,
+      collectionId,
+    });
+  };
+
+  const status = updateCollectionItemsStatusMutation.variables?.status;
+  const loading = updateCollectionItemsStatusMutation.isLoading;
+
+  return (
+    <div className="flex items-center justify-center gap-4">
+      <PopConfirm
+        message={`Are you sure you want to reject this entry?`}
+        onConfirm={handleRejectSelected}
+        withArrow
+        withinPortal
+      >
+        <Button
+          className="flex-1"
+          leftIcon={<IconBan size="1.25rem" />}
+          color="red"
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.REJECTED}
+        >
+          Reject
+        </Button>
+      </PopConfirm>
+      <PopConfirm
+        message={`Are you sure you want to approve this entry?`}
+        onConfirm={handleApproveSelected}
+        withArrow
+        withinPortal
+      >
+        <Button
+          className="flex-1"
+          leftIcon={<IconCheck size="1.25rem" />}
+          disabled={loading}
+          loading={loading && status === CollectionItemStatus.ACCEPTED}
+        >
+          Approve
+        </Button>
+      </PopConfirm>
+    </div>
+  );
+}

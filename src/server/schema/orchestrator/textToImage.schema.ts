@@ -87,8 +87,8 @@ export const generateImageSchema = z.object({
   remixOfId: z.number().optional(),
   tips: z
     .object({
-      creators: z.number().min(0).max(1).default(0).optional(),
-      civitai: z.number().min(0).max(1).default(0).optional(),
+      creators: z.number().min(0).max(1).default(0),
+      civitai: z.number().min(0).max(1).default(0),
     })
     .optional(),
 });

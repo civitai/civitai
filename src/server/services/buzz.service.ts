@@ -34,7 +34,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { stripTime } from '~/utils/date-helpers';
+import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
 // import { adWatchedReward } from '~/server/rewards';
@@ -914,7 +914,8 @@ export async function getTransactionsReport({
       : input.window === 'week'
       ? dayjs().startOf('day').subtract(1, 'month')
       : dayjs().startOf('year');
-  const endDate = dayjs().endOf('day');
+  // End date is always the start of the next day
+  const endDate = dayjs().add(1, 'day').startOf('day');
 
   const query = QS.stringify({
     ...input,
@@ -940,5 +941,8 @@ export async function getTransactionsReport({
 
   const data = (await response.json()) as GetTransactionsReportResultSchema;
 
-  return data;
+  return data.map((record) => ({
+    ...record,
+    date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
+  }));
 }

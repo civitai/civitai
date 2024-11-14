@@ -101,7 +101,7 @@ const useStyles = createStyles<string, { columnWidth?: number; columnGap?: numbe
 
 export const LeaderboardsHomeBlock = ({ showAds, ...props }: Props) => {
   return (
-    <HomeBlockWrapper py={32} showAds={showAds}>
+    <HomeBlockWrapper py={32}>
       <LeaderboardsHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );

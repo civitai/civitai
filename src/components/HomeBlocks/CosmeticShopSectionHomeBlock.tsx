@@ -10,7 +10,7 @@ export function CosmeticShopSectionHomeBlock({ showAds, ...props }: Props) {
   if (!props.metadata.cosmeticShopSection) return null;
 
   return (
-    <HomeBlockWrapper py={32} showAds={showAds}>
+    <HomeBlockWrapper py={32}>
       <CosmeticShopSectionHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );

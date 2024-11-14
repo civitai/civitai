@@ -100,6 +100,11 @@ const transformData = async ({
         tags: tags.map((articleTag) => articleTag.tag),
         coverImage: {
           ...coverImage,
+          // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
+          nsfwLevel:
+            articleRecord.nsfwLevel === articleRecord.userNsfwLevel
+              ? articleRecord.nsfwLevel
+              : coverImage.nsfwLevel,
           meta: coverImage.meta as ImageMetaProps,
           tags: coverImage.tags.map((x) => x.tag),
         },

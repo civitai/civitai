@@ -286,7 +286,7 @@ export default function IntentPost() {
               vidData.height > constants.mediaUpload.maxVideoDimension
             )
               throw new Error(
-                `Videos cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image and try again.`
+                `Videos cannot be larger than ${constants.mediaUpload.maxVideoDimension}px from either side. Please resize your image or video and try again.`
               );
           })
           .catch((e) => {

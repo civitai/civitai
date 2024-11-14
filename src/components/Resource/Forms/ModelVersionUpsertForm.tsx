@@ -295,10 +295,18 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
   const showEarlyAccessInput =
-    maxEarlyAccessModels > 0 &&
-    features.earlyAccessModel &&
-    earlyAccessUnlockedDays.length > 0 &&
-    (!isPublished || atEarlyAccess);
+    currentUser?.isModerator ||
+    (maxEarlyAccessModels > 0 &&
+      features.earlyAccessModel &&
+      earlyAccessUnlockedDays.length > 0 &&
+      (!isPublished || atEarlyAccess));
+  console.log({
+    showEarlyAccessInput,
+    maxEarlyAccessModels,
+    earlyAccessUnlockedDays,
+    isPublished,
+    atEarlyAccess,
+  });
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS

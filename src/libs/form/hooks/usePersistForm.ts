@@ -75,7 +75,7 @@ export function usePersistForm<
 
   const form = useForm<TypeOf<TSchema>>({
     resolver: schema ? zodResolver(schema) : undefined,
-    defaultValues: _defaultValues.current,
+    defaultValues: _defaultValues.current as any,
     values: Object.keys(values).length
       ? typeof values === 'function'
         ? values(getParsedStorage())

@@ -69,13 +69,8 @@ export function ImageDetailByProps({
   image?: ImageProps | null;
 } & Partial<ImageGuardConnect>) {
   const { data = null, isLoading } = trpc.image.get.useQuery(
-    {
-      id: imageId,
-      withoutPost: true,
-    },
-    {
-      enabled: !!imageId,
-    }
+    { id: imageId, withoutPost: true },
+    { enabled: !!imageId }
   );
 
   const image = data || defaultImageItem || null;
@@ -141,10 +136,12 @@ export function ImageDetailByProps({
                         size="sm"
                         subText={
                           <>
-                            {image.createdAt && (
+                            {image.publishedAt || image.createdAt ? (
                               <Text size="xs" color="dimmed">
-                                Uploaded <DaysFromNow date={image.createdAt} />
+                                Uploaded <DaysFromNow date={image.publishedAt || image.createdAt} />
                               </Text>
+                            ) : (
+                              'Not Published'
                             )}
                           </>
                         }
