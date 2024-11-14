@@ -26,7 +26,7 @@ export async function getAllTools() {
 
 export async function getToolByName(name: string) {
   return dbRead.tool.findFirst({
-    where: { name },
+    where: { name: { equals: name, mode: 'insensitive' } },
     select: { id: true },
   });
 }

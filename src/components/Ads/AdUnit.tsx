@@ -13,6 +13,7 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useDebouncer } from '~/utils/debouncer';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;
@@ -26,8 +27,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
   const isClient = useIsClient();
   const [visible, setVisible] = useState(false);
   const { adsBlocked, isMember } = useAdsContext();
-  const isMobile =
-    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  const isMobile = isMobileDevice();
   const { withFeedback } = useAdUnitContext();
   const { item } = useAdUnitContext();
   // const focused = useIsLevelFocused();

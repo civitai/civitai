@@ -1,9 +1,15 @@
 import {
   Blob,
   ComfyStep,
+  HaiperVideoGenInput,
+  HaiperVideoGenOutput,
   ImageJobNetworkParams,
   TextToImageInput,
   TextToImageStep,
+  VideoBlob,
+  VideoGenOutput,
+  VideoGenStep,
+  Workflow,
   WorkflowStatus,
   WorkflowStep,
   WorkflowStepJob,
@@ -23,6 +29,7 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsSD3,
+  getRoundedUpscaleSize,
   getSizeFromAspectRatio,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
@@ -51,6 +58,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '@prisma/client';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -162,12 +171,13 @@ export async function parseGenerateImageInput({
   )
     throw throwBadRequestError('You have exceed the number of allowed resources.');
 
-  const checkpoint = resourceData.resources.find((x) => x.model.type === ModelType.Checkpoint);
-  if (!checkpoint)
-    throw throwBadRequestError('A checkpoint is required to make a generation request');
-  if (params.baseModel !== getBaseModelSetType(checkpoint.baseModel))
+  const model = resourceData.resources.find(
+    (x) => x.model.type === ModelType.Checkpoint || x.model.type === ModelType.Upscaler
+  );
+  if (!model) throw throwBadRequestError('A checkpoint is required to make a generation request');
+  if (params.baseModel !== getBaseModelSetType(model.baseModel))
     throw throwBadRequestError(
-      `Invalid base model. Checkpoint with baseModel: ${checkpoint.baseModel} does not match the input baseModel: ${params.baseModel}`
+      `Invalid base model. Checkpoint with baseModel: ${model.baseModel} does not match the input baseModel: ${params.baseModel}`
     );
 
   const injectableResources = getInjectablResources(params.baseModel);
@@ -185,10 +195,11 @@ export async function parseGenerateImageInput({
         .join(', ')}`
     );
 
-  const availableResourceTypes = getBaseModelResourceTypes(params.baseModel).map((x) => x.type);
+  const availableResourceTypes =
+    getBaseModelResourceTypes(params.baseModel)?.map((x) => x.type) ?? [];
   // const availableResourceTypes = config.additionalResourceTypes.map((x) => x.type);
   const availableResources = [
-    checkpoint,
+    model,
     ...resourceData.resources.filter((x) => availableResourceTypes.includes(x.model.type as any)),
   ];
 
@@ -273,32 +284,39 @@ export async function parseGenerateImageInput({
     batchSize = 4;
   }
 
+  if (!params.upscaleHeight || !params.upscaleWidth) {
+    params.upscaleHeight = params.height * 1.5;
+    params.upscaleWidth = params.width * 1.5;
+  }
+
+  const upscale =
+    params.upscaleHeight && params.upscaleWidth
+      ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+      : undefined;
+
   return {
     resources: [...availableResources, ...resourcesToInject],
-    params: {
+    params: removeEmpty({
       ...params,
       quantity,
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
       // temp?
-      upscaleWidth: getUpscaleSize(params.width, params.upscale),
-      upscaleHeight: getUpscaleSize(params.height, params.upscale),
-    },
+      upscaleWidth: upscale?.width,
+      upscaleHeight: upscale?.height,
+    }),
   };
-}
-
-function getUpscaleSize(src: number, multiplier = 1) {
-  return Math.ceil((src * multiplier) / 64) * 64;
 }
 
 function getResources(step: WorkflowStep) {
   if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-  else
+  else if (step.$type === 'textToImage')
     return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
       strength: x.networkParams.strength,
     }));
+  else return [];
 }
 
 function combineResourcesWithInputResource(
@@ -314,8 +332,7 @@ function combineResourcesWithInputResource(
   });
 }
 
-export type GeneratedImageResponseFormatted = AsyncReturnType<typeof formatGeneratedImageResponses>;
-export async function formatGeneratedImageResponses(workflows: GeneratedImageWorkflow[]) {
+export async function formatGenerationResponse(workflows: Workflow[]) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
@@ -334,7 +351,7 @@ export async function formatGeneratedImageResponses(workflows: GeneratedImageWor
         }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
-      steps: workflow.steps.map((step) =>
+      steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
           step,
@@ -369,18 +386,88 @@ function formatWorkflowStep(args: {
       return formatTextToImageStep(args);
     case 'comfy':
       return formatComfyStep(args);
+    case 'videoGen':
+      return formatVideoGenStep(args);
     default:
       throw new Error('failed to extract generation resources: unsupported workflow type');
   }
 }
 
-export function formatTextToImageStep({
+function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
+  const { input, output, jobs } = step as VideoGenStep;
+  const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
+
+  let width = videoMetadata.params?.width;
+  let height = videoMetadata.params?.height;
+
+  // if ((workflowId = '0-20241108234000287')) console.log(input);
+
+  const { params } = videoMetadata;
+  if (params) {
+    switch (params.engine) {
+      case 'haiper': {
+        const { aspectRatio, resolution } = params;
+        if (aspectRatio && resolution && (!width || !height)) {
+          const [rw, rh] = aspectRatio.split(':').map(Number);
+          width = resolution;
+          const ratio = width / rw;
+          height = ratio * rh;
+        }
+      }
+    }
+  }
+
+  const grouped = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
+    (acc, job, i) => ({
+      ...acc,
+      [job.id]:
+        [output?.video as VideoBlob]
+          ?.filter(isDefined)
+          .filter((x) => x.jobId === job.id)
+          .map((image) => ({
+            type: 'video',
+            progress: (output as HaiperVideoGenOutput).progress ?? 0,
+            workflowId,
+            stepName: step.name,
+            jobId: job.id,
+            id: image.id,
+            status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
+            completed: job.completedAt ? new Date(job.completedAt) : undefined,
+            url: image.url + '.mp4',
+            width: width ?? 1080,
+            height: height ?? 1080,
+          })) ?? [],
+    }),
+    {}
+  );
+  const videos = Object.values(grouped).flat();
+  const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+
+  return {
+    $type: 'videoGen' as const,
+    timeout: step.timeout,
+    name: step.name,
+    // workflow and quantity are only here because they are required for other components to function
+    params: {
+      ...input,
+      workflow: videoMetadata.params?.workflow,
+      quantity: 1,
+    },
+    images: videos,
+    status: step.status,
+    metadata,
+    resources: [],
+  };
+}
+
+function formatTextToImageStep({
   step,
-  resources: allResources,
+  resources: allResources = [],
   workflowId,
 }: {
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources?: AirResourceData[];
   workflowId: string;
 }) {
   const { input, output, jobs } = step as TextToImageStep;
@@ -438,14 +525,17 @@ export function formatTextToImageStep({
         output?.images
           ?.filter((x) => x.jobId === job.id)
           .map((image) => ({
+            type: 'image',
             workflowId,
-            stepName: step.name ?? '$0',
+            stepName: step.name,
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
+            height: input.height,
+            width: input.width,
           })) ?? [],
     }),
     {}
@@ -456,6 +546,14 @@ export function formatTextToImageStep({
   const injectableIds = Object.values(injectable)
     .map((x) => x?.id)
     .filter(isDefined);
+
+  const upscale =
+    'upscale' in input
+      ? {
+          upscaleWidth: input.width * (input.upscale as number),
+          upscaleHeight: input.height * (input.upscale as number),
+        }
+      : {};
 
   return {
     $type: 'textToImage' as const,
@@ -482,6 +580,7 @@ export function formatTextToImageStep({
       steps: metadata?.params?.steps ?? input.steps,
       cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
       sampler: metadata?.params?.sampler ?? sampler,
+      ...upscale,
 
       fluxMode: metadata?.params?.fluxMode,
     } as TextToImageParams,
@@ -494,15 +593,21 @@ export function formatTextToImageStep({
 
 export function formatComfyStep({
   step,
-  resources,
+  resources = [],
   workflowId,
 }: {
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources?: AirResourceData[];
   workflowId: string;
 }) {
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
+
+  if (params?.aspectRatio) {
+    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+    params.width = size.width;
+    params.height = size.height;
+  }
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -511,8 +616,9 @@ export function formatComfyStep({
         output?.blobs
           ?.filter((x) => x.jobId === job.id)
           .map((image) => ({
+            type: 'image',
             workflowId,
-            stepName: step.name ?? '$0',
+            stepName: step.name,
 
             jobId: job.id,
             id: image.id,
@@ -520,6 +626,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
+            height: params?.height ?? 512,
+            width: params?.width ?? 512,
           })) ?? [],
     }),
     {}
@@ -527,17 +635,19 @@ export function formatComfyStep({
 
   const images = Object.values(groupedImages).flat();
 
-  if (params?.aspectRatio) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
+  const upscale =
+    params && 'upscale' in params
+      ? {
+          upscaleWidth: params.width * (params.upscale as number),
+          upscaleHeight: params.height * (params.upscale as number),
+        }
+      : {};
 
   return {
     $type: 'comfy' as const,
     timeout: step.timeout,
     name: step.name,
-    params: { ...params! } as TextToImageParams,
+    params: { ...params!, ...upscale } as TextToImageParams,
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
@@ -555,13 +665,10 @@ export type GeneratedImageWorkflowModel = AsyncReturnType<
 export async function queryGeneratedImageWorkflows(
   props: Parameters<typeof queryWorkflows>[0] & { token: string }
 ) {
-  const { nextCursor, items } = await queryWorkflows({
-    ...props,
-    tags: [WORKFLOW_TAGS.IMAGE, ...(props.tags ?? [])],
-  });
+  const { nextCursor, items } = await queryWorkflows(props);
 
   return {
-    items: await formatGeneratedImageResponses(items as GeneratedImageWorkflow[]),
+    items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
     nextCursor,
   };
 }

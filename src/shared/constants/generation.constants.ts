@@ -8,10 +8,13 @@ import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
+  GENERATION: 'gen',
   IMAGE: 'img',
+  VIDEO: 'vid',
   FAVORITE: 'favorite',
   FOLDER: 'folder',
   FEEDBACK: {
@@ -24,6 +27,17 @@ export const generationServiceCookie = {
   name: 'generation-service',
   maxAge: 3600,
 };
+
+export const maxUpscaleSize = 8192;
+export function getRoundedUpscaleSize({ width, height }: { width: number; height: number }) {
+  const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
+  const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
+  const ratio = Math.min(maxWidth / width, maxHeight / height);
+  return {
+    width: Math.ceil((width * ratio) / 64) * 64,
+    height: Math.ceil((height * ratio) / 64) * 64,
+  };
+}
 
 // #region [statuses]
 export const generationStatusColors: Record<WorkflowStatus, MantineColor> = {
@@ -354,6 +368,7 @@ export const getClosestAspectRatio = (width?: number, height?: number, baseModel
   height = height ?? (baseModel === 'SDXL' ? 1024 : 512);
   const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
   const ratios = aspectRatios.map((x) => x.width / x.height);
+  if (!ratios.length) return '0';
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);
   return `${index ?? 0}`;
@@ -365,7 +380,8 @@ export function getWorkflowDefinitionFeatures(workflow?: {
   return {
     draft: workflow?.features?.includes('draft') ?? false,
     denoise: workflow?.features?.includes('denoise') ?? false,
-    upscale: workflow?.features?.includes('upscale') ?? false,
+    upscaleWidth: workflow?.features?.includes('upscale') ?? false,
+    upscaleHeight: workflow?.features?.includes('upscale') ?? false,
     image: workflow?.features?.includes('image') ?? false,
   };
 }
@@ -395,7 +411,6 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
-    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SD1] },
   ],
   SDXL: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
@@ -404,7 +419,6 @@ export const baseModelResourceTypes = {
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
-    // { type: ModelType.Upscaler, baseModels: [...baseModelSets.SDXL] },
   ],
   Pony: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
@@ -462,7 +476,7 @@ export const baseModelResourceTypes = {
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
-  throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
+  // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
 export const fluxModeOptions = [
@@ -471,56 +485,6 @@ export const fluxModeOptions = [
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
 ];
-
-// const generationInputConfig: GenerationInputConfig = {
-//   model: { type: 'resourceSelect' },
-//   resources: { type: 'resourceSelect', multiple: true },
-//   vae: { type: 'resourceSelect' },
-//   prompt: {},
-//   negativePrompt: {},
-//   nsfw: {},
-//   draft: {},
-//   sampler: { defaultValue: 'undefined' },
-//   steps: { min: 20, max: 50, defaultValue: 30 },
-//   cfg: { min: 2, max: 20, defaultValue: 3.5 },
-//   workflow: {},
-//   clipSkip: {},
-//   fluxMode: {
-//     type: 'segmentedControl',
-//     options: [
-//       { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
-//       { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
-//       { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
-//     ],
-//   },
-// };
-
-// function getGenerationConfigSettings(baseModel: SupportedBaseModel) {
-//   const config = {
-//     resources: true,
-//     vae: true,
-//     negativePrompt: true,
-//     nsfw: true,
-//     draft: true,
-//     sampler: true,
-//     workflow: true,
-//     clipSkip: true,
-//   };
-
-//   if (baseModel === 'Flux1') {
-//     for (const key in config) {
-//       config[key as keyof typeof config] = false;
-//     }
-//   }
-
-//   return { config };
-// }
-
-// function getStepConfig(baseModel: SupportedBaseModel, draft: boolean, max?: number) {
-//   if(baseModel === 'Flux1') {
-//     return draft ? { min: 4, max: 4, defaultValue: 4 } : { min: 20, max: 50, defaultValue: 30 };
-//   }
-// }
 
 export function getBaseModelSetTypes({
   modelType,
@@ -540,4 +504,55 @@ export function getBaseModelSetTypes({
     })
     .map(([key]) => key) as SupportedBaseModel[];
 }
+// #endregion
+
+// #region [workflows]
+export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'haiper',
+    key: 'haiper-txt2vid',
+    defaultValues: {
+      prompt: '',
+      negativePrompt: '',
+      aspectRatio: '1:1',
+      duration: 4,
+      seed: undefined,
+      enablePromptEnhancer: true,
+    },
+    metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
+  },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'haiper',
+    key: 'haiper-img2vid',
+    defaultValues: {
+      prompt: '',
+      duration: 4,
+      seed: undefined,
+      enablePromptEnhancer: true,
+    },
+    metadataDisplayProps: ['duration', 'seed', 'resolution'],
+  },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'mochi',
+    key: 'mochi-txt2vid',
+    defaultValues: {
+      prompt: '',
+      seed: undefined,
+      enablePromptEnhancer: true,
+    },
+    metadataDisplayProps: ['seed'],
+  },
+];
 // #endregion

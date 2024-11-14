@@ -245,7 +245,7 @@ function EditDetail() {
                       </div>
                     ))}
                   </div>
-                  {!isBlocked && (
+                  {!isBlocked && !('engine' in (image.meta ?? {})) && (
                     <div>
                       <Button
                         variant="light"
@@ -400,7 +400,7 @@ function EditDetail() {
             {/*
           // #region [missing resources]
           */}
-            {!resources?.length && (
+            {!resources?.length && image.type === 'image' && (
               <Alert className="rounded-lg" color="yellow">
                 <div className="flex flex-col gap-3">
                   <div className="flex items-center gap-2">

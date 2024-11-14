@@ -9,46 +9,9 @@ export type WorkflowDefinition = {
   selectable?: boolean;
   template: string;
   features?: (typeof workflowDefinitionFeatures)[number][];
-  inputs?: InputSchema[];
   remix?: WorkflowDefinitionKey;
   status?: 'mod-only' | 'published' | 'disabled';
 };
-
-// TODO - these will need to be defined as an input schema first, then as a workflow input schema
-type InputBase = {
-  key: string;
-  label: string;
-  defaultValue: any;
-  required: boolean;
-};
-
-type NumberInput = InputBase & {
-  type: 'number';
-  variant?: 'stepper' | 'slider';
-  min?: number;
-  max?: number;
-  step?: number;
-};
-
-type TextInput = InputBase & {
-  type: 'text';
-  maxLength?: number;
-  minLength?: number;
-};
-
-type SelectInput = InputBase & {
-  type: 'select';
-  options: { label: string; value: string }[];
-};
-
-type ImageInput = InputBase & {
-  type: 'image';
-  maxWidth?: number;
-  maxHeight?: number;
-  resizeToFit?: boolean;
-};
-
-export type InputSchema = NumberInput | TextInput | SelectInput | ImageInput;
 
 export const workflowDefinitionLabel: Record<WorkflowDefinitionType, string> = {
   txt2img: 'Text-to-image',

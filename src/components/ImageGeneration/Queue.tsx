@@ -42,7 +42,7 @@ export function Queue() {
   if (isError)
     return (
       <Alert color="red">
-        <Text align="center">Could not retrieve image generation requests</Text>
+        <Text align="center">Could not retrieve generation requests</Text>
       </Alert>
     );
 

@@ -1,4 +1,4 @@
-import { TypeOf, z, AnyZodObject, ZodEffects } from 'zod';
+import { TypeOf, z, AnyZodObject, ZodEffects, input } from 'zod';
 import {
   Path,
   useForm,
@@ -13,7 +13,7 @@ import { getDeepPartialWithoutChecks } from '~/utils/zod-helpers';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {
-    clear: () => void;
+    // clear: () => void;
   };
 
 export function usePersistForm<
@@ -27,11 +27,11 @@ export function usePersistForm<
     version?: number;
     exclude?: TExclude;
     defaultValues?:
-      | DeepPartial<TypeOf<TSchema>>
-      | ((storageValues: DeepPartial<TypeOf<TSchema>>) => DeepPartial<TypeOf<TSchema>>);
+      | DeepPartial<input<TSchema>>
+      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
     values?:
-      | DeepPartial<TypeOf<TSchema>>
-      | ((storageValues: DeepPartial<TypeOf<TSchema>>) => DeepPartial<TypeOf<TSchema>>);
+      | DeepPartial<input<TSchema>>
+      | ((storageValues: DeepPartial<input<TSchema>>) => DeepPartial<input<TSchema>>);
   }
 ) {
   const {
@@ -52,7 +52,7 @@ export function usePersistForm<
       version: z.number().default(version),
     });
 
-  const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
+  // const _formControl = useRef<UsePersistFormReturn<TypeOf<TSchema>> | undefined>();
   const _defaultValues = useRef<DeepPartial<TypeOf<TSchema>> | undefined>();
   if (!_defaultValues.current) {
     if (defaultValues)
@@ -62,8 +62,7 @@ export function usePersistForm<
           : Object.keys(defaultValues).length
           ? { ...getParsedStorage(), ...defaultValues }
           : undefined;
-
-    if (values) {
+    if (values && !_defaultValues.current) {
       _defaultValues.current =
         typeof values === 'function'
           ? values(getParsedStorage())
@@ -92,6 +91,9 @@ export function usePersistForm<
     const defaults = { state: {}, version };
     if (!_storageSchema.current) return defaults;
 
+    const prompt = localStorage.getItem('generation:prompt') ?? '';
+    const negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
+
     const obj = JSON.parse(value);
     const result = _storageSchema.current.safeParse(obj);
     const response = result.success ? result.data : defaults;
@@ -100,14 +102,14 @@ export function usePersistForm<
       return defaults;
     }
     return {
-      state: response.state ?? {},
+      state: { ...response.state, prompt, negativePrompt } ?? {},
       version: response.version,
     };
   }
 
   function getParsedStorage() {
     const str = getStorage().getItem(storageKey);
-    return str ? parseStorage(str).state : {};
+    return parseStorage(str ?? '{}').state;
   }
 
   function updateStorage(watchedValues: DeepPartial<TypeOf<TSchema>>) {
@@ -128,14 +130,22 @@ export function usePersistForm<
   // }, []);
 
   useEffect(() => {
-    for (const [key, value] of Object.entries(getParsedStorage())) {
+    const storage = getParsedStorage();
+    for (const [key, value] of Object.entries(storage)) {
       form.setValue(key as any, value as any);
     }
   }, []);
 
   // update storage values on form input update
   useEffect(() => {
-    const subscription = form.watch((watchedValues) => {
+    const subscription = form.watch((watchedValues, { name }) => {
+      if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
+      if (name === 'negativePrompt')
+        localStorage.setItem('generation:negativePrompt', watchedValues[name]);
+      if (!name) {
+        localStorage.setItem('generation:prompt', watchedValues.prompt);
+        localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
+      }
       updateStorage(watchedValues);
     });
     return () => {
@@ -143,15 +153,17 @@ export function usePersistForm<
     };
   }, [form, storageKey, version]); // eslint-disable-line
 
-  if (!_formControl.current) {
-    _formControl.current = {
-      ...form,
-      clear: () => getStorage().removeItem(storageKey),
-    };
-  }
+  // if (!_formControl.current) {
+  //   _formControl.current = {
+  //     ...form,
+  //     clear: () => getStorage().removeItem(storageKey),
+  //   };
+  // }
 
-  return {
-    ...form,
-    clear: () => getStorage().removeItem(storageKey),
-  };
+  return form;
+
+  // return {
+  //   ...form,
+  //   clear: () => getStorage().removeItem(storageKey),
+  // };
 }
