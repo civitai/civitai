@@ -92,7 +92,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: { session, colorScheme, cookies, flags, ...pageProps },
   } = props;
 
-  console.log(props);
+  // console.log(props);
 
   if (typeof window !== 'undefined' && !window.authChecked) {
     window.authChecked = true;
