@@ -39,7 +39,8 @@ We've built this project using a combination of modern web technologies, includi
 
 ## Getting Started
 
-To get a local copy up and running, follow these steps.
+<details open>
+<summary>To get a local copy up and running, follow these steps.</summary>
 
 ### Prerequisites
 
@@ -91,6 +92,7 @@ Services that require external input will currently not work locally. These incl
   - Orchestration (Generation, Training)
   - Signals (Chat, Notifications, other real-time updates)
   - Buzz
+</details>
 
 ## Contributing
 
