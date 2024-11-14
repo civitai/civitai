@@ -218,20 +218,9 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   );
 }
 
-const useStyles = createStyles((theme, _, getRef) => {
-  const footerRef = getRef('footer');
-  const infoRef = getRef('info');
-
+const useStyles = createStyles((theme) => {
   return {
-    title: {
-      lineHeight: 1.1,
-      fontSize: 14,
-      color: 'white',
-      fontWeight: 500,
-    },
     footer: {
-      ref: footerRef,
-
       display: 'flex',
       flexDirection: 'row',
       justifyContent: 'space-between',

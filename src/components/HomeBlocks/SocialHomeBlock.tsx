@@ -99,7 +99,7 @@ export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
   if (!props.metadata.socials?.length) return null;
 
   return (
-    <HomeBlockWrapper py={32} showAds={showAds}>
+    <HomeBlockWrapper py={32}>
       <SocialHomeBlockContent {...props} />
     </HomeBlockWrapper>
   );
@@ -109,8 +109,8 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   const currentUser = useCurrentUser();
   const { classes: homeBlockClasses } = useHomeBlockStyles();
 
-  const socialData = metadata.socials ?? [];
-  const itemCount = socialData.length;
+  const socialData = metadata.socials;
+  const itemCount = socialData?.length ?? 0;
   const isLive = useIsLive();
   const { columnWidth, columnGap, columnCount } = useMasonryContext();
   const { classes, cx } = useStyles({ columnWidth, columnGap });
@@ -202,7 +202,7 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   );
 
   const blocks = useMemo(() => {
-    const blocks: SocialBlockProps[] = socialData;
+    const blocks: SocialBlockProps[] = socialData ?? [];
     if (typeof window === 'undefined') return blocks;
     if (isLive) {
       blocks.unshift({

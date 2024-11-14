@@ -15,6 +15,8 @@ import { constants } from '~/server/common/constants';
 import { ReactionEntityType, ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ReactionButton, useReactionsStore } from './ReactionButton';
+import React from 'react';
+import clsx from 'clsx';
 
 export type ReactionMetrics = {
   likeCount?: number;
@@ -77,11 +79,8 @@ export function Reactions({
   entityId,
   readonly,
   targetUserId,
-  ...groupProps
-}: ReactionsProps &
-  Omit<GroupProps, 'children' | 'onClick'> & {
-    targetUserId?: number;
-  }) {
+  className,
+}: ReactionsProps & { className?: string; targetUserId?: number }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -125,17 +124,14 @@ export function Reactions({
 
   return (
     <LoginPopover message="You must be logged in to react to this" withArrow={false}>
-      <Group
-        spacing={4}
-        align="center"
+      <div
+        className={clsx('flex items-center justify-center gap-1', className)}
         onClick={(e) => {
           if (!readonly) {
             e.preventDefault();
             e.stopPropagation();
           }
         }}
-        {...groupProps}
-        noWrap
       >
         {!hasAllReactions && !readonly && (
           <Button
@@ -172,17 +168,18 @@ export function Reactions({
             hideLoginPopover
           />
         )}
-      </Group>
+      </div>
     </LoginPopover>
   );
 }
 
+const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
 function ReactionsList({
   reactions,
   metrics = {},
   entityType,
   entityId,
-  available,
+  available = availableReactions[entityType],
   noEmpty,
   readonly,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
@@ -192,8 +189,6 @@ function ReactionsList({
   readonly?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
-  available ??= availableReactions[entityType];
 
   return (
     <>

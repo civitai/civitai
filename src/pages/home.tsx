@@ -2,7 +2,6 @@ import { Box, Button, Center, Group, Loader, Popover, Text, Title } from '@manti
 import { trpc } from '~/utils/trpc';
 import { HomeBlockType, MetricTimeframe } from '@prisma/client';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
-import { AnnouncementHomeBlock } from '~/components/HomeBlocks/AnnouncementHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
@@ -110,50 +109,6 @@ export default function Home() {
                   )}
                 </React.Fragment>
               );
-              // switch (homeBlock.type) {
-              //   case HomeBlockType.Collection:
-              //     return (
-              //       <CollectionHomeBlock
-              //         key={homeBlock.id}
-              //         homeBlockId={homeBlock.id}
-              //         metadata={homeBlock.metadata}
-              //         showAds={showAds}
-              //       />
-              //     );
-              //   case HomeBlockType.Announcement:
-              //     return (
-              //       <AnnouncementHomeBlock
-              //         key={homeBlock.id}
-              //         homeBlockId={homeBlock.id}
-              //         showAds={showAds}
-              //       />
-              //     );
-              //   case HomeBlockType.Leaderboard:
-              //     return (
-              //       <LeaderboardsHomeBlock
-              //         key={homeBlock.id}
-              //         homeBlockId={homeBlock.id}
-              //         metadata={homeBlock.metadata}
-              //         showAds={showAds}
-              //       />
-              //     );
-              //   case HomeBlockType.Social:
-              //     return (
-              //       <SocialHomeBlock
-              //         key={homeBlock.id}
-              //         metadata={homeBlock.metadata}
-              //         showAds={showAds}
-              //       />
-              //     );
-              //   case HomeBlockType.Event:
-              //     return (
-              //       <EventHomeBlock
-              //         key={homeBlock.id}
-              //         metadata={homeBlock.metadata}
-              //         showAds={showAds}
-              //       />
-              //     );
-              // }
             })}
           </BrowsingModeOverrideProvider>
           <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>

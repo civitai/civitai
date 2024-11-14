@@ -1,5 +1,4 @@
-import { MantineSize, useMantineTheme } from '@mantine/core';
-import { useMediaQuery } from '@mantine/hooks';
+import { MantineSize } from '@mantine/core';
 import { useContainerQuery } from '~/components/ContainerProvider/useContainerQuery';
 
 export function useIsMobile(options?: { breakpoint: MantineSize }) {
@@ -13,8 +12,10 @@ export function useIsMobile(options?: { breakpoint: MantineSize }) {
   // });
 }
 
+let isMobile: boolean | undefined;
 export function isMobileDevice() {
-  return (
-    typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
-  );
+  if (!isMobile)
+    isMobile =
+      typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  return isMobile;
 }

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { CivitaiSessionUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import {
   HiddenPreferencesState,
   useHiddenPreferencesContext,
