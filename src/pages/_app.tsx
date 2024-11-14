@@ -60,6 +60,7 @@ import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { AppProvider } from '~/providers/AppProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
+import { env } from '~/env/client.mjs';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -80,12 +81,21 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags?: FeatureAccess;
   seed: number;
+  hasAuthCookie: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
+    pageProps: {
+      session,
+      colorScheme,
+      cookies,
+      flags,
+      seed = Date.now(),
+      hasAuthCookie,
+      ...pageProps
+    },
   } = props;
 
   console.log(props);
@@ -137,7 +147,7 @@ function MyApp(props: CustomAppProps) {
             <RouterTransition />
             {/* <ChadGPT isAuthed={!!session} /> */}
             <SessionProvider
-              session={session}
+              session={session ? session : !hasAuthCookie ? null : undefined}
               refetchOnWindowFocus={false}
               refetchWhenOffline={false}
             >
@@ -213,11 +223,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  // const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = await getSession(appContext.ctx);
-  const flags = appContext.ctx?.req
-    ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
-    : undefined;
+  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
 
   // Pass this via the request so we can use it in SSR
   if (session) {
@@ -234,6 +242,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       session,
       flags,
       seed: Date.now(),
+      hasAuthCookie,
     },
     ...appProps,
   };
