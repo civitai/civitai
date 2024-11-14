@@ -3,24 +3,18 @@ import { Group, Input, InputWrapperProps, SegmentedControl } from '@mantine/core
 import { useEffect, useState } from 'react';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
-import { generation } from '~/server/common/constants';
 
+const min = 1;
+const max = 4294967295;
+const maxRandom = max / 2;
 type Props = {
   value?: number;
   onChange?: (value?: number) => void;
-  min?: number;
-  max?: number;
+
   disabled?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
 
-function SeedInput({
-  value,
-  onChange,
-  min = 1,
-  max = generation.maxValues.seed,
-  disabled,
-  ...inputWrapperProps
-}: Props) {
+function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
   const [control, setControl] = useState(value ? 'custom' : 'random');
 
   const previousControl = usePrevious(control);
@@ -32,7 +26,7 @@ function SeedInput({
   useEffect(() => {
     if (value !== undefined && control === 'random') onChange?.(undefined);
     else if (value === undefined && control === 'custom')
-      onChange?.(Math.floor(Math.random() * max));
+      onChange?.(Math.floor(Math.random() * maxRandom));
   }, [control]); //eslint-disable-line
 
   return (

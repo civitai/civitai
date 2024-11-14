@@ -4,7 +4,7 @@ const baseVideoSchema = z.object({
   workflow: z.string(),
   engine: z.string(),
   prompt: z.string().max(1500, 'Prompt cannot be longer than 1500 characters').default(''),
-  seed: z.number().min(0).max(4294967195).optional(),
+  seed: z.number().min(0).max(4294967295).optional(),
   width: z.number().optional(),
   height: z.number().optional(),
 });
