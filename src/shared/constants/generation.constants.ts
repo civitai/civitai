@@ -521,6 +521,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       aspectRatio: '1:1',
       duration: 4,
       seed: undefined,
+      enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
   },
@@ -535,6 +536,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       prompt: '',
       duration: 4,
       seed: undefined,
+      enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],
   },
@@ -548,6 +550,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     defaultValues: {
       prompt: '',
       seed: undefined,
+      enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['seed'],
   },

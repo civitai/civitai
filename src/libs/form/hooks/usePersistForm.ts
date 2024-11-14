@@ -109,7 +109,7 @@ export function usePersistForm<
 
   function getParsedStorage() {
     const str = getStorage().getItem(storageKey);
-    return str ? parseStorage(str).state : {};
+    return parseStorage(str ?? '{}').state;
   }
 
   function updateStorage(watchedValues: DeepPartial<TypeOf<TSchema>>) {
@@ -130,7 +130,8 @@ export function usePersistForm<
   // }, []);
 
   useEffect(() => {
-    for (const [key, value] of Object.entries(getParsedStorage())) {
+    const storage = getParsedStorage();
+    for (const [key, value] of Object.entries(storage)) {
       form.setValue(key as any, value as any);
     }
   }, []);

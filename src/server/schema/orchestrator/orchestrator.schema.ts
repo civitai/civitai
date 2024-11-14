@@ -19,6 +19,7 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),
   resolution: z.number().default(1080),
+  enablePromptEnhancer: z.boolean().optional(),
 });
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
@@ -36,6 +37,7 @@ export const mochiVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('mochi'),
   width: z.number().default(848),
   height: z.number().default(480),
+  enablePromptEnhancer: z.boolean().optional(),
 });
 
 export type VideoGenerationInput = z.input<typeof videoGenerationSchema>;

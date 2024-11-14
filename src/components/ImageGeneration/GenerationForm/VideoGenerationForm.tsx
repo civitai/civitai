@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { Form, InputSegmentedControl, InputText, InputTextArea } from '~/libs/form';
+import { Form, InputSegmentedControl, InputSwitch, InputText, InputTextArea } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
   VideoGenerationInput,
@@ -114,6 +114,7 @@ function HaiperTxt2VidGenerationForm() {
     <FormWrapper engine="haiper">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
@@ -132,6 +133,7 @@ function HaiperImg2VidGenerationForm() {
     <FormWrapper engine="haiper">
       <InputImageUrl name="sourceImageUrl" label="Image" />
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
@@ -148,6 +150,7 @@ function MochiGenerationForm() {
   return (
     <FormWrapper engine="mochi">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
