@@ -1,11 +1,13 @@
 import Script from 'next/script';
 import { useFeatureFlags } from './FeatureFlagsProvider';
+import { isProd } from '~/env/other';
 
 export function GoogleAnalytics() {
   const features = useFeatureFlags();
 
+  if (!isProd) return null;
+  if (!features.isGreen && !features.isBlue) return null;
   const id = features.isGreen ? googleAnalyticsIds.green : googleAnalyticsIds.blue;
-  if (features.isBlue) return null;
 
   return (
     <>
