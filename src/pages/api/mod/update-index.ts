@@ -64,6 +64,7 @@ export default ModEndpoint(async function updateIndexSync(
               processDeletes: input.processQueues?.includes('delete'),
             }
           : undefined;
+
       switch (input.index) {
         case USERS_SEARCH_INDEX:
           if (processQueuesOpts) {
