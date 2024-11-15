@@ -9,7 +9,6 @@ import {
   Group,
   Menu,
   Popover,
-  Select,
   Stack,
   Text,
   ThemeIcon,
@@ -73,12 +72,13 @@ import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { removeTags, toPascalCase } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '../Meta/Meta';
 import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
 import { isDefined } from '~/utils/type-guards';
 import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
+import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -157,24 +157,12 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
             </>
           )}
           {isContestCollection && collection.tags.length > 0 && (
-            <Select
-              label="Collection Categories"
+            <CollectionCategorySelect
+              collectionId={collection.id}
               value={query.collectionTagId?.toString() ?? 'all'}
               onChange={(x) =>
                 set({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
               }
-              placeholder="All"
-              data={[
-                {
-                  value: 'all',
-                  label: 'All',
-                },
-                ...collection.tags.map((tag) => ({
-                  value: tag.id.toString(),
-                  label: toPascalCase(tag.name),
-                })),
-              ]}
-              clearable
             />
           )}
           <ModelsInfinite filters={filters} disableStoreFilters />
@@ -291,24 +279,12 @@ const ImageCollection = ({
           )}
 
           {isContestCollection && collection.tags.length > 0 && (
-            <Select
-              label="Collection Categories"
+            <CollectionCategorySelect
+              collectionId={collection.id}
               value={query.collectionTagId?.toString() ?? 'all'}
               onChange={(x) =>
                 replace({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
               }
-              placeholder="All"
-              data={[
-                {
-                  value: 'all',
-                  label: 'All',
-                },
-                ...collection.tags.map((tag) => ({
-                  value: tag.id.toString(),
-                  label: toPascalCase(tag.name),
-                })),
-              ]}
-              clearable
             />
           )}
           {isContestCollection && (

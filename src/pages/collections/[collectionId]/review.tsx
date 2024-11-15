@@ -38,13 +38,16 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CollectionItemStatus, CollectionType } from '@prisma/client';
+import { CollectionItemStatus, CollectionMode, CollectionType } from '@prisma/client';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { getCollectionItemReviewData } from '~/components/Collections/collection.utils';
+import {
+  getCollectionItemReviewData,
+  useCollection,
+} from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
 import { BackButton } from '~/components/BackButton/BackButton';
@@ -55,6 +58,9 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -97,27 +103,23 @@ const ReviewCollection = () => {
   const { collectionId: collectionIdString } = router.query;
   const collectionId = Number(collectionIdString);
 
-  // const queryUtils = trpc.useContext();
-  // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const [statuses, setStatuses] = useState<CollectionItemStatus[]>([CollectionItemStatus.REVIEW]);
   const [sort, setSort] = useState<CollectionReviewSort>(CollectionReviewSort.Newest);
+  const [collectionTagId, setCollectionTagId] = useState<number | undefined>(undefined);
+
   const filters = useMemo(
-    () => ({
-      collectionId: collectionId,
-      statuses,
-      forReview: true,
-      reviewSort: sort,
-    }),
-    [collectionId, statuses, sort]
+    () => ({ collectionId, statuses, forReview: true, reviewSort: sort, collectionTagId }),
+    [collectionId, statuses, sort, collectionTagId]
   );
   const browsingLevel = useBrowsingLevelDebounced();
+
+  const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
+
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(
       { ...filters, browsingLevel },
-      {
-        getNextPageParam: (lastPage) => lastPage.nextCursor,
-      }
+      { enabled: !!collection, getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
 
   const collectionItems = useMemo(
@@ -129,6 +131,12 @@ const ReviewCollection = () => {
     setStatuses(value as CollectionItemStatus[]);
     deselectAll();
   };
+
+  if (loadingCollection) <PageLoader />;
+  if ((!loadingCollection && !collection) || (permissions && !permissions.manage))
+    return <NotFound />;
+
+  const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
     <Container size="xl" py="xl">
@@ -160,6 +168,13 @@ const ReviewCollection = () => {
             You are reviewing items on the collection that are either pending review or have been
             rejected. You can change the status of these to be accepted or rejected.
           </Text>
+          {isContestCollection && collection.tags.length > 0 && (
+            <CollectionCategorySelect
+              collectionId={collection.id}
+              value={collectionTagId?.toString() ?? 'all'}
+              onChange={(x) => setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)}
+            />
+          )}
           <Group position="apart">
             <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
               <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
@@ -378,7 +393,7 @@ function ModerationControls({
   collectionItems: CollectionItemExpanded[];
   filters: { collectionId: number; statuses: CollectionItemStatus[]; forReview: boolean };
 }) {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const selected = useStore((state) => Object.keys(state.selected).map(Number));
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
