@@ -2,6 +2,11 @@
 import { withAxiom } from "@civitai/next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
 
+import bundleAnalyzer from '@next/bundle-analyzer'
+const withBundleAnalyzer = bundleAnalyzer({
+  enabled: process.env.ANALYZE === 'true',
+})
+
 /**
  * Don't be scared of the generics here.
  * All they do is to give us autocompletion when using this.
@@ -11,7 +16,7 @@ import packageJson from './package.json' assert { type: 'json' };
  * @constraint {{import('next').NextConfig}}
  */
 function defineNextConfig(config) {
-  return config;
+  return withBundleAnalyzer(config);
 }
 
 export default defineNextConfig(withAxiom({
