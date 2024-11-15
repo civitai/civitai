@@ -173,6 +173,7 @@ export function GeneratedImageActions({
   };
 
   const hasSelected = !!selectedCount;
+  console.log({ images });
 
   return (
     <div className="flex items-center justify-between gap-6">
@@ -220,13 +221,15 @@ export function GeneratedImageActions({
           </Tooltip>
         </div>
       )}
-      <Checkbox
-        checked={allChecked}
-        indeterminate={indeterminate}
-        onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
-        label={!selectedCount ? 'Select all' : `${selectedCount} selected`}
-        labelPosition="left"
-      />
+      {selectableImages.length > 0 && (
+        <Checkbox
+          checked={allChecked}
+          indeterminate={indeterminate}
+          onChange={(e) => handleCheckboxClick(e.currentTarget.checked)}
+          label={!selectedCount ? 'Select all' : `${selectedCount} selected`}
+          labelPosition="left"
+        />
+      )}
     </div>
   );
 }

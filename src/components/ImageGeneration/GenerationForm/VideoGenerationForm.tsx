@@ -177,7 +177,7 @@ function MochiGenerationForm() {
       <DescriptionTable
         items={[
           { label: 'Aspect Ratio', value: '16:9' },
-          { label: 'Resolution', value: '848x480' },
+          { label: 'Resolution', value: '848x480 (480p)' },
           { label: 'Duration', value: '5s' },
         ]}
       />

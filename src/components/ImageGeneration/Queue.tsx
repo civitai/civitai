@@ -1,5 +1,3 @@
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
 import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
@@ -7,37 +5,12 @@ import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { MarkerType } from '~/server/common/enums';
-
 export function Queue() {
-  const { filters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
-  }));
-
-  let workflowTagsFilter = undefined;
-
-  switch (filters.marker) {
-    case MarkerType.Favorited:
-      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
-      break;
-
-    case MarkerType.Liked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
-      break;
-
-    case MarkerType.Disliked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
-      break;
-  }
+  const filters = useFiltersContext((state) => state.markers);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError } =
-    useGetTextToImageRequests({
-      tags: workflowTagsFilter,
-    });
+    useGetTextToImageRequests();
 
   if (isError)
     return (
