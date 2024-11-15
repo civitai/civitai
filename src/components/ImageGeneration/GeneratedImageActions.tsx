@@ -172,7 +172,6 @@ export function GeneratedImageActions({
   };
 
   const hasSelected = !!selectedCount;
-  console.log({ images });
 
   return (
     <div className="flex items-center justify-between gap-6">

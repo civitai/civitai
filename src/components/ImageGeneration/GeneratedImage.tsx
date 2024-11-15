@@ -40,7 +40,7 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
+import { getIsFlux, getIsSD3, img2vidWorkflows } from '~/shared/constants/generation.constants';
 import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -349,16 +349,19 @@ export function GeneratedImage({
               {!isVideo && (
                 <>
                   <Menu.Divider />
-                  <Menu.Item
-                    onClick={() =>
-                      handleGenerate({ sourceImageUrl: image.url } as any, {
-                        type: 'video',
-                        workflow: 'haiper-img2vid',
-                      })
-                    }
-                  >
-                    Image to Video
-                  </Menu.Item>
+                  {img2vidWorkflows.map(({ name, key, type }) => (
+                    <Menu.Item
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
+                    >
+                      {name}
+                    </Menu.Item>
+                  ))}
                 </>
               )}
               <Menu.Divider />
@@ -426,6 +429,19 @@ export function GeneratedImage({
                       }}
                     >
                       {workflow.name}
+                    </Menu.Item>
+                  ))}
+                  {img2vidWorkflows.map(({ name, key, type }) => (
+                    <Menu.Item
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
+                    >
+                      {name}
                     </Menu.Item>
                   ))}
                 </Menu.Dropdown>
