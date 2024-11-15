@@ -4250,9 +4250,8 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       status: true,
       createdAt: true,
       reviewedAt: true,
-      collection: {
-        select: collectionSelect,
-      },
+      collection: { select: collectionSelect },
+      scores: { select: { userId: true, score: true } },
       tag: true,
     },
   });

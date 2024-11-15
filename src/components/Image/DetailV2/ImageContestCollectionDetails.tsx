@@ -1,10 +1,11 @@
-import { Anchor, Button, Card, Divider, Text } from '@mantine/core';
+import { Anchor, Button, Card, Divider, SegmentedControl, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '@prisma/client';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import React from 'react';
+import React, { useState } from 'react';
+import { useSetCollectionItemScore } from '~/components/Collections/collection.utils';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -18,17 +19,20 @@ export const ImageContestCollectionDetails = ({
   isOwner,
   isModerator,
   shareUrl,
+  userId,
 }: {
   imageId: number;
   isOwner: boolean;
   isModerator?: boolean;
   shareUrl?: string;
+  userId?: number;
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
   const { collectionItems } = useImageContestCollectionDetails(
     { id: imageId },
     { enabled: !!imageId }
   );
+
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =
@@ -58,6 +62,7 @@ export const ImageContestCollectionDetails = ({
             </>
           ) : null;
           const inReview = item.status === CollectionItemStatus.REVIEW;
+          const userScore = item?.scores?.find((s) => s.userId === userId)?.score;
 
           if (isModerator && inReview) {
             return (
@@ -105,23 +110,39 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.ACCEPTED && (
                   <div className="flex flex-col gap-3">
-                    <Text>
-                      Share the link to your submission in the and have your friends react on it.
-                      This could help you win the contest and the Community Choice award.
-                    </Text>
-                    <Text>
-                      Please note than an account is required to react and reaction votes are
-                      limited to one per account.
-                    </Text>
-                    <ShareButton
-                      url={shareUrl}
-                      title="Share now"
-                      collect={{ type: CollectionType.Image, imageId }}
-                    >
-                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
-                        <Text size="xs">Share Now</Text>
-                      </Button>
-                    </ShareButton>
+                    {isModerator && !userScore ? (
+                      <ContestItemScore
+                        itemId={item.id}
+                        collectionId={item.collection.id}
+                        imageId={imageId}
+                      />
+                    ) : (
+                      <>
+                        <Text>
+                          Share the link to your submission in the and have your friends react on
+                          it. This could help you win the contest and the Community Choice award.
+                        </Text>
+                        <Text>
+                          Please note than an account is required to react and reaction votes are
+                          limited to one per account.
+                        </Text>
+                        <ShareButton
+                          url={shareUrl}
+                          title="Share now"
+                          collect={{ type: CollectionType.Image, imageId }}
+                        >
+                          <Button
+                            radius="xl"
+                            color="gray"
+                            size="sm"
+                            compact
+                            className="text-center"
+                          >
+                            <Text size="xs">Share Now</Text>
+                          </Button>
+                        </ShareButton>
+                      </>
+                    )}
                   </div>
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
@@ -257,6 +278,44 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
           Approve
         </Button>
       </PopConfirm>
+    </div>
+  );
+}
+
+function ContestItemScore({
+  itemId,
+  collectionId,
+  imageId,
+}: {
+  itemId: number;
+  collectionId: number;
+  imageId: number;
+}) {
+  const [selectedScore, setSelectedScore] = useState(1);
+
+  const { setItemScore, loading } = useSetCollectionItemScore({ imageId });
+  const handleSetItemScore = async () => {
+    await setItemScore({
+      itemId,
+      collectionId,
+      score: selectedScore,
+    });
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <Text>
+        Rate this submission on a scale of 1 to 10, with 1 being the lowest and 10 being the
+        highest.
+      </Text>
+      <SegmentedControl
+        data={['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']}
+        value={selectedScore.toString()}
+        onChange={(value) => setSelectedScore(Number(value))}
+      />
+      <Button onClick={handleSetItemScore} loading={loading}>
+        Submit
+      </Button>
     </div>
   );
 }

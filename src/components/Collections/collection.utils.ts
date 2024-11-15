@@ -13,6 +13,7 @@ import { CollectionSort } from '~/server/common/enums';
 import {
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
+  SetItemScoreInput,
 } from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -22,7 +23,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { ImageMetadata } from '~/server/schema/media.schema';
+import produce from 'immer';
 
 const collectionQueryParamSchema = z
   .object({
@@ -316,5 +317,46 @@ export const useMutateCollection = () => {
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
+  };
+};
+
+export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
+  const queryUtils = trpc.useUtils();
+  const setItemScoreMutation = trpc.collection.setItemScore.useMutation({
+    onSuccess: (result) => {
+      const { collectionItemId, userId, score } = result;
+      queryUtils.image.getContestCollectionDetails.setData(
+        { id: imageId },
+        produce((old) => {
+          if (!old) return;
+
+          const item = old.find((item) => item.id === collectionItemId);
+          if (!item) return;
+
+          const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
+          if (!existingScore) {
+            item.scores.push({ userId, score });
+            return;
+          }
+
+          existingScore.score = score;
+        })
+      );
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to set item score',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const setItemScoreHandler = (data: SetItemScoreInput) => {
+    return setItemScoreMutation.mutateAsync(data);
+  };
+
+  return {
+    setItemScore: setItemScoreHandler,
+    loading: setItemScoreMutation.isLoading,
   };
 };
