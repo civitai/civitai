@@ -10,6 +10,7 @@ export type ComfyNode = {
 interface BaseGenerationWorkflowConfig {
   // id: number;
   key: string; // in place of id for uniqueness
+  engine: string; // ie civitai, haiper, mochi
   name: string; // ie. Face fix
   description?: string;
   /** used for things like 'draft mode' */ // TODO - determine if this should simply go into `values` prop
@@ -52,7 +53,6 @@ interface ModelGenerationWorkflowConfig {
 
 interface ServiceGenerationWorkflowConfig {
   category: 'service';
-  engine: string;
 }
 
 export type GenerationWorkflowCategoryConfig =

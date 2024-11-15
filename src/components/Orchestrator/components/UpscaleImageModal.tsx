@@ -137,7 +137,7 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
         control={form.control}
         render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
       />
-      <UpscalePicker label="Upscale multipliers" />
+      <UpscalePicker label="Upscale multipliers" width={params.width} height={params.height} />
       <GenerateButton
         type="submit"
         // onClick={handleSubmit}

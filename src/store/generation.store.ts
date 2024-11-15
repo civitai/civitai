@@ -8,10 +8,7 @@ import {
   GenerationResource,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
-import {
-  GenerationWorkflowCategoryConfig,
-  GenerationWorkflowTypeConfig,
-} from '~/shared/types/generation.types';
+import { GenerationWorkflowCategoryConfig } from '~/shared/types/generation.types';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'replay';
@@ -157,7 +154,7 @@ export const generationFormStore = {
 };
 
 export function useGenerationFormWorkflowConfig(
-  filters: { type: MediaType } & GenerationWorkflowCategoryConfig
+  filters: { type: MediaType; engine: string } & GenerationWorkflowCategoryConfig
 ) {
   const selectedWorkflow = useGenerationFormStore((state) => state.workflow);
   const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>

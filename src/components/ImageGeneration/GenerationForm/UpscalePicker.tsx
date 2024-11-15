@@ -5,13 +5,19 @@ import { getRoundedUpscaleSize } from '~/shared/constants/generation.constants';
 
 const multipliers = [1.5, 2, 2.5, 3];
 
-export function UpscalePicker({ label }: { label?: string }) {
+export function UpscalePicker({
+  label,
+  width,
+  height,
+}: {
+  label?: string;
+  width: number;
+  height: number;
+}) {
   const widthKey = 'upscaleWidth';
   const heightKey = 'upscaleHeight';
 
   const { control, watch, setValue, getValues } = useFormContext();
-  const initialValues = getValues();
-  const [width = initialValues.width, height = initialValues.height] = watch(['width', 'height']);
 
   const [upscaleWidth, upscaleHeight] = watch([widthKey, heightKey]);
   const options = useMemo(() => {
