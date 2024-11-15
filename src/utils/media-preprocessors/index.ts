@@ -28,6 +28,6 @@ export async function preprocessFile(file: File): Promise<PreprocessFileReturnTy
       const videoData = await preprocessVideo(file);
       return { type, ...data, ...videoData };
     default:
-      throw new Error(`unhandled file type: ${file.name.split('.').pop()}`);
+      throw new Error(`Unhandled file type: ${file.name.split('.').pop()}`);
   }
 }

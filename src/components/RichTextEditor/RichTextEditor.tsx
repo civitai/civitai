@@ -163,7 +163,7 @@ export function RichTextEditor({
   onSuperEnter,
   withLinkValidation,
   stickyToolbar,
-  toolbarOffset = 70,
+  toolbarOffset = 44,
   ...props
 }: Props) {
   const { classes } = useStyles();
