@@ -1,5 +1,5 @@
 import { Button, Input, Text, Select, Alert } from '@mantine/core';
-import React, { createContext, useEffect, useState, useContext } from 'react';
+import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -34,6 +34,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { hashify } from '~/utils/string-helpers';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 
 const schema = videoGenerationSchema;
 
@@ -180,6 +184,11 @@ function FormWrapper({
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
   const { defaultValues } = workflow ?? {};
+  const status = useGenerationStatus();
+  const messageHash = useMemo(
+    () => (status.message ? hashify(status.message).toString() : undefined),
+    [status.message]
+  );
 
   const form = usePersistForm(workflow.key, {
     schema: schema as any,
@@ -270,6 +279,19 @@ function FormWrapper({
             Reset
           </Button>
         </div>
+        {status.message && !status.isLoading && (
+          <DismissibleAlert
+            color="yellow"
+            title="Image Generation Status Alert"
+            id={messageHash}
+            storage="sessionStorage"
+            getInitialValueInEffect={false}
+          >
+            <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+              {status.message}
+            </CustomMarkdown>
+          </DismissibleAlert>
+        )}
       </div>
     </Form>
   );

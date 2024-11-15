@@ -1,21 +1,24 @@
 import { Alert, AlertProps, createStyles, Group, MantineColor, Stack, Text } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
+import { StorageType, useStorage } from '~/hooks/useStorage';
+import { useIsClient } from '~/providers/IsClientProvider';
 
-export const DismissibleAlert = ({
+export const DismissibleAlert = (props: DismissibleAlertProps) => {
+  const isClient = useIsClient();
+  if (!isClient) return null;
+  if (!props.id) {
+    return <AlertContentInner {...props} />;
+  }
+  return <AlertDismissable {...props} />;
+};
+
+function AlertDismissable({
   id,
-  title,
-  content,
-  color = 'blue',
-  size = 'md',
-  emoji,
-  icon,
-  className,
   getInitialValueInEffect = true,
-  children,
+  storage = 'localStorage',
   ...props
-}: DismissibleAlertProps) => {
-  const { classes, cx } = useStyles({ color });
-  const [dismissed, setDismissed] = useLocalStorage({
+}: DismissibleAlertProps) {
+  const [dismissed, setDismissed] = useStorage({
+    type: storage,
     key: `alert-dismissed-${id}`,
     defaultValue:
       typeof window !== 'undefined'
@@ -26,16 +29,32 @@ export const DismissibleAlert = ({
 
   if (dismissed) return null;
 
-  const contentSize = size === 'md' ? 'sm' : 'xs';
+  return <AlertContentInner onDismiss={() => setDismissed(true)} {...props} />;
+}
 
+function AlertContentInner({
+  id,
+  title,
+  content,
+  color = 'blue',
+  size = 'md',
+  emoji,
+  icon,
+  className,
+  children,
+  onDismiss,
+  ...props
+}: DismissibleAlertProps & { onDismiss?: () => void }) {
+  const { classes, cx } = useStyles({ color });
+  const contentSize = size === 'md' ? 'sm' : 'xs';
   return (
     <Alert
       py={8}
       {...props}
       className={cx(className, classes.announcement)}
-      onClose={() => setDismissed(true)}
+      onClose={onDismiss}
       closeButtonLabel="Close alert"
-      withCloseButton
+      withCloseButton={!!onDismiss}
     >
       <Group spacing="xs" noWrap pr="xs">
         {emoji && (
@@ -57,10 +76,10 @@ export const DismissibleAlert = ({
       </Group>
     </Alert>
   );
-};
+}
 
 type DismissibleAlertProps = {
-  id: string;
+  id?: string;
   content?: React.ReactNode;
   children?: React.ReactNode;
   title?: React.ReactNode;
@@ -69,6 +88,7 @@ type DismissibleAlertProps = {
   icon?: React.ReactNode;
   size?: 'sm' | 'md';
   getInitialValueInEffect?: boolean;
+  storage?: StorageType;
 } & Omit<AlertProps, 'color' | 'children'>;
 
 const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
