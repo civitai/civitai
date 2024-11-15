@@ -35,7 +35,6 @@ export function UpscaleImageModal({
     if (params.image)
       getImageData(params.image)
         .then(({ width, height }) => {
-          console.log({ height, width });
           setSize({ width, height });
         })
         .catch((e) => setError('failed to load image'));
@@ -71,6 +70,7 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
   });
 
   const [upscaleWidth, upscaleHeight] = form.watch(['upscaleWidth', 'upscaleHeight']);
+  console.log({ upscaleWidth, upscaleHeight });
 
   const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
     {

@@ -10,7 +10,8 @@ export function UpscalePicker({ label }: { label?: string }) {
   const heightKey = 'upscaleHeight';
 
   const { control, watch, setValue, getValues } = useFormContext();
-  const [width, height] = watch(['width', 'height']);
+  const initialValues = getValues();
+  const [width = initialValues.width, height = initialValues.height] = watch(['width', 'height']);
 
   const [upscaleWidth, upscaleHeight] = watch([widthKey, heightKey]);
   const options = useMemo(() => {
