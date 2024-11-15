@@ -1146,9 +1146,9 @@ export const earlyAccessPurchase = async ({
   });
 
   if (
-    access.hasAccess &&
-    access.meta?.[buzzTransactionKey] &&
-    (access.permissions & permission) !== 0
+    access?.hasAccess &&
+    access?.meta?.[buzzTransactionKey] &&
+    (access?.permissions & permission) !== 0
   ) {
     // This user has already purchased early access.
     throw throwBadRequestError('You have already purchased early access for this model.');
