@@ -26,7 +26,7 @@ export const useGenerationStatus = () => {
     const tier = currentUser?.tier ?? 'free';
     const limits = status.limits[tier];
 
-    return { ...status, tier, limits, isLoading, message: 'this is a test' };
+    return { ...status, tier, limits, isLoading };
   }, [data, currentUser, isLoading]);
 };
 
