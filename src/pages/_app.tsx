@@ -60,7 +60,6 @@ import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { AppProvider } from '~/providers/AppProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
-import { env } from '~/env/client.mjs';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -224,22 +223,23 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const parsedCookies = parseCookies(cookies);
 
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
-  const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
 
-  // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
+  // // Pass this via the request so we can use it in SSR
+  // if (session) {
+  //   (appContext.ctx.req as any)['session'] = session;
+  //   // (appContext.ctx.req as any)['flags'] = flags;
+  // }
 
   return {
     pageProps: {
       ...pageProps,
       colorScheme,
       cookies: parsedCookies,
-      cookieKeys: Object.keys(cookies),
-      session,
+      // cookieKeys: Object.keys(cookies),
+      // session,
       flags,
       seed: Date.now(),
       hasAuthCookie,

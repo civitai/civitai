@@ -33,7 +33,6 @@ import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableR
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -42,6 +41,10 @@ import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import dynamic from 'next/dynamic';
+const RedeemCodeModal = dynamic(() =>
+  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
+);
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

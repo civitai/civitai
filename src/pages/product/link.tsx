@@ -64,9 +64,7 @@ export default function LinkApp(props: ServerSideProps) {
             <Title className={classes.heroTitle} order={1}>
               Civitai Link App
             </Title>
-            <Text className={classes.copy}>
-              For Windows, Linux, and MacOS.
-            </Text>  
+            <Text className={classes.copy}>For Windows, Linux, and MacOS.</Text>
             {!isMember ? (
               <Text className={classes.heroText}>
                 ❤️ Civitai Link is only available to Supporters
@@ -90,8 +88,7 @@ export default function LinkApp(props: ServerSideProps) {
             Add models to your local library with one click
           </Title>
           <Text className={classes.copy}>
-            Directly add any resource from Civitai to your local model library with just one
-            click.
+            Directly add any resource from Civitai to your local model library with just one click.
           </Text>
         </Stack>
 
@@ -110,7 +107,8 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading}>
-              See instantly which models you have stored in your local library as you browse the site
+              See instantly which models you have stored in your local library as you browse the
+              site
             </Title>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -130,7 +128,8 @@ export default function LinkApp(props: ServerSideProps) {
               Pair with your Civitai Vault to free-up local disk space
             </Title>
             <Text className={classes.copy}>
-              Models saved to Civitai Vault remain accessible, even if removed from Civitai by the creator.
+              Models saved to Civitai Vault remain accessible, even if removed from Civitai by the
+              creator.
             </Text>
           </Grid.Col>
         </Grid>
