@@ -46,11 +46,15 @@ export function useGetTextToImageRequests(
   options?: { enabled?: boolean }
 ) {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(input ?? {}, {
-    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-    enabled: !!currentUser,
-    ...options,
-  });
+  const { tags = [] } = input ?? {};
+  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
+    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
 
   const flatData = useMemo(
     () =>
@@ -144,6 +148,24 @@ export function useSubmitCreateImage() {
   });
 }
 
+export function useGenerate() {
+  return trpc.orchestrator.generate.useMutation({
+    onSuccess: (data) => {
+      updateTextToImageRequests((old) => {
+        old.pages[0].items.unshift(data);
+      });
+      updateFromEvents();
+    },
+    // onError: (error) => {
+    //   showErrorNotification({
+    //     title: 'Failed to generate',
+    //     error: new Error(error.message),
+    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+    //   });
+    // },
+  });
+}
+
 export function useDeleteTextToImageRequest() {
   return trpc.orchestrator.deleteWorkflow.useMutation({
     onSuccess: (_, { workflowId }) => {
@@ -165,24 +187,6 @@ export function useDeleteTextToImageRequest() {
 
 export function useCancelTextToImageRequest() {
   return trpc.orchestrator.cancelWorkflow.useMutation({
-    onSuccess: (_, { workflowId }) => {
-      updateTextToImageRequests((old) => {
-        for (const page of old.pages) {
-          for (const item of page.items.filter((x) => x.id === workflowId)) {
-            for (const step of item.steps) {
-              for (const image of step.images.filter(
-                (x) => !orchestratorCompletedStatuses.includes(x.status)
-              )) {
-                image.status = 'canceled';
-              }
-              if (step.images.some((x) => x.status === 'canceled')) {
-                item.status = 'canceled';
-              }
-            }
-          }
-        }
-      });
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Error cancelling request',
@@ -431,6 +435,7 @@ function updateFromEvents() {
             for (const image of images) {
               image.status = signalEvent.status!;
               image.completed = signalEvent.completed;
+              if (image.type === 'video') image.progress = signalEvent.progress ?? 0;
             }
 
             if (status === signalJobEventsDictionary[jobId].status) {

@@ -15,9 +15,9 @@ import {
   Anchor,
   Badge,
   Divider,
-  LoadingOverlay,
   ActionIcon,
   Group,
+  SegmentedControl,
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
@@ -44,7 +44,6 @@ import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -76,54 +75,22 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
   GenerationFormOutput,
-  GenerationFormProvider,
   useGenerationForm,
   blockedRequest,
 } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import React, { useEffect, useState, useMemo } from 'react';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { create } from 'zustand';
-import {
-  TextToImageWhatIfProvider,
-  useTextToImageWhatIfContext,
-} from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { clone } from 'lodash-es';
-import { workflowDefinitions } from '~/server/services/orchestrator/types';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import { useTipStore } from '~/store/tip.store';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
-
-export function GenerationForm2() {
-  // const utils = trpc.useUtils();
-  // const currentUser = useCurrentUser();
-
-  // const { mutateAsync } = trpc.generation.setWorkflowDefinition.useMutation();
-  // const handleSetDefinitions = async () => {
-  //   await Promise.all(workflowDefinitions.map((item) => mutateAsync(item)));
-  //   utils.generation.getWorkflowDefinitions.invalidate();
-  // };
-
-  return (
-    <IsClient>
-      {/* {(currentUser?.id === 1 || currentUser?.id === 5) && (
-        <div className="p-3">
-          <Button onClick={handleSetDefinitions}>Set workflow definitions</Button>
-        </div>
-      )} */}
-
-      <GenerationFormProvider>
-        <TextToImageWhatIfProvider>
-          <GenerationFormContent />
-        </TextToImageWhatIfProvider>
-      </GenerationFormProvider>
-    </IsClient>
-  );
-}
 
 // #region [form component]
 export function GenerationFormContent() {
@@ -217,6 +184,9 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
+    const tips = useTipStore.getState();
+    let creatorTip = tips.creatorTip;
+    const civitaiTip = tips.civitaiTip;
 
     const {
       model,
@@ -225,11 +195,8 @@ export function GenerationFormContent() {
       remixOfId,
       remixSimilarity,
       aspectRatio,
-      civitaiTip = 0,
-      creatorTip: _creatorTip,
       ...params
     } = data;
-    let { creatorTip = 0.25 } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
@@ -315,7 +282,7 @@ export function GenerationFormContent() {
       form={form}
       onSubmit={handleSubmit}
       onError={handleError}
-      className="relative flex h-full flex-1 flex-col overflow-hidden"
+      className="relative flex flex-1 flex-col justify-between gap-2"
     >
       <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
         {({ baseModel, fluxMode, draft, model }) => {
@@ -344,14 +311,11 @@ export function GenerationFormContent() {
           }
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
+          if (!resourceTypes) return <></>;
 
           return (
             <>
-              <ScrollArea
-                scrollRestore={{ key: 'generation-form' }}
-                pt={0}
-                className="flex flex-col gap-2 px-3 pb-3"
-              >
+              <div className="flex flex-col gap-2 px-3">
                 {!isFlux && !isSD3 && (
                   <div className="flex items-start justify-start gap-3">
                     {features.image && image && (
@@ -946,12 +910,7 @@ export function GenerationFormContent() {
                             </Watch>
                           </div>
                         )}
-                        <InputSeed
-                          name="seed"
-                          label="Seed"
-                          min={1}
-                          max={generation.maxValues.seed}
-                        />
+                        <InputSeed name="seed" label="Seed" />
                         {!isSDXL && !isFlux && !isSD3 && (
                           <InputNumberSlider
                             name="clipSkip"
@@ -1005,8 +964,8 @@ export function GenerationFormContent() {
                     </Accordion.Panel>
                   </Accordion.Item>
                 </PersistentAccordion>
-              </ScrollArea>
-              <div className="shadow-topper flex flex-col gap-2 rounded-xl p-2">
+              </div>
+              <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert
@@ -1155,15 +1114,11 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
+  const { civitaiTip, creatorTip } = useTipStore();
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [creatorTip, civitaiTip, baseModel, resources] = form.watch([
-    'creatorTip',
-    'civitaiTip',
-    'baseModel',
-    'resources',
-  ]);
+  const [baseModel, resources] = form.watch(['baseModel', 'resources']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const hasCreatorTip = (!isFlux && !isSD3) || resources?.length > 0;
@@ -1176,7 +1131,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
 
   const cost = data?.cost?.base ?? 0;
   const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip ?? 0 : 0)) + Math.ceil(cost * (civitaiTip ?? 0));
+    Math.ceil(cost * (hasCreatorTip ? creatorTip : 0)) + Math.ceil(cost * civitaiTip);
   const totalCost = features.creatorComp ? cost + totalTip : cost;
 
   const generateButton = (
@@ -1204,14 +1159,6 @@ function SubmitButton(props: { isLoading?: boolean }) {
         <GenerationCostPopover
           width={300}
           workflowCost={data?.cost ?? {}}
-          creatorTipInputOptions={{
-            value: (creatorTip ?? 0) * 100,
-            onChange: (value) => form.setValue('creatorTip', (value ?? 0) / 100),
-          }}
-          civitaiTipInputOptions={{
-            value: (civitaiTip ?? 0) * 100,
-            onChange: (value) => form.setValue('civitaiTip', (value ?? 0) / 100),
-          }}
           hideCreatorTip={!hasCreatorTip}
         >
           <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>

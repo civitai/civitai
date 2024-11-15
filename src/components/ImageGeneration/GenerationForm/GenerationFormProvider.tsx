@@ -25,7 +25,12 @@ import {
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
-import { fetchGenerationData, generationStore, useGenerationStore } from '~/store/generation.store';
+import {
+  fetchGenerationData,
+  generationStore,
+  useGenerationFormStore,
+  useGenerationStore,
+} from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { defaultsByTier } from '~/server/schema/generation.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
@@ -97,8 +102,8 @@ const formSchema = textToImageParamsSchema
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     aspectRatio: z.string(),
-    creatorTip: z.number().min(0).max(1).default(0.25).optional(),
-    civitaiTip: z.number().min(0).max(1).optional(),
+    // creatorTip: z.number().min(0).max(1).default(0.25).optional(),
+    // civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform((data) => {
     const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -227,6 +232,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
     (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
@@ -258,7 +264,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   // TODO.Briant - determine a better way to pipe the data into the form
   // #region [effects]
   useEffect(() => {
-    if (storeData) {
+    if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
       switch (runType) {
         case 'replay':
@@ -299,10 +305,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           message: 'Some resources used to generate this image are unavailable',
         });
       }
-    }
-    return () => {
       generationStore.clearData();
-    };
+    }
   }, [status, currentUser, storeData]); // eslint-disable-line
 
   useEffect(() => {
@@ -380,7 +384,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
         tier: currentUser?.tier ?? 'free',
-        creatorTip: overrides.creatorTip ?? 0.25,
+        // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
       },
       status.limits
@@ -455,6 +459,10 @@ function calculateAdjustedCosineSimilarities(prompt1: string, prompt2: string): 
   const adjustedSetCosSim = (setCosSim + 1) / 2;
 
   return 2 / (1 / adjustedCosSim + 1 / adjustedSetCosSim);
+}
+
+function objectSimilarity(obj1: Record<string, unknown>, obj2: Record<string, unknown>) {
+  // TODO
 }
 
 // Example usage

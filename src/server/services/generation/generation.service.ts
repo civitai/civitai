@@ -13,9 +13,7 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { Prisma } from '@prisma/client';
-
-import { isDefined } from '~/utils/type-guards';
+import { MediaType, Prisma } from '@prisma/client';
 
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
@@ -35,12 +33,10 @@ import {
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
 import { findClosest } from '~/utils/number-helpers';
-import {
-  TextToImageParams,
-  TextToImageStepRemixMetadata,
-} from '~/server/schema/orchestrator/textToImage.schema';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { getGenerationConfig } from '~/server/common/constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
+import { getImageGenerationResources } from '~/server/services/image.service';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -198,17 +194,24 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
+export type RemixOfProps = {
+  id?: number;
+  url?: string;
+  type: MediaType;
+  similarity?: number;
+};
 export type GenerationData = {
+  remixOfId?: number;
   resources: GenerationResource[];
   params: Partial<TextToImageParams>;
-  remixOfId?: number;
-  // runType: 'run' | 'remix' | ''
+  remixOf?: RemixOfProps;
 };
 
 export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
   switch (props.type) {
     case 'image':
-      return await getImageGenerationData(props.id);
+    case 'video':
+      return await getMediaGenerationData(props.id);
     case 'modelVersion':
       return await getResourceGenerationData({ modelVersionId: props.id });
     case 'modelVersions':
@@ -217,6 +220,108 @@ export const getGenerationData = async (props: GetGenerationDataInput): Promise<
       throw new Error('unsupported generation data type');
   }
 };
+
+async function getMediaGenerationData(id: number): Promise<GenerationData> {
+  const media = await dbRead.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      type: true,
+      url: true,
+      meta: true,
+      height: true,
+      width: true,
+    },
+  });
+  if (!media) throw throwNotFoundError();
+
+  const width = media.width ? media.width : 0;
+  const height = media.height ? media.height : 0;
+  const remixOf: RemixOfProps = {
+    id: media.id,
+    type: media.type,
+    url: media.url,
+    similarity: 1,
+  };
+
+  const { prompt, negativePrompt } = cleanPrompt(media.meta as Record<string, any>);
+  const common = {
+    prompt,
+    negativePrompt,
+  };
+
+  switch (media.type) {
+    case 'image':
+      const resources = await getImageGenerationResources(media.id);
+      const baseModel = getBaseModelFromResources(resources);
+
+      let aspectRatio = '0';
+      try {
+        if (width && height) {
+          const config = getGenerationConfig(baseModel);
+          const ratios = config.aspectRatios.map((x) => x.width / x.height);
+          const closest = findClosest(ratios, width / height);
+          aspectRatio = `${ratios.indexOf(closest)}`;
+        }
+      } catch (e) {}
+
+      const {
+        'Clip skip': legacyClipSkip,
+        clipSkip = legacyClipSkip,
+        comfy, // don't return to client
+        external, // don't return to client
+        ...meta
+      } = imageGenerationSchema.parse(media.meta);
+
+      if (meta.hashes && meta.prompt) {
+        for (const [key, hash] of Object.entries(meta.hashes)) {
+          if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
+
+          // get the resource that matches the hash
+          const uHash = hash.toUpperCase();
+          const resource = resources.find((x) => x.hash === uHash);
+          if (!resource || resource.strength) continue;
+
+          // get everything that matches <key:{number}>
+          const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
+          if (!matches) continue;
+
+          resource.strength = parseFloat(matches[1]);
+        }
+      }
+
+      return {
+        remixOfId: media.id, // TODO - remove
+        remixOf,
+        resources,
+        params: {
+          ...common,
+          cfgScale: meta.cfgScale !== 0 ? meta.cfgScale : undefined,
+          steps: meta.steps !== 0 ? meta.steps : undefined,
+          seed: meta.seed !== 0 ? meta.seed : undefined,
+          width,
+          height,
+          aspectRatio,
+          baseModel,
+          clipSkip,
+        },
+      };
+    case 'video':
+      return {
+        remixOfId: media.id, // TODO - remove,
+        remixOf,
+        resources: [] as GenerationResource[],
+        params: {
+          ...(media.meta as Record<string, any>),
+          ...common,
+          width,
+          height,
+        },
+      };
+    case 'audio':
+      throw new Error('not implemented');
+  }
+}
 
 export const getResourceGenerationData = async ({ modelVersionId }: { modelVersionId: number }) => {
   if (!modelVersionId) throw new Error('modelVersionId required');
@@ -256,119 +361,6 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
     params: {
       baseModel: getBaseModelFromResources(deduped),
     },
-  };
-};
-
-// const defaultCheckpointData: Partial<Record<BaseModelSetType, ResourceData>> = {};
-const getImageGenerationData = async (id: number) => {
-  const [image, imageResources] = await dbRead.$transaction([
-    dbRead.image.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        meta: true,
-        height: true,
-        width: true,
-      },
-    }),
-    dbRead.imageResource.findMany({
-      where: { imageId: id },
-      select: { imageId: true, modelVersionId: true, hash: true, strength: true },
-    }),
-  ]);
-  if (!image) throw throwNotFoundError();
-
-  const {
-    'Clip skip': legacyClipSkip,
-    clipSkip = legacyClipSkip,
-    comfy, // don't return to client
-    external, // don't return to client
-    ...meta
-  } = imageGenerationSchema.parse(image.meta);
-
-  const versionIds = imageResources.map((x) => x.modelVersionId).filter(isDefined);
-  const resourceData = await resourceDataCache
-    .fetch(versionIds)
-    .then((result) => result.filter((x) => x.available));
-
-  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
-  if (index > -1 && !resourceData[index].available) {
-    const checkpoint = resourceData[index];
-    const latestVersion = await dbRead.modelVersion.findFirst({
-      where: {
-        modelId: checkpoint.model.id,
-        availability: { in: ['Public', 'EarlyAccess'] },
-        generationCoverage: { covered: true },
-      },
-      select: { id: true },
-      orderBy: { index: 'asc' },
-    });
-    if (latestVersion) {
-      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
-      if (newCheckpoint) resourceData[index] = newCheckpoint;
-    }
-  }
-
-  const resources = formatGenerationResources(resourceData);
-
-  // dedupe resources and add image resource strength/hashes
-  const deduped = uniqBy(resources, 'id').map((resource) => {
-    const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
-    return {
-      ...resource,
-      strength: imageResource?.strength ? imageResource.strength / 100 : 1,
-      hash: imageResource?.hash ?? undefined,
-    };
-  });
-
-  if (meta.hashes && meta.prompt) {
-    for (const [key, hash] of Object.entries(meta.hashes)) {
-      if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
-
-      // get the resource that matches the hash
-      const uHash = hash.toUpperCase();
-      const resource = deduped.find((x) => x.hash === uHash);
-      if (!resource || resource.strength) continue;
-
-      // get everything that matches <key:{number}>
-      const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
-      if (!matches) continue;
-
-      resource.strength = parseFloat(matches[1]);
-    }
-  }
-
-  const baseModel = getBaseModelFromResources(deduped);
-
-  // Clean-up bad values
-  if (meta.cfgScale == 0) meta.cfgScale = 7;
-  if (meta.steps == 0) meta.steps = 30;
-  if (meta.seed == 0) meta.seed = undefined;
-
-  let aspectRatio = '0';
-  try {
-    if (image.width && image.height) {
-      const config = getGenerationConfig(baseModel);
-      const ratios = config.aspectRatios.map((x) => x.width / x.height);
-      const closest = findClosest(ratios, image.width / image.height);
-      aspectRatio = `${ratios.indexOf(closest)}`;
-    }
-  } catch (e) {}
-
-  const { prompt, negativePrompt } = cleanPrompt(meta);
-
-  return {
-    // only send back resources if we have a checkpoint resource
-    resources: deduped,
-    params: {
-      ...meta,
-      clipSkip,
-      aspectRatio,
-      baseModel,
-      prompt,
-      negativePrompt,
-    },
-    remixOfId: image.id,
   };
 };
 

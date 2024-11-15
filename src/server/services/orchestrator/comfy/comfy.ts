@@ -11,7 +11,7 @@ import {
   populateWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
-  formatGeneratedImageResponses,
+  formatGenerationResponse,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -89,7 +89,7 @@ export async function createComfy(
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
+      tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
@@ -106,6 +106,6 @@ export async function createComfy(
   // console.dir(workflow, { depth: null });
 
   // TODO - have this use `formatComfyStep`
-  const [formatted] = await formatGeneratedImageResponses([workflow]);
+  const [formatted] = await formatGenerationResponse([workflow]);
   return formatted;
 }

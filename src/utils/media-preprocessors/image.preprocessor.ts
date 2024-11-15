@@ -8,12 +8,13 @@ import { createImageElement } from '~/utils/image-utils';
 export const loadImage = async (src: string) =>
   new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'Anonymous';
     img.onload = () => resolve(img);
     img.onerror = (...args) => reject(args);
     img.src = src;
   });
 
-const getImageData = async (url: string): Promise<ImageMetadata> => {
+export const getImageData = async (url: string): Promise<ImageMetadata> => {
   const img = await loadImage(url);
   const width = img.width;
   const height = img.height;

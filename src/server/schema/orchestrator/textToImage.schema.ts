@@ -6,6 +6,7 @@ import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.s
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
 
+export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z
@@ -19,7 +20,7 @@ export const textToImageParamsSchema = z.object({
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce.number().min(0).max(generation.maxValues.seed).optional(),
+  seed: z.coerce.number().min(0).max(4294967295).optional(),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce
@@ -40,7 +41,8 @@ export const textToImageParamsSchema = z.object({
       isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
     )
     .optional(),
-  upscale: z.number().max(3).optional(),
+  upscaleWidth: z.number().optional(),
+  upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
   experimental: z.boolean().optional(),

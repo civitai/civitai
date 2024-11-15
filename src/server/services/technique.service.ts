@@ -10,3 +10,10 @@ export async function getAllTechniques() {
     },
   });
 }
+
+export async function getTechniqueByName(name: string) {
+  return dbRead.technique.findFirst({
+    where: { name: { equals: name, mode: 'insensitive' } },
+    select: { id: true },
+  });
+}

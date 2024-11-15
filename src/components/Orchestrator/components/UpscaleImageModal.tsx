@@ -1,52 +1,58 @@
-import { Modal, SegmentedControl } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { Modal, Text } from '@mantine/core';
+import { Controller } from 'react-hook-form';
+import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { UpscalePicker } from '~/components/ImageGeneration/GenerationForm/UpscalePicker';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { generationConfig } from '~/server/common/constants';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import {
-  GenerationResource,
-  getBaseModelSetType,
-  whatIfQueryOverrides,
-} from '~/shared/constants/generation.constants';
-import { createImageElement } from '~/utils/image-utils';
+import { Form, useForm } from '~/libs/form';
+import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
+const schema = z.object({
+  width: z.number(),
+  height: z.number(),
+  upscaleWidth: z.number(),
+  upscaleHeight: z.number(),
+});
+
 export function UpscaleImageModal({
-  resources,
-  params,
+  params: { aspectRatio, ...params },
 }: {
   resources: GenerationResource[];
-  params: TextToImageParams;
+  params: TextToImageInput;
 }) {
   const dialog = useDialogContext();
-  const [upscale, setUpscale] = useState(String(params.upscale ?? 2));
-  const [size, setSize] = useState({ height: params.height, width: params.width });
 
-  useEffect(() => {
-    if (!params.image) return;
-    createImageElement(params.image).then((elem) => {
-      setSize({ height: elem.height, width: elem.width });
-    });
-  }, [params.image]);
-
-  const defaultModel =
-    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
-      ?.checkpoint ?? resources[0];
-
-  const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery({
-    resources: [defaultModel.id],
-    params: {
-      ...params,
-      ...whatIfQueryOverrides,
-      upscale: Number(upscale),
-      quantity: 1,
-      ...size,
+  const form = useForm({
+    schema,
+    defaultValues: {
+      width: params.width,
+      height: params.height,
     },
   });
+
+  const [upscaleWidth, upscaleHeight] = form.watch(['upscaleWidth', 'upscaleHeight']);
+
+  const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
+    {
+      resources: [164821],
+      params: {
+        ...params,
+        ...whatIfQueryOverrides,
+        quantity: 1,
+        baseModel: 'Other',
+        upscaleWidth,
+        upscaleHeight,
+      },
+    },
+    {
+      enabled: !!upscaleWidth && !!upscaleHeight,
+    }
+  );
 
   const generateImage = useSubmitCreateImage();
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -58,15 +64,16 @@ export function UpscaleImageModal({
     type: 'Generation',
   });
 
-  function handleSubmit() {
+  function handleSubmit(formData: z.infer<typeof schema>) {
+    console.log(data);
     async function performTransaction() {
       await generateImage.mutateAsync({
-        resources,
+        resources: [{ id: 164821 }],
         params: {
           ...params,
-          upscale: Number(upscale),
           quantity: 1,
-          ...size,
+          baseModel: 'Other',
+          ...formData,
         },
       });
       dialog.onClose();
@@ -76,21 +83,30 @@ export function UpscaleImageModal({
 
   return (
     <Modal {...dialog}>
-      <div className="flex flex-col gap-3">
+      <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
         {params.image && (
-          <>
+          <div className="flex flex-col items-end gap-0.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
-          </>
+            <Text color="dimmed" size="sm">
+              Image dimensions: {params.width} x {params.height}
+            </Text>
+          </div>
         )}
-        <SegmentedControl
-          value={upscale}
-          onChange={setUpscale}
-          data={['1.5', '2', '2.5', '3']}
-          className="flex-1"
+        <Controller
+          name="width"
+          control={form.control}
+          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
         />
+        <Controller
+          name="height"
+          control={form.control}
+          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
+        />
+        <UpscalePicker label="Upscale multipliers" />
         <GenerateButton
-          onClick={handleSubmit}
+          type="submit"
+          // onClick={handleSubmit}
           loading={isLoading || generateImage.isLoading}
           cost={data?.cost?.total ?? 0}
           error={
@@ -101,7 +117,7 @@ export function UpscaleImageModal({
         >
           Upscale
         </GenerateButton>
-      </div>
+      </Form>
     </Modal>
   );
 }

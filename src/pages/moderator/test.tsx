@@ -8,6 +8,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -81,9 +82,22 @@ function Content() {
   );
 }
 
+const someObject = new Promise((resolve) =>
+  resolve({
+    test: true,
+    array: [1, 2, 3, 4],
+  })
+);
+
 export default function Test() {
+  const [count, setCount] = useState(0);
+
   return (
     <IsClient>
+      <div className="container flex items-center gap-2 pb-2">
+        <span>{count}</span>
+        <Button onClick={() => setCount((c) => c + 1)}>Counter</Button>
+      </div>
       <ComponentWithSlots>
         <Content />
       </ComponentWithSlots>

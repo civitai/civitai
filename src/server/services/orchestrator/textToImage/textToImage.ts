@@ -1,7 +1,7 @@
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import {
-  formatGeneratedImageResponses,
+  formatGenerationResponse,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
 import {
@@ -87,7 +87,7 @@ export async function createTextToImage(
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
+      tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
@@ -101,6 +101,6 @@ export async function createTextToImage(
     },
   })) as TextToImageResponse;
 
-  const [formatted] = await formatGeneratedImageResponses([workflow]);
+  const [formatted] = await formatGenerationResponse([workflow]);
   return formatted;
 }

@@ -428,6 +428,7 @@ export const baseModelSetTypes = [
   'ODOR',
   'Flux1',
   'Illustrious',
+  'Other',
   'Mochi',
 ] as const;
 
@@ -449,6 +450,7 @@ export const baseModelSets = defineBaseModelSets({
   Pony: ['Pony'],
   ODOR: ['ODOR'],
   Illustrious: ['Illustrious'],
+  Other: ['Other'],
   Mochi: ['Mochi'],
 });
 
@@ -470,6 +472,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
+  Other: 'Other',
   Mochi: 'Mochi',
 });
 
@@ -672,7 +675,7 @@ export const generation = {
     } as GenerationResource,
   },
   maxValues: {
-    seed: 4294967295,
+    seed: 2147483647,
     clipSkip: 3,
   },
 } as const;
@@ -830,6 +833,24 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+    } as GenerationResource,
+  },
+  Other: {
+    aspectRatios: [] as { label: string; width: number; height: number }[],
+    checkpoint: {
+      id: 164821,
+      name: '',
+      trainedWords: [],
+      modelId: 147759,
+      modelName: 'Remacri',
+      modelType: 'Upscaler',
+      baseModel: 'Other',
+      covered: true,
+      available: true,
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      minor: false,
     } as GenerationResource,
   },
 };
