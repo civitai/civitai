@@ -20,7 +20,7 @@ import {
   useQueryUserResourceReview,
   useUpdateResourceReview,
 } from '~/components/ResourceReview/resourceReview.utils';
-import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
+import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { Form, InputRTE, InputTextArea, useForm } from '~/libs/form';
 import {
   ResourceReviewModel,

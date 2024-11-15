@@ -1,6 +1,11 @@
 // @ts-check
 import { withAxiom } from "next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
+import bundlAnalyzer  from '@next/bundle-analyzer'
+
+const withBundleAnalyzer = bundlAnalyzer({
+  enabled: process.env.ANALYZE === 'true',
+})
 
 /**
  * Don't be scared of the generics here.
