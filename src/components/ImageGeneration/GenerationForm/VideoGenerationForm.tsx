@@ -38,6 +38,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 
 const schema = videoGenerationSchema;
 
@@ -65,16 +66,22 @@ export function VideoGenerationForm() {
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
-        <Alert className="flex justify-center">
-          Learn more about{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
-            target="blank"
-            inline
-          >
-            video generation
+        <Alert>
+          <Text>
+            Learn more about{' '}
+            <Text
+              component="a"
+              variant="link"
+              href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
+              target="blank"
+              inline
+            >
+              video generation
+            </Text>
+          </Text>
+          <Text size="xs" color="dimmed">
+            Note: this is an experimental build. Pricing, default settings, and results are subject
+            to change.
           </Text>
         </Alert>
         <Select
@@ -167,6 +174,13 @@ function MochiGenerationForm() {
     <FormWrapper engine="mochi">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+      <DescriptionTable
+        items={[
+          { label: 'Aspect Ratio', value: '16:9' },
+          { label: 'Resolution', value: '848x480' },
+          { label: 'Duration', value: '5s' },
+        ]}
+      />
       <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
