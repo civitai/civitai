@@ -80,6 +80,7 @@
     "@microsoft/signalr": "^7.0.10",
     "@next-auth/prisma-adapter": "^1.0.7",
     "@next/bundle-analyzer": "^15.0.3",
+    "@next/third-parties": "^15.0.3",
     "@okikio/sharedworker": "^1.0.4",
     "@paddle/paddle-js": "^1.2.1",
     "@paddle/paddle-node-sdk": "^1.4.1",

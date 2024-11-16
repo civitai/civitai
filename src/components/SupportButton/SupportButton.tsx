@@ -61,7 +61,3 @@ export const SupportButton = () => {
     </HoverCard>
   );
 };
-
-type Props = {
-  size?: 'sm' | 'md' | 'lg' | 'xl';
-} & ButtonProps;
