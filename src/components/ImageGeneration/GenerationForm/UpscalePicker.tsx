@@ -5,17 +5,22 @@ import { getRoundedUpscaleSize } from '~/shared/constants/generation.constants';
 
 const multipliers = [1.5, 2, 2.5, 3];
 
-export function UpscalePicker({ label }: { label?: string }) {
+export function UpscalePicker({
+  label,
+  width,
+  height,
+}: {
+  label?: string;
+  width: number;
+  height: number;
+}) {
   const widthKey = 'upscaleWidth';
   const heightKey = 'upscaleHeight';
 
   const { control, watch, setValue, getValues } = useFormContext();
-  const [width, height] = watch(['width', 'height']);
 
   const [upscaleWidth, upscaleHeight] = watch([widthKey, heightKey]);
   const options = useMemo(() => {
-    if (!width || !height) return null;
-
     const sizes = multipliers.map((multiplier) => ({
       multiplier,
       ...getRoundedUpscaleSize({ width: multiplier * width, height: multiplier * height }),
@@ -24,7 +29,6 @@ export function UpscalePicker({ label }: { label?: string }) {
   }, [width, height]);
 
   useEffect(() => {
-    if (!options) return;
     const [upscaleWidth, upscaleHeight] = getValues([widthKey, heightKey]);
     if (!upscaleWidth || !upscaleHeight) {
       setValue(widthKey, options[0].width);
@@ -33,7 +37,7 @@ export function UpscalePicker({ label }: { label?: string }) {
   }, [options]);
 
   const selectedIndex = useMemo(() => {
-    if (!upscaleWidth || !upscaleHeight || !options) return undefined;
+    if (!upscaleWidth || !upscaleHeight) return undefined;
     const index = options.findIndex((x) => x.width === upscaleWidth && x.height === upscaleHeight);
     return index.toString();
   }, [upscaleWidth, upscaleHeight, options]);

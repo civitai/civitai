@@ -45,6 +45,7 @@ import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
+import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -242,6 +243,9 @@ export function GeneratedImage({
     );
   }
 
+  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
+  const img2vidConfigs = availableEngineConfigurations?.filter((x) => x.subType === 'img2vid');
+
   if (!available) return <></>;
 
   const isUpscale = step.params.workflow === 'img2img-upscale';
@@ -346,19 +350,22 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
-              {!isVideo && (
+              {!isVideo && img2vidConfigs && (
                 <>
                   <Menu.Divider />
-                  <Menu.Item
-                    onClick={() =>
-                      handleGenerate({ sourceImageUrl: image.url } as any, {
-                        type: 'video',
-                        workflow: 'haiper-img2vid',
-                      })
-                    }
-                  >
-                    Image to Video
-                  </Menu.Item>
+                  {img2vidConfigs.map(({ name, key, type }) => (
+                    <Menu.Item
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
+                    >
+                      {name}
+                    </Menu.Item>
+                  ))}
                 </>
               )}
               <Menu.Divider />
@@ -400,7 +407,7 @@ export function GeneratedImage({
               <IconHeart size={16} />
             </ActionIcon>
 
-            {/* {!!img2imgWorkflows?.length && canImg2Img && (
+            {!!img2imgWorkflows?.length && canImg2Img && (
               <Menu
                 zIndex={400}
                 trigger="hover"
@@ -428,9 +435,22 @@ export function GeneratedImage({
                       {workflow.name}
                     </Menu.Item>
                   ))}
+                  {img2vidConfigs?.map(({ name, key, type }) => (
+                    <Menu.Item
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
+                    >
+                      {name}
+                    </Menu.Item>
+                  ))}
                 </Menu.Dropdown>
               </Menu>
-            )} */}
+            )}
 
             <ActionIcon
               size="md"

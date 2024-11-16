@@ -158,6 +158,7 @@ export const REDIS_KEYS = {
     LIMITS: 'generation:limits',
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
+    ENGINES: 'generation:engines',
   },
   TRAINING: {
     STATUS: 'training:status',

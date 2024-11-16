@@ -10,6 +10,7 @@ export type ComfyNode = {
 interface BaseGenerationWorkflowConfig {
   // id: number;
   key: string; // in place of id for uniqueness
+  engine: string; // ie civitai, haiper, mochi
   name: string; // ie. Face fix
   description?: string;
   /** used for things like 'draft mode' */ // TODO - determine if this should simply go into `values` prop
@@ -19,6 +20,7 @@ interface BaseGenerationWorkflowConfig {
   /** default values used for generation */
   defaultValues?: Record<string, any>;
   metadataDisplayProps?: string[];
+  disabled?: boolean;
 }
 
 interface ImageGenerationWorkflowConfig {
@@ -52,7 +54,6 @@ interface ModelGenerationWorkflowConfig {
 
 interface ServiceGenerationWorkflowConfig {
   category: 'service';
-  engine: string;
 }
 
 export type GenerationWorkflowCategoryConfig =
@@ -64,3 +65,9 @@ export type GenerationWorkflowConfig = BaseGenerationWorkflowConfig &
   GenerationWorkflowCategoryConfig;
 
 // #endregion
+
+export interface GenerationEngine {
+  engine: string;
+  disabled?: boolean;
+  message?: string;
+}

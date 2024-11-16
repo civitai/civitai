@@ -21,6 +21,9 @@ body {
   overflow: hidden;
 }
 
+#uniconsent-config {
+  display: none;
+}
 /* html {
   container: root layout / size;
 } */

@@ -195,6 +195,8 @@ export function GenerationFormContent() {
       remixOfId,
       remixSimilarity,
       aspectRatio,
+      upscaleHeight,
+      upscaleWidth,
       ...params
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);

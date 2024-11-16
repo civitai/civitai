@@ -1,5 +1,5 @@
-import { Button, Input, Text, Select, Alert } from '@mantine/core';
-import React, { createContext, useEffect, useState, useContext } from 'react';
+import { Button, Input, Text, Select, Alert, Loader } from '@mantine/core';
+import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -34,6 +34,13 @@ import { showErrorNotification } from '~/utils/notifications';
 import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { hashify } from '~/utils/string-helpers';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
+import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 const schema = videoGenerationSchema;
 
@@ -53,6 +60,10 @@ export function VideoGenerationForm() {
     engine,
   });
 
+  const { data: engines, isLoading } = useGetGenerationEngines();
+  const engineData = engines?.find((x) => x.engine === engine);
+  const isDisabled = engineData?.disabled;
+
   const workflows =
     workflow.subType === 'txt2vid'
       ? availableWorkflows.filter((x) => x.subType === 'txt2vid')
@@ -61,16 +72,22 @@ export function VideoGenerationForm() {
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
-        <Alert className="flex justify-center">
-          Learn more about{' '}
-          <Text
-            component="a"
-            variant="link"
-            href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
-            target="blank"
-            inline
-          >
-            video generation
+        <Alert>
+          <Text>
+            Learn more about{' '}
+            <Text
+              component="a"
+              variant="link"
+              href="https://education.civitai.com/civitais-guide-to-video-in-the-civitai-generator"
+              target="blank"
+              inline
+            >
+              video generation
+            </Text>
+          </Text>
+          <Text size="xs" color="dimmed">
+            Note: this is an experimental build. Pricing, default settings, and results are subject
+            to change.
           </Text>
         </Alert>
         <Select
@@ -100,9 +117,37 @@ export function VideoGenerationForm() {
           </div>
         )}
       </div>
-      <WorkflowContext.Provider value={{ workflow }}>
-        <EngineForm />
-      </WorkflowContext.Provider>
+      {isLoading ? (
+        <div className="flex items-center justify-center p-3">
+          <Loader />
+        </div>
+      ) : isDisabled ? (
+        <Alert color="yellow" className="mx-3" title={`${engine} generation disabled`}>
+          {engineData?.message && <Text className="mb-2">{engineData?.message}</Text>}
+          {engines && (
+            <>
+              <Text className="mb-1">Try out another of our generation tools</Text>
+              <div className="flex flex-wrap gap-2">
+                {engines
+                  .filter((x) => !x.disabled)
+                  .map(({ engine }) => (
+                    <Button
+                      key={engine}
+                      compact
+                      onClick={() => generationFormStore.setEngine(engine)}
+                    >
+                      {engine}
+                    </Button>
+                  ))}
+              </div>
+            </>
+          )}
+        </Alert>
+      ) : (
+        <WorkflowContext.Provider value={{ workflow }}>
+          <EngineForm />
+        </WorkflowContext.Provider>
+      )}
     </div>
   );
 }
@@ -163,6 +208,13 @@ function MochiGenerationForm() {
     <FormWrapper engine="mochi">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+      <DescriptionTable
+        items={[
+          { label: 'Aspect Ratio', value: '16:9' },
+          { label: 'Resolution', value: '848x480 (480p)' },
+          { label: 'Duration', value: '5s' },
+        ]}
+      />
       <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
@@ -180,6 +232,13 @@ function FormWrapper({
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
   const { defaultValues } = workflow ?? {};
+  const status = useGenerationStatus();
+  const messageHash = useMemo(
+    () => (status.message ? hashify(status.message).toString() : undefined),
+    [status.message]
+  );
+
+  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
 
   const form = usePersistForm(workflow.key, {
     schema: schema as any,
@@ -205,7 +264,8 @@ function FormWrapper({
       localStorage.removeItem(workflow.key);
     }
     form.reset(defaultValues);
-    generationFormStore.setWorkflow('haiper-txt2vid');
+    const engineConfig = availableEngineConfigurations?.[0];
+    if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
   }
 
   function handleSubmit(data: z.infer<typeof schema>) {
@@ -270,6 +330,19 @@ function FormWrapper({
             Reset
           </Button>
         </div>
+        {status.message && !status.isLoading && (
+          <DismissibleAlert
+            color="yellow"
+            title="Image Generation Status Alert"
+            id={messageHash}
+            storage="sessionStorage"
+            getInitialValueInEffect={false}
+          >
+            <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+              {status.message}
+            </CustomMarkdown>
+          </DismissibleAlert>
+        )}
       </div>
     </Form>
   );

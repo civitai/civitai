@@ -7,6 +7,7 @@ import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 import { env } from '~/env/server.mjs';
 import { getSystemPermissions } from '~/server/services/system-cache';
+import { addGenerationEngine } from '~/server/services/generation/engines';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   console.log('hit me');
@@ -41,6 +42,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   //   tags: ['civitai', 'img'],
   // });
   const data = await getSystemPermissions();
+
+  await addGenerationEngine({ engine: 'civitai', disabled: true, message: undefined });
+  await addGenerationEngine({ engine: 'haiper', disabled: false, message: undefined });
+  await addGenerationEngine({ engine: 'mochi', disabled: false, message: undefined });
 
   return res.status(200).json({ data });
   // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));

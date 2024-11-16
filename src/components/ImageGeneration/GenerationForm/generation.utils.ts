@@ -15,7 +15,7 @@ import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
   const currentUser = useCurrentUser();
-  const { data } = trpc.generation.getStatus.useQuery(undefined, {
+  const { data, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
@@ -26,8 +26,8 @@ export const useGenerationStatus = () => {
     const tier = currentUser?.tier ?? 'free';
     const limits = status.limits[tier];
 
-    return { ...status, tier, limits };
-  }, [data, currentUser]);
+    return { ...status, tier, limits, isLoading };
+  }, [data, currentUser, isLoading]);
 };
 
 export const useUnstableResources = () => {

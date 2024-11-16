@@ -1,4 +1,5 @@
-import { Modal, Text } from '@mantine/core';
+import { Alert, Loader, Modal, Text } from '@mantine/core';
+import { useEffect, useState } from 'react';
 import { Controller } from 'react-hook-form';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -8,7 +9,12 @@ import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generat
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
+import {
+  GenerationResource,
+  getRoundedUpscaleSize,
+  whatIfQueryOverrides,
+} from '~/shared/constants/generation.constants';
+import { getImageData } from '~/utils/media-preprocessors';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,16 +32,56 @@ export function UpscaleImageModal({
   params: TextToImageInput;
 }) {
   const dialog = useDialogContext();
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (params.image)
+      getImageData(params.image)
+        .then(({ width, height }) => {
+          setSize({ width, height });
+        })
+        .catch((e) => setError('failed to load image'));
+    else {
+      setSize(null);
+    }
+  }, [params.image]);
+
+  return (
+    <Modal {...dialog}>
+      {error ? (
+        <Alert color="red">{error}</Alert>
+      ) : !size ? (
+        <div className="flex h-72 items-center justify-center">
+          <Loader />
+        </div>
+      ) : (
+        <UpscalImageForm params={{ ...params, ...size }} />
+      )}
+    </Modal>
+  );
+}
+
+function UpscalImageForm({ params }: { params: TextToImageInput }) {
+  const dialog = useDialogContext();
+
+  const upscale = getRoundedUpscaleSize({ width: params.width * 1.5, height: params.height * 1.5 });
 
   const form = useForm({
     schema,
     defaultValues: {
       width: params.width,
       height: params.height,
+      upscaleWidth: upscale.width,
+      upscaleHeight: upscale.height,
     },
   });
 
-  const [upscaleWidth, upscaleHeight] = form.watch(['upscaleWidth', 'upscaleHeight']);
+  const values = form.getValues();
+  const [upscaleWidth = values.upscaleWidth, upscaleHeight = values.upscaleHeight] = form.watch([
+    'upscaleWidth',
+    'upscaleHeight',
+  ]);
 
   const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
     {
@@ -65,7 +111,6 @@ export function UpscaleImageModal({
   });
 
   function handleSubmit(formData: z.infer<typeof schema>) {
-    console.log(data);
     async function performTransaction() {
       await generateImage.mutateAsync({
         resources: [{ id: 164821 }],
@@ -82,42 +127,40 @@ export function UpscaleImageModal({
   }
 
   return (
-    <Modal {...dialog}>
-      <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        {params.image && (
-          <div className="flex flex-col items-end gap-0.5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
-            <Text color="dimmed" size="sm">
-              Image dimensions: {params.width} x {params.height}
-            </Text>
-          </div>
-        )}
-        <Controller
-          name="width"
-          control={form.control}
-          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
-        />
-        <Controller
-          name="height"
-          control={form.control}
-          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
-        />
-        <UpscalePicker label="Upscale multipliers" />
-        <GenerateButton
-          type="submit"
-          // onClick={handleSubmit}
-          loading={isLoading || generateImage.isLoading}
-          cost={data?.cost?.total ?? 0}
-          error={
-            !isInitialLoading && isError
-              ? 'Error calculating cost. Please try updating your values'
-              : undefined
-          }
-        >
-          Upscale
-        </GenerateButton>
-      </Form>
-    </Modal>
+    <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
+      {params.image && (
+        <div className="flex flex-col items-end gap-0.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
+          <Text color="dimmed" size="sm">
+            Image dimensions: {params.width} x {params.height}
+          </Text>
+        </div>
+      )}
+      <Controller
+        name="width"
+        control={form.control}
+        render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
+      />
+      <Controller
+        name="height"
+        control={form.control}
+        render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
+      />
+      <UpscalePicker label="Upscale multipliers" width={params.width} height={params.height} />
+      <GenerateButton
+        type="submit"
+        // onClick={handleSubmit}
+        loading={isLoading || generateImage.isLoading}
+        cost={data?.cost?.total ?? 0}
+        error={
+          !isInitialLoading && isError
+            ? 'Error calculating cost. Please try updating your values'
+            : undefined
+        }
+      >
+        Upscale
+      </GenerateButton>
+    </Form>
   );
 }

@@ -93,7 +93,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
 
-  useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
+  // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
   // useEffect(() => console.log('items'), [items]);
 

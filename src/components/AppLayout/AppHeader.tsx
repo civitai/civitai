@@ -815,9 +815,9 @@ export function AppHeader({
         ['border-green-8 border-b-[3px]']: features.isGreen,
       })}
     >
-      <Box className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
+      <div className={cx(classes.mobileSearchWrapper, { [classes.dNone]: !showSearch })}>
         {renderSearchComponent({ onSearchDone, isMobile: true, ref: searchRef })}
-      </Box>
+      </div>
 
       <Grid
         className={cx(classes.header, { [classes.dNone]: showSearch })}

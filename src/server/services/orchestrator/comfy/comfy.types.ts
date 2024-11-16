@@ -9,7 +9,6 @@ export type WorkflowDefinition = {
   selectable?: boolean;
   template: string;
   features?: (typeof workflowDefinitionFeatures)[number][];
-  remix?: WorkflowDefinitionKey;
   status?: 'mod-only' | 'published' | 'disabled';
 };
 
@@ -88,7 +87,6 @@ export const workflowDefinitions: WorkflowDefinition[] = [
     name: 'Upscale',
     features: ['upscale', 'image'],
     selectable: false,
-    remix: 'txt2img',
     template:
       '{"12": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "24", 0 ]}, "class_type": "SaveImage", "_meta": { "title": "Save Image" }}, "22": { "inputs": { "upscale_model": [ "23", 0 ], "image": [ "26", 0 ]}, "class_type": "ImageUpscaleWithModel", "_meta": { "title": "Upscale Image (using Model)" }}, "23": { "inputs": { "model_name": "urn:air:multi:upscaler:civitai:147759@164821" }, "class_type": "UpscaleModelLoader", "_meta": { "title": "Load Upscale Model" }}, "24": { "inputs": { "upscale_method": "bilinear", "width": {{upscaleWidth}}, "height": {{upscaleHeight}}, "crop": "disabled", "image": [ "22", 0 ]}, "class_type": "ImageScale", "_meta": { "title": "Upscale Image" }}, "26": { "inputs": { "image": "{{image}}", "upload": "image" }, "class_type": "LoadImage", "_meta": { "title": "Load Image" }}}',
   },

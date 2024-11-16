@@ -205,7 +205,7 @@ export async function parseGenerateImageInput({
 
   // #region [together]
   // TODO - should be able to remove this 30 days after orchestrator integration
-  if (params.aspectRatio) {
+  if (params.aspectRatio && (!params.width || !params.height)) {
     const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
     params.width = size.width;
     params.height = size.height;
@@ -534,8 +534,8 @@ function formatTextToImageStep({
             seed: input.seed ? input.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            height: input.height,
             width: input.width,
+            height: input.height,
           })) ?? [],
     }),
     {}
@@ -626,8 +626,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            height: params?.height ?? 512,
             width: params?.width ?? 512,
+            height: params?.height ?? 512,
           })) ?? [],
     }),
     {}
