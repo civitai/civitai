@@ -69,8 +69,11 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
     },
   });
 
-  const [upscaleWidth, upscaleHeight] = form.watch(['upscaleWidth', 'upscaleHeight']);
-  console.log({ upscaleWidth, upscaleHeight });
+  const values = form.getValues();
+  const [upscaleWidth = values.upscaleWidth, upscaleHeight = values.upscaleHeight] = form.watch([
+    'upscaleWidth',
+    'upscaleHeight',
+  ]);
 
   const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
     {

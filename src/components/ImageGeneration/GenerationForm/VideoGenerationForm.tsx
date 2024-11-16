@@ -1,4 +1,4 @@
-import { Button, Input, Text, Select, Alert } from '@mantine/core';
+import { Button, Input, Text, Select, Alert, Loader } from '@mantine/core';
 import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
@@ -39,6 +39,8 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
+import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 const schema = videoGenerationSchema;
 
@@ -57,6 +59,10 @@ export function VideoGenerationForm() {
     category: 'service',
     engine,
   });
+
+  const { data: engines, isLoading } = useGetGenerationEngines();
+  const engineData = engines?.find((x) => x.engine === engine);
+  const isDisabled = engineData?.disabled;
 
   const workflows =
     workflow.subType === 'txt2vid'
@@ -111,9 +117,37 @@ export function VideoGenerationForm() {
           </div>
         )}
       </div>
-      <WorkflowContext.Provider value={{ workflow }}>
-        <EngineForm />
-      </WorkflowContext.Provider>
+      {isLoading ? (
+        <div className="flex items-center justify-center p-3">
+          <Loader />
+        </div>
+      ) : isDisabled ? (
+        <Alert color="yellow" className="mx-3" title={`${engine} generation disabled`}>
+          {engineData?.message && <Text className="mb-2">{engineData?.message}</Text>}
+          {engines && (
+            <>
+              <Text className="mb-1">Try out another of our generation tools</Text>
+              <div className="flex flex-wrap gap-2">
+                {engines
+                  .filter((x) => !x.disabled)
+                  .map(({ engine }) => (
+                    <Button
+                      key={engine}
+                      compact
+                      onClick={() => generationFormStore.setEngine(engine)}
+                    >
+                      {engine}
+                    </Button>
+                  ))}
+              </div>
+            </>
+          )}
+        </Alert>
+      ) : (
+        <WorkflowContext.Provider value={{ workflow }}>
+          <EngineForm />
+        </WorkflowContext.Provider>
+      )}
     </div>
   );
 }
@@ -204,6 +238,8 @@ function FormWrapper({
     [status.message]
   );
 
+  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
+
   const form = usePersistForm(workflow.key, {
     schema: schema as any,
     version: 1,
@@ -228,7 +264,8 @@ function FormWrapper({
       localStorage.removeItem(workflow.key);
     }
     form.reset(defaultValues);
-    generationFormStore.setWorkflow('haiper-txt2vid');
+    const engineConfig = availableEngineConfigurations?.[0];
+    if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
   }
 
   function handleSubmit(data: z.infer<typeof schema>) {

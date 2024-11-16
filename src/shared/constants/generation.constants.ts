@@ -556,7 +556,3 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
   },
 ];
 // #endregion
-
-export const img2vidWorkflows = generationFormWorkflowConfigurations.filter(
-  (x) => x.subType === 'img2vid'
-);

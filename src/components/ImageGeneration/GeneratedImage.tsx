@@ -40,11 +40,12 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux, getIsSD3, img2vidWorkflows } from '~/shared/constants/generation.constants';
+import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '@prisma/client';
+import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -242,6 +243,9 @@ export function GeneratedImage({
     );
   }
 
+  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
+  const img2vidConfigs = availableEngineConfigurations?.filter((x) => x.subType === 'img2vid');
+
   if (!available) return <></>;
 
   const isUpscale = step.params.workflow === 'img2img-upscale';
@@ -346,10 +350,10 @@ export function GeneratedImage({
                   ))}
                 </>
               )}
-              {!isVideo && (
+              {!isVideo && img2vidConfigs && (
                 <>
                   <Menu.Divider />
-                  {img2vidWorkflows.map(({ name, key, type }) => (
+                  {img2vidConfigs.map(({ name, key, type }) => (
                     <Menu.Item
                       key={key}
                       onClick={() =>
@@ -431,7 +435,7 @@ export function GeneratedImage({
                       {workflow.name}
                     </Menu.Item>
                   ))}
-                  {img2vidWorkflows.map(({ name, key, type }) => (
+                  {img2vidConfigs?.map(({ name, key, type }) => (
                     <Menu.Item
                       key={key}
                       onClick={() =>

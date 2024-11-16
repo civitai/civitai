@@ -24,8 +24,10 @@ import {
   setWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { z } from 'zod';
+import { getGenerationEngines } from '~/server/services/generation/engines';
 
 export const generationRouter = router({
+  getGenerationEngines: publicProcedure.query(() => getGenerationEngines()),
   getWorkflowDefinitions: publicProcedure.query(({ ctx }) =>
     getWorkflowDefinitions().then((res) =>
       res

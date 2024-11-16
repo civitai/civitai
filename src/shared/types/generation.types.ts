@@ -20,6 +20,7 @@ interface BaseGenerationWorkflowConfig {
   /** default values used for generation */
   defaultValues?: Record<string, any>;
   metadataDisplayProps?: string[];
+  disabled?: boolean;
 }
 
 interface ImageGenerationWorkflowConfig {
@@ -64,3 +65,9 @@ export type GenerationWorkflowConfig = BaseGenerationWorkflowConfig &
   GenerationWorkflowCategoryConfig;
 
 // #endregion
+
+export interface GenerationEngine {
+  engine: string;
+  disabled?: boolean;
+  message?: string;
+}
