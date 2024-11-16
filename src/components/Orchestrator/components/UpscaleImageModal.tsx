@@ -9,7 +9,11 @@ import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generat
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
+import {
+  GenerationResource,
+  getRoundedUpscaleSize,
+  whatIfQueryOverrides,
+} from '~/shared/constants/generation.constants';
 import { getImageData } from '~/utils/media-preprocessors';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -61,11 +65,15 @@ export function UpscaleImageModal({
 function UpscalImageForm({ params }: { params: TextToImageInput }) {
   const dialog = useDialogContext();
 
+  const upscale = getRoundedUpscaleSize({ width: params.width * 1.5, height: params.height * 1.5 });
+
   const form = useForm({
     schema,
     defaultValues: {
       width: params.width,
       height: params.height,
+      upscaleWidth: upscale.width,
+      upscaleHeight: upscale.height,
     },
   });
 
@@ -103,7 +111,6 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
   });
 
   function handleSubmit(formData: z.infer<typeof schema>) {
-    console.log(data);
     async function performTransaction() {
       await generateImage.mutateAsync({
         resources: [{ id: 164821 }],

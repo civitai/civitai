@@ -21,8 +21,6 @@ export function UpscalePicker({
 
   const [upscaleWidth, upscaleHeight] = watch([widthKey, heightKey]);
   const options = useMemo(() => {
-    if (!width || !height) return null;
-
     const sizes = multipliers.map((multiplier) => ({
       multiplier,
       ...getRoundedUpscaleSize({ width: multiplier * width, height: multiplier * height }),
@@ -31,7 +29,6 @@ export function UpscalePicker({
   }, [width, height]);
 
   useEffect(() => {
-    if (!options) return;
     const [upscaleWidth, upscaleHeight] = getValues([widthKey, heightKey]);
     if (!upscaleWidth || !upscaleHeight) {
       setValue(widthKey, options[0].width);
@@ -40,7 +37,7 @@ export function UpscalePicker({
   }, [options]);
 
   const selectedIndex = useMemo(() => {
-    if (!upscaleWidth || !upscaleHeight || !options) return undefined;
+    if (!upscaleWidth || !upscaleHeight) return undefined;
     const index = options.findIndex((x) => x.width === upscaleWidth && x.height === upscaleHeight);
     return index.toString();
   }, [upscaleWidth, upscaleHeight, options]);

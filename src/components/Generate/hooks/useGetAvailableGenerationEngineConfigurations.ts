@@ -3,7 +3,6 @@ import { generationFormWorkflowConfigurations } from '~/shared/constants/generat
 
 export function useGetAvailableGenerationEngineConfigurations() {
   const { data, ...rest } = useGetGenerationEngines();
-  console.log({ data });
 
   return {
     data: data
