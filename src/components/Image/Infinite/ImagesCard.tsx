@@ -85,7 +85,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       width={450}
                       placeholder="empty"
                       contain={!!image.cosmetic?.data}
-                      fadeIn
+                      // fadeIn
                     />
                   ) : (
                     <MediaHash {...image} />
