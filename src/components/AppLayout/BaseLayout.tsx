@@ -20,7 +20,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <MetaPWA />
-      <div style={{ opacity: 0 }} className="base">
+      <div className={`flex flex-1 overflow-hidden`}>
         {!isBanned && !shouldOnboard && <GenerationSidebar />}
         <ContainerProvider id="main" containerName="main" className="flex-1">
           {isBanned ? (

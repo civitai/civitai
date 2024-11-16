@@ -398,7 +398,3 @@ div[data-youtube-video] > iframe {
   display: flex;
   flex-direction: column;
 }
-
-.base {
-  @apply flex flex-1 overflow-hidden !opacity-100;
-}
