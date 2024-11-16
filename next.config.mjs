@@ -1,6 +1,11 @@
 // @ts-check
 import { withAxiom } from "@civitai/next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
+import bundlAnalyzer  from '@next/bundle-analyzer'
+
+const withBundleAnalyzer = bundlAnalyzer({
+  enabled: process.env.ANALYZE === 'true',
+})
 
 import bundleAnalyzer from '@next/bundle-analyzer'
 const withBundleAnalyzer = bundleAnalyzer({
