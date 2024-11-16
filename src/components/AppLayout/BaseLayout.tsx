@@ -12,7 +12,6 @@ const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 const OnboardingWizard = dynamic(() => import('~/components/Onboarding/OnboardingWizard'));
 
 export function BaseLayout({ children }: { children: React.ReactNode }) {
-  const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const isBanned = currentUser?.bannedAt ?? false;
   const shouldOnboard =
@@ -21,7 +20,7 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <MetaPWA />
-      <div className={`flex flex-1 overflow-hidden ${theme.colorScheme}`}>
+      <div style={{ display: 'none' }} className={`!flex flex-1 overflow-hidden`}>
         {!isBanned && !shouldOnboard && <GenerationSidebar />}
         <ContainerProvider id="main" containerName="main" className="flex-1">
           {isBanned ? (

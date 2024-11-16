@@ -7,10 +7,11 @@ export default class _Document extends Document {
   static getInitialProps = getInitialProps;
 
   render() {
+    const pageProps = this.props?.__NEXT_DATA__?.props?.pageProps;
     return (
       <Html>
         <Head />
-        <body>
+        <body className={pageProps.colorScheme}>
           <Main />
           <NextScript />
         </body>
