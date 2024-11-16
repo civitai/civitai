@@ -55,25 +55,9 @@ export default defineNextConfig(withAxiom({
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
-    // bundlePagesExternals: true,
     optimizePackageImports: [
       '@civitai/client',
-      // '@prisma/client',
-      // '@mantine/carousel',
-      // '@mantine/core',
-      // '@mantine/dates',
-      // '@mantine/dropzone',
-      // '@mantine/form',
-      // '@mantine/hooks',
-      // '@mantine/modals',
-      // '@mantine/next',
-      // '@mantine/notifications',
-      // '@mantine/nprogress',
-      // '@mantine/rte',
-      // '@mantine/spotlight',
-      // '@mantine/tiptap',
     ]
-
   },
   headers: async () => {
     // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc

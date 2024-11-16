@@ -400,5 +400,5 @@ div[data-youtube-video] > iframe {
 }
 
 .base {
-  @apply !flex flex-1 overflow-hidden;
+  @apply flex flex-1 overflow-hidden !opacity-100;
 }
