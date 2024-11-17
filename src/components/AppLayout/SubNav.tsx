@@ -1,4 +1,3 @@
-import { Group } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { ArticleFeedFilters } from '~/components/Filters/FeedFilters/ArticleFeedFilters';
 import { BountyFeedFilters } from '~/components/Filters/FeedFilters/BountyFeedFilters';
@@ -8,6 +7,7 @@ import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilter
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
+import clsx from 'clsx';
 
 const filterSections = [
   { pathname: '/', component: <ManageHomepageButton ml="auto" /> },
@@ -26,9 +26,13 @@ export function SubNav2() {
   const section = filterSections.find((x) => x.pathname === router.pathname);
 
   return (
-    <Group py={4} px={8} spacing={8} position="apart" noWrap={router.pathname === '/'}>
+    <div
+      className={clsx('flex justify-between gap-2 px-2 py-1', {
+        ['flex-wrap']: router.pathname !== '/',
+      })}
+    >
       <HomeTabs />
       {section?.component}
-    </Group>
+    </div>
   );
 }

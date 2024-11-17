@@ -1,4 +1,3 @@
-import { ScrollAreaProps } from '@mantine/core';
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
@@ -9,6 +8,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
+import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 
 export function AppLayout({
   children,

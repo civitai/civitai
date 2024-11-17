@@ -261,6 +261,7 @@ function ReactionBadge({
         {constants.availableReactions[reaction]}
       </Text>
       {!hideReactionCount && <Text inherit>{count}</Text>}
+      {/* {constants.availableReactions[reaction]} {!hideReactionCount && count} */}
     </Button>
   );
 }

@@ -3,7 +3,7 @@ import { trpc } from '~/utils/trpc';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
 import React from 'react';
 import { useStripePaymentMethodSetup } from '~/components/Buzz/useStripePaymentMethodSetup';
-import { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
+import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
 import { Button, Center, Group, Loader, Stack, Text, useMantineTheme } from '@mantine/core';
 
 type Props = {

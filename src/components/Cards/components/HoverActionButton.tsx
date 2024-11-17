@@ -1,12 +1,10 @@
 import React from 'react';
 import {
   Badge,
-  Box,
   createStyles,
   MantineColor,
   ThemeIcon,
   ThemeIconProps,
-  UnstyledButton,
   UnstyledButtonProps,
 } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
@@ -117,7 +115,7 @@ const HoverActionButton = ({
   const colorCustomVariant = color as CustomVariantType;
 
   return (
-    <UnstyledButton
+    <button
       onClick={onClick}
       className={cx(classes.wrapper, isCustomVariant ? classes[colorCustomVariant] : undefined)}
       {...props}
@@ -147,7 +145,7 @@ const HoverActionButton = ({
           <IconArrowRight size={16} stroke={2.5} />
         </ThemeIcon>
       )}
-    </UnstyledButton>
+    </button>
   );
 };
 

@@ -1,4 +1,4 @@
-import { loadStripe, Stripe } from '@stripe/stripe-js';
+import type { Stripe } from '@stripe/stripe-js';
 import { useRef, useEffect } from 'react';
 import { env } from '~/env/client.mjs';
 import { useRouter } from 'next/router';
@@ -15,9 +15,12 @@ export const useStripePromise = () => {
   const ref = useRef<Promise<Stripe | null> | null>(null);
 
   useEffect(() => {
-    ref.current = env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
-      ? loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY)
-      : null;
+    if (!env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY) return;
+    if (!ref.current) {
+      import('@stripe/stripe-js').then(({ loadStripe }) => {
+        ref.current = loadStripe(env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY!);
+      });
+    }
     return () => {
       ref.current = null;
     };

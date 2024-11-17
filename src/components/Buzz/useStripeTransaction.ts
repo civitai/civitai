@@ -1,7 +1,7 @@
 import { useElements, useStripe } from '@stripe/react-stripe-js';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useInterval } from '@mantine/hooks';
-import { PaymentIntent, PaymentMethod } from '@stripe/stripe-js';
+import type { PaymentIntent, PaymentMethod } from '@stripe/stripe-js';
 import {
   STRIPE_PROCESSING_AWAIT_TIME,
   STRIPE_PROCESSING_CHECK_INTERVAL,
