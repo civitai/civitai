@@ -116,7 +116,7 @@ export function AppFooter() {
         <div className="flex items-center">
           {footerLinks
             .filter((item) => !item.features || item.features?.(features))
-            .map((props, i) => (
+            .map(({ features, ...props }, i) => (
               <Button
                 key={i}
                 {...props}
