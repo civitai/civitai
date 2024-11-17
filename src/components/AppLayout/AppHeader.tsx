@@ -265,7 +265,7 @@ export function AppHeader({
   // const ref = useClickOutside(() => setBurgerOpened(false));
   const searchRef = useRef<HTMLInputElement>(null);
 
-  const isMuted = currentUser && currentUser.muted;
+  const isMuted = currentUser?.muted ?? false;
   const {
     groupedCollections: {
       Article: bookmarkedArticlesCollection,
