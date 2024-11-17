@@ -69,7 +69,7 @@ export function throwDbError(error: unknown) {
 export function throwInternalServerError(error: unknown) {
   throw new TRPCError({
     code: 'INTERNAL_SERVER_ERROR',
-    message: (e as any).message ?? 'An unexpected error ocurred, please try again later',
+    message: (error as any).message ?? 'An unexpected error ocurred, please try again later',
     cause: error,
   });
 }
