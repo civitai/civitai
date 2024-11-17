@@ -43,7 +43,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
-import JSZip from 'jszip';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
@@ -78,6 +77,7 @@ import {
 } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
+import { getJSZip } from '~/utils/lazy';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -381,7 +381,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const parsedFiles: ImageDataType[] = [];
 
-    const zipReader = new JSZip();
+    const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
     const ret = await Promise.all(
@@ -769,7 +769,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
 
-    const zip = new JSZip();
+    const zip = await getJSZip();
 
     await Promise.all(
       imageList.map(async (imgData, idx) => {

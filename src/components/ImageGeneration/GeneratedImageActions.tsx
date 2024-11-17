@@ -15,11 +15,11 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
-import JSZip from 'jszip';
 import { fetchBlob } from '~/utils/file-utils';
 import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
+import { getJSZip } from '~/utils/lazy';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -116,7 +116,7 @@ export function GeneratedImageActions({
   async function downloadSelected() {
     setZipping(true);
     const selectedImages = getSelectedImages();
-    const zip = new JSZip();
+    const zip = await getJSZip();
     await Promise.all(
       selectedImages.map((image) =>
         limit(async () => {
