@@ -1,36 +1,41 @@
-import { Badge, CloseButton, Group, Stack, Text, Divider } from '@mantine/core';
+import { CloseButton, Group, Stack, Text, Divider, Modal } from '@mantine/core';
 
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UserBuzz } from '../User/UserBuzz';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 
-const { openModal, Modal } = createContextModal<{
+export type BuyBuzzModalProps = {
   message?: string;
   purchaseSuccessMessage?: (purchasedBalance: number) => React.ReactNode;
   onPurchaseSuccess?: () => void;
   minBuzzAmount?: number;
-}>({
-  name: 'buyBuzz',
-  withCloseButton: false,
-  centered: true,
-  size: 'xl',
-  radius: 'lg',
-  zIndex: 400,
-  Element: ({
-    context,
-    props: { message, onPurchaseSuccess, minBuzzAmount, purchaseSuccessMessage },
-  }) => {
-    const { trackAction } = useTrackEvent();
-    const handleClose = () => {
-      trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 1 } }).catch(() => undefined);
-      context.close();
-    };
+};
 
-    return (
+export default function BuyBuzzModal({
+  message,
+  purchaseSuccessMessage,
+  onPurchaseSuccess,
+  minBuzzAmount,
+}: BuyBuzzModalProps) {
+  const dialog = useDialogContext();
+  const { trackAction } = useTrackEvent();
+  const handleClose = () => {
+    trackAction({ type: 'PurchaseFunds_Cancel', details: { step: 1 } }).catch(() => undefined);
+    dialog.onClose();
+  };
+  const isMobile = isMobileDevice();
+  return (
+    <Modal
+      {...dialog}
+      id="buyBuzz"
+      withCloseButton={false}
+      size="xl"
+      radius="lg"
+      fullScreen={isMobile}
+    >
       <Stack spacing="lg">
         <Group position="apart" noWrap>
           <Text size="lg" weight={700}>
@@ -63,7 +68,7 @@ const { openModal, Modal } = createContextModal<{
           <BuzzPurchase
             message={message}
             onPurchaseSuccess={() => {
-              context.close();
+              dialog.onClose();
               onPurchaseSuccess?.();
             }}
             minBuzzAmount={minBuzzAmount}
@@ -72,9 +77,6 @@ const { openModal, Modal } = createContextModal<{
           />
         </Group>
       </Stack>
-    );
-  },
-});
-
-export const openBuyBuzzModal = openModal;
-export default Modal;
+    </Modal>
+  );
+}

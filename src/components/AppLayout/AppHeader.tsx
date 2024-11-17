@@ -703,7 +703,7 @@ export function AppHeader({
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                onBuyBuzz({}, { fullScreen: isMobile });
+                onBuyBuzz({});
               }}
               compact
             >

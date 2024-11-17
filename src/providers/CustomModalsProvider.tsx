@@ -8,7 +8,6 @@ import { openAddToCollectionModal } from '~/components/Collections/AddToCollecti
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
 import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
@@ -36,7 +35,6 @@ const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddT
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
@@ -80,10 +78,6 @@ const registry = {
   manageHomeBlocks: {
     Component: ManageHomeBlocksModal,
     fn: openManageHomeBlocksModal,
-  },
-  buyBuzz: {
-    Component: BuyBuzzModal,
-    fn: openBuyBuzzModal,
   },
   sendTip: {
     Component: SendTipModal,

@@ -52,10 +52,7 @@ import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import {
-  TrainingImagesCaptions,
-  TrainingImagesCaptionViewer,
-} from '~/components/Training/Form/TrainingImagesCaptionViewer';
+
 import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
@@ -86,6 +83,17 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+
+const TrainingImagesCaptions = dynamic(() =>
+  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+    (x) => x.TrainingImagesCaptions
+  )
+);
+const TrainingImagesCaptionViewer = dynamic(() =>
+  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+    (x) => x.TrainingImagesCaptionViewer
+  )
+);
 
 const AutoLabelModal = dynamic(() =>
   import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal)
