@@ -57,6 +57,7 @@ export default defineNextConfig(withAxiom({
     largePageDataBytes: 512 * 100000,
     optimizePackageImports: [
       '@civitai/client',
+      './srs/libs/form'
     ]
   },
   headers: async () => {

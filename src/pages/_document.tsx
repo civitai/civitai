@@ -51,7 +51,6 @@ class InlineStylesHead extends Head {
         <style
           key={file}
           data-href={`${assetPrefix}/_next/${encodeURI(file)}`}
-          nonce={this.props.nonce}
           dangerouslySetInnerHTML={{
             __html: readFileSync(join(process.cwd(), '.next', file), 'utf-8'),
           }}
