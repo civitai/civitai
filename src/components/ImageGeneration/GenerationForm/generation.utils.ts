@@ -209,6 +209,8 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.value = text;
   target.selectionStart = selectionStart;
   target.selectionEnd = selectionEnd;
+
+  return text;
 }
 
 // const workflowDefinitionKey = 'workflow-definition';

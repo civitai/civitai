@@ -164,11 +164,17 @@ export function GenerationFormContent() {
     ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
     [
       'mod+ArrowUp',
-      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+      (event) => {
+        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
+        form.setValue('prompt', text ?? '');
+      },
     ],
     [
       'mod+ArrowDown',
-      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+      (event) => {
+        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
+        form.setValue('prompt', text ?? '');
+      },
     ],
   ]);
 
