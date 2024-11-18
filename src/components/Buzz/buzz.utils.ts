@@ -1,7 +1,6 @@
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client.mjs';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -11,6 +10,9 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
+import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import dynamic from 'next/dynamic';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();
@@ -74,13 +76,19 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
   };
 };
 
-type OpenBuyBuzzModalProps = Parameters<typeof openBuyBuzzModal>;
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+function openBuyBuzzModal(props: BuyBuzzModalProps) {
+  dialogStore.trigger({
+    id: 'buy-buzz-modal',
+    component: BuyBuzzModal,
+    props,
+  });
+}
 
-export const useBuyBuzz = (): ((...args: OpenBuyBuzzModalProps) => void) => {
+export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
   if (!features.canBuyBuzz) {
-    return (...args: OpenBuyBuzzModalProps) => {
-      const props = args[0];
+    return (props: BuyBuzzModalProps) => {
       const query = {
         minBuzzAmount: props.minBuzzAmount,
         'sync-account': 'blue',
@@ -189,15 +197,12 @@ export const useBuzzTransaction = (opts?: {
         () => undefined
       );
 
-      onBuyBuzz(
-        {
-          message: typeof message === 'function' ? message(buzzAmount - balance) : message,
-          minBuzzAmount: buzzAmount - balance,
-          onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
-          purchaseSuccessMessage,
-        },
-        { fullScreen: isMobile }
-      );
+      onBuyBuzz({
+        message: typeof message === 'function' ? message(buzzAmount - balance) : message,
+        minBuzzAmount: buzzAmount - balance,
+        onPurchaseSuccess: performTransactionOnPurchase ? onPerformTransaction : undefined,
+        purchaseSuccessMessage,
+      });
 
       return;
     }

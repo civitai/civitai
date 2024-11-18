@@ -92,9 +92,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   )}
                 </RoutedDialogLink>
 
-                <div className="absolute left-2 top-2">
-                  <ImageGuard2.BlurToggle />
-                </div>
+                <ImageGuard2.BlurToggle className="absolute left-2 top-2" />
 
                 {safe && (
                   <div className="absolute right-2 top-2 flex flex-col gap-2">

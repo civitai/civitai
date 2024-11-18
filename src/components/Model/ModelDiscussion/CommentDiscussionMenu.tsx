@@ -11,13 +11,12 @@ import {
   IconLockOpen,
   IconBan,
 } from '@tabler/icons-react';
-import { SessionUser } from 'next-auth';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -222,7 +221,7 @@ export function CommentDiscussionMenu({
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
-                openContext('report', { entityType: ReportEntity.Comment, entityId: comment.id })
+                openReportModal({ entityType: ReportEntity.Comment, entityId: comment.id })
               }
             >
               Report

@@ -35,7 +35,6 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
@@ -79,6 +78,11 @@ import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardCo
 import { isDefined } from '~/utils/type-guards';
 import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import dynamic from 'next/dynamic';
+const AddUserContentModal = dynamic(() =>
+  import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
+);
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -446,7 +450,6 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
-  const [opened, setOpened] = useState(false);
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
@@ -491,7 +494,6 @@ export function Collection({
         position="bottom-end"
         shadow="md"
         radius={12}
-        onClose={() => setOpened(false)}
         middlewares={{ flip: true, shift: true }}
       >
         <Popover.Target>
@@ -633,7 +635,12 @@ export function Collection({
                             if (!!metadata.existingEntriesDisabled) {
                               router.push(`/posts/create?collectionId=${collection.id}`);
                             } else {
-                              setOpened(true);
+                              dialogStore.trigger({
+                                component: AddUserContentModal,
+                                props: {
+                                  collectionId: collection.id,
+                                },
+                              });
                             }
                           }}
                         >
@@ -702,13 +709,6 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-      {collection && canAddContent && (
-        <AddUserContentModal
-          collectionId={collection.id}
-          opened={opened}
-          onClose={() => setOpened(false)}
-        />
-      )}
     </>
   );
 }

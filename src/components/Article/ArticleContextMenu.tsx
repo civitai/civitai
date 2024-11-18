@@ -20,6 +20,7 @@ import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { ArticleGetById } from '~/types/router';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -200,7 +201,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openContext('report', { entityType: ReportEntity.Article, entityId: article.id });
+                openReportModal({ entityType: ReportEntity.Article, entityId: article.id });
               }}
             >
               Report article

@@ -40,8 +40,10 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
 import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-export function AddUserContentModal({ collectionId, opened, onClose, ...props }: Props) {
+export function AddUserContentModal({ collectionId }: Props) {
+  const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
   const { collection } = useCollection(collectionId);
@@ -62,7 +64,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
 
   const handleClose = () => {
     resetFiles();
-    onClose();
+    dialog.onClose();
     deselectAll();
     setError('');
   };
@@ -139,14 +141,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   const loading = uploading || addSimpleImagePostCollectionMutation.isLoading;
 
   return (
-    <Modal
-      {...props}
-      title="Add images to collection"
-      size="80%"
-      opened={opened}
-      onClose={handleClose}
-      centered
-    >
+    <Modal {...dialog} title="Add images to collection" size="80%" onClose={handleClose} centered>
       <Stack spacing="xl">
         {error && (
           <AlertWithIcon color="red" iconColor="red" size="sm" icon={<IconInfoCircle size={16} />}>
@@ -226,7 +221,7 @@ export function AddUserContentModal({ collectionId, opened, onClose, ...props }:
   );
 }
 
-type Props = ModalProps & { collectionId: number };
+type Props = { collectionId: number };
 
 function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
   const toggleSelected = useStore((state) => state.toggleSelected);

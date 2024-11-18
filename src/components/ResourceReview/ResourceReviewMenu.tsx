@@ -14,11 +14,11 @@ import { ToggleLockComments } from '~/components/CommentsV2';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ResourceReviewPagedModel } from '~/types/router';
+import { openReportModal, openResourceReviewEditModal } from '~/components/Dialog/dialog-registry';
 
 export function ResourceReviewMenu({
   reviewId,
@@ -128,7 +128,7 @@ export function ResourceReviewMenu({
             {!isMuted && (
               <Menu.Item
                 icon={<IconEdit size={14} stroke={1.5} />}
-                onClick={() => openContext('resourceReviewEdit', review)}
+                onClick={() => openResourceReviewEditModal(review)}
               >
                 Edit review
               </Menu.Item>
@@ -172,7 +172,7 @@ export function ResourceReviewMenu({
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
-                openContext('report', {
+                openReportModal({
                   entityType: ReportEntity.ResourceReview,
                   entityId: reviewId,
                 })

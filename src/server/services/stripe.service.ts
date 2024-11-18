@@ -1,5 +1,5 @@
 import { Currency } from '@prisma/client';
-import { MetadataParam } from '@stripe/stripe-js';
+import type { MetadataParam } from '@stripe/stripe-js';
 import { chunk } from 'lodash-es';
 import { Stripe } from 'stripe';
 import { env } from '~/env/server.mjs';

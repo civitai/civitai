@@ -1,16 +1,10 @@
-import { GroupProps, Group, ActionIcon, Menu, Stack, Text, Button, Box } from '@mantine/core';
-import {
-  IconDotsVertical,
-  IconTrash,
-  IconEdit,
-  IconFlag,
-  IconArrowBackUp,
-} from '@tabler/icons-react';
+import { ActionIcon, Menu } from '@mantine/core';
+import { IconDotsVertical, IconTrash, IconEdit, IconFlag } from '@tabler/icons-react';
 import { useCommentsContext } from '~/components/CommentsV2';
 import { useCommentV2Context } from '~/components/CommentsV2/Comment/CommentProvider';
 import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export function ModelDiscussionContextMenu() {
@@ -22,7 +16,7 @@ export function ModelDiscussionContextMenu() {
   };
 
   const handleReportClick = () =>
-    openContext('report', {
+    openReportModal({
       entityType: ReportEntity.CommentV2,
       entityId: comment.id,
     });

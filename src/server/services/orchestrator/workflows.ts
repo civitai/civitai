@@ -23,6 +23,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
+  throwInternalServerError,
 } from '~/server/utils/errorHandling';
 
 export async function queryWorkflows({
@@ -69,7 +70,7 @@ export async function submitWorkflow({
     query,
   });
   if (!data) {
-    const message = (error as any).errors?.messages?.join('\n');
+    const message: string | undefined = (error as any).errors?.messages?.join('\n');
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
@@ -86,6 +87,8 @@ export async function submitWorkflow({
       case 403:
         throw throwInsufficientFundsError(message);
       default:
+        if (message?.startsWith('<!DOCTYPE'))
+          throw throwInternalServerError('Generation services down');
         throw error;
     }
   }

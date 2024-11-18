@@ -16,7 +16,7 @@ module.exports = {
   important: '#__next',
   theme: {
     screens: breakpoints,
-
+    important: '#__next',
     extend: {
       textShadow: {
         sm: '0 1px 2px var(--tw-shadow-color)',

@@ -7,9 +7,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { useMutateBounty } from './bounty.utils';
 import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function BountyContextMenu({
   bounty,
@@ -103,9 +103,7 @@ export function BountyContextMenu({
       <ReportMenuItem
         key="report"
         label="Report bounty"
-        onReport={() =>
-          openContext('report', { entityType: ReportEntity.Bounty, entityId: bounty.id })
-        }
+        onReport={() => openReportModal({ entityType: ReportEntity.Bounty, entityId: bounty.id })}
       />
     ) : null,
   ].filter(isDefined);

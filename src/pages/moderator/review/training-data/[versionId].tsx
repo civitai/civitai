@@ -1,6 +1,5 @@
 import { Button, Loader, Popover, Text } from '@mantine/core';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
-import JSZip from 'jszip';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Page } from '~/components/AppLayout/Page';
@@ -12,6 +11,7 @@ import {
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useStepper } from '~/hooks/useStepper';
 import { fetchBlob } from '~/utils/file-utils';
+import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 
@@ -39,7 +39,7 @@ function ReviewTrainingData() {
     fetchBlob(`/api/download/training-data/${versionId}`)
       .then(async (zip) => {
         if (zip) {
-          const zipReader = new JSZip();
+          const zipReader = await getJSZip();
           const zData = await zipReader.loadAsync(zip);
           const urls = await unzipTrainingData(zData, ({ imgBlob }) =>
             URL.createObjectURL(imgBlob)
