@@ -47,7 +47,7 @@ const useStyles = createStyles(
         if (i === 1) return { ...acc, width: '100%' };
         const combinedGapWidth = columnGap * (i - 1);
         const minWidth = columnWidth * i + combinedGapWidth;
-        const width = columnWidth * i + combinedGapWidth;
+        const width = columnWidth * i + combinedGapWidth + 32;
         return {
           ...acc,
           width: '100%',

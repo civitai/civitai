@@ -34,11 +34,13 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
     return {
       grid: {
         display: 'grid',
+        gridAutoFlow: 'column',
         gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
         // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
+        // gap: 16,
         margin: -theme.spacing.md / 2,
         // marginTop: -theme.spacing.md,
         // paddingBottom: theme.spacing.md,
