@@ -1,13 +1,11 @@
-import { Stack, Title } from '@mantine/core';
+import { Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { env } from '~/env/client.mjs';
 
 export default Page(
@@ -23,15 +21,13 @@ export default Page(
           links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images`, rel: 'canonical' }]}
         />
         {/* <ToolBanner /> */}
-        <MasonryContainer>
+        <MasonryContainer className="min-h-full">
           {/* <Announcements /> */}
           {hidden && <Title>Your Hidden Images</Title>}
-          <Stack spacing="xs">
-            <IsClient>
-              <ImageCategories />
-              <ImagesInfinite showEof showAds useIndex />
-            </IsClient>
-          </Stack>
+          <div className="flex flex-col gap-2.5">
+            <ImageCategories />
+            <ImagesInfinite showEof showAds useIndex />
+          </div>
         </MasonryContainer>
       </>
     );

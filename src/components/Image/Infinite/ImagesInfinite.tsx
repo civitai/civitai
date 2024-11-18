@@ -70,7 +70,7 @@ export function ImagesInfiniteContent({
   //#endregion
 
   return (
-    <IsClient>
+    <>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -123,6 +123,6 @@ export function ImagesInfiniteContent({
           )}
         </NoContent>
       )}
-    </IsClient>
+    </>
   );
 }

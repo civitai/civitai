@@ -14,19 +14,14 @@ export function MasonryContainer({ children, ...boxProps }: MasonryContainerProp
   const { columnWidth, columnGap, maxColumnCount, columnCount, combinedWidth } =
     masonryProviderState;
 
-  const { classes } = useStyles({
+  const { classes, cx } = useStyles({
     columnWidth,
     columnGap,
     maxColumnCount,
   });
 
   return (
-    <Box
-      px="md"
-      {...boxProps}
-      className={classes.container}
-      style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
-    >
+    <Box px="md" {...boxProps} className={cx(classes.container, boxProps.className)}>
       {typeof children === 'function' ? children(masonryProviderState) : children}
     </Box>
   );
@@ -55,6 +50,7 @@ const useStyles = createStyles(
         const width = columnWidth * i + combinedGapWidth;
         return {
           ...acc,
+          width: '100%',
           [`@container masonry-container (min-width: ${minWidth}px)`]: {
             width,
           },
@@ -64,8 +60,8 @@ const useStyles = createStyles(
     );
     return {
       container: {
-        containerType: 'inline-size',
-        containerName: 'masonry-container',
+        // containerType: 'inline-size',
+        // containerName: 'masonry-container',
         margin: '0 auto',
         ...containerQueries,
       },
