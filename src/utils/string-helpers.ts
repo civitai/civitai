@@ -1,6 +1,5 @@
 import { Air } from '@civitai/client';
 import { ModelType } from '@prisma/client';
-import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import {
@@ -183,14 +182,6 @@ export function hashifyObject(obj: any) {
 
 export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
-}
-
-export function normalizeText(input?: string): string {
-  if (!input) return '';
-  return he
-    .decode(input)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
 }
 
 export function parseAIR(identifier: string) {
