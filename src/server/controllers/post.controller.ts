@@ -1,4 +1,4 @@
-import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { Context } from '~/server/createContext';

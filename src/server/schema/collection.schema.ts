@@ -7,7 +7,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   baseQuerySchema,

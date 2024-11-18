@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -9,9 +10,8 @@ import {
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  Prisma,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { uniq, uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';

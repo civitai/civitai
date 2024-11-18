@@ -1,4 +1,4 @@
-import { Availability } from '@prisma/client';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { parseNumericString } from '~/utils/query-string-helpers';

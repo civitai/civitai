@@ -1,4 +1,4 @@
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server.mjs';
 import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';

@@ -1,4 +1,5 @@
-import { EntityMetric_MetricType_Type, Prisma, ReviewReactions } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { EntityMetric_MetricType_Type, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { notifDbRead } from '~/server/db/notifDb';

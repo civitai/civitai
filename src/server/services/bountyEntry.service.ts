@@ -1,4 +1,5 @@
-import { Currency, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { BountyEntryFileMeta, UpsertBountyEntryInput } from '~/server/schema/bounty-entry.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';

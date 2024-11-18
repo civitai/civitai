@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { isEqual } from 'lodash';
+import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';

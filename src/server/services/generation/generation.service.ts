@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
@@ -13,7 +14,7 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { MediaType, Prisma } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';

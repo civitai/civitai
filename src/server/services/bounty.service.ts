@@ -1,11 +1,11 @@
+import { Prisma } from '@prisma/client';
 import {
   BountyEntryMode,
   Currency,
   ImageIngestionStatus,
   MetricTimeframe,
-  Prisma,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs, { ManipulateType } from 'dayjs';
 import { groupBy } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';

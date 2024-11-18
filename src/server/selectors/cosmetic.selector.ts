@@ -1,5 +1,6 @@
+import { Prisma } from '@prisma/client';
 import { TextProps } from '@mantine/core';
-import { CosmeticEntity, Prisma, MediaType } from '@prisma/client';
+import { CosmeticEntity, MediaType } from '~/shared/utils/prisma/enums';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 
 export const simpleCosmeticSelect = Prisma.validator<Prisma.CosmeticSelect>()({

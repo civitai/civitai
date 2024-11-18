@@ -1,4 +1,4 @@
-import { ReportStatus } from '@prisma/client';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import { Context } from '~/server/createContext';
 import { CreateCsamReportSchema } from '~/server/schema/csam.schema';
