@@ -35,7 +35,7 @@ export function MasonryColumns<TData>({
   staticItem,
   withAds,
 }: Props<TData>) {
-  const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
+  const { columnCount, columnWidth } = useMasonryContext();
 
   const columns = useMasonryColumns(
     data,

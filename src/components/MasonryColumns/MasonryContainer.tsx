@@ -1,4 +1,4 @@
-import { createStyles, Box, BoxProps } from '@mantine/core';
+import { createStyles, ContainerProps, Box, BoxProps } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,
@@ -14,15 +14,26 @@ export function MasonryContainer({ children, ...boxProps }: MasonryContainerProp
   const { columnWidth, columnGap, maxColumnCount, columnCount, combinedWidth } =
     masonryProviderState;
 
-  const { classes, cx } = useStyles({
+  const { classes } = useStyles({
     columnWidth,
     columnGap,
     maxColumnCount,
   });
 
+  const state = {
+    ...masonryProviderState,
+  };
+
   return (
-    <Box px="md" {...boxProps} className={cx(classes.container, boxProps.className)}>
-      {typeof children === 'function' ? children(masonryProviderState) : children}
+    <Box px="md" {...boxProps}>
+      <div className={classes.container}>
+        <div
+          style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
+          className={classes.queries}
+        >
+          {typeof children === 'function' ? children(state) : children}
+        </div>
+      </div>
     </Box>
   );
 }
@@ -47,10 +58,9 @@ const useStyles = createStyles(
         if (i === 1) return { ...acc, width: '100%' };
         const combinedGapWidth = columnGap * (i - 1);
         const minWidth = columnWidth * i + combinedGapWidth;
-        const width = columnWidth * i + combinedGapWidth + 32;
+        const width = columnWidth * i + combinedGapWidth;
         return {
           ...acc,
-          width: '100%',
           [`@container masonry-container (min-width: ${minWidth}px)`]: {
             width,
           },
@@ -60,8 +70,10 @@ const useStyles = createStyles(
     );
     return {
       container: {
-        // containerType: 'inline-size',
-        // containerName: 'masonry-container',
+        containerType: 'inline-size',
+        containerName: 'masonry-container',
+      },
+      queries: {
         margin: '0 auto',
         ...containerQueries,
       },

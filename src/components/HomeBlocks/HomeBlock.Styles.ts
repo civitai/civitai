@@ -35,23 +35,23 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
       grid: {
         display: 'grid',
         gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(auto-fill, minmax(320px, 1fr))`,
+        gridTemplateColumns: `repeat(auto-fill, 320px)`,
         // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        // gap: 16,
-        margin: -theme.spacing.md / 2,
+        gap: 16,
+        // margin: -theme.spacing.md / 2,
         // marginTop: -theme.spacing.md,
         // paddingBottom: theme.spacing.md,
 
-        '& > *': {
-          margin: theme.spacing.md / 2,
-        },
+        // '& > *': {
+        //   margin: theme.spacing.md / 2,
+        // },
 
         [containerQuery.smallerThan('md')]: {
           gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count / 2}, minmax(280px, 1fr) )`,
+          gridTemplateColumns: `repeat(${count / 2}, 280px)`,
           gridTemplateRows: `repeat(${rows}, auto)`,
           scrollSnapType: 'x mandatory',
           overflowX: 'auto',

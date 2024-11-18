@@ -1,4 +1,4 @@
-import { Box, BoxProps, createStyles } from '@mantine/core';
+import { Box, BoxProps } from '@mantine/core';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
@@ -41,7 +41,6 @@ export function MasonryProvider({
   maxSingleColumnWidth = columnWidth,
   ...boxProps
 }: Props) {
-  const { classes, cx } = useStyles();
   // width will be set to the inner width of the element. (clientWidth - paddingX)
   const [width, setWidth] = useState(0);
   const debouncer = useDebouncer(100);
@@ -78,16 +77,9 @@ export function MasonryProvider({
         combinedWidth,
       }}
     >
-      <Box ref={containerRef} {...boxProps} className={cx(classes.root, boxProps.className)}>
+      <Box ref={containerRef} {...boxProps}>
         {children}
       </Box>
     </MasonryContext.Provider>
   );
 }
-
-const useStyles = createStyles(() => ({
-  root: {
-    containerType: 'inline-size',
-    containerName: 'masonry-container',
-  },
-}));
