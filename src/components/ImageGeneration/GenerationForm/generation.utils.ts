@@ -1,12 +1,8 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-
-import { GenerateFormModel, generationStatusSchema } from '~/server/schema/generation.schema';
-import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 
 // export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })

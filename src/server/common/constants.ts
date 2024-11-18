@@ -675,10 +675,11 @@ export const generation = {
     } as GenerationResource,
   },
   maxValues: {
-    seed: 2147483647,
+    seed: 4294967295,
     clipSkip: 3,
   },
 } as const;
+export const maxRandomSeed = 2147483647;
 
 export const generationConfig = {
   SD1: {
