@@ -71,15 +71,11 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             icon={<IconPhoto />}
             action={
               !isRefetching && (
-<<<<<<< Updated upstream
-                <Link href={`/user/${user.username}/images?sort=${ImageSort.Newest}`} passHref>
-=======
                 <Link
-                  legacyBehavior
                   href={`/user/${user.username}/images?sort=${ImageSort.Newest}`}
+                  legacyBehavior
                   passHref
                 >
->>>>>>> Stashed changes
                   <Button
                     h={34}
                     component="a"

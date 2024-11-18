@@ -21,12 +21,8 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
-=======
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
->>>>>>> Stashed changes
 import {
   IconArrowBack,
   IconChevronDown,

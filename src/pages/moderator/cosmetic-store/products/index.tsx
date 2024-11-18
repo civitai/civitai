@@ -17,13 +17,8 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
-import { Currency } from '@prisma/client';
-=======
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Currency } from '~/shared/utils/prisma/enums';
->>>>>>> Stashed changes
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';

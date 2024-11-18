@@ -15,13 +15,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
-import { Currency } from '@prisma/client';
-=======
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Currency } from '~/shared/utils/prisma/enums';
->>>>>>> Stashed changes
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
   CategoryScale,

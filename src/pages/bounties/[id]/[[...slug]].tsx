@@ -289,15 +289,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-<<<<<<< Updated upstream
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
-=======
                       <Link
-                        legacyBehavior
                         href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        legacyBehavior
                         passHref
                       >
->>>>>>> Stashed changes
                         <Badge
                           component="a"
                           size="sm"

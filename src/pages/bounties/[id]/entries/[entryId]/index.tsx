@@ -288,15 +288,11 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
-<<<<<<< Updated upstream
-        <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
-=======
         <Link
-          legacyBehavior
           href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`}
+          legacyBehavior
           passHref
         >
->>>>>>> Stashed changes
           <Button
             size="md"
             radius="xl"

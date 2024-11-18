@@ -9,13 +9,8 @@ import {
   createStyles,
   Text,
 } from '@mantine/core';
-<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
-import { MetricTimeframe } from '@prisma/client';
-=======
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
->>>>>>> Stashed changes
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

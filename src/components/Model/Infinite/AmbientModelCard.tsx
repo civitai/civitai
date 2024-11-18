@@ -13,12 +13,8 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelStatus, CosmeticType } from '@prisma/client';
-=======
 import { CollectionType, ModelStatus, CosmeticType } from '~/shared/utils/prisma/enums';
->>>>>>> Stashed changes
 import {
   IconBrush,
   IconDownload,
