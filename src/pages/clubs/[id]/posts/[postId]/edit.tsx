@@ -10,7 +10,7 @@ import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({

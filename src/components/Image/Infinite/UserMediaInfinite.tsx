@@ -9,7 +9,7 @@ import {
   SegmentedControlProps,
   Stack,
 } from '@mantine/core';
-import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SortFilter } from '~/components/Filters';

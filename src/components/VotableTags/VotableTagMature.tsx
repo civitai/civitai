@@ -1,5 +1,5 @@
 import { Badge, createStyles, Divider, Chip, Group, Text, Popover, Stack } from '@mantine/core';
-import { TagType } from '@prisma/client';
+import { TagType } from '~/shared/utils/prisma/enums';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { moderationCategories } from '~/libs/moderation';

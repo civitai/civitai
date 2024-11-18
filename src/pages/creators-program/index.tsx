@@ -34,7 +34,7 @@ import {
 } from '@tabler/icons-react';
 import { formatCurrencyForDisplay, numberWithCommas } from '../../utils/number-helpers';
 import { constants } from '../../server/common/constants';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
 import { Meta } from '../../components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

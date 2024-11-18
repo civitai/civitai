@@ -1,6 +1,11 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { Currency, ModelType } from '@prisma/client';
+=======
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { Currency, ModelType } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 

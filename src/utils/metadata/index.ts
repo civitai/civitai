@@ -5,7 +5,7 @@ import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata'
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
 import { isDefined } from '~/utils/type-guards';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { constants } from '~/server/common/constants';

@@ -10,8 +10,13 @@ import {
   Overlay,
   useMantineTheme,
 } from '@mantine/core';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { ModelType } from '@prisma/client';
+=======
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ModelType } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';

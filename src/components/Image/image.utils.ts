@@ -1,6 +1,6 @@
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { MediaType, MetricTimeframe, ReviewReactions } from '@prisma/client';
+import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';

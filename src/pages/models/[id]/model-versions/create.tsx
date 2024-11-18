@@ -3,7 +3,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { isNumber } from '~/utils/type-guards';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 import { InferGetServerSidePropsType } from 'next';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

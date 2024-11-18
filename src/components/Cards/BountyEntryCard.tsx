@@ -9,7 +9,7 @@ import { BountyGetEntries } from '~/types/router';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { IconFiles } from '@tabler/icons-react';
 import { openBountyEntryFilesModal } from '~/components/Bounty/BountyEntryFilesModal';

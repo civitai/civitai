@@ -22,8 +22,12 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { Currency } from '@prisma/client';
+=======
+import { Currency } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import {
   IconBarbell,
   IconBookmark,

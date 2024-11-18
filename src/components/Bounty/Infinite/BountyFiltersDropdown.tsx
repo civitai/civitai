@@ -12,7 +12,7 @@ import {
   ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BountyType, MetricTimeframe } from '@prisma/client';
+import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { useCallback, useState } from 'react';

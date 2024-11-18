@@ -9,7 +9,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React, { useState } from 'react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembershipInfinite';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 
 const querySchema = z.object({ id: z.coerce.number() });
 

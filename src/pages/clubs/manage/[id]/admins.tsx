@@ -8,7 +8,7 @@ import { useQueryClub } from '~/components/Club/club.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import React from 'react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubAdminInvitesPaged } from '../../../../components/Club/Infinite/ClubAdminInvitesPaged';
 import { dialogStore } from '../../../../components/Dialog/dialogStore';
 import { ClubAdminInviteUpsertModal } from '../../../../components/Club/ClubAdminInviteUpsertForm';

@@ -12,7 +12,7 @@ import {
   ButtonProps,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { BuzzWithdrawalRequestStatus, PurchasableRewardUsage } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';

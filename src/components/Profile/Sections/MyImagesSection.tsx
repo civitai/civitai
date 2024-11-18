@@ -1,5 +1,5 @@
 import { Button, Loader, Text } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
 import Link from 'next/link';
 import React, { useMemo } from 'react';
@@ -71,7 +71,15 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             icon={<IconPhoto />}
             action={
               !isRefetching && (
+<<<<<<< Updated upstream
                 <Link href={`/user/${user.username}/images?sort=${ImageSort.Newest}`} passHref>
+=======
+                <Link
+                  legacyBehavior
+                  href={`/user/${user.username}/images?sort=${ImageSort.Newest}`}
+                  passHref
+                >
+>>>>>>> Stashed changes
                   <Button
                     h={34}
                     component="a"

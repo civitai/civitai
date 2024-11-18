@@ -14,8 +14,13 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+=======
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';

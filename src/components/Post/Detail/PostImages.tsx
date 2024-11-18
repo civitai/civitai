@@ -25,7 +25,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostContestCollectionItem } from '~/types/router';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { CollectionItemStatus } from '@prisma/client';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';

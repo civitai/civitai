@@ -1,5 +1,5 @@
 import { Button, Title, useMantineTheme } from '@mantine/core';
-import { ToolType } from '@prisma/client';
+import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';

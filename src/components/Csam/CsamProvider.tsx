@@ -1,4 +1,4 @@
-import { CsamReportType } from '@prisma/client';
+import { CsamReportType } from '~/shared/utils/prisma/enums';
 import { createContext, useContext } from 'react';
 import { SimpleUser } from '~/server/selectors/user.selector';
 

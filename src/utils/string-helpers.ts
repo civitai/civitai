@@ -1,5 +1,5 @@
 import { Air } from '@civitai/client';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import he from 'he';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';

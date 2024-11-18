@@ -22,7 +22,7 @@ import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export function UserReferralCodesCard() {
   const { copied, copy } = useClipboard();

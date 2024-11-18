@@ -1,5 +1,5 @@
 import { Alert, Anchor } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 export function ProfilePictureAlert({ ingestion }: Props) {
   if (ingestion === ImageIngestionStatus.Pending)

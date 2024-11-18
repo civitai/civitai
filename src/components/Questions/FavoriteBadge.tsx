@@ -4,7 +4,7 @@ import { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { trpc } from '~/utils/trpc';
 import { useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 
 type ReactionButtonProps = Omit<ToggleReactionInput, 'reaction'> & {

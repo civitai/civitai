@@ -7,7 +7,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { ScanResultCode } from '@prisma/client';
+import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import { IconShieldCheck, IconShieldOff, IconShieldX } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import dayjs from 'dayjs';

@@ -37,7 +37,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Availability, BountyEngagementType, BountyMode } from '@prisma/client';
+import { Availability, BountyEngagementType, BountyMode } from '~/shared/utils/prisma/enums';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
@@ -289,7 +289,15 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
+<<<<<<< Updated upstream
                       <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+=======
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
+>>>>>>> Stashed changes
                         <Badge
                           component="a"
                           size="sm"

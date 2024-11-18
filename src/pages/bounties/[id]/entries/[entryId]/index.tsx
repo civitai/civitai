@@ -68,7 +68,7 @@ import Link from 'next/link';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { Availability, ReviewReactions } from '@prisma/client';
+import { Availability, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';
@@ -288,7 +288,15 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
+<<<<<<< Updated upstream
         <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+=======
+        <Link
+          legacyBehavior
+          href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`}
+          passHref
+        >
+>>>>>>> Stashed changes
           <Button
             size="md"
             radius="xl"

@@ -9,8 +9,12 @@ import {
   Title,
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { ReportStatus } from '@prisma/client';
+=======
+import { ReportStatus } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import React, { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';

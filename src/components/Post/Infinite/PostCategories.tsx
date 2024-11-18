@@ -1,4 +1,4 @@
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { TagScroller } from '~/components/Tags/TagScroller';
 import { useCategoryTags } from '~/components/Tags/tag.utils';

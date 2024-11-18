@@ -63,8 +63,13 @@ import { VaultItemGetPaged } from '~/types/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { VaultItemStatus } from '@prisma/client';
+=======
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { VaultItemStatus } from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';

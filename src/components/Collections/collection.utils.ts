@@ -3,7 +3,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';

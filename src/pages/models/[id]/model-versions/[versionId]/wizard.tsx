@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 import { dbRead } from '~/server/db/client';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';

@@ -44,7 +44,7 @@ import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
 import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 export type GeneratedImageProps = {

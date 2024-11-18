@@ -16,7 +16,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconExclamationMark, IconExternalLink } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
 import Link from 'next/link';

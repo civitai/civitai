@@ -1,5 +1,5 @@
 import { Box, Group, Stack, Tabs } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
 

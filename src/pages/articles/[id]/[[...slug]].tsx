@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import { ArticleEngagementType, ArticleStatus, Availability } from '@prisma/client';
+import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
@@ -250,7 +250,16 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
+<<<<<<< Updated upstream
                       <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
+=======
+                      <Link
+                        legacyBehavior
+                        key={tag.id}
+                        href={`/articles?view=feed&tags=${tag.id}`}
+                        passHref
+                      >
+>>>>>>> Stashed changes
                         <Badge
                           component="a"
                           color="gray"

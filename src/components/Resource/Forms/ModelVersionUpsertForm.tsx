@@ -11,7 +11,7 @@ import {
   Switch,
   Text,
 } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { isEqual } from 'lodash';
 import { useRouter } from 'next/router';

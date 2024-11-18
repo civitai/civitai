@@ -21,8 +21,18 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
+<<<<<<< Updated upstream
 import { NextLink } from '@mantine/next';
 import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+=======
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  Availability,
+  CollectionType,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
+>>>>>>> Stashed changes
 import {
   IconArchive,
   IconArrowsLeftRight,
@@ -903,7 +913,15 @@ export default function ModelDetailsV2({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
+<<<<<<< Updated upstream
                       <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+=======
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
+>>>>>>> Stashed changes
                         <Badge
                           component="a"
                           size="sm"

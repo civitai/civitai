@@ -12,6 +12,16 @@ generator client {
   previewFeatures = ["metrics"]
 }
 
+generator enums {
+  provider = "node ./scripts/prisma-enum-generator.mjs"
+  output   = "../src/shared/utils/prisma/enums.ts"
+}
+
+generator typescriptInterfaces {
+  provider = "prisma-generator-typescript-interfaces"
+  output   = "../src/shared/utils/prisma/models.ts"
+}
+
 datasource db {
   provider          = "postgresql"
   // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below

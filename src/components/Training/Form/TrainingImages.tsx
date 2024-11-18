@@ -30,7 +30,7 @@ import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
-import { ModelFileVisibility } from '@prisma/client';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconCheck,

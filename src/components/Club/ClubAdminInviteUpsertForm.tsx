@@ -22,7 +22,7 @@ import { upsertClubAdminInviteInput } from '../../server/schema/clubAdmin.schema
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { showSuccessNotification } from '../../utils/notifications';
 import dayjs from 'dayjs';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '../../utils/string-helpers';
 import { useMutateClubAdmin } from './club.utils';
 

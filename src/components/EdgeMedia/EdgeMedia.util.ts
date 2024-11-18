@@ -1,4 +1,4 @@
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
 import { videoMetadataSchema } from '~/server/schema/media.schema';
 

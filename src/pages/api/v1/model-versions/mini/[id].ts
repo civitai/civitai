@@ -1,15 +1,15 @@
+import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { Session } from 'next-auth';
-import { isProd } from '~/env/other';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 import { BaseModel } from '~/server/common/constants';
-import { Availability, ModelType, Prisma } from '@prisma/client';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 

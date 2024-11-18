@@ -1,5 +1,5 @@
 import { Anchor, Button, Card, Divider, Text } from '@mantine/core';
-import { CollectionItemStatus, CollectionType } from '@prisma/client';
+import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';

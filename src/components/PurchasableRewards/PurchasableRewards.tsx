@@ -32,7 +32,7 @@ import {
 } from '~/components/PurchasableRewards/purchasableRewards.util';
 import { GetPaginatedPurchasableRewardsSchema } from '~/server/schema/purchasable-reward.schema';
 import { PurchasableRewardViewMode } from '~/server/common/enums';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useDebouncedValue } from '@mantine/hooks';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

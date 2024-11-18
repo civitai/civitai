@@ -36,7 +36,7 @@ import {
 } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';

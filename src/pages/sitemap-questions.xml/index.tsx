@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { GetServerSideProps } from 'next';
 import { ISitemapField, getServerSideSitemapLegacy } from 'next-sitemap';
 import { QuestionSort } from '~/server/common/enums';

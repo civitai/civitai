@@ -1,4 +1,4 @@
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import {
   Popover,
   ActionIcon,
