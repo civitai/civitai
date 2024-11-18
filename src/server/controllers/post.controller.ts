@@ -503,11 +503,13 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
+  ctx: Context;
 }) => {
   try {
-    const items = await getPostContestCollectionDetails({ ...input });
+    const items = await getPostContestCollectionDetails({ ...input, userId: ctx.user?.id });
     return items;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
