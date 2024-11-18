@@ -39,7 +39,6 @@ import {
 import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import Linkify from 'linkify-react';
-import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { throttle } from 'lodash-es';
 import Link from 'next/link';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';

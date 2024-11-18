@@ -64,6 +64,7 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles((theme, _, getRef) => {
   const infoRef = getRef('info');
@@ -266,7 +267,7 @@ export function AmbientModelCard({ data, height }: Props) {
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Model, entityId: id });
+          openReportModal({ entityType: ReportEntity.Model, entityId: id });
         }}
       >
         Report Resource
@@ -281,7 +282,7 @@ export function AmbientModelCard({ data, height }: Props) {
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           e.preventDefault();
           e.stopPropagation();
-          openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+          openReportModal({ entityType: ReportEntity.Image, entityId: image.id });
         }}
       >
         Report Image

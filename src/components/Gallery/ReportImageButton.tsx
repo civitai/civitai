@@ -1,5 +1,5 @@
 import React, { cloneElement } from 'react';
-import { openContext } from '~/providers/CustomModalsProvider';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export const ReportImageButton = ({
@@ -12,7 +12,7 @@ export const ReportImageButton = ({
   const handleClick = (e: React.SyntheticEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    openContext('report', { entityType: ReportEntity.Image, entityId: imageId });
+    openReportModal({ entityType: ReportEntity.Image, entityId: imageId });
   };
 
   return cloneElement(children, { onClick: handleClick });

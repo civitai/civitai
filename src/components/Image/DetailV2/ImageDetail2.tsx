@@ -41,6 +41,7 @@ import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
@@ -57,16 +58,13 @@ import { useImageContestCollectionDetails } from '~/components/Image/image.utils
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -138,7 +136,7 @@ export function ImageDetail2() {
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
 
   const handleReportClick = () => {
-    openContext('report', {
+    openReportModal({
       entityType: ReportEntity.Image,
       entityId: image.id,
     });

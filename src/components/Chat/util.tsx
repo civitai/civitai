@@ -1,5 +1,5 @@
 import React, { ReactElement } from 'react';
-import { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
+import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
 import { constants } from '~/server/common/constants';
 import { Anchor, Text } from '@mantine/core';
 import Link from 'next/link';

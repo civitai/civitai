@@ -9,23 +9,17 @@ import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlo
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
-import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
-const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
-const ResourceReviewEdit = dynamic(
-  () => import('~/components/ResourceReview/EditResourceReviewModal')
-);
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
@@ -47,10 +41,6 @@ const registry = {
     Component: BlockModelTagsModal,
     fn: openBlockModelTagsModal,
   },
-  report: {
-    Component: ReportModal,
-    fn: openReportModal,
-  },
   unpublishModel: {
     Component: UnpublishModal,
     fn: openUnpublishModal,
@@ -62,10 +52,6 @@ const registry = {
   'civitai-link-wizard': {
     Component: CivitaiLinkWizard,
     fn: openCivitaiLinkModal,
-  },
-  resourceReviewEdit: {
-    Component: ResourceReviewEdit,
-    fn: openResourceReviewEditModal,
   },
   associateModels: {
     Component: AssociateModelsModal,

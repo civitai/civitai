@@ -49,14 +49,13 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -159,7 +158,7 @@ export function ModelCategoryCard({
           onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
-            openContext('report', { entityType: ReportEntity.Model, entityId: id });
+            openReportModal({ entityType: ReportEntity.Model, entityId: id });
           }}
         >
           Report Resource
@@ -178,7 +177,7 @@ export function ModelCategoryCard({
               onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+                openReportModal({ entityType: ReportEntity.Image, entityId: image.id });
               }}
             >
               Report Image

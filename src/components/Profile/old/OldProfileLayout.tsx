@@ -1,77 +1,38 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Card,
-  Center,
-  Container,
-  createStyles,
-  Group,
-  Loader,
-  Menu,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-  useMantineTheme,
-} from '@mantine/core';
+import { ActionIcon, Menu, useMantineTheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconBan,
-  IconCategory,
   IconCrystalBall,
   IconDotsVertical,
-  IconFileText,
   IconFlag,
-  IconFolder,
   IconInfoCircle,
   IconGraphOff,
   IconGraph,
-  IconLayoutList,
   IconMicrophone,
   IconMicrophoneOff,
-  IconPhoto,
-  IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
-import { ChatUserButton } from '~/components/Chat/ChatUserButton';
+import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import { CivitaiTabs } from '~/components/CivitaiWrapped/CivitaiTabs';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Meta } from '~/components/Meta/Meta';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import { ProfileLayout2 } from '~/components/Profile/ProfileLayout2';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { TrackView } from '~/components/TrackView/TrackView';
-import { Username } from '~/components/User/Username';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { EncryptedDataSchema, impersonateEndpoint } from '~/server/schema/civToken.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { formatDate } from '~/utils/date-helpers';
-import { sortDomainLinks } from '~/utils/domain-link';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -92,14 +53,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     !!currentUser.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(username);
   const removeContentMutation = trpc.user.removeAllContent.useMutation();
-  const deleteAccountMutation = trpc.user.delete.useMutation({
-    onSuccess() {
-      showSuccessNotification({
-        title: 'Account Deleted',
-        message: 'This account has been deleted.',
-      });
-    },
-  });
+  // const deleteAccountMutation = trpc.user.delete.useMutation({
+  //   onSuccess() {
+  //     showSuccessNotification({
+  //       title: 'Account Deleted',
+  //       message: 'This account has been deleted.',
+  //     });
+  //   },
+  // });
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
@@ -200,26 +161,26 @@ export const UserContextMenu = ({ username }: { username: string }) => {
           toggleLeaderboardMutation.mutate({ id: user.id, setTo: !user.excludeFromLeaderboards }),
       });
   };
-  const handleRemoveContent = () => {
-    if (!user) return;
-    openConfirmModal({
-      title: 'Remove All Content',
-      children: `Are you sure you want to remove all content (models, reviews, comments, posts, and images) by this user? This action cannot be undone.`,
-      labels: { confirm: 'Yes, remove all content', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => removeContentMutation.mutate({ id: user.id }),
-    });
-  };
-  const handleDeleteAccount = () => {
-    if (!user) return;
-    openConfirmModal({
-      title: 'Delete Account',
-      children: `Are you sure you want to delete this account? This action cannot be undone.`,
-      labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
-    });
-  };
+  // const handleRemoveContent = () => {
+  //   if (!user) return;
+  //   openConfirmModal({
+  //     title: 'Remove All Content',
+  //     children: `Are you sure you want to remove all content (models, reviews, comments, posts, and images) by this user? This action cannot be undone.`,
+  //     labels: { confirm: 'Yes, remove all content', cancel: 'Cancel' },
+  //     confirmProps: { color: 'red' },
+  //     onConfirm: () => removeContentMutation.mutate({ id: user.id }),
+  //   });
+  // };
+  // const handleDeleteAccount = () => {
+  //   if (!user) return;
+  //   openConfirmModal({
+  //     title: 'Delete Account',
+  //     children: `Are you sure you want to delete this account? This action cannot be undone.`,
+  //     labels: { confirm: 'Yes, delete account', cancel: 'Cancel' },
+  //     confirmProps: { color: 'red' },
+  //     onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
+  //   });
+  // };
   const handleImpersonate = async () => {
     if (!user || !currentUser || !features.impersonation || user.id === currentUser?.id) return;
     const notificationId = `impersonate-${user.id}`;
@@ -359,7 +320,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
               onClick={() =>
-                openContext('report', {
+                openReportModal({
                   entityType: ReportEntity.User,
                   entityId: user.id,
                 })

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { z } from 'zod';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -19,7 +19,6 @@ import {
   Center,
   CloseButton,
   createStyles,
-  Divider,
   Group,
   Loader,
   MantineProvider,
@@ -31,19 +30,13 @@ import {
   Text,
   ThemeIcon,
   Tooltip,
-  UnstyledButton,
 } from '@mantine/core';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
-import { useAspectRatioFit } from '~/hooks/useAspectRatioFit';
-import { useDidUpdate, useHotkeys } from '@mantine/hooks';
+import { useDidUpdate } from '@mantine/hooks';
 import {
   IconBrandWechat,
-  IconChevronLeft,
-  IconChevronRight,
-  IconInfoCircle,
   IconLock,
   IconLockOpen,
   IconNotes,
@@ -54,8 +47,6 @@ import {
   IconTrash,
   IconTrophy,
 } from '@tabler/icons-react';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { BountyEntryGetById } from '~/types/router';
 import { BountyEntryDiscussion } from '~/components/Bounty/BountyEntryDiscussion';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -68,19 +59,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { IconDotsVertical } from '@tabler/icons-react';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import Link from 'next/link';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
 import { Availability, ReviewReactions } from '@prisma/client';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -92,6 +79,7 @@ import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCaro
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -417,7 +405,7 @@ export default function BountyEntryDetailsPage({
             <ReportMenuItem
               label="Report entry"
               onReport={() =>
-                openContext('report', {
+                openReportModal({
                   entityType: ReportEntity.BountyEntry,
                   entityId: bountyEntry.id,
                 })

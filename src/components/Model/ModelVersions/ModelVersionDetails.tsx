@@ -89,7 +89,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -113,7 +112,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
-import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
+import {
+  openCollectionSelectModal,
+  openResourceReviewEditModal,
+} from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -943,7 +945,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                           <Button
                             size="xs"
                             color="gray"
-                            onClick={() => openContext('resourceReviewEdit', userReview)}
+                            onClick={() => openResourceReviewEditModal(userReview)}
                           >
                             See Review
                           </Button>

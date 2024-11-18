@@ -65,7 +65,10 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
-import { openMigrateModelToCollectionModal } from '~/components/Dialog/dialog-registry';
+import {
+  openMigrateModelToCollectionModal,
+  openReportModal,
+} from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -809,7 +812,7 @@ export default function ModelDetailsV2({
                             <Menu.Item
                               icon={<IconFlag size={14} stroke={1.5} />}
                               onClick={() =>
-                                openContext('report', {
+                                openReportModal({
                                   entityType: ReportEntity.Model,
                                   entityId: model.id,
                                 })

@@ -1,28 +1,22 @@
-import { createContextModal } from '~/components/Modals/utils/createContextModal';
+import { Modal } from '@mantine/core';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EditResourceReview } from '~/components/ResourceReview/EditResourceReview';
 import { ResourceReviewPagedModel } from '~/types/router';
 
-const { openModal, Modal } = createContextModal<
-  Pick<ResourceReviewPagedModel, 'id' | 'modelId' | 'modelVersionId' | 'recommended' | 'details'>
->({
-  name: 'resourceReviewEdit',
-  title: 'Edit Review',
-  size: 600,
-  Element: ({ context, props: { id, details, recommended, modelId, modelVersionId } }) => {
-    return (
+export type EditResourceReviewModalProps = Pick<
+  ResourceReviewPagedModel,
+  'id' | 'modelId' | 'modelVersionId' | 'recommended' | 'details'
+>;
+export default function EditResourceReviewModal(props: EditResourceReviewModalProps) {
+  const dialog = useDialogContext();
+  return (
+    <Modal {...dialog}>
       <EditResourceReview
-        id={id}
-        recommended={recommended}
-        details={details}
-        modelId={modelId}
-        modelVersionId={modelVersionId}
-        onSuccess={context.close}
-        onCancel={context.close}
+        {...props}
+        onSuccess={dialog.onClose}
+        onCancel={dialog.onClose}
         initialEditing
       />
-    );
-  },
-});
-
-export const openResourceReviewEditModal = openModal;
-export default Modal;
+    </Modal>
+  );
+}

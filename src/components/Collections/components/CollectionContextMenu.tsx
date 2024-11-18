@@ -7,7 +7,6 @@ import { useMemo } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -15,6 +14,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { CollectionMode } from '@prisma/client';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function CollectionContextMenu({
   collectionId,
@@ -168,7 +168,7 @@ export function CollectionContextMenu({
             label="Report collection"
             loginReason="report-content"
             onReport={() =>
-              openContext('report', {
+              openReportModal({
                 entityType: ReportEntity.Collection,
                 // Explicitly cast to number because we know it's not undefined
                 entityId: collectionId,

@@ -1,16 +1,13 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { CollectionType } from '@prisma/client';
 import { IconEdit, IconFlag, IconTrash, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 
 export function PostControls({
@@ -26,7 +23,6 @@ export function PostControls({
 }) {
   const router = useRouter();
   const theme = useMantineTheme();
-  const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
@@ -67,9 +63,7 @@ export function PostControls({
           <LoginRedirect reason="report-content">
             <Menu.Item
               icon={<IconFlag size={14} stroke={1.5} />}
-              onClick={() =>
-                openContext('report', { entityType: ReportEntity.Post, entityId: postId })
-              }
+              onClick={() => openReportModal({ entityType: ReportEntity.Post, entityId: postId })}
             >
               Report
             </Menu.Item>

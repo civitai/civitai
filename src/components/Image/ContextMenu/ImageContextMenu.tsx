@@ -31,6 +31,7 @@ import Router, { useRouter } from 'next/router';
 import React, { createContext, useContext } from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
@@ -157,7 +158,7 @@ function ImageMenuItems(
   };
 
   const handleReportClick = () =>
-    openContext('report', { entityType: ReportEntity.Image, entityId: imageId }, { zIndex: 1000 });
+    openReportModal({ entityType: ReportEntity.Image, entityId: imageId });
 
   const deleteImage = useDeleteImage();
   const rescanImage = useRescanImage();

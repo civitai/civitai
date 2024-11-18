@@ -62,6 +62,7 @@ import { ResourceSelectOptions } from './resource-select.types';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import clsx from 'clsx';
 import { isDefined } from '~/utils/type-guards';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -330,15 +331,13 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
       <ReportMenuItem
         key="report-model"
         loginReason="report-model"
-        onReport={() =>
-          openContext('report', { entityType: ReportEntity.Model, entityId: data.id })
-        }
+        onReport={() => openReportModal({ entityType: ReportEntity.Model, entityId: data.id })}
       />,
       <ReportMenuItem
         key="report-image"
         label="Report image"
         onReport={() =>
-          openContext('report', {
+          openReportModal({
             entityType: ReportEntity.Image,
             // Explicitly cast to number because we know it's not undefined
             entityId: image.id,
