@@ -266,15 +266,13 @@ export function MediaFiltersDropdown({
               </Chip>
             </>
           )}
-          {filterType !== 'videos' && (
-            <Chip
-              {...chipProps}
-              checked={mergedFilters.fromPlatform}
-              onChange={(checked) => handleChange({ fromPlatform: checked })}
-            >
-              Made On-site
-            </Chip>
-          )}
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.fromPlatform}
+            onChange={(checked) => handleChange({ fromPlatform: checked })}
+          >
+            Made On-site
+          </Chip>
         </div>
 
         {isModerator && (
