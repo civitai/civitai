@@ -2907,8 +2907,9 @@ export const getImagesByEntity = async ({
 export async function createImage({
   toolIds,
   techniqueIds,
+  skipIngestion,
   ...image
-}: ImageSchema & { userId: number }) {
+}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
   const result = await dbWrite.image.create({
     data: {
       ...image,
@@ -2922,21 +2923,24 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
+      ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
     },
     select: { id: true },
   });
 
-  await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
-  await ingestImage({
-    image: {
-      id: result.id,
-      url: image.url,
-      type: image.type,
-      height: image.height,
-      width: image.width,
-      prompt: image?.meta?.prompt,
-    },
-  });
+  if (!skipIngestion) {
+    await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
+    await ingestImage({
+      image: {
+        id: result.id,
+        url: image.url,
+        type: image.type,
+        height: image.height,
+        width: image.width,
+        prompt: image?.meta?.prompt,
+      },
+    });
+  }
 
   await userContentOverviewCache.bust(image.userId);
 

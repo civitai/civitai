@@ -68,6 +68,7 @@ import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 type GetAllPostsRaw = {
   id: number;
@@ -838,12 +839,28 @@ export const addPostImage = async ({
     }
   }
 
+  const post = await dbRead.post.findFirst({
+    where: { id: props.postId },
+    select: {
+      collection: {
+        select: {
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
+
+  console.log(collectionMeta);
+
   const partialResult = await createImage({
     ...props,
     meta,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
+    skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
   });
 
   try {

@@ -69,6 +69,7 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isPendingManualAssignment: boolean;
   onDelete: () => void;
   isDeleting: boolean;
   onEditMetaClick: () => void;
@@ -99,6 +100,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
+  const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isBlocked = false;
   // #endregion
 
@@ -163,6 +165,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         onEditMetaClick: handleEditMetaClick,
         isUpdating: updateImageMutation.isLoading,
         toggleHidePrompt,
+        isPendingManualAssignment,
       }}
     >
       <div className="overflow-hidden rounded-lg border border-gray-1 bg-gray-0 dark:border-dark-6 dark:bg-dark-8">
@@ -213,8 +216,8 @@ function EditDetail() {
     onEditMetaClick,
     isUpdating,
     toggleHidePrompt,
+    isPendingManualAssignment,
   } = useAddedImageContext();
-  const { activeCollection } = useCollectionsForPostEditor();
 
   const { meta, hideMeta, resourceHelper: resources } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
@@ -606,6 +609,19 @@ function EditDetail() {
           >
             <Loader size="xs" />
             <Text align="center">Analyzing image</Text>
+          </Alert>
+        )}
+        {isPendingManualAssignment && (
+          <Alert
+            color="blue"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              This image is waiting for manual review and will receive a rating at a later time.
+            </Text>
           </Alert>
         )}
         {/* #endregion */}

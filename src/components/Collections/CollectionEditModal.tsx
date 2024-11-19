@@ -1,4 +1,4 @@
-import { Button, Center, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
+import { Button, Center, Divider, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
 
 import { useEffect } from 'react';
 import {
@@ -91,14 +91,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const isCreate = !collectionId;
 
   return (
-    <Modal {...dialog} title={isCreate ? 'Create collection' : 'Edit collection'}>
+    <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
       {isLoading ? (
         <Center py="xl">
           <Loader variant="bars" />
         </Center>
       ) : canEdit || isCreate ? (
         <Form form={form} onSubmit={handleSubmit}>
-          <Stack spacing="xs">
+          <Stack spacing="sm">
             <InputSimpleImageUpload name="image" label="Cover Image" />
             <InputText
               name="name"
@@ -158,6 +158,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 />
                 {mode === CollectionMode.Contest && (
                   <>
+                    <Divider label="Contest Details" />
                     <InputDatePicker
                       name="metadata.endsAt"
                       label="End Date"
@@ -194,17 +195,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       <InputCheckbox
                         name="metadata.existingEntriesDisabled"
                         label="Existing entries disabled"
-                        placeholder="Makes it so that the + button takes you directly to the create flow."
+                        description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
                       />
                     )}
-                    <InputDatePicker
-                      name="metadata.votingPeriodStart"
-                      label="When voting for this contest will start"
-                      description="This will lock the ratings on these entries. Use with care. Leaving this blank makes it so that they're always reactable."
-                      placeholder="Select a voting period start date"
-                      icon={<IconCalendar size={16} />}
-                      clearable
-                    />
                     <InputTags
                       name="tags"
                       label={
@@ -222,10 +215,29 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       }
                       target={[TagTarget.Collection]}
                     />
+                    <Divider label="Judging details" />
+
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.judgesApplyBrowsingLevel"
+                        label="Judges apply NSFW Rating"
+                        description="This will make it so that people with Manage permission on the collection apply NSFW rating to the submissions. Subsmissions made to this collection will not be publicly visible until they're rated."
+                      />
+                    )}
+                    <InputDatePicker
+                      name="metadata.votingPeriodStart"
+                      label="Sets a start date for Reactions on the entries"
+                      description="This will lock the reactions on these entries. Use with care, ideally only when the contest rely on reactions from users. Leaving this blank makes it so that they're always reactable."
+                      placeholder="Select a voting period start date"
+                      icon={<IconCalendar size={16} />}
+                      clearable
+                    />
                   </>
                 )}
               </>
             )}
+
+            <Divider label="Extras" />
             <InputCheckbox name="nsfw" label="This collection contains mature content" mt="xs" />
             <Group position="right">
               <Button type="submit" loading={upsertCollectionMutation.isLoading}>

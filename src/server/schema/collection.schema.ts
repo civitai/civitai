@@ -116,6 +116,7 @@ export const collectionMetadataSchema = z
       })
       .optional(),
     bannerPosition: z.string().optional(),
+    judgesApplyBrowsingLevel: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
