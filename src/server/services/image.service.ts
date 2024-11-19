@@ -1120,6 +1120,7 @@ export const getAllImages = async (
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
@@ -1142,6 +1143,9 @@ export const getAllImages = async (
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2097,6 +2101,7 @@ export const getImage = async ({
       )})`
     );
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -2126,6 +2131,9 @@ export const getImage = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2364,6 +2372,7 @@ export const getImagesForModelVersion = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
     WITH targets AS (
       SELECT
@@ -2408,6 +2417,9 @@ export const getImagesForModelVersion = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2544,6 +2556,7 @@ export const getImagesForPosts = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -2584,6 +2597,9 @@ export const getImagesForPosts = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+                ${Prisma.join(workflows)}
+              ]::text[])
           THEN TRUE
           ELSE FALSE
         END
