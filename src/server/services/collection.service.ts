@@ -970,7 +970,8 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   if (
-    (statuses.includes(CollectionItemStatus.REVIEW) ||
+    (forReview ||
+      statuses.includes(CollectionItemStatus.REVIEW) ||
       statuses.includes(CollectionItemStatus.REJECTED)) &&
     !permission.isOwner &&
     !permission.manage
@@ -985,7 +986,7 @@ export const getCollectionItemsByCollectionId = async ({
     status: { in: statuses },
     // Ensure we only show images that have been scanned
     image:
-      collection.type === CollectionType.Image
+      collection.type === CollectionType.Image && !forReview
         ? { ingestion: ImageIngestionStatus.Scanned }
         : undefined,
     tagId: collectionTagId,
@@ -1023,6 +1024,10 @@ export const getCollectionItemsByCollectionId = async ({
 
   if (collectionItems.length === 0) {
     return [];
+  }
+
+  if (user && forReview) {
+    user.isModerator = true;
   }
 
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
@@ -1078,6 +1083,7 @@ export const getCollectionItemsByCollectionId = async ({
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
+          pending: forReview,
         })
       : { items: [] };
 

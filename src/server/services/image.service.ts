@@ -1116,7 +1116,9 @@ export const getAllImages = async (
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      ids?.length ? 'LEFT' : ''
+    )} JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -2094,7 +2096,15 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`
+            (i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")
+            OR
+            (p."collectionId" IS NOT NULL AND EXISTS (
+              SELECT 1 FROM "CollectionContributor" cc
+              WHERE cc."collectionId" = p."collectionId"
+                AND cc."userId" = ${userId}
+                AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+            ))`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
         ' OR '
@@ -4202,8 +4212,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const { 'Clip skip': legacyClipSkip, clipSkip = legacyClipSkip, external, ...rest } = data;
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
-
-  console.log(data);
 
   let onSite = false;
   let process: string | null = null;
