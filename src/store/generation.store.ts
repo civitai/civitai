@@ -73,6 +73,7 @@ export const useGenerationStore = create<GenerationState>()(
         });
       },
       setData: ({ type, remixOf, workflow, ...data }) => {
+        console.log({ type, workflow });
         generationFormStore.setType(type);
         generationFormStore.setWorkflow(workflow);
         set((state) => {

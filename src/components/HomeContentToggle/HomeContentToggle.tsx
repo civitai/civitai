@@ -12,6 +12,7 @@ import {
   IconVideo,
   IconProps,
   IconCake,
+  IconTools,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -57,6 +58,11 @@ const homeOptions: Record<string, HomeOption> = {
   bounties: {
     url: '/bounties',
     icon: (props: IconProps) => <IconMoneybag {...props} />,
+    grouped: true,
+  },
+  tools: {
+    url: '/tools',
+    icon: (props: IconProps) => <IconTools {...props} />,
     grouped: true,
   },
   events: {
@@ -181,6 +187,7 @@ export function HomeTabs() {
               key === 'clubs' && !features.clubs,
               key === 'shop' && !features.cosmeticShop,
               key === 'articles' && !features.articles,
+              key === 'tools' && !features.toolSearch,
             ].some((b) => b)
         )
         .map(([key, value]) => {

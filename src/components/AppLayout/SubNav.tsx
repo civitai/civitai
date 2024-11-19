@@ -5,6 +5,7 @@ import { ImageFeedFilters } from '~/components/Filters/FeedFilters/ImageFeedFilt
 import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilters';
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
+import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
 import clsx from 'clsx';
@@ -17,12 +18,12 @@ const filterSections = [
   { pathname: '/posts', component: <PostFeedFilters ml="auto" /> },
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
   { pathname: '/bounties', component: <BountyFeedFilters ml="auto" /> },
+  { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
   { pathname: '/tools/[slug]', component: <ImageFeedFilters ml="auto" hideMediaTypes hideTools /> },
 ];
 
 export function SubNav2() {
   const router = useRouter();
-
   const section = filterSections.find((x) => x.pathname === router.pathname);
 
   return (
