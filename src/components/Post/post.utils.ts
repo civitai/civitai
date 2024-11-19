@@ -66,7 +66,7 @@ export const usePostContestCollectionDetails = (
   filters: { id: number },
   options?: { enabled: boolean }
 ) => {
-  const { data: collectionItems = [], ...rest } = trpc.post.getContestCollectionDetails.useQuery(
+  const { data, ...rest } = trpc.post.getContestCollectionDetails.useQuery(
     { ...filters },
     {
       ...options,
@@ -74,7 +74,9 @@ export const usePostContestCollectionDetails = (
   );
 
   return {
-    collectionItems,
+    collectionItems: data?.items ?? [],
+    collection: data?.collection ?? null,
+    permissions: data?.permissions ?? { manage: false },
     ...rest,
   };
 };
