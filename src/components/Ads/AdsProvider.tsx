@@ -39,20 +39,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
-  // const [cmpLoaded, setCmpLoaded] = useState(false);
-
-  // const readyRef = useRef<boolean>();
-  // useEffect(() => {
-  //   if (!readyRef.current && adsEnabled) {
-  //     readyRef.current = true;
-  //     if (!isProd) setAdsBlocked(true);
-  //     else {
-  //       checkAdsBlocked((blocked) => {
-  //         setAdsBlocked(blocked);
-  //       });
-  //     }
-  //   }
-  // }, [adsEnabled]);
 
   function handleCmpLoaded() {
     // setCmpLoaded(true);
@@ -88,11 +74,50 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {adsEnabled && isProd && (
         <>
           <Script
-            src="https://cmp.uniconsent.com/v2/stub.min.js"
+            id="snigel-config"
+            data-cfasync="false"
+            type="text/javascript"
+            dangerouslySetInnerHTML={{
+              __html: `
+                window.snigelPubConf = {
+                  "adengine": {
+                    "activeAdUnits": ["adhesive", "incontent_1", "interstitial", "outstream", "side_1", "side_2", "side_3", "top"]
+                  }
+                }
+              `,
+            }}
+          ></Script>
+
+          <Script
+            async
+            src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
             onLoad={handleCmpLoaded}
             onError={handleCmpError}
           />
-          <Script src={config.cmpScript} async />
+
+          {/* Cleanup old ad tags */}
+          <Script
+            id="ad-cleanup"
+            type="text/javascript"
+            dangerouslySetInnerHTML={{
+              __html: `
+                // GPT
+                window.googletag = window.googletag || {cmd: []};
+                googletag.cmd.push(function() {
+                  googletag.pubads().disableInitialLoad();
+                  googletag.pubads().enableSingleRequest();
+                  googletag.enableServices();
+                });
+
+                // adsense
+                (window.adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1
+              `,
+            }}
+          ></Script>
+          {/* TODO - impression tracking */}
+          {/* TODO - destroy slots on route change? */}
+
+          {/* <Script src={config.cmpScript} async />
           {adsBlocked === false && (
             <>
               <Script
@@ -153,7 +178,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
               <GoogletagManager />
               <ImpressionTracker config={config} />
             </>
-          )}
+          )} */}
           <div id="uniconsent-config" />
         </>
       )}

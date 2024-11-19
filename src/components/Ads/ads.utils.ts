@@ -161,3 +161,10 @@ export function getAdConfig() {
     ? adConfig[location.host] ?? adConfig[defaultAdConfig]
     : adConfig[defaultAdConfig];
 }
+
+const ads = {
+  incontent_1: ['320x100', '320x50', '300x250', '300x100', '300x50', '336x280'],
+  side_1: ['120x600', '160x600', '300x600', '300x250', '336x280'],
+  side_2: ['200x200', '250x250', '300x250', '336x280'],
+  side_3: ['200x200', '250x250', '300x250', '336x280'],
+} as const;
