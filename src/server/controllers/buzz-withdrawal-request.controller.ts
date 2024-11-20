@@ -14,8 +14,8 @@ import {
   updateBuzzWithdrawalRequest,
 } from '../services/buzz-withdrawal-request.service';
 import { throwAuthorizationError, throwDbError } from '../utils/errorHandling';
-import { GetByIdInput, GetByIdStringInput } from '~/server/schema/base.schema';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 
 export function createBuzzWithdrawalRequestHandler({
   input,

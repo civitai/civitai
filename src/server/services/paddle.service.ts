@@ -1,4 +1,4 @@
-import { Currency, PaymentProvider } from '@prisma/client';
+import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   handleLogError,

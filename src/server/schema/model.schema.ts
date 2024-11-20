@@ -8,7 +8,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';

@@ -1,4 +1,5 @@
-import { Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';

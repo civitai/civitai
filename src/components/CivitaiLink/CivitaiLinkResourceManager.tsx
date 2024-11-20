@@ -1,5 +1,5 @@
 import { showNotification } from '@mantine/notifications';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { useCallback } from 'react';
 import { useCivitaiLink, useCivitaiLinkStore } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CommandResourcesAdd } from '~/components/CivitaiLink/shared-types';

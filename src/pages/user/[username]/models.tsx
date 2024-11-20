@@ -6,7 +6,7 @@ import {
   Stack,
   createStyles,
 } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';

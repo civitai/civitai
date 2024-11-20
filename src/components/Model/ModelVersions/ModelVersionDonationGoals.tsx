@@ -11,7 +11,7 @@ import {
   Anchor,
   Tooltip,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';

@@ -29,7 +29,7 @@ import {
 } from '~/server/paddle/client';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 export const createBuzzPurchaseTransactionHandler = async ({

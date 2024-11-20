@@ -1,10 +1,5 @@
-import {
-  Availability,
-  ModelFileVisibility,
-  ModelModifier,
-  ModelType,
-  Prisma,
-} from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server.mjs';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';

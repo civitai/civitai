@@ -1,4 +1,4 @@
-import { PurchasableRewardUsage } from '@prisma/client';
+import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import {
   PurchasableRewardModeratorViewMode,

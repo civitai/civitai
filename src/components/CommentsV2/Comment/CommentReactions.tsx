@@ -2,7 +2,7 @@ import { InfiniteCommentV2Model } from '~/server/controllers/commentv2.controlle
 import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import React from 'react';
 
 export function CommentReactions({ comment }: { comment: InfiniteCommentV2Model }) {

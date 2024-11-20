@@ -34,7 +34,7 @@ import {
 } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { ClubAdminPermission, Currency } from '@prisma/client';
+import { ClubAdminPermission, Currency } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function ClubMembershipInfinite({ clubId, showEof = true }: Props) {

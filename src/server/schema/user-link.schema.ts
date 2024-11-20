@@ -1,4 +1,4 @@
-import { LinkType } from '@prisma/client';
+import { LinkType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
 

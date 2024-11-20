@@ -1,5 +1,5 @@
 import { Box, Group, GroupProps, List, Popover, Text, Tooltip } from '@mantine/core';
-import { CommercialUse } from '@prisma/client';
+import { CommercialUse } from '~/shared/utils/prisma/enums';
 import {
   IconBrushOff,
   IconCheck,

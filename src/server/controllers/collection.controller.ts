@@ -1,4 +1,4 @@
-import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';

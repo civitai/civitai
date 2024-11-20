@@ -17,13 +17,12 @@ import {
   Divider,
   ActionIcon,
   Group,
-  SegmentedControl,
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';

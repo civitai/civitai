@@ -1,4 +1,4 @@
-import type { User as PrismaUser } from '@prisma/client';
+import type { User as PrismaUser } from '~/shared/utils/prisma/enums';
 import { DefaultSession, DefaultUser } from 'next-auth';
 import { UserSettingsSchema, UserTier } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';

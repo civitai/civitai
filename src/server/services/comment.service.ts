@@ -1,4 +1,5 @@
-import { Prisma, ReportReason, ReportStatus, ReviewReactions } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { SessionUser } from 'next-auth';
 

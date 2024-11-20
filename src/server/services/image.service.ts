@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   BlockImageReason,
@@ -7,11 +8,10 @@ import {
   ImageIngestionStatus,
   MediaType,
   ModelType,
-  Prisma,
   ReportReason,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -2913,9 +2913,7 @@ export async function createImage({
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,

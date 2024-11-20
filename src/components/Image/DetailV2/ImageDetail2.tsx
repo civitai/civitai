@@ -14,7 +14,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { Availability, CollectionType, EntityType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBolt,

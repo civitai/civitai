@@ -1,4 +1,5 @@
-import { ChatMemberStatus, ChatMessageType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server.mjs';

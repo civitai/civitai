@@ -9,7 +9,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';

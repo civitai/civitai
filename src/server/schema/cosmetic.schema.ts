@@ -1,4 +1,4 @@
-import { CosmeticType, CosmeticEntity } from '@prisma/client';
+import { CosmeticType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 

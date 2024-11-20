@@ -1,4 +1,4 @@
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
 import { JobContext } from '~/server/jobs/job';
 import { MetricProcessorRunContext } from '~/server/metrics/base.metrics';

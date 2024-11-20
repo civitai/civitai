@@ -1,4 +1,4 @@
-import { ImageGenerationProcess, ModelStatus, Prisma, TrainingStatus } from '@prisma/client';
+import { ImageGenerationProcess, ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { ModelFileType } from '~/server/common/constants';
 import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -25,7 +25,7 @@ export const createModelFileDownloadUrl = ({
   return `/api/download/models/${versionId}${queryString ? '?' + queryString : ''}`;
 };
 
-export function getImageGenerationProcess(meta: Prisma.JsonObject): ImageGenerationProcess {
+export function getImageGenerationProcess(meta: MixedObject): ImageGenerationProcess {
   // if (meta['comfy'] != null) return ImageGenerationProcess.comfy; // Enable this after the search migration is complete
 
   const denoiseStrength = meta['Denoise strength'] ?? meta['Denoising strength'] != null;

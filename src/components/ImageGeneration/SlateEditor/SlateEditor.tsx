@@ -23,7 +23,7 @@ import { CustomEditor, MentionElement, ModelElement } from './index';
 import ReactDOM from 'react-dom';
 import { useMantineTheme } from '@mantine/core';
 import { parsePromptResources, splitPromptResources } from '~/utils/prompt-helpers';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 const Portal = ({ children }: { children: React.ReactNode }) => {
   return typeof document === 'object'

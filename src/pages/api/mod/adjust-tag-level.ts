@@ -1,4 +1,4 @@
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { NsfwLevel } from '~/server/common/enums';

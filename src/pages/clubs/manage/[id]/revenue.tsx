@@ -10,7 +10,7 @@ import React, { useState } from 'react';
 import { ClubManagementLayout } from '~/pages/clubs/manage/[id]/index';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ClubWithdrawFunds } from '~/components/Club/ClubWithdrawFunds';
 import { NextLink } from '@mantine/next';

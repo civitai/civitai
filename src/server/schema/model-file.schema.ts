@@ -1,5 +1,5 @@
 import { BuzzClientAccount, TransactionType } from '@civitai/client';
-import { ModelFileVisibility, TrainingStatus } from '@prisma/client';
+import { ModelFileVisibility, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 

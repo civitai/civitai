@@ -3,7 +3,7 @@ import { IconSearch, IconSearchOff } from '@tabler/icons-react';
 import { useCurrentUser } from '../../hooks/useCurrentUser';
 import { SupportedAvailabilityResources } from '../../server/schema/base.schema';
 import { trpc } from '~/utils/trpc';
-import { Availability } from '@prisma/client';
+import { Availability } from '~/shared/utils/prisma/enums';
 
 export function ToggleSearchableMenuItem({ entityType, entityId }: Props) {
   const currentUser = useCurrentUser();

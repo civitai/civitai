@@ -1,14 +1,14 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
-  ImageResource,
-  Prisma,
   TagTarget,
   TagType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
+import { ImageResource } from '~/shared/utils/prisma/models';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';

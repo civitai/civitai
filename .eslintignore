@@ -2,3 +2,4 @@
 *.mjs
 /dist
 /node_modules
+/src/shared/utils/prisma

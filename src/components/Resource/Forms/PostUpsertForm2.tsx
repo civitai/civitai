@@ -1,5 +1,5 @@
 import { Center, Loader, Text, Container, Title } from '@mantine/core';
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';

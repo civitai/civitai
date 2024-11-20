@@ -1,4 +1,4 @@
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 
 import { TagScroller } from '~/components/Tags/TagScroller';

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -7,8 +8,7 @@ import {
   CosmeticType,
   ModelEngagementType,
   ModelStatus,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';

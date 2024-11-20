@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { CosmeticSource } from '@prisma/client';
+import { CosmeticSource } from '~/shared/utils/prisma/enums';
 import { IconCircleCheck, IconClock2, IconX } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';

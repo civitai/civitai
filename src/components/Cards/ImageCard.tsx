@@ -14,7 +14,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';

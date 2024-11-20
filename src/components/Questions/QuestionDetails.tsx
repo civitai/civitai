@@ -9,7 +9,7 @@ import {
   Menu,
   Title,
 } from '@mantine/core';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';

@@ -1,4 +1,5 @@
-import { HomeBlockType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';

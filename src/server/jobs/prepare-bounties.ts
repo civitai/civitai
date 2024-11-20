@@ -2,7 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 import dayjs from 'dayjs';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { Tracker } from '../clickhouse/client';

@@ -1,5 +1,5 @@
 import { Button, Loader, Text } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconArrowRight, IconPhoto } from '@tabler/icons-react';
 import Link from 'next/link';
 import React, { useMemo } from 'react';
