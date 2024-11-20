@@ -2096,17 +2096,18 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`
-            (i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")
-            OR
-            (p."collectionId" IS NOT NULL AND EXISTS (
-              SELECT 1 FROM "CollectionContributor" cc
-              WHERE cc."collectionId" = p."collectionId"
-                AND cc."userId" = ${userId}
-                AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-            ))`,
+          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          withoutPost
+            ? null
+            : Prisma.sql`
+              p."collectionId" IS NOT NULL AND EXISTS (
+                SELECT 1 FROM "CollectionContributor" cc
+                WHERE cc."collectionId" = p."collectionId"
+                  AND cc."userId" = ${userId}
+                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+              )`,
           Prisma.sql`i."userId" = ${userId}`,
-        ],
+        ].filter(isDefined),
         ' OR '
       )})`
     );
