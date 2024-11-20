@@ -10,7 +10,7 @@ import { Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitIncontent_1, AdUnitRenderable } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -48,7 +48,13 @@ export function MasonryGrid<TData>({
       createAdFeed({
         data,
         columnCount,
-        keys: adsReallyAreEnabled ? ['300x250:Dynamic_Feeds'] : undefined,
+        options: [
+          {
+            width: 300,
+            height: 250,
+            AdUnit: AdUnitIncontent_1,
+          },
+        ],
       }),
     [columnCount, data, adsReallyAreEnabled]
   );
@@ -70,30 +76,31 @@ export function MasonryGrid<TData>({
             {item.type === 'data' &&
               createRenderElement(RenderComponent, index, item.data, columnWidth)}
             {item.type === 'ad' && (
-              <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
-                <div className="flex flex-col items-center  gap-2">
-                  <Image
-                    src={`/images/logo_${theme.colorScheme}_mode.png`}
-                    alt="Civitai logo"
-                    height={30}
-                    width={142}
-                  />
-                  <Text>Become a Member to turn off ads today.</Text>
-                  <Button
-                    component={NextLink}
-                    href="/pricing"
-                    compact
-                    color="green"
-                    variant="outline"
-                    className="w-24"
-                  >
-                    <Text weight={500}>Do It</Text>
-                    <IconCaretRightFilled size={16} />
-                  </Button>
-                </div>
-
-                <AdUnit keys={[item.data.key]} withFeedback />
-              </TwCard>
+              <AdUnitRenderable>
+                <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
+                  <div className="flex flex-col items-center  gap-2">
+                    <Image
+                      src={`/images/logo_${theme.colorScheme}_mode.png`}
+                      alt="Civitai logo"
+                      height={30}
+                      width={142}
+                    />
+                    <Text>Become a Member to turn off ads today.</Text>
+                    <Button
+                      component={NextLink}
+                      href="/pricing"
+                      compact
+                      color="green"
+                      variant="outline"
+                      className="w-24"
+                    >
+                      <Text weight={500}>Do It</Text>
+                      <IconCaretRightFilled size={16} />
+                    </Button>
+                  </div>
+                  <item.data.AdUnit />
+                </TwCard>
+              </AdUnitRenderable>
             )}
           </React.Fragment>
         );

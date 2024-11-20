@@ -25,7 +25,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitTop } from '~/components/Ads/AdUnit';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 
 export default function Home() {
@@ -104,9 +104,7 @@ export default function Home() {
                       homeBlockId={homeBlock.id}
                     />
                   )}
-                  {showAds && (
-                    <AdUnit className="justify-center p-3" keys={['Dynamic_Leaderboard']} />
-                  )}
+                  {showAds && <AdUnitTop />}
                 </React.Fragment>
               );
             })}

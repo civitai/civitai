@@ -33,7 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2, AdUnitTop } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
@@ -338,13 +338,7 @@ export function ImageDetail2() {
                       </ReactionSettingsProvider>
                     </div>
                     <CarouselIndicators {...carouselNavigation} />
-                    {viewportHeight >= 1050 && (
-                      <AdUnit
-                        keys={['728x90:Leaderboard']}
-                        justify="center"
-                        browsingLevel={image.nsfwLevel}
-                      />
-                    )}
+                    {viewportHeight >= 1050 && <AdUnitTop browsingLevel={image.nsfwLevel} />}
                   </div>
                 </>
               )}
@@ -404,11 +398,12 @@ export function ImageDetail2() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
-                <AdUnit
+                {/* <AdUnit
                   keys={['300x250:model_image_pages']}
                   justify="center"
                   browsingLevel={image.nsfwLevel}
-                />
+                /> */}
+                <AdUnitSide_2 browsingLevel={image.nsfwLevel} />
                 <VotableTags
                   entityType="image"
                   entityId={image.id}

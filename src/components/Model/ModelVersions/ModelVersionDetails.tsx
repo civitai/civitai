@@ -41,7 +41,7 @@ import { startCase } from 'lodash-es';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitRenderable, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -1301,11 +1301,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           )}
           {model.poi && <PoiAlert />}
           {!model.nsfw && (
-            <AdUnit keys={['300x250:model_image_pages']}>
+            <AdUnitRenderable>
               <TwCard className="mx-auto border p-2 shadow">
-                <AdUnit.Content />
+                <AdUnitSide_2 />
               </TwCard>
-            </AdUnit>
+            </AdUnitRenderable>
           )}
         </Stack>
       </ContainerGrid.Col>
