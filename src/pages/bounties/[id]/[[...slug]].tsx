@@ -289,11 +289,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-                      <Link
-                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                        legacyBehavior
-                        passHref
-                      >
+                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
                         <Badge
                           component="a"
                           size="sm"

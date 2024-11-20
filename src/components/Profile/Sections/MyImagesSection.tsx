@@ -71,11 +71,7 @@ export const MyImagesSection = ({ user }: ProfileSectionProps) => {
             icon={<IconPhoto />}
             action={
               !isRefetching && (
-                <Link
-                  href={`/user/${user.username}/images?sort=${ImageSort.Newest}`}
-                  legacyBehavior
-                  passHref
-                >
+                <Link href={`/user/${user.username}/images?sort=${ImageSort.Newest}`} passHref>
                   <Button
                     h={34}
                     component="a"

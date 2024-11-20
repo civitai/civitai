@@ -162,11 +162,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           <Text size="sm" color="dimmed">
             Your version has been published and is now available to the public.
           </Text>
-          <Link
-            legacyBehavior
-            href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
-            passHref
-          >
+          <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
             <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
               Go to model
             </Anchor>
