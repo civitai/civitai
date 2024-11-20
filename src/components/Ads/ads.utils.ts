@@ -13,7 +13,7 @@ type AdMatrix = {
 type AdFeedConfig = {
   width: number;
   height: number;
-  AdUnit: React.ComponentType;
+  AdUnit: React.ComponentType<{ lazyLoad?: boolean }>;
 };
 
 export function useCreateAdFeed() {

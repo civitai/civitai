@@ -7,6 +7,8 @@ import { NextLink } from '@mantine/next';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getRandomId } from '~/utils/string-helpers';
+import clsx from 'clsx';
+import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 
 // export function AdUnit({
 //   keys,
@@ -98,6 +100,93 @@ import { getRandomId } from '~/utils/string-helpers';
 //   }
 // }
 
+// const AdWrapper = ({ children, className, width, height, style, ...props }: AdWrapperProps) => {
+//   const node = useScrollAreaRef();
+//   const currentUser = useCurrentUser();
+//   const isClient = useIsClient();
+//   const [visible, setVisible] = useState(false);
+//   const { adsBlocked, isMember } = useAdsContext();
+//   const isMobile = isMobileDevice();
+//   const { withFeedback } = useAdUnitContext();
+//   const { item } = useAdUnitContext();
+//   // const focused = useIsLevelFocused();
+
+//   const { ref, inView } = useInView({ root: node?.current, rootMargin: '75% 0px' });
+//   useEffect(() => {
+//     if (inView && !visible) {
+//       setVisible(true);
+//     }
+//   }, [inView]);
+
+//   return (
+//     <div
+//       ref={ref}
+//       className={clsx('flex flex-col items-center justify-between', className)}
+//       style={{
+//         ...style,
+//         minHeight: height ? height + (withFeedback ? 20 : 0) : undefined,
+//         // don't change this logic without consulting Briant
+//         // width - 1 allows the parent AdUnit to remove this content when its parent width is too small
+//         minWidth: width ? width - 1 : undefined,
+//       }}
+//       {...props}
+//     >
+//       {isClient && adsBlocked !== undefined && height && width && (
+//         <>
+//           {adsBlocked ? (
+//             <NextLink href="/pricing" className="flex">
+//               <Image
+//                 src={`/images/support-us/${width}x${height}.jpg`}
+//                 alt="Please support civitai and creators by disabling adblock"
+//                 width={width}
+//                 height={height}
+//               />
+//             </NextLink>
+//           ) : (
+//             <div className="w-full overflow-hidden" key={item.id}>
+//               {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
+//             </div>
+//           )}
+
+//           {withFeedback && (
+//             <>
+//               <div className="flex w-full justify-between">
+//                 {!isMember ? (
+//                   <Text
+//                     component={NextLink}
+//                     td="underline"
+//                     href="/pricing"
+//                     color="dimmed"
+//                     size="xs"
+//                     align="center"
+//                   >
+//                     Remove ads
+//                   </Text>
+//                 ) : (
+//                   <div />
+//                 )}
+
+//                 {currentUser && (
+//                   <Text
+//                     component={NextLink}
+//                     td="underline"
+//                     href={`/ad-feedback?Username=${currentUser.username}`}
+//                     color="dimmed"
+//                     size="xs"
+//                     align="center"
+//                   >
+//                     Feedback
+//                   </Text>
+//                 )}
+//               </div>
+//             </>
+//           )}
+//         </>
+//       )}
+//     </div>
+//   );
+// };
+
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
 type AdSizeLUT = [containerSize: ContainerSize, adSizes: AdSize[]];
@@ -182,28 +271,34 @@ function AdWrapper({
   lutSizes,
   withFeedback,
   lazyLoad,
+  className,
 }: {
   adUnit: string;
   sizes?: AdSize[];
   lutSizes?: AdSizeLUT[];
   withFeedback?: boolean;
   lazyLoad?: boolean;
+  className?: string;
 }) {
-  const { adsBlocked, isMember } = useAdsContext();
+  const { adsBlocked, ready, isMember } = useAdsContext();
   const adSizes = sizes ?? getAdSizesFromLUT(lutSizes);
-  const maxHeight = adSizes ? getMaxHeight(adSizes) : undefined;
+  const [maxHeight, setMaxHeight] = useState<number | undefined>();
+
+  useIsomorphicLayoutEffect(() => {
+    setMaxHeight(adSizes ? getMaxHeight(adSizes) : undefined);
+  }, []);
 
   return (
     <div
-      className="relative flex flex-col items-center justify-center gap-2"
-      style={{ height: maxHeight }}
+      className={clsx('relative flex flex-col items-center justify-center gap-2', className)}
+      style={{ minHeight: maxHeight }}
       suppressHydrationWarning
     >
       {adsBlocked ? (
         <SupportUsImage maxHeight={maxHeight} />
-      ) : (
+      ) : ready ? (
         <AdUnitContent adUnit={adUnit} sizes={adSizes} lazyLoad={lazyLoad} />
-      )}
+      ) : null}
       {withFeedback && !isMember && (
         <>
           <div className="flex w-full justify-end">
@@ -229,14 +324,21 @@ function adUnitFactory(factoryArgs: { adUnit: string; sizes?: AdSize[]; lutSizes
     lazyLoad,
     withFeedback,
     browsingLevel,
+    className,
   }: {
     lazyLoad?: boolean;
     withFeedback?: boolean;
     browsingLevel?: number;
+    className?: string;
   }) {
     return (
       <AdUnitRenderable browsingLevel={browsingLevel}>
-        <AdWrapper {...factoryArgs} lazyLoad={lazyLoad} withFeedback={withFeedback} />
+        <AdWrapper
+          {...factoryArgs}
+          lazyLoad={lazyLoad}
+          withFeedback={withFeedback}
+          className={className}
+        />
       </AdUnitRenderable>
     );
   };
@@ -321,8 +423,12 @@ export const AdUnitSide_3 = adUnitFactory({
   ],
 });
 
-export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
-// export const AdUnitOutstream = () => <div id="adngin-outstream-0"></div>;
+// export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
+export const AdUnitOutstream = () => (
+  <AdUnitRenderable>
+    <div id="adngin-outstream-0"></div>
+  </AdUnitRenderable>
+);
 
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',

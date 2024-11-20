@@ -104,7 +104,7 @@ export default function Home() {
                       homeBlockId={homeBlock.id}
                     />
                   )}
-                  {showAds && <AdUnitTop />}
+                  {showAds && <AdUnitTop className="py-2" />}
                 </React.Fragment>
               );
             })}
