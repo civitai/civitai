@@ -12,7 +12,8 @@ export default class _Document extends Document {
     const pageProps = this.props?.__NEXT_DATA__?.props?.pageProps;
     return (
       <Html>
-        <InlineStylesHead />
+        {/* <InlineStylesHead /> */}
+        <Head />
         <body className={pageProps.colorScheme}>
           <Main />
           <NextScript />
