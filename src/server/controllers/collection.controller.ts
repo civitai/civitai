@@ -1,4 +1,4 @@
-import { CollectionItemStatus, CollectionReadConfiguration, CollectionType } from '@prisma/client';
+import { CollectionItemStatus, CollectionReadConfiguration } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
@@ -16,6 +16,7 @@ import {
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
@@ -39,6 +40,7 @@ import {
   removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
+  setItemScore,
   updateCollectionCoverImage,
   updateCollectionItemsStatus,
   upsertCollection,
@@ -46,7 +48,6 @@ import {
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
-  throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
@@ -594,6 +595,29 @@ export const removeCollectionItemHandler = async ({
       userId: user.id,
       isModerator: user.isModerator,
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setItemScoreHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetItemScoreInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    const permissions = await getUserCollectionPermissionsById({
+      id: input.collectionId,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
+    if (!permissions.manage)
+      throw throwAuthorizationError('You do not have permission to manage this collection.');
+
+    return await setItemScore({ ...input, userId: user.id });
   } catch (error) {
     throw throwDbError(error);
   }

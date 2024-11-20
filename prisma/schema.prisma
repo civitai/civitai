@@ -280,6 +280,7 @@ model User {
   collaborationsCreated      EntityCollaborator[]           @relation("entityCollaboratorCreator")
   adTokens                   AdToken[]
   ratingRequests             ImageRatingRequest[]
+  collectionItemScores       CollectionItemScore[]
 }
 
 model CustomerSubscription {
@@ -2394,35 +2395,47 @@ enum CollectionItemStatus {
 }
 
 model CollectionItem {
-  id           Int                  @id @default(autoincrement())
-  createdAt    DateTime?            @default(now())
-  updatedAt    DateTime?            @updatedAt
+  id           Int                   @id @default(autoincrement())
+  createdAt    DateTime?             @default(now())
+  updatedAt    DateTime?             @updatedAt
   collectionId Int
-  collection   Collection           @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  collection   Collection            @relation(fields: [collectionId], references: [id], onDelete: Cascade)
   articleId    Int?
-  article      Article?             @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  article      Article?              @relation(fields: [articleId], references: [id], onDelete: Cascade)
   postId       Int?
-  post         Post?                @relation(fields: [postId], references: [id], onDelete: Cascade)
+  post         Post?                 @relation(fields: [postId], references: [id], onDelete: Cascade)
   imageId      Int?
-  image        Image?               @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image        Image?                @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelId      Int?
-  model        Model?               @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model        Model?                @relation(fields: [modelId], references: [id], onDelete: Cascade)
   addedById    Int?
-  addedBy      User?                @relation(fields: [addedById], references: [id], onDelete: SetNull)
+  addedBy      User?                 @relation(fields: [addedById], references: [id], onDelete: SetNull)
   reviewedById Int?
-  reviewedBy   User?                @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedBy   User?                 @relation("reviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt   DateTime?
   note         String?
-  status       CollectionItemStatus @default(ACCEPTED)
+  status       CollectionItemStatus  @default(ACCEPTED)
   randomId     Int?
   tagId        Int?
-  tag          Tag?                 @relation(fields: [tagId], references: [id], onDelete: SetNull)
+  tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
+  scores       CollectionItemScore[]
 
   @@unique([collectionId, articleId, postId, imageId, modelId])
   @@index([addedById], type: Hash)
   @@index([imageId], type: Hash)
   @@index([modelId], type: Hash)
   @@index([collectionId], type: Hash)
+}
+
+model CollectionItemScore {
+  userId           Int
+  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collectionItemId Int
+  collectionItem   CollectionItem @relation(fields: [collectionItemId], references: [id], onDelete: Cascade)
+  score            Int
+  createdAt        DateTime       @default(now())
+
+  @@id([userId, collectionItemId])
 }
 
 enum CollectionContributorPermission {
