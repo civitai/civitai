@@ -1,4 +1,4 @@
-import { MediaType, MetricTimeframe } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from 'dayjs';

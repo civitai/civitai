@@ -15,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import { closeModal, openConfirmModal } from '@mantine/modals';
-import { CsamReportType } from '@prisma/client';
+import { CsamReportType } from '~/shared/utils/prisma/enums';
 import { IconExternalLink, IconPhoto } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 

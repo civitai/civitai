@@ -19,7 +19,12 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
+import {
+  CollectionType,
+  ModelFileVisibility,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
   IconClock,

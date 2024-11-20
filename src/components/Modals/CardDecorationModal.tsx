@@ -10,7 +10,7 @@ import {
   createStyles,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { CosmeticEntity } from '@prisma/client';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { z } from 'zod';

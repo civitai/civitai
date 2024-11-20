@@ -46,7 +46,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
 import Link from 'next/link';
 import { openConfirmModal } from '@mantine/modals';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubsInfinite } from '../../../../components/Club/Infinite/ClubsInfinite';
 
 const querySchema = z.object({ id: z.coerce.number() });

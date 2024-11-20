@@ -8,7 +8,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { z } from 'zod';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 const schema = clubTransactionSchema.omit({ clubId: true });
 

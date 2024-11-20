@@ -25,7 +25,7 @@ import {
   updateClubMembership,
 } from '~/server/services/clubMembership.service';
 import { userContributingClubs } from '~/server/services/club.service';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '../schema/image.schema';
 import { clubMembershipDetailSelect } from '../selectors/club.selector';
@@ -39,7 +39,7 @@ export const getInfiniteClubMembershipsHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 10) + 1;
 
   const userClubs = await userContributingClubs({ userId: user.id });
   const isClubOwner = userClubs.find((c) => c.id === input.clubId && c.userId === user.id);

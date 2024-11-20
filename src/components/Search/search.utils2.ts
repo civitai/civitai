@@ -8,7 +8,7 @@ import { ImageSearchIndexRecord } from '~/server/search-index/images.search-inde
 import { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import { UserSearchIndexRecord } from '~/server/search-index/users.search-index';
 
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ReverseSearchIndexKey, reverseSearchIndexMap } from '~/components/Search/search.types';
 import { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
 import { ImageMetadata } from '~/server/schema/media.schema';

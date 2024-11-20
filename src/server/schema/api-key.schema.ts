@@ -1,4 +1,4 @@
-import { KeyScope } from '@prisma/client';
+import { KeyScope } from '~/shared/utils/prisma/enums';
 import { TypeOf, z } from 'zod';
 
 export const getApiKeyInputSchema = z.object({ id: z.number() });

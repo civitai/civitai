@@ -1,4 +1,4 @@
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';

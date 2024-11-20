@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { ReportReason } from '@prisma/client';
+import { ReportReason } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft } from '@tabler/icons-react';
 import produce from 'immer';
 import { useRouter } from 'next/router';

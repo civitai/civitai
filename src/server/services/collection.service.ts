@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -9,9 +10,8 @@ import {
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  Prisma,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { uniq, uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -42,6 +42,7 @@ import {
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
@@ -2112,3 +2113,26 @@ export async function checkUserOwnsCollectionAndItem({
 
   return item.userId === collection.userId;
 }
+
+export const setItemScore = async ({
+  itemId,
+  collectionId,
+  userId,
+  score,
+}: SetItemScoreInput & { userId: number }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true },
+  });
+  if (!collection) throw throwNotFoundError('Collection not found');
+  if (collection.mode !== CollectionMode.Contest)
+    throw throwBadRequestError('This collection is not a contest collection');
+
+  const itemScore = await dbWrite.collectionItemScore.upsert({
+    where: { userId_collectionItemId: { userId, collectionItemId: itemId } },
+    create: { userId, collectionItemId: itemId, score },
+    update: { score },
+  });
+
+  return itemScore;
+};

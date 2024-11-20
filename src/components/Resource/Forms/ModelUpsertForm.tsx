@@ -16,7 +16,7 @@ import {
   ModelType,
   ModelUploadType,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';

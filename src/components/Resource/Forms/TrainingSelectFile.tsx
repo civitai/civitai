@@ -12,7 +12,7 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';

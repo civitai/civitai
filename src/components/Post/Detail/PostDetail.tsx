@@ -14,7 +14,12 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType, EntityCollaboratorStatus, EntityType } from '@prisma/client';
+import {
+  Availability,
+  CollectionType,
+  EntityCollaboratorStatus,
+  EntityType,
+} from '~/shared/utils/prisma/enums';
 import { IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';

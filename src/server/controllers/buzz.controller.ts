@@ -1,4 +1,4 @@
-import { ClubAdminPermission, EntityType } from '@prisma/client';
+import { ClubAdminPermission, EntityType } from '~/shared/utils/prisma/enums';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';

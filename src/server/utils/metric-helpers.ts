@@ -1,4 +1,7 @@
-import { EntityMetric_EntityType_Type, EntityMetric_MetricType_Type } from '@prisma/client';
+import {
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
+} from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';

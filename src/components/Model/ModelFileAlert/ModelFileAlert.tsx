@@ -1,5 +1,5 @@
 import { Anchor, Text } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle } from '@tabler/icons-react';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';

@@ -20,7 +20,7 @@ import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function ImageSearch() {

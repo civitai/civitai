@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { startCase } from 'lodash-es';
 import { ModelFileType } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';

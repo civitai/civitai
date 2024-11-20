@@ -15,7 +15,7 @@ import {
   Badge,
   UnstyledButton,
 } from '@mantine/core';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconMapPin,

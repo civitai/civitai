@@ -1,5 +1,5 @@
 import { ImageResourceTrainingStep, Workflow, WorkflowStatus } from '@civitai/client';
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { SignalMessages } from '~/server/common/enums';

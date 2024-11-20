@@ -1,4 +1,4 @@
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { useCallback } from 'react';
 import { create } from 'zustand';
 import { removeEmpty } from '~/utils/object-helpers';

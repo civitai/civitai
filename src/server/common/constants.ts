@@ -7,7 +7,7 @@ import {
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client.mjs';

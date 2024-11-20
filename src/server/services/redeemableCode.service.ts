@@ -1,4 +1,4 @@
-import { RedeemableCodeType } from '@prisma/client';
+import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';

@@ -1,4 +1,4 @@
-import { ArticleEngagementType } from '@prisma/client';
+import { ArticleEngagementType } from '~/shared/utils/prisma/enums';
 import produce from 'immer';
 import { useMemo } from 'react';
 import { useSystemCollections } from '~/components/Collections/collection.utils';

@@ -1,4 +1,4 @@
-import { TagSource } from '@prisma/client';
+import { TagSource } from '~/shared/utils/prisma/enums';
 
 const tagCombos: ComputedTagCombo[] = [
   {

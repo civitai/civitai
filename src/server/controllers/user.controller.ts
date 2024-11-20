@@ -1,4 +1,8 @@
-import { CosmeticType, ModelEngagementType, ModelVersionEngagementType } from '@prisma/client';
+import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';

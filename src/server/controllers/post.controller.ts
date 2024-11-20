@@ -1,4 +1,4 @@
-import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { Context } from '~/server/createContext';
@@ -509,7 +509,7 @@ export const getPostContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    const items = await getPostContestCollectionDetails({ ...input, userId: ctx.user?.id });
+    const items = await getPostContestCollectionDetails({ ...input });
     return items;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

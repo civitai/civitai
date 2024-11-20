@@ -1,4 +1,5 @@
-import { Prisma, VaultItemStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { VaultItemStatus } from '~/shared/utils/prisma/enums';
 import JSZip from 'jszip';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';

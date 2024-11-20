@@ -12,7 +12,7 @@ import useIsClient from '~/hooks/useIsClient';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;

@@ -1,4 +1,4 @@
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { buzzAccountTypes } from '~/server/schema/buzz.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';

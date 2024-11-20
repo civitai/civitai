@@ -1,11 +1,11 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   ImageGenerationProcess,
   ImageIngestionStatus,
   MediaType,
   MetricTimeframe,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { SessionUser } from 'next-auth';
 import { CacheTTL } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';

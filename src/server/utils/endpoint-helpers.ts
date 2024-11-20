@@ -1,4 +1,4 @@
-import { Partner } from '@prisma/client';
+import { Partner } from '~/shared/utils/prisma/models';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import { NextApiRequest, NextApiResponse } from 'next';

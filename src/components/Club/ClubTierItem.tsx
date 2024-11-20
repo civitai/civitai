@@ -1,6 +1,6 @@
 import { Alert, Anchor, Button, Center, Paper, Stack, Text, Title } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';

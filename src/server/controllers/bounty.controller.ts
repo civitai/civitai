@@ -38,7 +38,7 @@ import { getImagesByEntity } from '../services/image.service';
 import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { getReactionsSelectV2 } from '~/server/selectors/reaction.selector';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NsfwLevel } from '~/server/common/enums';
@@ -53,7 +53,7 @@ export const getInfiniteBountiesHandler = async ({
   ctx: Context;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 10) + 1;
   const userId = input.userId ?? user?.id;
 
   try {

@@ -32,7 +32,7 @@ import { WithdrawalRequestBadgeColor, useBuzzDashboardStyles } from '../buzz.sty
 import { IconCloudOff } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
-import { BuzzWithdrawalRequestStatus, Currency } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus, Currency } from '~/shared/utils/prisma/enums';
 import { openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

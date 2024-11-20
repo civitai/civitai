@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';
 import { ClubSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';

@@ -1,5 +1,5 @@
 import { Center, Group, Loader, Stack, Button, Text } from '@mantine/core';
-import { EntityCollaboratorStatus, EntityType } from '@prisma/client';
+import { EntityCollaboratorStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { CreatorCardV2, CreatorCardPropsV2 } from '~/components/CreatorCard/CreatorCard';
 import {
   useGetEntityCollaborators,

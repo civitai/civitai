@@ -1,5 +1,5 @@
 import { DeepPartial } from 'react-hook-form';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';

@@ -13,7 +13,7 @@ import {
   HomeStyleSegmentedControl,
 } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 
 const overviewPath = '[id]';
 

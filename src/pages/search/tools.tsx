@@ -35,7 +35,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { ToolType } from '@prisma/client';
+import { ToolType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

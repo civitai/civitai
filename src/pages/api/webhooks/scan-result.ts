@@ -1,4 +1,6 @@
-import { ModelFile, ModelHashType, ModelStatus, Prisma, ScanResultCode } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ModelFile } from '~/shared/utils/prisma/models';
+import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';

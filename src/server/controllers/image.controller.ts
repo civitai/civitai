@@ -1,4 +1,4 @@
-import { BlockImageReason, ReportReason, ReportStatus } from '@prisma/client';
+import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import {

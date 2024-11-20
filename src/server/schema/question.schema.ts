@@ -1,6 +1,6 @@
 import { constants } from '~/server/common/constants';
 import { QuestionStatus } from './../common/enums';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { QuestionSort } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';

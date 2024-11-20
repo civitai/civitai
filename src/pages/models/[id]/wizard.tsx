@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { ModelWizard } from '~/components/Resource/Wizard/ModelWizard';
 import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

@@ -1,4 +1,4 @@
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import type { MetadataParam } from '@stripe/stripe-js';
 import { chunk } from 'lodash-es';
 import { Stripe } from 'stripe';

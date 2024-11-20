@@ -16,7 +16,7 @@ import Link from 'next/link';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useQueryEventContributors } from './events.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { UserAvatar } from '../UserAvatar/UserAvatar';
 import dayjs from 'dayjs';
 import { formatDate } from '~/utils/date-helpers';

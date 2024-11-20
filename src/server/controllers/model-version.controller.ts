@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';

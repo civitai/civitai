@@ -1,6 +1,6 @@
 import { Autocomplete, Badge, createStyles, Group } from '@mantine/core';
 import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { getDisplayName } from '~/utils/string-helpers';

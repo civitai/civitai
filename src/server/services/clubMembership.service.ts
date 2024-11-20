@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
-import { ClubAdminPermission, Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ToggleClubMembershipStatusInput,
@@ -20,7 +21,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { userContributingClubs } from '~/server/services/club.service';
-import { createNotification } from './notification.service';
 import { clubMetrics } from '../metrics';
 
 export const getClubMemberships = async <TSelect extends Prisma.ClubMembershipSelect>({

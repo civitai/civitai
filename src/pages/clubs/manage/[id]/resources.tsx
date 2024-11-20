@@ -18,7 +18,7 @@ import { ClubMembershipInfinite } from '~/components/Club/Infinite/ClubsMembersh
 import { ClubResourcesPaged } from '~/components/Club/Infinite/ClubResourcesPaged';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { AddResourceToClubModal } from '~/components/Club/AddResourceToClubModal';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubAddContent } from '../../../../components/Club/ClubAddContent';
 
 const querySchema = z.object({ id: z.coerce.number() });

@@ -11,6 +11,7 @@ import {
   getUserCollectionItemsByItemHandler,
   removeCollectionItemHandler,
   saveItemHandler,
+  setItemScoreHandler,
   unfollowHandler,
   updateCollectionCoverImageHandler,
   updateCollectionItemsStatusHandler,
@@ -29,6 +30,7 @@ import {
   getUserCollectionItemsByItemSchema,
   removeCollectionItemInput,
   saveCollectionItemInputSchema,
+  setItemScoreInput,
   updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
   upsertCollectionInput,
@@ -132,4 +134,8 @@ export const collectionRouter = router({
     .input(removeCollectionItemInput)
     .use(isFlagProtected('collections'))
     .mutation(removeCollectionItemHandler),
+  setItemScore: guardedProcedure
+    .input(setItemScoreInput)
+    .use(isFlagProtected('collections'))
+    .mutation(setItemScoreHandler),
 });

@@ -1,4 +1,4 @@
-import { Currency, BountyEngagementType } from '@prisma/client';
+import { Currency, BountyEngagementType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 
 import {

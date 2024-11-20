@@ -22,7 +22,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBack,
   IconChevronDown,

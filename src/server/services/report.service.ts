@@ -1,4 +1,6 @@
-import { ImageEngagementType, Prisma, Report, ReportReason, ReportStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ImageEngagementType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import { Report } from '~/shared/utils/prisma/models';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';

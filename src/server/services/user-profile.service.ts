@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import {
@@ -8,7 +9,7 @@ import {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageIngestionStatus, Prisma } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';

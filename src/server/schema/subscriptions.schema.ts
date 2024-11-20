@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Currency, PaymentProvider } from '@prisma/client';
+import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { booleanString } from '~/utils/zod-helpers';
 

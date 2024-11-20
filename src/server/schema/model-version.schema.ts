@@ -5,7 +5,7 @@ import {
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   TrainingStatus,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import {

@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { ClubAdmin } from '../../types/router';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { showSuccessNotification } from '../../utils/notifications';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '../../utils/string-helpers';
 import { useMutateClubAdmin } from './club.utils';
 import { updateClubAdminInput } from '../../server/schema/clubAdmin.schema';

@@ -1,4 +1,4 @@
-import { CsamReportType } from '@prisma/client';
+import { CsamReportType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 

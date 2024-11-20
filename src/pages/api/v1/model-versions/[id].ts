@@ -1,4 +1,4 @@
-import { ModelHashType, ModelModifier } from '@prisma/client';
+import { ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
