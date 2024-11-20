@@ -96,8 +96,6 @@ export function PostDetailContent({ postId }: Props) {
   const requiresCollectionJudgement =
     collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
 
-  console.log(collection, requiresCollectionJudgement);
-
   const {
     flatData: unfilteredImages,
     images,

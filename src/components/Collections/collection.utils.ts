@@ -13,6 +13,7 @@ import { CollectionSort } from '~/server/common/enums';
 import {
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
 } from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
@@ -24,6 +25,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import produce from 'immer';
+import { MutateOptions } from '@tanstack/react-query';
 
 const collectionQueryParamSchema = z
   .object({
@@ -310,13 +312,40 @@ export const useMutateCollection = () => {
     },
   });
 
+  const updateCollectionItemNsfwLevelMutation =
+    trpc.collection.updateCollectionItemNSFWLevel.useMutation({
+      onSuccess: async (res, req) => {
+        showSuccessNotification({
+          autoClose: 5000, // 10s
+          title: 'NSFW level has been updated.',
+          message: 'NSFW level has been updated for the item.',
+        });
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Unable to update NSFW level',
+          error: new Error(error.message),
+        });
+      },
+    });
+
   const removeCollectionItemHandler = async (data: RemoveCollectionItemInput) => {
     await removeCollectionItemMutation.mutateAsync(data);
+  };
+
+  const updateCollectionItemNsfwLevelHandler = async (
+    data: SetCollectionItemNsfwLevelInput,
+    opts: Parameters<typeof updateCollectionItemNsfwLevelMutation.mutateAsync>[1]
+  ) => {
+    await updateCollectionItemNsfwLevelMutation.mutateAsync(data, opts);
   };
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
+    updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
+    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
+    updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
   };
 };
 

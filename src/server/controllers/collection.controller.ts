@@ -16,6 +16,7 @@ import {
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
@@ -31,6 +32,7 @@ import {
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
+  getCollectionItemById,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
@@ -40,6 +42,7 @@ import {
   removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
+  setCollectionItemNsfwLevel,
   setItemScore,
   updateCollectionCoverImage,
   updateCollectionItemsStatus,
@@ -618,6 +621,34 @@ export const setItemScoreHandler = async ({
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
     return await setItemScore({ ...input, userId: user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setCollectionItemNsfwLevelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetCollectionItemNsfwLevelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    const collectionItem = await getCollectionItemById({
+      id: input.collectionItemId,
+    });
+
+    const permissions = await getUserCollectionPermissionsById({
+      id: collectionItem.collectionId,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
+
+    if (!permissions.manage)
+      throw throwAuthorizationError('You do not have permission to manage this collection.');
+
+    return await setCollectionItemNsfwLevel({ ...input });
   } catch (error) {
     throw throwDbError(error);
   }

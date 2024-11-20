@@ -27,7 +27,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, createContext, useContext } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -48,6 +48,7 @@ import { FeedCard } from '~/components/Cards/FeedCard';
 import {
   getCollectionItemReviewData,
   useCollection,
+  useMutateCollection,
 } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import Link from 'next/link';
@@ -62,8 +63,15 @@ import { VideoMetadata } from '~/server/schema/media.schema';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import {
+  CollectionMetadataSchema,
+  GetAllCollectionItemsSchema,
+} from '~/server/schema/collection.schema';
+import {
+  allBrowsingLevelsFlag,
+  browsingLevelLabels,
+  browsingLevels,
+} from '~/shared/constants/browsingLevel.constants';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -101,6 +109,13 @@ const useStore = create<StoreState>()(
   }))
 );
 
+const ReviewCollectionContext = createContext<GetAllCollectionItemsSchema | null>(null);
+
+export function useReviewCollectionContext() {
+  const context = useContext(ReviewCollectionContext);
+  return context;
+}
+
 const ReviewCollection = () => {
   const router = useRouter();
   const { collectionId: collectionIdString } = router.query;
@@ -115,13 +130,12 @@ const ReviewCollection = () => {
     () => ({ collectionId, statuses, forReview: true, reviewSort: sort, collectionTagId }),
     [collectionId, statuses, sort, collectionTagId]
   );
-  const browsingLevel = useBrowsingLevelDebounced();
 
   const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
 
   const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.collection.getAllCollectionItems.useInfiniteQuery(
-      { ...filters, browsingLevel },
+      { ...filters, browsingLevel: allBrowsingLevelsFlag },
       { enabled: !!collection, getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
 
@@ -142,88 +156,150 @@ const ReviewCollection = () => {
   const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
-    <Container size="xl" py="xl">
-      <Stack>
-        <Paper
-          withBorder
-          shadow="lg"
-          p="xs"
-          sx={{
-            display: 'inline-flex',
-            float: 'right',
-            alignSelf: 'flex-end',
-            marginRight: 6,
-            position: 'sticky',
-            top: 'var(--mantine-header-height,0)',
-            marginBottom: -60,
-            zIndex: 1000,
-          }}
-        >
-          <ModerationControls collectionItems={collectionItems} filters={filters} />
-        </Paper>
-
-        <Stack spacing="sm" mb="lg">
-          <Group spacing="xs">
-            <BackButton url={`/collections/${collectionId}`} />
-            <Title order={1}>Collection items that need review</Title>
-          </Group>
-          <Text color="dimmed">
-            You are reviewing items on the collection that are either pending review or have been
-            rejected. You can change the status of these to be accepted or rejected.
-          </Text>
-          {isContestCollection && collection.tags.length > 0 && (
-            <CollectionCategorySelect
-              collectionId={collection.id}
-              value={collectionTagId?.toString() ?? 'all'}
-              onChange={(x) => setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)}
-            />
-          )}
-          <Group position="apart">
-            <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-              <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
-              <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
-              <Chip value={CollectionItemStatus.ACCEPTED}>Accepted</Chip>
-            </Chip.Group>
-
-            <SelectMenuV2
-              label="Sort by"
-              options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
-              value={sort}
-              onClick={(x) => setSort(x as CollectionReviewSort)}
-            />
-          </Group>
-        </Stack>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : collectionItems.length ? (
-          <MasonryGrid2
-            data={collectionItems}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            hasNextPage={hasNextPage}
-            fetchNextPage={fetchNextPage}
-            columnWidth={300}
-            filters={filters}
-            render={(props) => {
-              return <CollectionItemGridItem {...props} collection={collection} />;
+    <ReviewCollectionContext.Provider
+      value={{
+        ...filters,
+        browsingLevel: allBrowsingLevelsFlag,
+      }}
+    >
+      <Container size="xl" py="xl">
+        <Stack>
+          <Paper
+            withBorder
+            shadow="lg"
+            p="xs"
+            sx={{
+              display: 'inline-flex',
+              float: 'right',
+              alignSelf: 'flex-end',
+              marginRight: 6,
+              position: 'sticky',
+              top: 'var(--mantine-header-height,0)',
+              marginBottom: -60,
+              zIndex: 1000,
             }}
-          />
-        ) : (
-          <NoContent mt="lg" message="There are no images that need review" />
-        )}
-      </Stack>
-    </Container>
+          >
+            <ModerationControls collectionItems={collectionItems} filters={filters} />
+          </Paper>
+
+          <Stack spacing="sm" mb="lg">
+            <Group spacing="xs">
+              <BackButton url={`/collections/${collectionId}`} />
+              <Title order={1}>Collection items that need review</Title>
+            </Group>
+            <Text color="dimmed">
+              You are reviewing items on the collection that are either pending review or have been
+              rejected. You can change the status of these to be accepted or rejected.
+            </Text>
+            {isContestCollection && collection.tags.length > 0 && (
+              <CollectionCategorySelect
+                collectionId={collection.id}
+                value={collectionTagId?.toString() ?? 'all'}
+                onChange={(x) => setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)}
+              />
+            )}
+            <Group position="apart">
+              <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+                <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
+                <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
+                <Chip value={CollectionItemStatus.ACCEPTED}>Accepted</Chip>
+              </Chip.Group>
+
+              <SelectMenuV2
+                label="Sort by"
+                options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
+                value={sort}
+                onClick={(x) => setSort(x as CollectionReviewSort)}
+              />
+            </Group>
+          </Stack>
+          {isLoading ? (
+            <Center py="xl">
+              <Loader size="xl" />
+            </Center>
+          ) : collectionItems.length ? (
+            <MasonryGrid2
+              data={collectionItems}
+              isRefetching={isRefetching}
+              isFetchingNextPage={isFetchingNextPage}
+              hasNextPage={hasNextPage}
+              fetchNextPage={fetchNextPage}
+              columnWidth={300}
+              filters={filters}
+              render={(props) => {
+                return (
+                  <CollectionItemGridItem {...props} collectionId={collection?.id as number} />
+                );
+              }}
+            />
+          ) : (
+            <NoContent mt="lg" message="There are no images that need review" />
+          )}
+        </Stack>
+      </Container>
+    </ReviewCollectionContext.Provider>
   );
 };
 
 export default ReviewCollection;
 
+const CollectionItemNSFWLevelSelector = ({
+  collectionId,
+  collectionItemId,
+  nsfwLevel,
+  onNsfwLevelUpdated,
+}: {
+  collectionId: number;
+  collectionItemId: number;
+  nsfwLevel?: number;
+  onNsfwLevelUpdated?: (value: string) => void;
+}) => {
+  const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
+  const {
+    updateCollectionItemNsfwLevel,
+    updatingCollectionItemNsfwLevel,
+    updateCollectionItemNsfwLevelPayload,
+  } = useMutateCollection();
+
+  const handleNSFWLevelChange = (value: string) => {
+    updateCollectionItemNsfwLevel(
+      {
+        collectionItemId,
+        nsfwLevel: parseInt(value, 10),
+      },
+      {
+        onSuccess: async () => {
+          onNsfwLevelUpdated?.(value);
+        },
+      }
+    );
+  };
+
+  if (loadingCollection) return null;
+
+  const judgesCanApplyRatings = collection?.metadata?.judgesApplyBrowsingLevel ?? false;
+
+  if (!judgesCanApplyRatings || !permissions?.manage) return null;
+
+  return (
+    <SegmentedControl
+      value={nsfwLevel?.toString() ?? undefined}
+      onChange={handleNSFWLevelChange}
+      data={browsingLevels.map((level) => ({
+        value: level.toString(),
+        label: browsingLevelLabels[level],
+      }))}
+      disabled={
+        updatingCollectionItemNsfwLevel &&
+        updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
+      }
+    />
+  );
+};
+
 const CollectionItemGridItem = ({
   data: collectionItem,
-  collection,
+  collectionId,
 }: CollectionItemGridItemProps) => {
   const router = useRouter();
   const selected = useStore(
@@ -237,24 +313,35 @@ const CollectionItemGridItem = ({
     [CollectionItemStatus.REJECTED]: 'red',
     [CollectionItemStatus.REVIEW]: 'yellow',
   };
+  const reviewCollectionContext = useReviewCollectionContext();
+  const queryUtils = trpc.useUtils();
 
   const image = reviewData.image;
-  const judgesCanApplyRatings = collection?.metadata?.judgesApplyBrowsingLevel ?? false;
 
   return (
     <Stack spacing={0}>
-      {judgesCanApplyRatings && (
-        <SegmentedControl
-          value={image?.nsfwLevel?.toString() ?? undefined}
-          onChange={(v) => {
-            console.log(v);
-          }}
-          data={browsingLevels.map((level) => ({
-            value: level.toString(),
-            label: browsingLevelLabels[level],
-          }))}
-        />
-      )}
+      <CollectionItemNSFWLevelSelector
+        collectionId={collectionId}
+        collectionItemId={collectionItem.id}
+        nsfwLevel={image?.nsfwLevel}
+        onNsfwLevelUpdated={(value) => {
+          if (reviewCollectionContext) {
+            queryUtils.collection.getAllCollectionItems.setInfiniteData(
+              { ...reviewCollectionContext },
+              produce((data) => {
+                if (!data?.pages?.length) return;
+
+                for (const page of data.pages)
+                  for (const item of page.collectionItems) {
+                    if (item.id === collectionItem.id && item?.type === 'image') {
+                      item.data.nsfwLevel = parseInt(value, 10);
+                    }
+                  }
+              })
+            );
+          }
+        }}
+      />
       <FeedCard>
         <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
           <Stack
@@ -411,9 +498,7 @@ type CollectionItemGridItemProps = {
   data: CollectionItemExpanded;
   index: number;
   width: number;
-  collection?: {
-    metadata?: CollectionMetadataSchema;
-  };
+  collectionId: number;
 };
 
 function ModerationControls({
@@ -434,14 +519,13 @@ function ModerationControls({
     withinPortal: true,
   };
 
-  const browsingLevel = useBrowsingLevelDebounced();
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
       async onMutate({ collectionItemIds, status }) {
         await queryUtils.collection.getAllCollectionItems.cancel();
 
         queryUtils.collection.getAllCollectionItems.setInfiniteData(
-          { ...filters, browsingLevel },
+          { ...filters },
           produce((data) => {
             if (!data?.pages?.length) return;
 
