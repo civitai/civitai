@@ -2,7 +2,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
-import { Prisma, TagSource } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { TagSource } from '~/shared/utils/prisma/enums';
 import { chunk } from 'lodash-es';
 import { getComputedTags } from '~/server/utils/tag-rules';
 

@@ -373,6 +373,7 @@ export interface User {
   collaborationsCreated?: EntityCollaborator[];
   adTokens?: AdToken[];
   ratingRequests?: ImageRatingRequest[];
+  collectionItemScores?: CollectionItemScore[];
 }
 
 export interface CustomerSubscription {
@@ -1884,6 +1885,16 @@ export interface CollectionItem {
   randomId: number | null;
   tagId: number | null;
   tag?: Tag | null;
+  scores?: CollectionItemScore[];
+}
+
+export interface CollectionItemScore {
+  userId: number;
+  user?: User;
+  collectionItemId: number;
+  collectionItem?: CollectionItem;
+  score: number;
+  createdAt: Date;
 }
 
 export interface CollectionContributor {
