@@ -11,10 +11,10 @@ export function SuccessAnimation({
   return (
     <Flex direction={direction} {...flexProps}>
       <Lottie
-        options={{ animationData: successAnimation, loop: false }}
         style={{ margin: 0 }}
         ariaRole="presentation"
         {...lottieProps}
+        options={{ animationData: successAnimation, loop: false }}
       />
       {children}
     </Flex>

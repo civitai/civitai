@@ -42,6 +42,7 @@ import {
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
@@ -970,7 +971,8 @@ export const getCollectionItemsByCollectionId = async ({
   });
 
   if (
-    (statuses.includes(CollectionItemStatus.REVIEW) ||
+    (forReview ||
+      statuses.includes(CollectionItemStatus.REVIEW) ||
       statuses.includes(CollectionItemStatus.REJECTED)) &&
     !permission.isOwner &&
     !permission.manage
@@ -985,7 +987,7 @@ export const getCollectionItemsByCollectionId = async ({
     status: { in: statuses },
     // Ensure we only show images that have been scanned
     image:
-      collection.type === CollectionType.Image
+      collection.type === CollectionType.Image && !forReview
         ? { ingestion: ImageIngestionStatus.Scanned }
         : undefined,
     tagId: collectionTagId,
@@ -1023,6 +1025,10 @@ export const getCollectionItemsByCollectionId = async ({
 
   if (collectionItems.length === 0) {
     return [];
+  }
+
+  if (user && forReview) {
+    user.isModerator = true;
   }
 
   const modelIds = collectionItems.map((item) => item.modelId).filter(isDefined);
@@ -1078,6 +1084,7 @@ export const getCollectionItemsByCollectionId = async ({
           ids: imageIds,
           headers: { src: 'getCollectionItemsByCollectionId' },
           includeBaseModel: true,
+          pending: forReview,
         })
       : { items: [] };
 
@@ -2106,3 +2113,26 @@ export async function checkUserOwnsCollectionAndItem({
 
   return item.userId === collection.userId;
 }
+
+export const setItemScore = async ({
+  itemId,
+  collectionId,
+  userId,
+  score,
+}: SetItemScoreInput & { userId: number }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true },
+  });
+  if (!collection) throw throwNotFoundError('Collection not found');
+  if (collection.mode !== CollectionMode.Contest)
+    throw throwBadRequestError('This collection is not a contest collection');
+
+  const itemScore = await dbWrite.collectionItemScore.upsert({
+    where: { userId_collectionItemId: { userId, collectionItemId: itemId } },
+    create: { userId, collectionItemId: itemId, score },
+    update: { score },
+  });
+
+  return itemScore;
+};

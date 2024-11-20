@@ -65,10 +65,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 
   const rows = metadata.collection?.rows ?? 2;
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: homeBlock?.collection?.items.length ?? 0,
-    rows,
-  });
+
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
 
@@ -92,6 +89,11 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     const itemsToShow = ITEMS_PER_ROW * rows;
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
+
+  const { classes, cx } = useHomeBlockGridStyles({
+    count: items.length ?? 0,
+    rows,
+  });
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
