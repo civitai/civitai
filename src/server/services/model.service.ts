@@ -2149,6 +2149,23 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
   return coveredResources.map((x) => x.version_id);
 }
 
+export async function isModelHashBlocked(sha256Hash: string) {
+  const [{ blocked }] = await dbRead.$queryRaw<{ blocked: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "BlockedModelHashes"
+      WHERE hash = ${sha256Hash}
+    ) as blocked;
+  `;
+
+  return blocked;
+}
+
+export async function refreshBlockedModelHashes() {
+  await dbWrite.$executeRaw`
+    REFRESH MATERIALIZED VIEW CONCURRENTLY "BlockedModelHashes";
+  `;
+}
+
 export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
   const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
     SELECT version_id FROM "CoveredCheckpointDetails"
