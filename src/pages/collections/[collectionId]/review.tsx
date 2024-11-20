@@ -38,7 +38,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { CollectionItemStatus, CollectionMode, CollectionType } from '@prisma/client';
+import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/utils/prisma/enums';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';

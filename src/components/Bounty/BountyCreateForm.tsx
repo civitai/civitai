@@ -16,7 +16,13 @@ import {
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
-import { BountyEntryMode, BountyMode, BountyType, Currency, TagTarget } from '@prisma/client';
+import {
+  BountyEntryMode,
+  BountyMode,
+  BountyType,
+  Currency,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import {
   IconCalendar,
   IconCalendarDue,

@@ -40,7 +40,7 @@ import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussio
 import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';

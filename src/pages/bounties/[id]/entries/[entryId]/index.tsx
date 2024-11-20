@@ -68,7 +68,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
-import { Availability, ReviewReactions } from '@prisma/client';
+import { Availability, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useIsMutating } from '@tanstack/react-query';

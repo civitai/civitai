@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { ImageGenerationProcess, ModelType } from '@prisma/client';
+import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

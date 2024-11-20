@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { GenerationRequestStatus } from '~/server/common/enums';
 
 export namespace Generation {

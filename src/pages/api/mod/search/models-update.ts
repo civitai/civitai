@@ -1,4 +1,4 @@
-import { ModelStatus } from '@prisma/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';

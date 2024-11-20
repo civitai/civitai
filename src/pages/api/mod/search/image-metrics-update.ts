@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';

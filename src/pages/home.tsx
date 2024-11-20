@@ -1,6 +1,6 @@
 import { Box, Button, Center, Group, Loader, Popover, Text, Title } from '@mantine/core';
 import { trpc } from '~/utils/trpc';
-import { HomeBlockType, MetricTimeframe } from '@prisma/client';
+import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';

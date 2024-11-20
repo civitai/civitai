@@ -18,7 +18,7 @@ import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.sc
 import { env } from '~/env/server.mjs';
 import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { getRandomInt } from '~/utils/number-helpers';
-import { generation } from '~/server/common/constants';
+import { maxRandomSeed } from '~/server/common/constants';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -26,8 +26,7 @@ export async function createTextToImageStep(
   }
 ) {
   input.params.seed =
-    input.params.seed ??
-    getRandomInt(input.params.quantity, generation.maxValues.seed) - input.params.quantity;
+    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
   const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
   const { resources, params } = await parseGenerateImageInput({ ...input, workflowDefinition });
 

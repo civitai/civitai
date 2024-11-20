@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useContext } from 'react';
 import { BaseModelSetType } from '~/server/common/constants';

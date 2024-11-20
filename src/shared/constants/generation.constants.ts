@@ -1,6 +1,6 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
 import { BaseModelSetType, baseModelSets } from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';

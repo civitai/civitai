@@ -1,4 +1,4 @@
-import { TagEngagementType, UserEngagementType } from '@prisma/client';
+import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 
 import { dbWrite } from '~/server/db/client';

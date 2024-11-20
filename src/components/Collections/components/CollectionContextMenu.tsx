@@ -13,7 +13,7 @@ import { CollectionContributorPermissionFlags } from '~/server/services/collecti
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function CollectionContextMenu({

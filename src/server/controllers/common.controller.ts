@@ -1,4 +1,4 @@
-import { Availability } from '@prisma/client';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import {

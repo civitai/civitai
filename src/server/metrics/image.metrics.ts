@@ -1,12 +1,10 @@
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { imagesSearchIndex } from '~/server/search-index';
 import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
-import { ImageMetric, MetricTimeframe } from '@prisma/client';
+import { ImageMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 import { getJobDate } from '~/server/jobs/job';
 

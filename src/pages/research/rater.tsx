@@ -32,8 +32,8 @@ import {
   IconVolumeOff,
   IconX,
 } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
-import Lottie from 'react-lottie';
 import { Page } from '~/components/AppLayout/Page';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -44,9 +44,13 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getRandom } from '~/utils/array-helpers';
 import { getRandomBool } from '~/utils/boolean-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import * as levelAnimation from '~/utils/lotties/level-up-animation.json';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+
+const LevelAnimation = dynamic(
+  () => import('~/components/Animations/LevelAnimation').then((mod) => mod.LevelAnimation),
+  { ssr: false }
+);
 
 const NsfwLevel = {
   PG: 1,
@@ -410,10 +414,11 @@ function Rater() {
             animation: 'fadeOut 500ms ease-in 2s forwards',
           }}
         >
-          <Lottie
-            options={{ animationData: levelAnimation, loop: false }}
-            height={300}
-            style={{ marginTop: -210 }}
+          <LevelAnimation
+            lottieProps={{
+              height: 300,
+              style: { marginTop: -210 },
+            }}
           />
           <Text size={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
             Level up!

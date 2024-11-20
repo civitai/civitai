@@ -1,5 +1,5 @@
 import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
-import { ModelEngagementType } from '@prisma/client';
+import { ModelEngagementType } from '~/shared/utils/prisma/enums';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';

@@ -1,5 +1,5 @@
 import { MantineColor } from '@mantine/core';
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 

@@ -1,4 +1,4 @@
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { env } from 'process';
 import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbRead } from '~/server/db/client';

@@ -10,7 +10,7 @@ import { Form, InputNumber, useForm } from '~/libs/form';
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
 import { constants } from '~/server/common/constants';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { formatCurrencyForDisplay, getBuzzWithdrawalDetails } from '~/utils/number-helpers';

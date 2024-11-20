@@ -1,5 +1,5 @@
 import { Chip, createStyles } from '@mantine/core';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import { useCallback } from 'react';
 import { PeriodModeToggle } from '~/components/Filters/PeriodModeToggle';

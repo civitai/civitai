@@ -1,8 +1,9 @@
+import { Prisma } from '@prisma/client';
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
-import { PaymentProvider, Prisma } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { subscriptionRenewalReminderEmail } from '~/server/email/templates/subscriptionRenewalReminder.email';
-import { chunk } from 'lodash';
+import { chunk } from 'lodash-es';
 
 const pastDueCancelledCutOf = '2024-09-10 00:00:00.000';
 

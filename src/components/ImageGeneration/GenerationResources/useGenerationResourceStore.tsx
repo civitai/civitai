@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { Generation } from '~/server/services/generation/generation.types';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';

@@ -4,7 +4,7 @@ import { dialogStore } from '../Dialog/dialogStore';
 import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
 // import { ClubPostUpsertFormModal } from './ClubPost/ClubPostUpsertForm';
 import { AddResourceToClubModal } from './AddResourceToClubModal';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { useClubContributorStatus } from './club.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';

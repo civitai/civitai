@@ -15,7 +15,6 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -36,7 +35,7 @@ export default function Rewards() {
     page: 1,
     mode: PurchasableRewardModeratorViewMode.Available,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =
     useQueryPurchasableRewardsModerator(debouncedFilters);
 

@@ -11,7 +11,7 @@ import {
   Divider,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { CollectionContributorPermission } from '@prisma/client';
+import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { IconPlaylistX, IconSearch } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';

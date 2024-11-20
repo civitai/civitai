@@ -1,4 +1,5 @@
-import { Availability, ClubAdminPermission, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { Availability, ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { v4 as uuid } from 'uuid';
 import { dbRead, dbWrite } from '~/server/db/client';

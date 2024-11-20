@@ -1,4 +1,4 @@
-import { EntityCollaboratorStatus, EntityType } from '@prisma/client';
+import { EntityCollaboratorStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 
 export type UpsertEntityCollaboratorInput = z.infer<typeof upsertEntityCollaboratorInput>;

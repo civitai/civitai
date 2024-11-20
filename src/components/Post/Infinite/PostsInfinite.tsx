@@ -1,6 +1,6 @@
 import { Center, Loader, LoadingOverlay, Stack, Text, ThemeIcon } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import React, { useEffect } from 'react';

@@ -11,7 +11,7 @@ import { useInView } from '~/hooks/useInView';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { CosmeticEntity } from '@prisma/client';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';

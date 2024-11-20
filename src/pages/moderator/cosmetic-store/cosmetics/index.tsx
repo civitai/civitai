@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { IconCloudOff, IconEdit } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';

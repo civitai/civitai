@@ -8,7 +8,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import React from 'react';
 import { truncate } from 'lodash-es';

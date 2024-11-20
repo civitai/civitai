@@ -1,4 +1,5 @@
-import { ModelStatus, Prisma, VaultItemStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ModelStatus, VaultItemStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server.mjs';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';

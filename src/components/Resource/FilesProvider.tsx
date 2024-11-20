@@ -10,7 +10,7 @@ import { Stack, Text, Anchor } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ModelStatus, ModelType } from '@prisma/client';
+import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { UploadType } from '~/server/common/enums';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { z } from 'zod';
@@ -484,17 +484,47 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     maxFiles: 2,
   },
   LORA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.gguf', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: [
+      '.ckpt',
+      '.pt',
+      '.safetensors',
+      '.sft',
+      '.gguf',
+      '.bin',
+      '.zip',
+      '.yaml',
+      '.yml',
+    ],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
   DoRA: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.gguf', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: [
+      '.ckpt',
+      '.pt',
+      '.safetensors',
+      '.sft',
+      '.gguf',
+      '.bin',
+      '.zip',
+      '.yaml',
+      '.yml',
+    ],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },
   LoCon: {
-    acceptedFileTypes: ['.ckpt', '.pt', '.safetensors', '.sft', '.gguf', '.bin', '.zip', '.yaml', '.yml'],
+    acceptedFileTypes: [
+      '.ckpt',
+      '.pt',
+      '.safetensors',
+      '.sft',
+      '.gguf',
+      '.bin',
+      '.zip',
+      '.yaml',
+      '.yml',
+    ],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
     maxFiles: 4,
   },

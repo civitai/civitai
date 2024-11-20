@@ -22,7 +22,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';

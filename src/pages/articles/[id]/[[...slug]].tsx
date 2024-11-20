@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
-import { ArticleEngagementType, ArticleStatus, Availability } from '@prisma/client';
+import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';

@@ -1,6 +1,6 @@
 import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 
 export const usePaymentProvider = () => {
   const featureFlags = useFeatureFlags();

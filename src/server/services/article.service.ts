@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   ArticleEngagementType,
   ArticleStatus,
@@ -5,9 +6,8 @@ import {
   CosmeticSource,
   CosmeticType,
   MetricTimeframe,
-  Prisma,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';

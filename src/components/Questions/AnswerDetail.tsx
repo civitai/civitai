@@ -7,7 +7,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { DeleteAnswer } from '~/components/Questions/DeleteAnswer';
 import { IconDotsVertical, IconTrash, IconEdit, IconMessageCircle } from '@tabler/icons-react';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { AnswerVotes } from '~/components/Questions/AnswerVotes';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { QuestionDetailProps } from '~/server/controllers/question.controller';

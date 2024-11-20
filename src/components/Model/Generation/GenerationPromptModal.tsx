@@ -1,5 +1,5 @@
 import { Modal, Stack, Group, Button } from '@mantine/core';
-import { ModelVersionExploration } from '@prisma/client';
+import { ModelVersionExploration } from '~/shared/utils/prisma/models';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useEffect } from 'react';
 

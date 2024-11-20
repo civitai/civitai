@@ -39,7 +39,11 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   if (!ownsVersion) throw throwNotFoundError();
 
   const result = await dbWrite.modelFile.create({
-    data: { ...file, modelVersionId: data.modelVersionId },
+    data: {
+      ...file,
+      rawScanResult: file.rawScanResult !== null ? file.rawScanResult : Prisma.JsonNull,
+      modelVersionId: data.modelVersionId,
+    },
     select,
   });
   await deleteFilesForModelVersionCache(data.modelVersionId);

@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 const p = {
   textualInversion: `[\\w\\_\\.-]+`,

@@ -1,4 +1,5 @@
-import { BlockImageReason, CsamReport, CsamReportType } from '@prisma/client';
+import { BlockImageReason, CsamReportType } from '~/shared/utils/prisma/enums';
+import { CsamReport } from '~/shared/utils/prisma/models';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   CreateCsamReportSchema,

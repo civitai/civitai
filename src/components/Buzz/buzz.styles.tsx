@@ -1,5 +1,5 @@
 import { createStyles, keyframes } from '@mantine/core';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 
 const moveBackground = keyframes({
   '0%': {

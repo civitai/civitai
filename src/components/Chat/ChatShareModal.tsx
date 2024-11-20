@@ -14,7 +14,7 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { ChatMemberStatus } from '@prisma/client';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconCloudOff,
   IconSearch,

@@ -3,7 +3,7 @@ import { env } from '~/env/server.mjs';
 import { Readable } from 'node:stream';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { dbRead } from '~/server/db/client';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 

@@ -1,4 +1,5 @@
-import { EntityType, JobQueueType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';

@@ -1,11 +1,10 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { Currency, ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 
 import { Countdown } from '~/components/Countdown/Countdown';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

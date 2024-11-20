@@ -1,6 +1,6 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect } from 'react';
@@ -70,7 +70,7 @@ export function ImagesInfiniteContent({
   //#endregion
 
   return (
-    <IsClient>
+    <>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -123,6 +123,6 @@ export function ImagesInfiniteContent({
           )}
         </NoContent>
       )}
-    </IsClient>
+    </>
   );
 }

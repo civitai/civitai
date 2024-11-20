@@ -15,7 +15,7 @@ import {
   Alert,
   Anchor,
 } from '@mantine/core';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';

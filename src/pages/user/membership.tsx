@@ -45,7 +45,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { env } from '~/env/client.mjs';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';

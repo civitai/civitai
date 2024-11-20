@@ -1,6 +1,6 @@
 import { ActionIcon, Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { ChatMemberStatus } from '@prisma/client';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowsJoin2,
   IconBell,

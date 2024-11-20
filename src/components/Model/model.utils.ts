@@ -1,4 +1,9 @@
-import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import {
+  CheckpointType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';

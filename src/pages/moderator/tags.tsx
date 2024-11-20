@@ -10,7 +10,7 @@ import {
   Tooltip,
   Text,
 } from '@mantine/core';
-import { TagsOnTagsType, TagTarget, TagType } from '@prisma/client';
+import { TagsOnTagsType, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import {
   IconAlbum,
   IconArrowMergeRight,

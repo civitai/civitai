@@ -1,6 +1,6 @@
+import { Prisma } from '@prisma/client';
 import { updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex, onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import { EnqueuedTask } from 'meilisearch';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import {
   BountyType,
@@ -8,8 +8,7 @@ import {
   CosmeticType,
   ImageGenerationProcess,
   MediaType,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '~/server/db/client';

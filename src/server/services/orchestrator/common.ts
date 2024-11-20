@@ -55,7 +55,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { z } from 'zod';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';

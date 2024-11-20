@@ -35,7 +35,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ModelById } from '~/types/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },

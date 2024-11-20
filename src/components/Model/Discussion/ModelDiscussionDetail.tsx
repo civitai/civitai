@@ -8,7 +8,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { trpc } from '~/utils/trpc';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ModelDiscussionComments } from '~/components/Model/Discussion/ModelDiscussionComments';
-import { Thread } from '@prisma/client';
+import { Thread } from '~/shared/utils/prisma/models';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 
 export function ModelDiscussionDetail({

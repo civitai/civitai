@@ -7,7 +7,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { imageSchema } from '~/server/schema/image.schema';
 import {
   baseQuerySchema,
@@ -232,4 +232,11 @@ export type RemoveCollectionItemInput = z.infer<typeof removeCollectionItemInput
 export const removeCollectionItemInput = z.object({
   collectionId: z.coerce.number(),
   itemId: z.coerce.number(),
+});
+
+export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;
+export const setItemScoreInput = z.object({
+  collectionId: z.coerce.number(),
+  itemId: z.coerce.number(),
+  score: z.coerce.number().min(1).max(10),
 });

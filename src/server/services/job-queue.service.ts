@@ -1,4 +1,4 @@
-import { EntityType, JobQueueType } from '@prisma/client';
+import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { chunk } from 'lodash-es';
 

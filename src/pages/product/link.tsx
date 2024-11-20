@@ -9,15 +9,19 @@ import {
   Title,
   Image,
 } from '@mantine/core';
+import dynamic from 'next/dynamic';
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Lottie from 'react-lottie';
-import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
+
+const LinkAnimation = dynamic(
+  () => import('~/components/Animations/LinkAnimation').then((mod) => mod.LinkAnimation),
+  { ssr: false }
+);
 
 type ServerSideProps = {
   secondaryText: string;
@@ -77,9 +81,7 @@ export default function LinkApp(props: ServerSideProps) {
         </Flex>
 
         <Flex direction="row" className={classes.gradientContainer}>
-          <Flex justify="center" className={classes.videoBorder}>
-            <Lottie options={{ animationData: linkAnimation }} />
-          </Flex>
+          <LinkAnimation justify="center" className={classes.videoBorder} />
           <div className={classes.gradientBox} />
         </Flex>
 

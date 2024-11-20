@@ -1,4 +1,10 @@
-import { CollectionType, CosmeticType, MediaType, MetricTimeframe, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import {
+  CollectionType,
+  CosmeticType,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

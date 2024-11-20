@@ -17,12 +17,11 @@ import {
   Divider,
   ActionIcon,
   Group,
-  SegmentedControl,
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
@@ -163,11 +162,17 @@ export function GenerationFormContent() {
     ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
     [
       'mod+ArrowUp',
-      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+      (event) => {
+        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
+        form.setValue('prompt', text ?? '');
+      },
     ],
     [
       'mod+ArrowDown',
-      (event) => keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>),
+      (event) => {
+        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
+        form.setValue('prompt', text ?? '');
+      },
     ],
   ]);
 

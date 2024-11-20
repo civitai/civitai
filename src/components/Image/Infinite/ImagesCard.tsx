@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';

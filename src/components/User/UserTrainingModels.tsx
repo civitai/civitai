@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconCheck,

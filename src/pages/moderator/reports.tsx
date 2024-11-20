@@ -18,7 +18,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { ReportReason, ReportStatus } from '@prisma/client';
+import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { IconExternalLink } from '@tabler/icons-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';

@@ -7,7 +7,7 @@ import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCategoryTags } from '~/components/Tags/tag.utils';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 
 const useStyles = createStyles((theme) => ({
   tagsContainer: {

@@ -4,7 +4,7 @@ import {
   MetricTimeframe,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';

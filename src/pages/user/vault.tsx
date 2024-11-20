@@ -64,7 +64,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { VaultItemStatus } from '@prisma/client';
+import { VaultItemStatus } from '~/shared/utils/prisma/enums';
 import { VaultSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { dbRead } from '~/server/db/client';
@@ -73,7 +73,6 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { Meta } from '~/components/Meta/Meta';
 import { isDefined } from '~/utils/type-guards';
-import { saveAs } from 'file-saver';
 import { sleep } from '~/server/utils/concurrency-helpers';
 
 export const getServerSideProps = createServerSideProps({

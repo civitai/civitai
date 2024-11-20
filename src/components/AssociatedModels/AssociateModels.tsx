@@ -22,7 +22,7 @@ import {
   SelectItemProps,
   Box,
 } from '@mantine/core';
-import { AssociationType } from '@prisma/client';
+import { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconGripVertical, IconTrash, IconUser } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { forwardRef, useEffect, useState } from 'react';

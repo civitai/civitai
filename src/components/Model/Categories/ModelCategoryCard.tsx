@@ -13,7 +13,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { CollectionType, ModelStatus } from '@prisma/client';
+import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
   IconDotsVertical,

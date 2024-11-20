@@ -11,7 +11,8 @@ import {
   ThemeIcon,
   Grid,
 } from '@mantine/core';
-import { Currency, Price } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { Price } from '~/shared/utils/prisma/models';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 

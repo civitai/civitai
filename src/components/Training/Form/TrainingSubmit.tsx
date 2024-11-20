@@ -17,7 +17,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, ModelUploadType, TrainingStatus } from '@prisma/client';
+import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconConfetti,

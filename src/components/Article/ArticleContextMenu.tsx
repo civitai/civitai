@@ -12,7 +12,7 @@ import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { ArticleStatus, CollectionType, CosmeticEntity } from '@prisma/client';
+import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';

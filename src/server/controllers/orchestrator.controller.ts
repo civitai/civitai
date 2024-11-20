@@ -1,7 +1,7 @@
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants, generation } from '~/server/common/constants';
+import { constants, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
@@ -80,7 +80,7 @@ export async function generate({
   }
 
   if (!('seed' in args.data) || !args.data.seed)
-    args.data = { ...args.data, seed: getRandomInt(1, generation.maxValues.seed) };
+    args.data = { ...args.data, seed: getRandomInt(1, maxRandomSeed) };
 
   const step = await createWorkflowStep(args as GenerationSchema);
 

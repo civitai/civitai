@@ -1,4 +1,4 @@
-import { TagType } from '@prisma/client';
+import { TagType } from '~/shared/utils/prisma/enums';
 import { useUpdateHiddenPreferences, useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { VotableTagModel } from '~/libs/tags';
 import { trpc } from '~/utils/trpc';

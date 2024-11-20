@@ -9,7 +9,7 @@ import { generationPanel } from '~/store/generation.store';
 import { encodeMetadata } from '~/utils/metadata';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 export function ImageMetaPopover2({
   imageId,

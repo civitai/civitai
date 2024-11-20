@@ -5,7 +5,7 @@ import { SupportedClubPostEntities } from '~/server/schema/club.schema';
 import { useQueryUserContributingClubs } from './club.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMemo } from 'react';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 // import { ClubPostFromResourceModal } from './ClubPost/ClubPostUpsertForm';
 import { IconPencilPin } from '@tabler/icons-react';
 

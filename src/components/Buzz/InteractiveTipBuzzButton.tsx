@@ -20,7 +20,7 @@ import { devtools } from 'zustand/middleware';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { isTouchDevice } from '~/utils/device-helpers';

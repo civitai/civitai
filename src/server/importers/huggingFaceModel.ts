@@ -1,5 +1,6 @@
-import { ImportStatus, ModelType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
+import { ImportStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { createImporter } from '~/server/importers/importer';
 import { dbWrite } from '~/server/db/client';
 import { uploadViaUrl } from '~/utils/cf-images-utils';

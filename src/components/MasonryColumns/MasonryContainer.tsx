@@ -1,4 +1,4 @@
-import { createStyles, Box, BoxProps } from '@mantine/core';
+import { createStyles, ContainerProps, Box, BoxProps } from '@mantine/core';
 import React, { CSSProperties } from 'react';
 import {
   MasonryContextState,
@@ -20,14 +20,20 @@ export function MasonryContainer({ children, ...boxProps }: MasonryContainerProp
     maxColumnCount,
   });
 
+  const state = {
+    ...masonryProviderState,
+  };
+
   return (
-    <Box
-      px="md"
-      {...boxProps}
-      className={classes.container}
-      style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
-    >
-      {typeof children === 'function' ? children(masonryProviderState) : children}
+    <Box px="md" {...boxProps}>
+      <div className={classes.container}>
+        <div
+          style={{ width: columnCount > 1 && combinedWidth ? combinedWidth : undefined }}
+          className={classes.queries}
+        >
+          {typeof children === 'function' ? children(state) : children}
+        </div>
+      </div>
     </Box>
   );
 }
@@ -66,6 +72,8 @@ const useStyles = createStyles(
       container: {
         containerType: 'inline-size',
         containerName: 'masonry-container',
+      },
+      queries: {
         margin: '0 auto',
         ...containerQueries,
       },

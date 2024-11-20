@@ -21,7 +21,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBack,
   IconChevronDown,
@@ -35,21 +35,22 @@ import {
   IconSend,
   IconX,
 } from '@tabler/icons-react';
-import { AnimatePresence, motion } from 'framer-motion';
 import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { LazyMotion } from 'motion/react';
+import * as m from 'motion/react-m';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
-import { getLinkHref, linkifyOptions } from '~/components/Chat/util';
+import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
@@ -119,7 +120,7 @@ const useStyles = createStyles((theme) => ({
 export function ExistingChat() {
   const currentUser = useCurrentUser();
   const { classes } = useStyles();
-  const { connected, worker } = useSignalContext();
+  const { worker } = useSignalContext();
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
   const mobile = useIsMobile();
@@ -853,7 +854,7 @@ function DisplayMessages({
   let loopPreviousChatter = 0;
 
   return (
-    <AnimatePresence initial={false} mode="sync">
+    <LazyMotion features={loadMotion}>
       {chats.map((c, idx) => {
         const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
         const sameChatter = loopPreviousChatter === c.userId;
@@ -874,7 +875,7 @@ function DisplayMessages({
 
         return (
           <PStack
-            component={motion.div}
+            component={m.div}
             // ref={c.id === lastReadId ? lastReadRef : undefined}
             key={c.id}
             spacing={12}
@@ -988,6 +989,6 @@ function DisplayMessages({
           </PStack>
         );
       })}
-    </AnimatePresence>
+    </LazyMotion>
   );
 }

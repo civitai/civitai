@@ -3,10 +3,8 @@ import { Group, Input, InputWrapperProps, SegmentedControl } from '@mantine/core
 import { useEffect, useState } from 'react';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { withController } from '~/libs/form/hoc/withController';
+import { generation, maxRandomSeed } from '~/server/common/constants';
 
-const min = 1;
-const max = 4294967295;
-const maxRandom = max / 2;
 type Props = {
   value?: number;
   onChange?: (value?: number) => void;
@@ -26,7 +24,7 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
   useEffect(() => {
     if (value !== undefined && control === 'random') onChange?.(undefined);
     else if (value === undefined && control === 'custom')
-      onChange?.(Math.floor(Math.random() * maxRandom));
+      onChange?.(Math.floor(Math.random() * maxRandomSeed));
   }, [control]); //eslint-disable-line
 
   return (
@@ -46,8 +44,8 @@ function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: Props) {
           onChange={onChange}
           placeholder="Random"
           clearable
-          min={min}
-          max={max}
+          min={1}
+          max={generation.maxValues.seed}
           sx={{ flex: 1 }}
           hideControls
           format="default"

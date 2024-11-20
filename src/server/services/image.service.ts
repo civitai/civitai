@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   BlockImageReason,
@@ -7,11 +8,10 @@ import {
   ImageIngestionStatus,
   MediaType,
   ModelType,
-  Prisma,
   ReportReason,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -1116,10 +1116,13 @@ export const getAllImages = async (
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      ids?.length ? 'LEFT' : ''
+    )} JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
@@ -1142,6 +1145,9 @@ export const getAllImages = async (
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2090,13 +2096,22 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          Prisma.sql`
+            (i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")
+            OR
+            (p."collectionId" IS NOT NULL AND EXISTS (
+              SELECT 1 FROM "CollectionContributor" cc
+              WHERE cc."collectionId" = p."collectionId"
+                AND cc."userId" = ${userId}
+                AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+            ))`,
           Prisma.sql`i."userId" = ${userId}`,
         ],
         ' OR '
       )})`
     );
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -2126,6 +2141,9 @@ export const getImage = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2364,6 +2382,7 @@ export const getImagesForModelVersion = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
     WITH targets AS (
       SELECT
@@ -2408,6 +2427,9 @@ export const getImagesForModelVersion = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2544,6 +2566,7 @@ export const getImagesForPosts = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -2584,6 +2607,9 @@ export const getImagesForPosts = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+                ${Prisma.join(workflows)}
+              ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2887,9 +2913,7 @@ export async function createImage({
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,
@@ -4187,8 +4211,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
-  console.log(data);
-
   let onSite = false;
   let process: string | null = null;
   let hasControlNet = false;
@@ -4250,9 +4272,8 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       status: true,
       createdAt: true,
       reviewedAt: true,
-      collection: {
-        select: collectionSelect,
-      },
+      collection: { select: collectionSelect },
+      scores: { select: { userId: true, score: true } },
       tag: true,
     },
   });

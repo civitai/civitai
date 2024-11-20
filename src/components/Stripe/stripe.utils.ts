@@ -9,7 +9,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCallback, useEffect, useState } from 'react';
 import { useRecaptchaToken } from '~/components/Recaptcha/useReptchaToken';
 import { RECAPTCHA_ACTIONS } from '~/server/common/constants';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useDebouncer } from '~/utils/debouncer';
 
 export const useMutateStripe = () => {
