@@ -13,7 +13,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType } from '@prisma/client';
+import { TagType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBigDown,
   IconArrowBigUp,

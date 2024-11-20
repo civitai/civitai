@@ -1,4 +1,4 @@
-import { ModelType, MetricTimeframe } from '@prisma/client';
+import { ModelType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { ModelSort } from '~/server/common/enums';

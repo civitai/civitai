@@ -1,5 +1,5 @@
 import { Badge, BadgeProps, Divider, Text } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
 import { BaseModel } from '~/server/common/constants';

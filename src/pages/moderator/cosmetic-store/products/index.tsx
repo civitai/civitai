@@ -18,7 +18,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconCloudOff, IconEdit, IconPlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BackButton } from '~/components/BackButton/BackButton';

@@ -1,5 +1,5 @@
 import { MantineSize, Text } from '@mantine/core';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import {

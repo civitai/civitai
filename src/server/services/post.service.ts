@@ -1,14 +1,14 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
-  ImageResource,
-  Prisma,
   TagTarget,
   TagType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
+import { ImageResource } from '~/shared/utils/prisma/models';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';
@@ -502,7 +502,27 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       id,
       OR: user?.isModerator
         ? undefined
-        : [{ userId: user?.id }, { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } }],
+        : [
+            { userId: user?.id },
+            { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } },
+            // Support judges of a collection to view any post in the collection
+            // regardless of NSFW level and published status.
+            {
+              collectionId: {
+                not: null,
+              },
+              collection: {
+                contributors: {
+                  some: {
+                    userId: user?.id,
+                    permissions: {
+                      has: CollectionContributorPermission.MANAGE,
+                    },
+                  },
+                },
+              },
+            },
+          ],
     },
     select: postSelect,
   });

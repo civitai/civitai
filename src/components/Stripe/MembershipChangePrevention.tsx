@@ -29,7 +29,7 @@ import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { useMutatePaddle } from '~/components/Paddle/util';
 

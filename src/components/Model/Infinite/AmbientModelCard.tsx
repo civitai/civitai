@@ -14,7 +14,7 @@ import {
   ThemeIcon,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { CollectionType, ModelStatus, CosmeticType } from '@prisma/client';
+import { CollectionType, ModelStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
   IconDownload,

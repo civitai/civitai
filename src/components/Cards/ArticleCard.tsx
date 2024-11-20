@@ -17,7 +17,7 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 

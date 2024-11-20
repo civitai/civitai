@@ -1,6 +1,6 @@
 import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { ModelHashType } from '@prisma/client';
+import { ModelHashType } from '~/shared/utils/prisma/enums';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 

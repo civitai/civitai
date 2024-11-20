@@ -9,15 +9,19 @@ import {
   Title,
   Image,
 } from '@mantine/core';
+import dynamic from 'next/dynamic';
 // import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Lottie from 'react-lottie';
-import * as linkAnimation from '~/utils/lotties/link-animation.json';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { CivitaiLinkDownloadButton } from '~/components/CivitaiLink/CivitaiLinkDownloadButton';
+
+const LinkAnimation = dynamic(
+  () => import('~/components/Animations/LinkAnimation').then((mod) => mod.LinkAnimation),
+  { ssr: false }
+);
 
 type ServerSideProps = {
   secondaryText: string;
@@ -64,9 +68,7 @@ export default function LinkApp(props: ServerSideProps) {
             <Title className={classes.heroTitle} order={1}>
               Civitai Link App
             </Title>
-            <Text className={classes.copy}>
-              For Windows, Linux, and MacOS.
-            </Text>  
+            <Text className={classes.copy}>For Windows, Linux, and MacOS.</Text>
             {!isMember ? (
               <Text className={classes.heroText}>
                 ❤️ Civitai Link is only available to Supporters
@@ -79,9 +81,7 @@ export default function LinkApp(props: ServerSideProps) {
         </Flex>
 
         <Flex direction="row" className={classes.gradientContainer}>
-          <Flex justify="center" className={classes.videoBorder}>
-            <Lottie options={{ animationData: linkAnimation }} />
-          </Flex>
+          <LinkAnimation justify="center" className={classes.videoBorder} />
           <div className={classes.gradientBox} />
         </Flex>
 
@@ -90,8 +90,7 @@ export default function LinkApp(props: ServerSideProps) {
             Add models to your local library with one click
           </Title>
           <Text className={classes.copy}>
-            Directly add any resource from Civitai to your local model library with just one
-            click.
+            Directly add any resource from Civitai to your local model library with just one click.
           </Text>
         </Stack>
 
@@ -110,7 +109,8 @@ export default function LinkApp(props: ServerSideProps) {
               <div className={classes.gradientBox} />
             </Flex>
             <Title className={classes.heading}>
-              See instantly which models you have stored in your local library as you browse the site
+              See instantly which models you have stored in your local library as you browse the
+              site
             </Title>
           </Grid.Col>
           <Grid.Col md={6}>
@@ -130,7 +130,8 @@ export default function LinkApp(props: ServerSideProps) {
               Pair with your Civitai Vault to free-up local disk space
             </Title>
             <Text className={classes.copy}>
-              Models saved to Civitai Vault remain accessible, even if removed from Civitai by the creator.
+              Models saved to Civitai Vault remain accessible, even if removed from Civitai by the
+              creator.
             </Text>
           </Grid.Col>
         </Grid>

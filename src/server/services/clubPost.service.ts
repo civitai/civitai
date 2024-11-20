@@ -1,4 +1,5 @@
-import { ClubAdminPermission, MetricTimeframe, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ClubAdminPermission, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import {
   GetInfiniteClubPostsSchema,
   SupportedClubPostEntities,

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CollectionReadConfiguration,
@@ -5,10 +6,9 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelStatus,
-  Prisma,
   TagSource,
   TagType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';

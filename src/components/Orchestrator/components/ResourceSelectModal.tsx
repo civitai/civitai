@@ -1,5 +1,5 @@
 import { Modal } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';

@@ -52,15 +52,11 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
 
       if (reason === 'other') {
         if (!customMessage) return setError('Required');
-
-        return versionId
-          ? unpublishVersionMutation.mutate({ id: versionId, reason, customMessage })
-          : unpublishModelMutation.mutate({ id: modelId, reason, customMessage });
       }
 
       return versionId
-        ? unpublishVersionMutation.mutate({ id: versionId, reason })
-        : unpublishModelMutation.mutate({ id: modelId, reason });
+        ? unpublishVersionMutation.mutate({ id: versionId, reason, customMessage })
+        : unpublishModelMutation.mutate({ id: modelId, reason, customMessage });
     };
 
     const loading = unpublishModelMutation.isLoading || unpublishVersionMutation.isLoading;
@@ -78,18 +74,16 @@ const { openModal, Modal } = createContextModal<{ modelId: number; versionId?: n
         </Radio.Group>
         {reason && (
           <>
-            {reason === 'other' && (
-              <Textarea
-                name="customMessage"
-                label="Reason"
-                placeholder="Why is this being unpublished?"
-                rows={2}
-                value={customMessage}
-                onChange={(event) => setCustomMessage(event.currentTarget.value)}
-                error={error}
-                withAsterisk
-              />
-            )}
+            <Textarea
+              name="customMessage"
+              label="Reason"
+              placeholder="Why is this being unpublished?"
+              rows={2}
+              value={customMessage}
+              onChange={(event) => setCustomMessage(event.currentTarget.value)}
+              error={error}
+              withAsterisk={reason === 'other'}
+            />
             <Group position="right">
               <Button onClick={handleUnpublish} loading={loading}>
                 Unpublish

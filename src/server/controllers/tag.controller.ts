@@ -1,4 +1,4 @@
-import { TagsOnTagsType, TagType } from '@prisma/client';
+import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';

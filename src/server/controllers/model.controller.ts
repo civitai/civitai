@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   BountyType,
   CollectionItemStatus,
@@ -7,8 +8,7 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';

@@ -31,7 +31,7 @@ import {
   Currency,
   PurchasableRewardUsage,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import {
   IconCalendar,
   IconCalendarDue,

@@ -17,13 +17,12 @@ import {
   Divider,
   ActionIcon,
   Group,
-  SegmentedControl,
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
 import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
 import { NextLink } from '@mantine/next';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
@@ -529,8 +528,7 @@ export function GenerationFormContent() {
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
                               <Text size="xs">
-                                The following resources are currently unstable and may not be
-                                available for generation
+                                The following resources are experiencing a high generation failure rate, possibly due to temporary generator instability. This usually resolves with time and does not require action from you. This notice will be removed once performance stabilizes.
                               </Text>
                               <List size="xs">
                                 {unstableResources.map((resource) => (

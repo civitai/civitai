@@ -15,7 +15,12 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
+import {
+  Availability,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconCirclePlus,

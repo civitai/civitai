@@ -1,4 +1,4 @@
-import { TagsOnTagsType, TagTarget, TagType } from '@prisma/client';
+import { TagsOnTagsType, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { taggableEntitySchema, tagVotableEntitySchema } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';

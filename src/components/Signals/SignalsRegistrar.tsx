@@ -1,4 +1,4 @@
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { useBuzzSignalUpdate } from '~/components/Buzz/useBuzz';
 import { useChatNewMessageSignal, useChatNewRoomSignal } from '~/components/Chat/ChatSignals';
 import { useTextToImageSignalUpdate } from '~/components/ImageGeneration/utils/generationRequestHooks';

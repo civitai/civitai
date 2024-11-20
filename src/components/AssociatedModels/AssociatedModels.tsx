@@ -8,7 +8,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import type { AssociationType } from '@prisma/client';
+import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff, IconSparkles } from '@tabler/icons-react';
 import React from 'react';
 import { useQueryRecommendedResources } from '~/components/AssociatedModels/recommender.utils';

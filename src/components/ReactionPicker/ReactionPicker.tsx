@@ -1,5 +1,5 @@
 import { Button, Group, Popover, Text, Tooltip } from '@mantine/core';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconMoodSmile, IconPlus } from '@tabler/icons-react';
 import { groupBy } from 'lodash-es';
 import { Session } from 'next-auth';

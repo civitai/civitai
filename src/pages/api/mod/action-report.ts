@@ -1,4 +1,4 @@
-import { ReportStatus } from '@prisma/client';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { bulkSetReportStatus } from '~/server/services/report.service';

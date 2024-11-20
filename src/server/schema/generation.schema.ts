@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
 import { userTierSchema } from '~/server/schema/user.schema';

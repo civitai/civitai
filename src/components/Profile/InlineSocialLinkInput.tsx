@@ -17,7 +17,7 @@ import { useDidUpdate } from '@mantine/hooks';
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { zc } from '~/utils/schema-helpers';
 import { isEqual } from 'lodash-es';
-import { LinkType } from '@prisma/client';
+import { LinkType } from '~/shared/utils/prisma/enums';
 
 type InlineSocialLinkInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: { url: string; id?: number; type: LinkType }[];

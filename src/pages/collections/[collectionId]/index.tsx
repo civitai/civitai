@@ -1,4 +1,4 @@
-import { CollectionContributorPermission } from '@prisma/client';
+import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { Collection } from '~/components/Collections/Collection';
 import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

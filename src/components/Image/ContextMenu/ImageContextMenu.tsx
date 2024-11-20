@@ -9,7 +9,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBan,

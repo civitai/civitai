@@ -16,7 +16,7 @@ import {
   Title,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
   CategoryScale,

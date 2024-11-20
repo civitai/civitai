@@ -2,7 +2,7 @@ import { TagScroller } from '~/components/Tags/TagScroller';
 import { useRouter } from 'next/router';
 import { parseNumericStringArray } from '~/utils/query-string-helpers';
 import { useCategoryTags } from '~/components/Tags/tag.utils';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 
 export function ImageCategories() {
   const router = useRouter();

@@ -10,7 +10,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useMemo } from 'react';
 

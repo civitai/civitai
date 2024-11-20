@@ -1,4 +1,4 @@
-import { CollectionType } from '@prisma/client';
+import { CollectionType } from '~/shared/utils/prisma/enums';
 import { createBuzzEvent } from '../base.reward';
 
 const type = 'collectedContent' as const;

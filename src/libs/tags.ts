@@ -1,4 +1,4 @@
-import { TagSource, TagType } from '@prisma/client';
+import { TagSource, TagType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { moderationDisplayNames } from '~/libs/moderation';
 import { NsfwLevel } from '~/server/common/enums';

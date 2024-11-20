@@ -1,4 +1,5 @@
-import { CollectionItemStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isDefined } from '~/utils/type-guards';
 import { chunk, uniq } from 'lodash-es';

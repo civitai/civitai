@@ -9,7 +9,7 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';

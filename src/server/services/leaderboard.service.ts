@@ -1,4 +1,5 @@
-import { CosmeticSource, CosmeticType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isModerator } from '~/server/routers/base.router';
@@ -8,7 +9,6 @@ import {
   GetLeaderboardsInput,
   GetLeaderboardsWithResultsInput,
 } from '~/server/schema/leaderboard.schema';
-import { ProfileImage } from '~/server/selectors/image.selector';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
 export async function isLeaderboardPopulated() {

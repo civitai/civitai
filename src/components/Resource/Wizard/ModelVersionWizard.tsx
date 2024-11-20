@@ -1,5 +1,5 @@
 import { Anchor, Button, Group, Stepper, Text, Title } from '@mantine/core';
-import { ModelUploadType, TrainingStatus } from '@prisma/client';
+import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft } from '@tabler/icons-react';
 import Link from 'next/link';
 import { NextRouter, useRouter } from 'next/router';

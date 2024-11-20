@@ -1,4 +1,5 @@
-import { ModelStatus, Prisma, ReportReason, ReportStatus } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';

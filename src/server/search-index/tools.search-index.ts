@@ -1,4 +1,5 @@
-import { Prisma, ToolType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ToolType } from '~/shared/utils/prisma/enums';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 

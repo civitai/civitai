@@ -1,7 +1,7 @@
 import { CollectionsLanding } from '~/components/Collections/CollectionsLanding';
 import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { CollectionContributorPermission } from '@prisma/client';
+import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEffect } from 'react';
 import { Center, Loader } from '@mantine/core';

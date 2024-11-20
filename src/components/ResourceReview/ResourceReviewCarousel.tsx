@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';

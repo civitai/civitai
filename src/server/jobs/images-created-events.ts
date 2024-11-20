@@ -1,5 +1,5 @@
 import { ClickHouseError } from '@clickhouse/client';
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';

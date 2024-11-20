@@ -3,7 +3,7 @@ import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metri
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
 import { limitConcurrency, sleep, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
-import { PostMetric } from '@prisma/client';
+import { PostMetric } from '~/shared/utils/prisma/models';
 import dayjs from 'dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
 

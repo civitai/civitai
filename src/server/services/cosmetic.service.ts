@@ -1,4 +1,5 @@
-import { CosmeticEntity, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

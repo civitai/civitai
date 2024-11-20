@@ -1,10 +1,10 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelVersionEngagementType,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';

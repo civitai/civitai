@@ -11,7 +11,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconCircleCheck } from '@tabler/icons-react';
 import { z } from 'zod';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';

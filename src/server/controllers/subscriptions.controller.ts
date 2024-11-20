@@ -1,4 +1,4 @@
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { GetPlansSchema } from '~/server/schema/subscriptions.schema';
