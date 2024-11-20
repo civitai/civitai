@@ -59,6 +59,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     function callback() {
       setReady(true);
+      window.__tcfapi('addEventListener', 2, function (tcData: any, success: any) {
+        if (
+          success &&
+          (tcData.eventStatus === 'tcloaded' || tcData.eventStatus === 'useractioncomplete')
+        ) {
+          window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
+          // AdConsent finished asking for consent, do something that is dependend on user consent ...
+          console.log('This code is triggered only once', tcData);
+        }
+      });
     }
     window.addEventListener('adnginLoaderReady', callback);
     return () => window.removeEventListener('adnginLoaderReady', callback);
@@ -110,6 +120,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             onError={handleCmpError}
           />
 
+          {/* in the browser dev console, enter: adconsent('start'); */}
+          {/* {isDev && ready && (
+            <Script src="https://cdn.snigelweb.com/adconsent/adconsent.js" type="text/javascript" />
+          )} */}
+
           {/* Cleanup old ad tags */}
           <Script
             id="ad-cleanup"
@@ -129,23 +144,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
               `,
             }}
           ></Script>
-          {!adsBlocked && ready && (
-            <Script
-              id="ad-consent"
-              type="text/javascript"
-              dangerouslySetInnerHTML={{
-                __html: `
-                __tcfapi('addEventListener', 2, function(tcData, success) {
-                  if(success && (tcData.eventStatus === 'tcloaded' || tcData.eventStatus === 'useractioncomplete')) {
-                    __tcfapi('removeEventListener', 2, null, tcData.listenerId);
-                    // AdConsent finished asking for consent, do something that is dependend on user consent ...
-                    console.log("This code is triggered only once", tcData);
-                  }
-                });
-              `,
-              }}
-            />
-          )}
           {/* TODO - impression tracking */}
           {/* TODO - destroy slots on route change? */}
 
@@ -235,7 +233,7 @@ function GoogletagManager() {
 
 declare global {
   interface Window {
-    __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
+    __tcfapi: (...args: any[]) => void;
     pgHB: {
       que: Array<() => void>;
       requestWebRewardedAd?: (args: unknown) => void;
