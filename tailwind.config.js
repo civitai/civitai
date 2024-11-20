@@ -13,6 +13,7 @@ const breakpoints = {
 module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
   darkMode: 'selector',
+  important: 'body',
   theme: {
     screens: breakpoints,
     extend: {
