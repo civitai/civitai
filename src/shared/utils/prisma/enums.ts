@@ -283,6 +283,7 @@ export const ImageIngestionStatus = {
   Error: 'Error',
   Blocked: 'Blocked',
   NotFound: 'NotFound',
+  PendingManualAssignment: 'PendingManualAssignment',
 } as const;
 
 export type ImageIngestionStatus = (typeof ImageIngestionStatus)[keyof typeof ImageIngestionStatus];

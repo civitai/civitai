@@ -9,6 +9,7 @@ import {
   Group,
   Loader,
   Paper,
+  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -61,6 +62,8 @@ import { VideoMetadata } from '~/server/schema/media.schema';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -205,7 +208,7 @@ const ReviewCollection = () => {
             columnWidth={300}
             filters={filters}
             render={(props) => {
-              return <CollectionItemGridItem {...props} />;
+              return <CollectionItemGridItem {...props} collection={collection} />;
             }}
           />
         ) : (
@@ -218,7 +221,10 @@ const ReviewCollection = () => {
 
 export default ReviewCollection;
 
-const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItemProps) => {
+const CollectionItemGridItem = ({
+  data: collectionItem,
+  collection,
+}: CollectionItemGridItemProps) => {
   const router = useRouter();
   const selected = useStore(
     useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
@@ -233,150 +239,171 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
   };
 
   const image = reviewData.image;
+  const judgesCanApplyRatings = collection?.metadata?.judgesApplyBrowsingLevel ?? false;
 
   return (
-    <FeedCard>
-      <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-        <Stack
-          sx={{
-            position: 'absolute',
-            top: 5,
-            right: 5,
-            zIndex: 11,
+    <Stack spacing={0}>
+      {judgesCanApplyRatings && (
+        <SegmentedControl
+          value={image?.nsfwLevel?.toString() ?? undefined}
+          onChange={(v) => {
+            console.log(v);
           }}
-        >
-          <Group>
-            {reviewData.url && (
-              <Link href={reviewData.url} passHref>
-                <ActionIcon
-                  component="a"
-                  variant="transparent"
-                  size="lg"
-                  target="_blank"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                >
-                  <IconExternalLink
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </ActionIcon>
-              </Link>
-            )}
-            <Checkbox checked={selected} readOnly size="lg" />
-          </Group>
-          {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
-        </Stack>
-        {image && (
-          <ImageGuard2 image={image} connectType="collectionItem" connectId={collectionItem.id}>
-            {(safe) => {
-              const originalAspectRatio =
-                image.width && image.height ? image.width / image.height : 1;
-              return (
-                <>
-                  <Group
-                    spacing={4}
-                    position="apart"
-                    className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
-                    noWrap
+          data={browsingLevels.map((level) => ({
+            value: level.toString(),
+            label: browsingLevelLabels[level],
+          }))}
+        />
+      )}
+      <FeedCard>
+        <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
+          <Stack
+            sx={{
+              position: 'absolute',
+              top: 5,
+              right: 5,
+              zIndex: 11,
+            }}
+          >
+            <Group>
+              {reviewData.url && (
+                <Link href={reviewData.url} passHref>
+                  <ActionIcon
+                    component="a"
+                    variant="transparent"
+                    size="lg"
+                    target="_blank"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                    }}
                   >
-                    <Stack spacing={4}>
-                      <Group spacing={4}>
-                        <ImageGuard2.BlurToggle />
-                        {collectionItem.status && (
-                          <Badge variant="filled" color={badgeColor[collectionItem.status]}>
-                            {collectionItem.status}
+                    <IconExternalLink
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </ActionIcon>
+                </Link>
+              )}
+              <Checkbox checked={selected} readOnly size="lg" />
+            </Group>
+            {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
+          </Stack>
+          {image && (
+            <ImageGuard2 image={image} connectType="collectionItem" connectId={collectionItem.id}>
+              {(safe) => {
+                const originalAspectRatio =
+                  image.width && image.height ? image.width / image.height : 1;
+                return (
+                  <>
+                    <Group
+                      spacing={4}
+                      position="apart"
+                      className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
+                      noWrap
+                    >
+                      <Stack spacing={4}>
+                        <Group spacing={4}>
+                          <ImageGuard2.BlurToggle />
+                          {collectionItem.status && (
+                            <Badge variant="filled" color={badgeColor[collectionItem.status]}>
+                              {collectionItem.status}
+                            </Badge>
+                          )}
+                        </Group>
+                        {image.type === 'video' && (image.metadata as VideoMetadata)?.duration && (
+                          <Badge variant="filled" color="gray" size="xs">
+                            {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
                           </Badge>
                         )}
-                      </Group>
-                      {image.type === 'video' && (image.metadata as VideoMetadata)?.duration && (
-                        <Badge variant="filled" color="gray" size="xs">
-                          {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
-                        </Badge>
-                      )}
-                    </Stack>
-                  </Group>
-                  {safe ? (
-                    <EdgeMedia
-                      src={image.url ?? ''}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      type={image.type}
-                      width={
-                        originalAspectRatio > 1
-                          ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                          : DEFAULT_EDGE_IMAGE_WIDTH
-                      }
-                      placeholder="empty"
-                      className={sharedClasses.image}
-                      loading="lazy"
-                    />
-                  ) : (
-                    <MediaHash {...image} />
-                  )}
-                  {image.hasMeta && (
-                    <div className="absolute bottom-0.5 right-0.5 z-10">
-                      <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                        <ActionIcon variant="transparent" size="lg">
-                          <IconInfoCircle
-                            color="white"
-                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                            opacity={0.8}
-                            strokeWidth={2.5}
-                            size={26}
-                          />
-                        </ActionIcon>
-                      </ImageMetaPopover2>
-                    </div>
-                  )}
-                </>
-              );
-            }}
-          </ImageGuard2>
-        )}
-
-        <Stack className={cx(sharedClasses.contentOverlay, sharedClasses.bottom)} spacing="sm">
-          {reviewData.title && (
-            <Text className={sharedClasses.dropShadow} size="xl" weight={700} lineClamp={2} inline>
-              {reviewData.title}
-            </Text>
-          )}
-          {reviewData.user && reviewData.user.id !== -1 && (
-            <UnstyledButton
-              sx={{ color: 'white' }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                router.push(`/user/${reviewData.user?.username}`);
+                      </Stack>
+                    </Group>
+                    {safe ? (
+                      <EdgeMedia
+                        src={image.url ?? ''}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        width={
+                          originalAspectRatio > 1
+                            ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
+                            : DEFAULT_EDGE_IMAGE_WIDTH
+                        }
+                        placeholder="empty"
+                        className={sharedClasses.image}
+                        loading="lazy"
+                      />
+                    ) : (
+                      <MediaHash {...image} />
+                    )}
+                    {image.hasMeta && (
+                      <div className="absolute bottom-0.5 right-0.5 z-10">
+                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                          <ActionIcon variant="transparent" size="lg">
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                            />
+                          </ActionIcon>
+                        </ImageMetaPopover2>
+                      </div>
+                    )}
+                  </>
+                );
               }}
-            >
-              <UserAvatar
-                withUsername
-                user={reviewData.user}
-                avatarProps={{ radius: 'md', size: 32 }}
-                subText={
-                  reviewData.itemAddedAt ? (
-                    <>
-                      <Text size="sm">
-                        Added to collection: {formatDate(reviewData.itemAddedAt)}
-                      </Text>
-                      {reviewData.dataCreatedAt && (
-                        <Text size="sm">Created: {formatDate(reviewData.dataCreatedAt)}</Text>
-                      )}
-                    </>
-                  ) : undefined
-                }
-              />
-            </UnstyledButton>
+            </ImageGuard2>
           )}
-        </Stack>
-      </Box>
-    </FeedCard>
+
+          <Stack className={cx(sharedClasses.contentOverlay, sharedClasses.bottom)} spacing="sm">
+            {reviewData.title && (
+              <Text
+                className={sharedClasses.dropShadow}
+                size="xl"
+                weight={700}
+                lineClamp={2}
+                inline
+              >
+                {reviewData.title}
+              </Text>
+            )}
+            {reviewData.user && reviewData.user.id !== -1 && (
+              <UnstyledButton
+                sx={{ color: 'white' }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+
+                  router.push(`/user/${reviewData.user?.username}`);
+                }}
+              >
+                <UserAvatar
+                  withUsername
+                  user={reviewData.user}
+                  avatarProps={{ radius: 'md', size: 32 }}
+                  subText={
+                    reviewData.itemAddedAt ? (
+                      <>
+                        <Text size="sm">
+                          Added to collection: {formatDate(reviewData.itemAddedAt)}
+                        </Text>
+                        {reviewData.dataCreatedAt && (
+                          <Text size="sm">Created: {formatDate(reviewData.dataCreatedAt)}</Text>
+                        )}
+                      </>
+                    ) : undefined
+                  }
+                />
+              </UnstyledButton>
+            )}
+          </Stack>
+        </Box>
+      </FeedCard>
+    </Stack>
   );
 };
 
@@ -384,6 +411,9 @@ type CollectionItemGridItemProps = {
   data: CollectionItemExpanded;
   index: number;
   width: number;
+  collection?: {
+    metadata?: CollectionMetadataSchema;
+  };
 };
 
 function ModerationControls({

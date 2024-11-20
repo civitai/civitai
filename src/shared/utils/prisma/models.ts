@@ -60,7 +60,7 @@ export type ImageGenerationProcess = "txt2img" | "txt2imgHiRes" | "img2img" | "i
 
 export type NsfwLevel = "None" | "Soft" | "Mature" | "X" | "Blocked";
 
-export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound";
+export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound" | "PendingManualAssignment";
 
 export type MediaType = "image" | "video" | "audio";
 
