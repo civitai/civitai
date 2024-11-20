@@ -528,8 +528,7 @@ export function GenerationFormContent() {
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
                               <Text size="xs">
-                                The following resources are currently unstable and may not be
-                                available for generation
+                                The following resources are experiencing a high generation failure rate, possibly due to temporary generator instability. This usually resolves with time and does not require action from you. This notice will be removed once performance stabilizes.
                               </Text>
                               <List size="xs">
                                 {unstableResources.map((resource) => (
