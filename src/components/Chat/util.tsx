@@ -1,9 +1,7 @@
 import { Anchor, Text } from '@mantine/core';
 import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
-import Link from 'next/link';
 import React, { ReactElement } from 'react';
 import { constants } from '~/server/common/constants';
-import { Anchor, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export const getLinkHref = (href: string | undefined) => {

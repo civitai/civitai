@@ -42,7 +42,6 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { LazyMotion } from 'motion/react';
 import * as m from 'motion/react-m';
 import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
