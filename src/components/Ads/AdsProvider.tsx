@@ -6,7 +6,8 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
-const isProd = true;
+import { isProd } from '~/env/other';
+// const isProd = true;
 
 declare global {
   interface Window {
