@@ -29,13 +29,15 @@ export function useMasonryColumns<TData>(
     const feed = createAdFeed({
       data,
       columnCount,
-      options: [
-        {
-          width: 300,
-          height: 250,
-          AdUnit: AdUnitIncontent_1,
-        },
-      ],
+      options: adsReallyAreEnabled
+        ? [
+            {
+              width: 300,
+              height: 250,
+              AdUnit: AdUnitIncontent_1,
+            },
+          ]
+        : undefined,
     });
 
     const columnHeights: number[] = Array(columnCount).fill(0);
