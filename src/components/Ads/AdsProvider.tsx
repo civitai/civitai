@@ -34,7 +34,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(undefined);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const canServeAds = location.host.includes('civitai');
+  const canServeAds = typeof window !== 'undefined' && location.host.includes('civitai');
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
