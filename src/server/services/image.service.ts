@@ -4263,7 +4263,10 @@ export async function getImageGenerationData({ id }: { id: number }) {
   };
 }
 
-export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => {
+export const getImageContestCollectionDetails = async ({
+  id,
+  userId,
+}: { userId?: number } & GetByIdInput) => {
   const items = await dbRead.collectionItem.findMany({
     where: {
       collection: {
@@ -4283,8 +4286,20 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     },
   });
 
+  const permissions = await Promise.all(
+    items.map(async (item) => {
+      const permissions = await getUserCollectionPermissionsById({
+        id: item.collection.id as number,
+        userId,
+      });
+
+      return permissions;
+    })
+  );
+
   return items.map((i) => ({
     ...i,
+    permissions: permissions.find((p) => p.collectionId === i.collection.id),
     collection: {
       ...i.collection,
       metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,

@@ -178,7 +178,7 @@ export const imageRouter = router({
   // #region [collections]
   getContestCollectionDetails: publicProcedure
     .input(getByIdSchema)
-    .query(({ input }) => getImageContestCollectionDetailsHandler({ input })),
+    .query(getImageContestCollectionDetailsHandler),
   // #endregion
 
   // #region [moderation]

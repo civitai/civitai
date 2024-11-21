@@ -13,6 +13,7 @@ import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc, queryClient } from '~/utils/trpc';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 export const ImageContestCollectionDetails = ({
   imageId,
@@ -36,8 +37,9 @@ export const ImageContestCollectionDetails = ({
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =
-    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod) ??
+    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod || ci.permissions?.manage) ??
     [];
+  
 
   if (displayedItems.length === 0) return null;
 
@@ -63,8 +65,10 @@ export const ImageContestCollectionDetails = ({
           ) : null;
           const inReview = item.status === CollectionItemStatus.REVIEW;
           const userScore = item?.scores?.find((s) => s.userId === userId)?.score;
+          const collectionSupportsScoring =  item?.collection?.metadata?.judgesCanScoreEntries;
+          const isCollectionJudge = item?.permissions?.manage;
 
-          if (isModerator && inReview) {
+          if (isCollectionJudge && inReview) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -80,7 +84,7 @@ export const ImageContestCollectionDetails = ({
             );
           }
 
-          if (isOwnerOrMod) {
+          if (isOwnerOrMod || isCollectionJudge) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -110,14 +114,14 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.ACCEPTED && (
                   <div className="flex flex-col gap-3">
-                    {isModerator && !userScore ? (
+                    {isCollectionJudge && collectionSupportsScoring && (
                       <ContestItemScore
                         itemId={item.id}
                         collectionId={item.collection.id}
                         imageId={imageId}
                       />
-                    ) : (
-                      <>
+                    )}
+                      
                         <Text>
                           Share the link to your submission in the and have your friends react on
                           it. This could help you win the contest and the Community Choice award.
@@ -141,9 +145,7 @@ export const ImageContestCollectionDetails = ({
                             <Text size="xs">Share Now</Text>
                           </Button>
                         </ShareButton>
-                      </>
-                    )}
-                  </div>
+                   </div>
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
                   <Text>

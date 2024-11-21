@@ -557,12 +557,15 @@ export const getModeratorReviewQueueHandler = async ({
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
+  ctx: Context;
 }) => {
   try {
     return await getImageContestCollectionDetails({
       ...input,
+      userId: ctx.user?.id,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -224,6 +224,13 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         description="This will make it so that people with Manage permission on the collection apply NSFW rating to the submissions. Subsmissions made to this collection will not be publicly visible until they're rated."
                       />
                     )}
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.judgesCanScoreEntries"
+                        label="Judges can score entries"
+                        description="Judges / Moderators of this collection will be able to leave a 1-10 score on each entry in this collection."
+                      />
+                    )}
                     <InputDatePicker
                       name="metadata.votingPeriodStart"
                       label="Sets a start date for Reactions on the entries"
