@@ -36,6 +36,7 @@ export const ImageContestCollectionDetails = ({
 
   if ((collectionItems?.length ?? 0) === 0) return null;
 
+ 
   const displayedItems =
     collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod || ci.permissions?.manage) ??
     [];
@@ -66,7 +67,7 @@ export const ImageContestCollectionDetails = ({
           const inReview = item.status === CollectionItemStatus.REVIEW;
           const userScore = item?.scores?.find((s) => s.userId === userId)?.score;
           const collectionSupportsScoring =  item?.collection?.metadata?.judgesCanScoreEntries;
-          const isCollectionJudge = item?.permissions?.manage;
+          const isCollectionJudge = item?.permissions?.manage || isModerator;
 
           if (isCollectionJudge && inReview) {
             return (
@@ -89,7 +90,7 @@ export const ImageContestCollectionDetails = ({
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
                 <Text>
-                  You have submitted this image to the{' '}
+                  {isOwner ? 'You have' : 'This user has'} submitted this image to the{' '}
                   <Text weight="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
