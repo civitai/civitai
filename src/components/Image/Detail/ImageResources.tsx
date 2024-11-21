@@ -269,7 +269,6 @@ const Wrapper = ({
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}
-      passHref
     >
       {cloneElement(children, { component: 'a' })}
     </Link>

@@ -40,7 +40,5 @@ export const FeatureFlagsProvider = ({
     [flags, userFeatures]
   );
 
-  console.log({flags, userFeatures});
-
   return <FeatureFlagsCtx.Provider value={featureFlags}>{children}</FeatureFlagsCtx.Provider>;
 };
