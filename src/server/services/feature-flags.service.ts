@@ -150,7 +150,7 @@ const hasFeature = (
     );
 
     serverMatch = domains.some(([key, domain]) => {
-      if (key === 'blue' && host === 'stage.civitai.com') return true;
+      if (key === 'blue' && ['stage.civitai.com', 'dev.civitai.com'].includes(host)) return true;
       return host === domain;
     });
     // if server doesn't match, return false regardless of other availability flags
