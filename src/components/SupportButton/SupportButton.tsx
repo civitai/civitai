@@ -1,5 +1,5 @@
 import { Button, ButtonProps, HoverCard, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconChevronRight, IconHeart } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useAppContext } from '~/providers/AppProvider';
@@ -48,7 +48,7 @@ export const SupportButton = () => {
   return (
     <HoverCard withArrow openDelay={500}>
       <HoverCard.Target>
-        <Button component={NextLink} className="relative z-10 cursor-pointer px-2" {...buttonProps}>
+        <Button component={Link} className="relative z-10 cursor-pointer px-2" {...buttonProps}>
           {children}
           <IconChevronRight size={18} strokeWidth={2.5} />
         </Button>
@@ -61,7 +61,3 @@ export const SupportButton = () => {
     </HoverCard>
   );
 };
-
-type Props = {
-  size?: 'sm' | 'md' | 'lg' | 'xl';
-} & ButtonProps;

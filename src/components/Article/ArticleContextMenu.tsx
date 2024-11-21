@@ -1,6 +1,6 @@
 import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
@@ -170,7 +170,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               </Menu.Item>
             )}
             <Menu.Item
-              component={NextLink}
+              component={Link}
               href={`/articles/${article.id}/edit`}
               icon={<IconPencil size={14} stroke={1.5} />}
             >

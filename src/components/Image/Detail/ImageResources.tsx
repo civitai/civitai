@@ -14,7 +14,7 @@ import {
 import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconMessageCircle2, IconX } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { cloneElement, useMemo, useState } from 'react';
 
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -269,7 +269,6 @@ const Wrapper = ({
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.modelVersionId
       }`}
-      passHref
     >
       {cloneElement(children, { component: 'a' })}
     </Link>

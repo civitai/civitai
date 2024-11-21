@@ -9,7 +9,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   Icon3dCubeSphere,
   IconAccessible,
@@ -144,7 +144,7 @@ export default function CivitaiVault() {
               color="blue"
               size="lg"
               radius="xl"
-              component={NextLink}
+              component={Link}
               href="/claim/cosmetic/292"
               fullWidth
             >
@@ -154,7 +154,7 @@ export default function CivitaiVault() {
               variant="default"
               size="lg"
               radius="xl"
-              component={NextLink}
+              component={Link}
               href="/models?baseModels=ODOR"
               fullWidth
             >

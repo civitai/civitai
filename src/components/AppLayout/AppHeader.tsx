@@ -22,7 +22,6 @@ import {
   UnstyledButton,
   useMantineColorScheme,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconBarbell,
@@ -55,7 +54,6 @@ import {
   IconVideoPlus,
   IconWriting,
 } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import {
   Fragment,
@@ -98,6 +96,7 @@ import { UserBuzz } from '../User/UserBuzz';
 import dynamic from 'next/dynamic';
 import clsx from 'clsx';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const FeatureIntroductionModal = dynamic(
   () => import('~/components/FeatureIntroduction/FeatureIntroduction')
@@ -590,7 +589,7 @@ export function AppHeader({
         .filter(({ visible }) => visible !== false)
         .map((link, index) => {
           const item = link.href ? (
-            <Link key={index} href={link.href} as={link.as} passHref>
+            <Link legacyBehavior key={index} href={link.href} as={link.as} passHref>
               <Anchor
                 variant="text"
                 className={cx(classes.link, { [classes.linkActive]: router.asPath === link.href })}
@@ -623,7 +622,7 @@ export function AppHeader({
             <Menu.Item
               key={link.href}
               display="flex"
-              component={NextLink}
+              component={Link}
               href={link.href}
               as={link.as}
               rel={link.rel}
@@ -786,7 +785,7 @@ export function AppHeader({
             const menuItem = (
               <Menu.Item
                 key={!link.redirectReason ? index : undefined}
-                component={NextLink}
+                component={Link}
                 href={link.href}
                 as={link.as}
                 rel={link.rel}
@@ -828,12 +827,7 @@ export function AppHeader({
       >
         <Grid.Col span="auto" pl={0}>
           <Group spacing="xs" noWrap>
-            <Anchor
-              component={NextLink}
-              href="/"
-              variant="text"
-              onClick={() => setBurgerOpened(false)}
-            >
+            <Anchor component={Link} href="/" variant="text" onClick={() => setBurgerOpened(false)}>
               <Logo />
             </Anchor>
             <SupportButton />
@@ -863,7 +857,7 @@ export function AppHeader({
             </Group>
             {!currentUser ? (
               <Button
-                component={NextLink}
+                component={Link}
                 href={`/login?returnUrl=${router.asPath}`}
                 rel="nofollow"
                 variant="default"
@@ -950,7 +944,7 @@ export function AppHeader({
                         <>
                           <Menu.Item
                             icon={<IconSettings stroke={1.5} />}
-                            component={NextLink}
+                            component={Link}
                             href="/user/account"
                           >
                             Account settings

@@ -11,7 +11,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
@@ -96,7 +96,7 @@ export function ArticlesHitList() {
             </Text>
             <Text>
               Why not{' '}
-              <Link href="/articles/create" passHref>
+              <Link legacyBehavior href="/articles/create" passHref>
                 <Anchor target="_blank">write your own!</Anchor>
               </Link>
             </Text>

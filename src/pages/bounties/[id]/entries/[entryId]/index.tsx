@@ -64,7 +64,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { env } from '~/env/client.mjs';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -288,7 +288,7 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
-        <Link href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+        <Link legacyBehavior href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
           <Button
             size="md"
             radius="xl"

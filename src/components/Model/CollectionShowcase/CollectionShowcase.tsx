@@ -7,7 +7,7 @@ import {
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';

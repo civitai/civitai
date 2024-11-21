@@ -51,7 +51,7 @@ import {
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { formatDate, secondsAsMinutes } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
@@ -319,7 +319,7 @@ const CollectionItemGridItem = ({
   const image = reviewData.image;
 
   return (
-    <Stack spacing={0}>
+     <Stack spacing={0}>
       <CollectionItemNSFWLevelSelector
         collectionId={collectionId}
         collectionItemId={collectionItem.id}
@@ -362,7 +362,7 @@ const CollectionItemGridItem = ({
                     target="_blank"
                     onClick={(e) => {
                       e.stopPropagation();
-                    }}
+                    }} 
                   >
                     <IconExternalLink
                       color="white"
@@ -404,7 +404,7 @@ const CollectionItemGridItem = ({
                           <Badge variant="filled" color="gray" size="xs">
                             {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
                           </Badge>
-                        )}
+                        )} 
                       </Stack>
                     </Group>
                     {safe ? (

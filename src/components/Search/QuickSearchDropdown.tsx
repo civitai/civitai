@@ -143,6 +143,7 @@ export const QuickSearchDropdown = ({
     setTargetIndex(value);
   };
 
+  const indexName = searchIndexMap[targetIndex];
   const indexSupportsNsfwLevel = useMemo(
     () =>
       [
@@ -151,17 +152,17 @@ export const QuickSearchDropdown = ({
         searchIndexMap.models,
         searchIndexMap.images,
         searchIndexMap.collections,
-      ].some((i) => i === searchIndexMap[targetIndex]),
-    [targetIndex]
+      ].some((i) => i === indexName),
+    [indexName]
   );
 
   return (
     <InstantSearch
       searchClient={disableInitialSearch ? searchClient : meilisearch}
-      indexName={searchIndexMap[targetIndex]}
+      indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >
-      <Configure hitsPerPage={dropdownItemLimit} filters={filters} />
+      <Configure index={indexName} hitsPerPage={dropdownItemLimit} filters={filters} />
       {indexSupportsNsfwLevel && <BrowsingLevelFilter attributeName="nsfwLevel" />}
 
       <QuickSearchDropdownContent

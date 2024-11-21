@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { ComponentType, forwardRef } from 'react';
 import {
   Controller,
   ControllerFieldState,
@@ -16,7 +16,8 @@ export function withController<
 >(
   BaseComponent:
     | React.ForwardRefExoticComponent<TComponentProps>
-    | ((props: TComponentProps) => JSX.Element),
+    | ((props: TComponentProps) => JSX.Element)
+    | ComponentType<TComponentProps>,
   mapper?: ({
     field,
     fieldState,

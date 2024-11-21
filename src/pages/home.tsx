@@ -12,7 +12,7 @@ import { constants } from '~/server/common/constants';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client.mjs';
@@ -149,7 +149,7 @@ export default function Home() {
                           </Popover>
                         </Group>
 
-                        <Link href="/images" passHref>
+                        <Link legacyBehavior href="/images" passHref>
                           <Button
                             h={34}
                             component="a"
@@ -214,7 +214,7 @@ export default function Home() {
                           </Popover>
                         </Group>
 
-                        <Link href="/models" passHref>
+                        <Link legacyBehavior href="/models" passHref>
                           <Button
                             h={34}
                             component="a"

@@ -17,7 +17,7 @@ import {
   Text,
 } from '@mantine/core';
 import { IconCloudOff, IconFilter, IconHeart, IconMessageCircle } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import router, { useRouter } from 'next/router';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
 import { constants } from '~/server/common/constants';
