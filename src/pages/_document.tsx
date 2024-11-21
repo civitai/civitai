@@ -15,15 +15,15 @@ export default class _Document extends Document {
       <Html>
         {/* <InlineStylesHead /> */}
         <Head />
-        {/* in the browser dev console, enter: adconsent('start'); */}
-        <Script
-          strategy="beforeInteractive"
-          src="//cdn.snigelweb.com/adconsent/adconsent.js"
-          type="text/javascript"
-        />
         <body className={pageProps.colorScheme}>
           <Main />
           <NextScript />
+          {/* in the browser dev console, enter: adconsent('start'); */}
+          <Script
+            strategy="beforeInteractive"
+            src="//cdn.snigelweb.com/adconsent/adconsent.js"
+            type="text/javascript"
+          />
         </body>
       </Html>
     );

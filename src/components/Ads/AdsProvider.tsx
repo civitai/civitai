@@ -6,6 +6,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
+import { create } from 'zustand';
 
 declare global {
   interface Window {
@@ -29,24 +30,24 @@ export function useAdsContext() {
   return context;
 }
 
+const useAdProviderStore = create<{ ready: boolean }>(() => ({ ready: false }));
+
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
-  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(undefined);
+  // const [ready, setReady] = useState(false);
+  const ready = useAdProviderStore((state) => state.ready);
+  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(false);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const canServeAds = typeof window !== 'undefined' && location.host.includes('civitai');
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
 
-  function handleCmpLoaded() {
-    if (canServeAds) setAdsBlocked(false);
-  }
+  console.log({ ready });
 
-  function handleCmpError() {
-    if (canServeAds) setAdsBlocked(true);
+  function handleLoadedError() {
+    setAdsBlocked(true);
   }
 
   useEffect(() => {
@@ -57,23 +58,24 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
           console.log('This code is triggered only once', tcData);
+          useAdProviderStore.setState({ ready: true });
         }
       });
 
       window.googletag.cmd.push(function () {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
-          const adUnit = slot.getName()?.split('/')?.reverse()?.[0];
+          const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
           console.log('Ad visible in slot: ', adUnit);
           if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
         });
       });
-
-      setReady(true);
     }
 
     window.addEventListener('adnginLoaderReady', callback);
-    return () => window.removeEventListener('adnginLoaderReady', callback);
+    return () => {
+      window.removeEventListener('adnginLoaderReady', callback);
+    };
   }, []);
 
   return (
@@ -118,8 +120,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           <Script
             async
             src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
-            onLoad={handleCmpLoaded}
-            onError={handleCmpError}
+            onError={handleLoadedError}
           />
 
           {/* Cleanup old ad tags */}
