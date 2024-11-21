@@ -1,5 +1,5 @@
 import { Badge, Button, Card, Group, Text, ThemeIcon, Tooltip } from '@mantine/core';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconExclamationCircle, IconLock, IconMessageCircle2 } from '@tabler/icons-react';
 
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';

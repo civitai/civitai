@@ -1,5 +1,5 @@
 import { Divider, Group, Select, Stack, Text, Alert, Anchor } from '@mantine/core';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { useEffect, useMemo, useState } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';

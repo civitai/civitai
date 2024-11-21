@@ -14,7 +14,7 @@ import dayjs from 'dayjs';
 import { trpc } from '~/utils/trpc';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo, useState } from 'react';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { Paper, Stack, Title, Text, MultiSelect, Loader, Center } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

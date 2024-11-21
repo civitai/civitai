@@ -1,4 +1,4 @@
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { createContext, ReactNode, useContext } from 'react';
 import { constants } from '~/server/common/constants';
 

@@ -1,5 +1,5 @@
 import { Stack, Button, Modal, Group } from '@mantine/core';
-import { LinkType } from '@prisma/client';
+import { LinkType } from '~/shared/utils/prisma/enums';
 import { useSession } from 'next-auth/react';
 import { useEffect } from 'react';
 import { z } from 'zod';

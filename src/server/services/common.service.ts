@@ -1,4 +1,5 @@
-import { Availability, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { modelVersionAccessCache } from '~/server/redis/caches';

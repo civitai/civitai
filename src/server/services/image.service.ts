@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   BlockImageReason,
@@ -7,11 +8,10 @@ import {
   ImageIngestionStatus,
   MediaType,
   ModelType,
-  Prisma,
   ReportReason,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -1116,7 +1116,9 @@ export const getAllImages = async (
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      ids?.length ? 'LEFT' : ''
+    )} JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -2095,8 +2097,17 @@ export const getImage = async ({
       Prisma.sql`(${Prisma.join(
         [
           Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          withoutPost
+            ? null
+            : Prisma.sql`
+              p."collectionId" IS NOT NULL AND EXISTS (
+                SELECT 1 FROM "CollectionContributor" cc
+                WHERE cc."collectionId" = p."collectionId"
+                  AND cc."userId" = ${userId}
+                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+              )`,
           Prisma.sql`i."userId" = ${userId}`,
-        ],
+        ].filter(isDefined),
         ' OR '
       )})`
     );
@@ -2903,9 +2914,7 @@ export async function createImage({
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
         : undefined,
@@ -4203,8 +4212,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
-  console.log(data);
-
   let onSite = false;
   let process: string | null = null;
   let hasControlNet = false;
@@ -4266,9 +4273,8 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       status: true,
       createdAt: true,
       reviewedAt: true,
-      collection: {
-        select: collectionSelect,
-      },
+      collection: { select: collectionSelect },
+      scores: { select: { userId: true, score: true } },
       tag: true,
     },
   });

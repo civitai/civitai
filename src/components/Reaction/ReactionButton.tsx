@@ -1,4 +1,4 @@
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { cloneElement, useCallback, useMemo } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';

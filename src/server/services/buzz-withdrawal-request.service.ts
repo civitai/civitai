@@ -1,8 +1,8 @@
+import { Prisma } from '@prisma/client';
 import {
   BuzzWithdrawalRequestStatus,
-  Prisma,
   UserPaymentConfigurationProvider,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { v4 as uuid } from 'uuid';
 import { GenerationRequestStatus, NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';

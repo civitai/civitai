@@ -16,6 +16,9 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ToolCard } from '~/components/Cards/ToolCard';
+import { generationPanel, generationStore } from '~/store/generation.store';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ToolType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

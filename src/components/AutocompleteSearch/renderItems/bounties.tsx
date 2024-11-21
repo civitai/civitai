@@ -1,5 +1,5 @@
 import { AutocompleteItem, Center, Group, Skeleton, Stack, Text } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import React, { forwardRef } from 'react';

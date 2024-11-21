@@ -10,7 +10,7 @@ import {
   postMetrics,
   questionMetrics,
 } from '~/server/metrics';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 export const toggleReaction = async ({
   entityType,

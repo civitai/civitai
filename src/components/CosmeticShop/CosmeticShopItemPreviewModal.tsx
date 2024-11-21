@@ -12,7 +12,7 @@ import {
   Loader,
   UnstyledButton,
 } from '@mantine/core';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';

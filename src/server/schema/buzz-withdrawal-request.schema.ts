@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { BuzzWithdrawalRequestStatus, UserPaymentConfigurationProvider } from '@prisma/client';
+import {
+  BuzzWithdrawalRequestStatus,
+  UserPaymentConfigurationProvider,
+} from '~/shared/utils/prisma/enums';
 import { paginationSchema } from './base.schema';
 import { constants } from '~/server/common/constants';
 

@@ -7,7 +7,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { SortFilter } from '~/components/Filters';
 import { PostSort } from '~/server/common/enums';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { PostsQueryInput } from '../../../server/schema/post.schema';
 import { PostFiltersDropdown } from '../../../components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite, { PostsInfiniteState } from '../../../components/Post/Infinite/PostsInfinite';

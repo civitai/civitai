@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.268",
+  "version": "5.0.271",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -212,6 +212,7 @@
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^12.1.4",
+    "@prisma/generator-helper": "^5.22.0",
     "@types/archiver": "^6.0.2",
     "@types/cloudflare": "^2.7.9",
     "@types/file-saver": "^2.0.7",
@@ -256,6 +257,7 @@
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
     "prisma": "^5.17.0",
+    "prisma-generator-typescript-interfaces": "^1.6.1",
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",
     "tsc-files": "^1.1.4",

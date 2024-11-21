@@ -26,7 +26,7 @@ import {
   BuzzWithdrawalRequestStatus,
   Currency,
   UserPaymentConfigurationProvider,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { IconCashBanknote, IconExternalLink, IconInfoTriangleFilled } from '@tabler/icons-react';
 import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
 import { useState } from 'react';

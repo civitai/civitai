@@ -28,7 +28,7 @@ import { z } from 'zod';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 

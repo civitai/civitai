@@ -1,4 +1,4 @@
-import { MediaType, MetricTimeframe } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';

@@ -1,4 +1,4 @@
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 export const MIME_TYPES = {
   // Images

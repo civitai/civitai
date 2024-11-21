@@ -19,7 +19,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { PurchasableRewardModeratorViewMode, TagSort } from '~/server/common/enums';
 import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { DatePicker } from '@mantine/dates';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';

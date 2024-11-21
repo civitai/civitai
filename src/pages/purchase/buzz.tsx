@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';

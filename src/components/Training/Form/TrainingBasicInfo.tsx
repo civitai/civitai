@@ -1,5 +1,10 @@
 import { Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine/core';
-import { ModelStatus, ModelType, ModelUploadType, TrainingStatus } from '@prisma/client';
+import {
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';

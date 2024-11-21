@@ -1,5 +1,5 @@
 import { Text, TextProps, Tooltip } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoSquareRounded, IconProps } from '@tabler/icons-react';
 
 const instructions: Partial<Record<ModelType, string>> = {

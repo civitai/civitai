@@ -14,7 +14,7 @@ import {
   Stack,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { MediaType, MetricTimeframe } from '@prisma/client';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';

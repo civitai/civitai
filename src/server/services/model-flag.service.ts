@@ -1,4 +1,5 @@
-import { ModelFlagStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ModelFlagStatus } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdsInput } from '~/server/schema/base.schema';

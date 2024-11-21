@@ -11,7 +11,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { CollectionMode, ImageIngestionStatus } from '@prisma/client';
+import { CollectionMode, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBackUp,
   IconChevronDown,

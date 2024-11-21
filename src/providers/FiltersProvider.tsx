@@ -6,7 +6,7 @@ import {
   ModelStatus,
   ModelType,
   ToolType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { createContext, useCallback, useContext, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';

@@ -45,7 +45,7 @@ import { ArticleCard } from '../../Cards/ArticleCard';
 import { PostCard } from '../../Cards/PostCard';
 import { QuickSearchDropdown } from '../../Search/QuickSearchDropdown';
 import { useCurrentUser } from '../../../hooks/useCurrentUser';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubPostResourceCard } from './ClubFeed';
 
 const formSchema = upsertClubPostInput.refine(

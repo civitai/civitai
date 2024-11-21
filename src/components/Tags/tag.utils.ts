@@ -1,4 +1,4 @@
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';

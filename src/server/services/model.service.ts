@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   CommercialUse,
   MetricTimeframe,
@@ -5,9 +6,8 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
-  Prisma,
   TagTarget,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty } from 'lodash-es';
@@ -2147,6 +2147,23 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
   `;
 
   return coveredResources.map((x) => x.version_id);
+}
+
+export async function isModelHashBlocked(sha256Hash: string) {
+  const [{ blocked }] = await dbRead.$queryRaw<{ blocked: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM "BlockedModelHashes"
+      WHERE hash = ${sha256Hash}
+    ) as blocked;
+  `;
+
+  return blocked;
+}
+
+export async function refreshBlockedModelHashes() {
+  await dbWrite.$executeRaw`
+    REFRESH MATERIALIZED VIEW CONCURRENTLY "BlockedModelHashes";
+  `;
 }
 
 export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {

@@ -10,7 +10,7 @@ import {
   Title,
   UnstyledButton,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useShopLastViewed } from '~/components/CosmeticShop/cosmetic-shop.util';

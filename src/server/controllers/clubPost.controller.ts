@@ -2,9 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { throwDbError } from '~/server/utils/errorHandling';
 import {
   ClubPostResourceInput,
-  ClubResourceInput,
   GetInfiniteClubPostsSchema,
-  SupportedClubEntities,
   SupportedClubPostEntities,
   UpsertClubPostInput,
 } from '~/server/schema/club.schema';
@@ -21,8 +19,7 @@ import {
   upsertClubPost,
 } from '~/server/services/clubPost.service';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { MetricTimeframe } from '@prisma/client';
-import { dbRead } from '../db/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getReactionsSelectV2 } from '../selectors/reaction.selector';
 import { isDefined } from '../../utils/type-guards';
 
@@ -34,7 +31,7 @@ export const getInfiniteClubPostsHandler = async ({
   ctx: Context;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 10) + 1;
 
   try {
     const items = await getAllClubPosts({

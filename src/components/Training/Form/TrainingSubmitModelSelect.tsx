@@ -12,7 +12,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';

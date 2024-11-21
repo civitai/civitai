@@ -1,4 +1,4 @@
-import { RedeemableCodeType } from '@prisma/client';
+import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 
 export type CreateRedeemableCodeInput = z.infer<typeof createRedeemableCodeSchema>;

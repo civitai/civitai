@@ -1,4 +1,4 @@
-import { ArticleStatus, MetricTimeframe } from '@prisma/client';
+import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 
 import { constants } from '~/server/common/constants';

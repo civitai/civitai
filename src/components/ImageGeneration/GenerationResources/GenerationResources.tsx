@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { useCallback, useState } from 'react';
 import { useGenerationResourceStore } from './useGenerationResourceStore';
 import { Card, Group, ActionIcon, Stack, Slider, Text, ThemeIcon } from '@mantine/core';

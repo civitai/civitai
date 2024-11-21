@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import _ from 'lodash-es';
 import { z } from 'zod';
 import { VaultSort } from '~/server/common/enums';

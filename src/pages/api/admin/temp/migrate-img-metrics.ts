@@ -1,4 +1,8 @@
-import { EntityMetric_EntityType_Type, EntityMetric_MetricType_Type, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import {
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
+} from '~/shared/utils/prisma/enums';
 import { chunk, remove } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';

@@ -37,7 +37,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Availability, BountyEngagementType, BountyMode } from '@prisma/client';
+import { Availability, BountyEngagementType, BountyMode } from '~/shared/utils/prisma/enums';
 import { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {

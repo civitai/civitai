@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useEffect, useState } from 'react';
@@ -169,7 +169,7 @@ export function SimpleImageUpload({
             {!!value && typeof value !== 'string' && (
               <BrowsingLevelBadge
                 browsingLevel={value.nsfwLevel}
-                className="absolute top-2 left-2 z-10"
+                className="absolute left-2 top-2 z-10"
               />
             )}
             <EdgeMedia

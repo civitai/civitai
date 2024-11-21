@@ -17,7 +17,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { UniqueIdentifier } from '@dnd-kit/core';
 import { IconArrowsMaximize, IconInfoCircle } from '@tabler/icons-react';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 //TODO - handle what to display when there is an error
 type Props = {

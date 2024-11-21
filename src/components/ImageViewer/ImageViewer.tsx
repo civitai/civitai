@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { useRouter } from 'next/router';
 import { useHotkeys } from '@mantine/hooks';
 import { ImageDetailByProps } from '~/components/Image/Detail/ImageDetailByProps';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { Modal } from '@mantine/core';

@@ -8,7 +8,7 @@ import { isDefined } from '~/utils/type-guards';
 import { isEqual, uniqWith } from 'lodash-es';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { PostDetailEditable } from '~/server/services/post.service';
 

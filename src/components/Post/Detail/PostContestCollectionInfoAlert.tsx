@@ -1,7 +1,7 @@
 import { Alert, Anchor, Button, Group, Stack, Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
-import { CollectionItemStatus } from '@prisma/client';
 import Link from 'next/link';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { PostContestCollectionItem } from '~/types/router';
 
 export const PostContestCollectionInfoAlert = ({

@@ -31,7 +31,7 @@ import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailCommen
 import { ImageResources } from '~/components/Image/Detail/ImageResources';
 import { Meta } from '~/components/Meta/Meta';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { CollectionType } from '@prisma/client';
+import { CollectionType } from '~/shared/utils/prisma/enums';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { trpc } from '~/utils/trpc';

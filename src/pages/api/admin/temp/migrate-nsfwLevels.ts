@@ -1,4 +1,5 @@
-import { CollectionItemStatus, ImageIngestionStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { CollectionItemStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';

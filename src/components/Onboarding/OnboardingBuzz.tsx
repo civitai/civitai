@@ -18,7 +18,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
 import {

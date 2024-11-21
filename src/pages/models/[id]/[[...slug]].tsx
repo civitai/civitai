@@ -22,7 +22,12 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { NextLink } from '@mantine/next';
-import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import {
+  Availability,
+  CollectionType,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import {
   IconArchive,
   IconArrowsLeftRight,

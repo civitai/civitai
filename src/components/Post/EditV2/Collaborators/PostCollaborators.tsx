@@ -1,5 +1,5 @@
 import { Center, Loader, Stack, Text } from '@mantine/core';
-import { EntityType } from '@prisma/client';
+import { EntityType } from '~/shared/utils/prisma/enums';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import {
   useEntityCollaboratorsMutate,

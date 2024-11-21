@@ -1,4 +1,4 @@
-import { HomeBlockType } from '@prisma/client';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
 

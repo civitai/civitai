@@ -1,4 +1,4 @@
-import { ModelFileVisibility } from '@prisma/client';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteAssets } from '~/server/services/training.service';

@@ -1,4 +1,4 @@
-import { TagsOnTagsType, TagType } from '@prisma/client';
+import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { tagsNeedingReview } from '~/libs/tags';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';

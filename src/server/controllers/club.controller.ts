@@ -39,7 +39,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isDefined } from '~/utils/type-guards';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 export async function getClubHandler({ input, ctx }: { input: GetByIdInput; ctx: Context }) {
   try {
@@ -203,7 +203,7 @@ export const getInfiniteClubsHandler = async ({
   ctx: Context;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 10) + 1;
   const userId = input.userId ?? user?.id;
   const { include } = input;
 
