@@ -66,7 +66,7 @@ export function MasonryColumns<TData>({
                 {data.type === 'ad' && (
                   <AdUnitRenderable>
                     <TwCard className="w-full items-center justify-center py-2 shadow">
-                      <data.data.AdUnit lazyLoad />
+                      <data.data.AdUnit />
                     </TwCard>
                   </AdUnitRenderable>
                 )}

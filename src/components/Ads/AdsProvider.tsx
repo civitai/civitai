@@ -6,8 +6,6 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
-import { isProd } from '~/env/other';
-// const isProd = true;
 
 declare global {
   interface Window {
@@ -33,9 +31,10 @@ export function useAdsContext() {
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(!isProd ? true : undefined);
+  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(undefined);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const canServeAds = location.host.includes('civitai');
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
@@ -43,11 +42,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
 
   function handleCmpLoaded() {
-    if (isProd) setAdsBlocked(false);
+    if (canServeAds) setAdsBlocked(false);
   }
 
   function handleCmpError() {
-    if (isProd) setAdsBlocked(true);
+    if (canServeAds) setAdsBlocked(true);
   }
 
   useEffect(() => {
@@ -88,7 +87,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-      {adsEnabled && isProd && (
+      {adsEnabled && (
         <>
           <Script
             id="snigel-config"
