@@ -30,12 +30,15 @@ export function useAdsContext() {
   return context;
 }
 
-const useAdProviderStore = create<{ ready: boolean }>(() => ({ ready: false }));
+const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() => ({
+  ready: false,
+  adsBlocked: false,
+}));
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   // const [ready, setReady] = useState(false);
   const ready = useAdProviderStore((state) => state.ready);
-  const [adsBlocked, setAdsBlocked] = useState<boolean | undefined>(false);
+  const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -44,21 +47,21 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = features.adsEnabled && (allowAds || !isMember);
 
-  console.log({ ready });
-
   function handleLoadedError() {
-    setAdsBlocked(true);
+    useAdProviderStore.setState({ adsBlocked: true });
   }
 
   useEffect(() => {
     function callback() {
       // check for cmp consent
-      window.__tcfapi('addEventListener', 2, function (tcData: any, success: any) {
-        if (success && ['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
+      window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
+        console.log({ tcData, success });
+        if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
           console.log('This code is triggered only once', tcData);
-          useAdProviderStore.setState({ ready: true });
+          if (!success) useAdProviderStore.setState({ adsBlocked: true });
+          else useAdProviderStore.setState({ ready: true });
         }
       });
 
