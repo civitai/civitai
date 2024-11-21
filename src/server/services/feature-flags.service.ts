@@ -34,7 +34,7 @@ const featureFlags = createFeatureFlags({
   adminTags: ['mod', 'granted'],
   civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
   stripe: ['mod'],
-  imageTraining: ['mod', 'member'],
+  imageTraining: ['user'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
