@@ -242,7 +242,6 @@ function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvaila
 
 function getEnvOverrides() {
   const processFeatureAvailability: Partial<Record<FeatureFlagKey, FeatureAvailability[]>> = {};
-  console.log(process.env);
   // Set flags from ENV
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.startsWith('FEATURE_FLAG_')) continue;
