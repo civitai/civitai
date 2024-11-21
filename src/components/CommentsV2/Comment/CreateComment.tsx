@@ -1,5 +1,5 @@
 import { Alert, Center, Group, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import router from 'next/router';
 import { CommentForm } from './CommentForm';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -34,7 +34,7 @@ export function CreateComment({
             You must{' '}
             <Text
               variant="link"
-              component={NextLink}
+              component={Link}
               href={`/login?returnUrl=${router.asPath}`}
               rel="nofollow"
               inline

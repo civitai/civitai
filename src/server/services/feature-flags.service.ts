@@ -1,6 +1,6 @@
 import { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client.mjs';
 import { isDev } from '~/env/other';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -34,7 +34,7 @@ const featureFlags = createFeatureFlags({
   adminTags: ['mod', 'granted'],
   civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
   stripe: ['mod'],
-  imageTraining: ['dev', 'mod', 'member'],
+  imageTraining: ['mod', 'member'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],

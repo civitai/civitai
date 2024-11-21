@@ -13,7 +13,7 @@ import {
 } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
 import { SimpleCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 const useStyles = createStyles((theme) => ({

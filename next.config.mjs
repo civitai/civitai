@@ -1,14 +1,11 @@
 // @ts-check
-import { withAxiom } from "next-axiom";
+import { withAxiom } from "@civitai/next-axiom";
 import packageJson from './package.json' assert { type: 'json' };
-
-
 import bundlAnalyzer  from '@next/bundle-analyzer'
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: process.env.ANALYZE === 'true',
 })
-
 
 /**
  * Don't be scared of the generics here.
@@ -39,18 +36,29 @@ export default defineNextConfig(withAxiom({
   generateEtags: false,
   compress: false,
   images: {
-    domains: [
-      's3.us-west-1.wasabisys.com',
-      'model-share.s3.us-west-1.wasabisys.com',
-      'civitai-prod.s3.us-west-1.wasabisys.com',
-      'civitai-dev.s3.us-west-1.wasabisys.com',
-      'image.civitai.com',
-    ],
+    remotePatterns: [
+      { hostname: 's3.us-west-1.wasabisys.com', },
+      { hostname: 'model-share.s3.us-west-1.wasabisys.com', },
+      { hostname: 'civitai-prod.s3.us-west-1.wasabisys.com', },
+      { hostname: 'civitai-dev.s3.us-west-1.wasabisys.com', },
+      { hostname: 'image.civitai.com', },
+    ]
+    // domains: [
+    //   's3.us-west-1.wasabisys.com',
+    //   'model-share.s3.us-west-1.wasabisys.com',
+    //   'civitai-prod.s3.us-west-1.wasabisys.com',
+    //   'civitai-dev.s3.us-west-1.wasabisys.com',
+    //   'image.civitai.com',
+    // ],
   },
+  transpilePackages: ['lodash', 'lodash-es', 'prisma'],
   experimental: {
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
-
+    optimizePackageImports: [
+      '@civitai/client',
+      './srs/libs/form'
+    ]
   },
   headers: async () => {
     // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc

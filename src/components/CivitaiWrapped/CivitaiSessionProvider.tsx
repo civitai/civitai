@@ -1,4 +1,4 @@
-import { Session, SessionUser } from 'next-auth';
+import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { createContext, useContext, useEffect, useMemo } from 'react';

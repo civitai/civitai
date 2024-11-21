@@ -7,7 +7,7 @@ import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
@@ -88,7 +88,7 @@ export function MasonryGrid<TData>({
                     />
                     <Text>Become a Member to turn off ads today.</Text>
                     <Button
-                      component={NextLink}
+                      component={Link}
                       href="/pricing"
                       compact
                       color="green"

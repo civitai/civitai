@@ -1,5 +1,5 @@
 import { Button, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -40,7 +40,7 @@ export function SensitiveShield({
           </Text>
           <Text>This content has been marked as NSFW</Text>
           <Button
-            component={NextLink}
+            component={Link}
             href={`/login?returnUrl=${router.asPath}`}
             leftIcon={<IconKey />}
           >

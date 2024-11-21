@@ -12,12 +12,12 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import { IconListCheck, IconSettings } from '@tabler/icons-react';
 import { forwardRef, useMemo, useState } from 'react';
 import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
 import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import {

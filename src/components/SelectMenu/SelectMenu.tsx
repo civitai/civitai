@@ -40,7 +40,7 @@ export function SelectMenu<T extends string | number>({
           className="flex cursor-pointer items-center gap-1.5"
           style={disabled ? { opacity: 0.3, cursor: 'default', userSelect: 'none' } : {}}
         >
-          <Text weight={700} transform="uppercase">
+          <Text weight={700} transform="uppercase" suppressHydrationWarning>
             {label}
           </Text>
           <IconChevronDown size={16} stroke={3} />
@@ -66,14 +66,6 @@ export function SelectMenu<T extends string | number>({
     </Menu>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  item: {
-    '&[data-hovered]': {
-      borderRadius: theme.radius.md,
-    },
-  },
-}));
 
 export function SelectMenuV2<T extends string | number>({
   label,
@@ -106,7 +98,7 @@ export function SelectMenuV2<T extends string | number>({
       {...buttonProps}
       onClick={() => setOpened((o) => !o)}
     >
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-1" suppressHydrationWarning>
         {icon ?? <IconSortDescending size={16} />}
         {label}
       </div>

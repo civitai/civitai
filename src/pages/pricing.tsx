@@ -34,7 +34,7 @@ import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -178,7 +178,7 @@ export default function Pricing() {
               >
                 <Text lh={1.2}>
                   The Supporter plan can no longer be purchased. You can stay on your{' '}
-                  <Text component={NextLink} td="underline" href="/user/membership">
+                  <Text component={Link} td="underline" href="/user/membership">
                     current plan
                   </Text>{' '}
                   or level up your support here.
@@ -241,12 +241,7 @@ export default function Pricing() {
                         </Text>
                       </Group>
                       {!isFreeTier ? (
-                        <Button
-                          radius="xl"
-                          color="gray"
-                          component={NextLink}
-                          href="/user/membership"
-                        >
+                        <Button radius="xl" color="gray" component={Link} href="/user/membership">
                           Downgrade to free
                         </Button>
                       ) : (
