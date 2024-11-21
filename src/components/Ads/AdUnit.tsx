@@ -222,7 +222,6 @@ function AdUnitContent({
           lazyLoad,
           sizes,
         };
-        console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }
@@ -423,12 +422,7 @@ export const AdUnitSide_3 = adUnitFactory({
   ],
 });
 
-// export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
-export const AdUnitOutstream = () => (
-  <AdUnitRenderable>
-    <div id="adngin-outstream-0"></div>
-  </AdUnitRenderable>
-);
+export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
 
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',

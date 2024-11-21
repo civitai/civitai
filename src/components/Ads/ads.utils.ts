@@ -81,3 +81,5 @@ export const supportUsImageSizes = [
   [970, 90],
   [970, 250],
 ];
+
+export const adUnitsLoaded: Record<string, boolean> = {};
