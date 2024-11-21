@@ -1,6 +1,7 @@
 import { createGetInitialProps } from '@mantine/next';
 import { readFileSync } from 'fs';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
+import Script from 'next/script';
 import { join } from 'path';
 
 const getInitialProps = createGetInitialProps();
@@ -14,6 +15,12 @@ export default class _Document extends Document {
       <Html>
         {/* <InlineStylesHead /> */}
         <Head />
+        {/* in the browser dev console, enter: adconsent('start'); */}
+        <Script
+          strategy="beforeInteractive"
+          src="//cdn.snigelweb.com/adconsent/adconsent.js"
+          type="text/javascript"
+        />
         <body className={pageProps.colorScheme}>
           <Main />
           <NextScript />

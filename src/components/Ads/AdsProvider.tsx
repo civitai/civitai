@@ -122,9 +122,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             onError={handleCmpError}
           />
 
-          {/* in the browser dev console, enter: adconsent('start'); */}
-          <Script src="//cdn.snigelweb.com/adconsent/adconsent.js" type="text/javascript" />
-
           {/* Cleanup old ad tags */}
           <Script
             id="ad-cleanup"
