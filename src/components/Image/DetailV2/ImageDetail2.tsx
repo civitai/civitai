@@ -33,7 +33,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { AdUnitSide_2, AdUnitTop } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2, AdUnitImageDetailBanner } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
@@ -338,7 +338,9 @@ export function ImageDetail2() {
                       </ReactionSettingsProvider>
                     </div>
                     <CarouselIndicators {...carouselNavigation} />
-                    {viewportHeight >= 1050 && <AdUnitTop browsingLevel={image.nsfwLevel} />}
+                    {viewportHeight >= 1050 && (
+                      <AdUnitImageDetailBanner browsingLevel={image.nsfwLevel} />
+                    )}
                   </div>
                 </>
               )}

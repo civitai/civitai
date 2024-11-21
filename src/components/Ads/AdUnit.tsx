@@ -65,7 +65,6 @@ export const AdUnitSide_3 = adUnitFactory({
 
 export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
 
-/** max dimensions: 336x280  */
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',
   lutSizes: [
@@ -93,6 +92,37 @@ export const AdUnitTop = adUnitFactory({
         [728, 90],
         [970, 90],
         [970, 250],
+        [980, 90],
+      ],
+    ],
+  ],
+});
+
+/** max dimensions: 336x280  */
+export const AdUnitImageDetailBanner = adUnitFactory({
+  adUnit: 'top',
+  lutSizes: [
+    [
+      [0, 759],
+      [
+        [320, 100],
+        [320, 50],
+        [300, 100],
+        [300, 50],
+      ],
+    ],
+    [
+      [760, 1023],
+      [
+        [468, 60],
+        [728, 90],
+      ],
+    ],
+    [
+      [1024],
+      [
+        [728, 90],
+        [970, 90],
         [980, 90],
       ],
     ],
