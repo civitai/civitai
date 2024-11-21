@@ -1,7 +1,7 @@
-import { ToolType } from '@prisma/client';
 import { z } from 'zod';
 import { ToolSort } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
+import { ToolType } from '~/shared/utils/prisma/enums';
 
 export type ToolMetadata = z.infer<typeof toolMetadata>;
 export const toolMetadata = z.object({ header: z.string().optional() });

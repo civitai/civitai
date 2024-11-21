@@ -2410,6 +2410,7 @@ export interface Tool {
   priority: number | null;
   description: string | null;
   supported: boolean;
+  company: string | null;
   metadata: JsonValue;
 }
 

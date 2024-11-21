@@ -11,7 +11,7 @@ import {
   Stack,
   createStyles,
 } from '@mantine/core';
-import { ToolType } from '@prisma/client';
+import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';

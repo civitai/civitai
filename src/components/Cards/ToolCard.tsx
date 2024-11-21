@@ -1,5 +1,5 @@
 import { Avatar, Badge, Button, Card, Image, Text, ThemeIcon } from '@mantine/core';
-import { ToolType } from '@prisma/client';
+import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconTools } from '@tabler/icons-react';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
