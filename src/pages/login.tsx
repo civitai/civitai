@@ -45,7 +45,7 @@ export default function Login() {
     { userReferralCode: code as string },
     { enabled: !!code }
   );
-  const [providers, setProviders] = useState<any>(null);
+  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
   const observedReason = useRef<string | null>(null);
   const { trackAction } = useTrackEvent();
   useEffect(() => {
