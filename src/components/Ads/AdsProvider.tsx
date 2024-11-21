@@ -96,16 +96,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             type="text/javascript"
             dangerouslySetInnerHTML={{
               __html: `
-                // // Spoofing domain to 'civitai.com' --> ONLY FOR TESTING PURPOSES.
-                // // This is required when the test environment domain differs from the production domain.
-                // window.addEventListener("adnginLoaderReady", function () {
-                //   adngin.queue.push(function () {
-                //     googletag.cmd.push(function () {
-                //       googletag.pubads().set("page_url", "civitai.com");
-                //     });
-                //   });
-                // });
-                // // END OF domain spoofing.
+                // Spoofing domain to 'civitai.com' --> ONLY FOR TESTING PURPOSES.
+                // This is required when the test environment domain differs from the production domain.
+                window.addEventListener("adnginLoaderReady", function () {
+                  adngin.queue.push(function () {
+                    googletag.cmd.push(function () {
+                      googletag.pubads().set("page_url", "civitai.com");
+                    });
+                  });
+                });
+                // END OF domain spoofing.
 
                 window.snigelPubConf = {
                   "adengine": {
