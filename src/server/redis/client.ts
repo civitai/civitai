@@ -226,4 +226,7 @@ export const REDIS_KEYS = {
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
   },
+  DAILY_CHALLENGE: {
+    DETAILS: 'daily-challenge:details',
+  },
 } as const;
