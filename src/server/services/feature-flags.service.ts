@@ -27,7 +27,7 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
-  gallery: ['mod', 'member'],
+  gallery: ['public'],
   posts: ['mod', 'member'],
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
@@ -64,8 +64,8 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  imageSearch: ['dev'],
-  buzz: isDev ? ['granted', 'public'] : ['public'],
+  imageSearch: ['public'],
+  buzz: ['public'],
   signal: isDev ? ['granted', 'user'] : ['user'],
   recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
@@ -73,11 +73,11 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'CivBot Assistant',
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
-    availability: ['mod', 'member'],
+    availability: ['user'],
   },
   bounties: ['public'],
   newsroom: ['public'],
-  safety: ['mod'],
+  safety: ['public'],
   csamReports: ['granted'],
   reviewTrainingData: ['granted'],
   clubs: ['mod'],
@@ -92,16 +92,16 @@ const featureFlags = createFeatureFlags({
   },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
-  vault: ['mod'],
+  vault: ['user'],
   draftMode: ['mod'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
   donationGoals: ['public'],
-  creatorComp: ['user'],
+  creatorComp: ['public'],
   experimentalGen: ['mod'],
-  imageIndex: ['granted', 'mod'],
-  imageIndexFeed: ['granted', 'mod'],
+  imageIndex: ['public'],
+  imageIndexFeed: ['public'],
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
@@ -242,6 +242,7 @@ function createFeatureFlags<T extends Record<string, FeatureFlag | FeatureAvaila
 
 function getEnvOverrides() {
   const processFeatureAvailability: Partial<Record<FeatureFlagKey, FeatureAvailability[]>> = {};
+  console.log(process.env);
   // Set flags from ENV
   for (const [key, value] of Object.entries(process.env)) {
     if (!key.startsWith('FEATURE_FLAG_')) continue;
