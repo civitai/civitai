@@ -36,13 +36,13 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
 
   return (
     <div id="browsing-mode">
-      <Stack spacing="md" className="sm:min-w-96">
+      <Stack spacing="md" className="sm:min-w-96" py="xl">
         {showNsfw && (
           <Stack spacing="lg">
             <Stack spacing={4}>
               <Stack spacing={0}>
                 <Group align="flex-start">
-                  <Text sx={{ lineHeight: 1 }}>Browsing Level</Text>
+                  <Text sx={{ lineHeight: 1, marginBottom: 20 }}>Browsing Level</Text>
                   {showNsfw && (
                     <Tooltip label="Help us improve by playing!" withArrow color="dark">
                       <Button
