@@ -20,11 +20,11 @@ import { deleteCookie } from 'cookies-next';
 // });
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
-  const { data, update } = useSession();
+  const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
   const cookies = useCookies();
-  useDomainSync(data?.user as SessionUser);
+  useDomainSync(data?.user as SessionUser, status);
 
   const { disableHidden } = cookies;
 

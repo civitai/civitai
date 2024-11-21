@@ -14,7 +14,7 @@ import { IconExclamationMark } from '@tabler/icons-react';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
@@ -29,7 +29,7 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 
-export default function Login({ providers }: Props) {
+export default function Login() {
   const router = useRouter();
   const {
     error,
@@ -45,8 +45,13 @@ export default function Login({ providers }: Props) {
     { userReferralCode: code as string },
     { enabled: !!code }
   );
+  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
   const observedReason = useRef<string | null>(null);
   const { trackAction } = useTrackEvent();
+  useEffect(() => {
+    console.log(providers);
+    if (!providers) getProviders().then((providers) => setProviders(providers));
+  }, []);
 
   const redirectReason = loginRedirectReasons[reason];
 
@@ -176,11 +181,11 @@ export const getServerSideProps = createServerSideProps({
       }
     }
 
-    const providers = await getProviders();
+    // const providers = await getProviders();
     const csrfToken = await getCsrfToken();
 
     return {
-      props: { providers, csrfToken },
+      props: { providers: null, csrfToken },
     };
   },
 });
