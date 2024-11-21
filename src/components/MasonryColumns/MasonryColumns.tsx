@@ -8,7 +8,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { AdUnitRenderable } from '~/components/Ads/AdUnit';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 

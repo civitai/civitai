@@ -46,7 +46,7 @@ import { startCase } from 'lodash-es';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
-import { AdUnitRenderable, AdUnitSide_2 } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -121,6 +121,7 @@ import {
   openCollectionSelectModal,
   openResourceReviewEditModal,
 } from '~/components/Dialog/dialog-registry';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {

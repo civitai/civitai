@@ -10,10 +10,11 @@ import { Text } from '@mantine/core';
 import { NextLink } from '@mantine/next';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
-import { AdUnitIncontent_1, AdUnitRenderable } from '~/components/Ads/AdUnit';
+import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 type Props<TData> = {
   data: TData[];
