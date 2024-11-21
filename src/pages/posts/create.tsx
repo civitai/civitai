@@ -11,7 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconLock } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -221,11 +221,11 @@ export default Page(
             <Text size="xs" color="dimmed">
               Our site is mostly used for sharing AI generated content. You can start generating
               images using our{' '}
-              <Link href="/generate" passHref>
+              <Link legacyBehavior href="/generate" passHref>
                 <Anchor>onsite generator</Anchor>
               </Link>{' '}
               or train your model using your own images by using our{' '}
-              <Link href="/models/train" passHref>
+              <Link legacyBehavior href="/models/train" passHref>
                 <Anchor>onsite LoRA trainer</Anchor>
               </Link>
               .

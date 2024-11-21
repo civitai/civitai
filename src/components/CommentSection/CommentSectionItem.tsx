@@ -7,7 +7,7 @@ import {
   IconFlag,
   IconArrowBackUp,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -157,7 +157,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           <Stack spacing={0}>
             <Group spacing={8} align="center">
               {!comment.user.deletedAt ? (
-                <Link href={`/user/${comment.user.username}`} passHref>
+                <Link legacyBehavior href={`/user/${comment.user.username}`} passHref>
                   <Anchor variant="text" size="sm" weight="bold">
                     <Username {...comment.user} />
                   </Anchor>

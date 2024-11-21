@@ -31,11 +31,11 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { MantineReactTable, MRT_ColumnDef, MRT_SortingState } from 'mantine-react-table';
 import { ActionIconSelect } from '~/components/ActionIconSelect/ActionIconSelect';
-import { NextLink } from '@mantine/next';
 import { ActionIconInput } from '~/components/ActionIconInput.tsx/ActionIconInput';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openConfirmModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const tagColor: Record<TagsOnTagsType, MantineColor> = {
   Parent: 'gray',
@@ -167,25 +167,25 @@ export default function Tags() {
           return (
             <Group noWrap spacing={5}>
               {tag.target.includes(TagTarget.Image) && (
-                <NextLink href={`/images?tags=${row.id}&view=feed`} target="_blank">
+                <Link href={`/images?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconPhoto size={14} />}>
                     {abbreviateNumber(tag.imageCount)}
                   </IconBadge>
-                </NextLink>
+                </Link>
               )}
               {tag.target.includes(TagTarget.Model) && (
-                <NextLink href={`/models?tags=${row.id}&view=feed`} target="_blank">
+                <Link href={`/models?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconBox size={14} />}>
                     {abbreviateNumber(tag.modelCount)}
                   </IconBadge>
-                </NextLink>
+                </Link>
               )}
               {tag.target.includes(TagTarget.Post) && (
-                <NextLink href={`/posts?tags=${row.id}&view=feed`} target="_blank">
+                <Link href={`/posts?tags=${row.id}&view=feed`} target="_blank">
                   <IconBadge icon={<IconAlbum size={14} />}>
                     {abbreviateNumber(tag.postCount)}
                   </IconBadge>
-                </NextLink>
+                </Link>
               )}
             </Group>
           );

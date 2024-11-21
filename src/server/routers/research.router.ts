@@ -100,7 +100,9 @@ async function getUserSanity(userId: number, sanityIds?: number[], refresh = fal
   }
 
   if (!sanityIds) sanityIds = await getSanityIds();
-  const [{ strikes }] = await dbWrite.$queryRaw<{ strikes: number }[]>`
+  let strikes = 0;
+  if (sanityIds.length) {
+    const result = await dbWrite.$queryRaw<{ strikes: number }[]>`
     WITH last_reset AS (
       SELECT COALESCE(MAX("createdAt"), '2024-03-01') date
       FROM research_ratings_resets
@@ -114,6 +116,8 @@ async function getUserSanity(userId: number, sanityIds?: number[], refresh = fal
       AND rr."imageId" IN (${Prisma.join(sanityIds)})
       AND rr."userId" = ${userId};
   `;
+    strikes = result[0].strikes ?? 0;
+  }
   await redis.hSet(cacheKey, 'strikes', strikes.toString());
   return { strikes: Number(strikes), sane: strikes < 3 };
 }
@@ -124,7 +128,7 @@ export const researchRouter = router({
     const sanityIds = await getSanityIds();
     let sanityImages: RaterImage[] = [];
     const { strikes, sane } = await getUserSanity(ctx.user.id, sanityIds);
-    if (sane) {
+    if (sane && sanityIds.length) {
       sanityImages = await dbRead.$queryRaw<RaterImage[]>`
         SELECT i.id, i.url, null as "nsfwLevel"
         FROM "Image" i
@@ -171,7 +175,7 @@ export const researchRouter = router({
     // Get the images
     input.cursor ??= userPosition.trackPosition;
     const where = [Prisma.sql`i.id > ${input.cursor}`];
-    if (track.filters?.tags) {
+    if (track.filters?.tags?.length) {
       where.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "ImageTag" it
         WHERE it."imageId" = i.id

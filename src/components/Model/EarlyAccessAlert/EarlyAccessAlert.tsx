@@ -1,5 +1,7 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 
 import { Countdown } from '~/components/Countdown/Countdown';

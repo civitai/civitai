@@ -22,7 +22,7 @@ import {
   IconSquareOff,
   IconTrash,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -198,7 +198,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 placeholder="empty"
               />
               {!!entityUrl && (
-                <Link href={entityUrl} passHref>
+                <Link legacyBehavior href={entityUrl} passHref>
                   <ActionIcon
                     component="a"
                     variant="transparent"

@@ -21,7 +21,6 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBack,
@@ -39,9 +38,10 @@ import {
 import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { LazyMotion } from 'motion/react';
 import * as m from 'motion/react-m';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
@@ -770,7 +770,7 @@ const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
   }
 
   return (
-    <Anchor component={NextLink} href={href} variant="link">
+    <Anchor component={Link} href={href} variant="link">
       <Title order={6}>{title}</Title>
     </Anchor>
   );
