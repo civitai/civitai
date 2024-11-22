@@ -4,9 +4,11 @@ import { useSetCollectionItemScore } from '~/components/Collections/collection.u
 
 export function ContestCollectionItemScorer({
   collectionItemId,
-  currentScore = 1,
+  currentScore = 0,
   onScoreChanged,
+  layout = 'default',
 }: {
+  layout?: 'default' | 'minimal';
   collectionItemId: number;
   currentScore?: number;
   onScoreChanged?: (data: { userId: number; collectionItemId: number; score: number }) => void;
@@ -14,11 +16,11 @@ export function ContestCollectionItemScorer({
   const [selectedScore, setSelectedScore] = useState(currentScore);
 
   const { setItemScore, loading } = useSetCollectionItemScore();
-  const handleSetItemScore = async () => {
+  const handleSetItemScore = async (_score?: number) => {
     await setItemScore(
       {
         collectionItemId,
-        score: selectedScore,
+        score: _score ?? selectedScore,
       },
       {
         onSuccess: (result) => {
@@ -33,6 +35,19 @@ export function ContestCollectionItemScorer({
     );
   };
 
+  if (layout === 'minimal') {
+    return (
+      <SegmentedControl
+        data={['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']}
+        value={selectedScore.toString()}
+        onChange={(value) => {
+          setSelectedScore(Number(value));
+          handleSetItemScore(Number(value));
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <Text>
@@ -44,7 +59,7 @@ export function ContestCollectionItemScorer({
         value={selectedScore.toString()}
         onChange={(value) => setSelectedScore(Number(value))}
       />
-      <Button onClick={handleSetItemScore} loading={loading}>
+      <Button onClick={() => handleSetItemScore()} loading={loading}>
         Submit
       </Button>
     </div>

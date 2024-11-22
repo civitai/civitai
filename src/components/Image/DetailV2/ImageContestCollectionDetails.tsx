@@ -28,7 +28,7 @@ export const ImageContestCollectionDetails = ({
   image: {
     id: number;
     nsfwLevel?: number;
-    postId?: number;
+    postId?: number | null;
   };
   isOwner: boolean;
   isModerator?: boolean;

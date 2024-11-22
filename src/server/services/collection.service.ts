@@ -941,6 +941,7 @@ export type CollectionItemExpanded = {
   id: number;
   status?: CollectionItemStatus;
   createdAt: Date | null;
+  scores?: { userId: number; score: number }[] | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 export const getCollectionItemsByCollectionId = async ({
@@ -1020,6 +1021,17 @@ export const getCollectionItemsByCollectionId = async ({
       status: input.forReview,
       createdAt: true,
       randomId: true,
+      scores: input.forReview
+        ? {
+            select: {
+              userId: true,
+              score: true,
+            },
+            where: {
+              userId: user?.id,
+            },
+          }
+        : undefined,
     },
     where,
     orderBy,

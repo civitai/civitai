@@ -73,6 +73,8 @@ import {
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
+import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -248,6 +250,7 @@ const CollectionItemGridItem = ({
   data: collectionItem,
   collectionId,
 }: CollectionItemGridItemProps) => {
+  const currentUser = useCurrentUser();
   const router = useRouter();
   const selected = useStore(
     useCallback((state) => state.selected[collectionItem.id] ?? false, [collectionItem.id])
@@ -261,6 +264,8 @@ const CollectionItemGridItem = ({
     [CollectionItemStatus.REVIEW]: 'yellow',
   };
   const reviewCollectionContext = useReviewCollectionContext();
+  const { collection } = useCollection(collectionId);
+
   const queryUtils = trpc.useUtils();
 
   const image = reviewData.image;
@@ -437,6 +442,14 @@ const CollectionItemGridItem = ({
           </Stack>
         </Box>
       </FeedCard>
+      {collection?.metadata?.judgesCanScoreEntries && (
+        <ContestCollectionItemScorer
+          layout="minimal"
+          collectionItemId={collectionItem.id}
+          // onScoreChanged={handleScoreUpdated}
+          currentScore={collectionItem.scores?.find((s) => s.userId === currentUser?.id)?.score}
+        />
+      )}
     </Stack>
   );
 };
