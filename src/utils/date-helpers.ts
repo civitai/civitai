@@ -106,3 +106,8 @@ export function dateWithoutTimezone(date: Date) {
   const withoutTimezone = new Date(date.valueOf()).toISOString().slice(0, -1);
   return new Date(withoutTimezone);
 }
+
+export function getThanksgivingDate(year: number) {
+  const thanksgiving = dayjs.utc(`${year}-11-01`).day(4).add(3, 'weeks');
+  return thanksgiving.toDate();
+}
