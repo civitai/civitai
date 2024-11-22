@@ -51,6 +51,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
+import { PostImageThumbnailSelect } from '~/components/Post/EditV2/Thumbnail/PostImageThumbnailSelect';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -589,7 +592,23 @@ function EditDetail() {
                       viewers see when they come across your post.
                     </InfoPopover>
                   </div>
-                  <Button className="text-sm uppercase" size="sm" variant="light" compact>
+                  <Button
+                    className="text-sm uppercase"
+                    size="sm"
+                    variant="light"
+                    onClick={() =>
+                      dialogStore.trigger({
+                        component: PostImageThumbnailSelect,
+                        props: {
+                          src: getEdgeUrl(image.url, { type: 'video' }),
+                          duration: (image.metadata as VideoMetadata)?.duration ?? 0,
+                          width: image.metadata?.width ?? 0,
+                          height: image.metadata?.height ?? 0,
+                        },
+                      })
+                    }
+                    compact
+                  >
                     Select
                   </Button>
                 </div>

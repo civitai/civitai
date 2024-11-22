@@ -13,7 +13,7 @@ export const videoFramesToCanvasArray: VideoFramesToCanvasArray = (
   canvasWidth
 ) => {
   const canvasArray: Array<Promise<HTMLCanvasElement>> = currentTimes.map((currentTime) => {
-    return new Promise<HTMLCanvasElement>((resolve, _reject) => {
+    return new Promise<HTMLCanvasElement>((resolve) => {
       const browser = detectBrowser();
       const video: HTMLVideoElement = document.createElement('video');
       video.src = videoSrc;

@@ -5,7 +5,7 @@ import { useScrubberStore } from '~/components/VideoScrubber/scrubber.store';
 import { Slider } from '@mantine/core';
 
 // todo: add wait animation while 'videoFramesToCanvasArray' is resolving.
-export function VideoScrubber({ videoSrc, width, height, duration, canvasWidth }: Props) {
+export function VideoScrubber({ src, width, height, duration, canvasWidth }: Props) {
   const [canvasFrames, setCanvasFrames] = useState<Array<HTMLCanvasElement>>([]);
   const { currentScrubberFrame, scrubberFramesMax } = useScrubberStore((state) => state.scrubber);
 
@@ -26,8 +26,8 @@ export function VideoScrubber({ videoSrc, width, height, duration, canvasWidth }
   // Create an array of canvas elements, each holding a frame of video
   // that corresponds to a temporal offset in the 'currentTimes' array.
   useEffect(() => {
-    videoFramesToCanvasArray(videoSrc, currentTimes, width, canvasWidth).then(setCanvasFrames);
-  }, [videoSrc, currentTimes, width, height, canvasWidth]);
+    videoFramesToCanvasArray(src, currentTimes, width, canvasWidth).then(setCanvasFrames);
+  }, [src, currentTimes, width, height, canvasWidth]);
 
   useEffect(() => {
     if (canvasRef.current !== null && canvasFrames.length) {
@@ -45,7 +45,7 @@ export function VideoScrubber({ videoSrc, width, height, duration, canvasWidth }
 }
 
 type Props = {
-  videoSrc: string;
+  src: string;
   width: number;
   height: number;
   duration: number;
