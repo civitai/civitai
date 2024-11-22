@@ -1,5 +1,5 @@
 import client, { Counter } from 'prom-client';
-import { pgDbRead } from '~/server/db/pgDb';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 
 const PROM_PREFIX = 'civitai_app_';
 export function registerCounter({ name, help }: { name: string; help: string }) {
@@ -90,5 +90,27 @@ if (!global.pgGaugeInitialized) {
       this.set(pgDbRead.waitingCount);
     },
   });
+  new client.Gauge({
+    name: 'node_postgres_write_total_count',
+    help: 'node postgres write total count',
+    collect() {
+      this.set(pgDbWrite.totalCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_write_idle_count',
+    help: 'node postgres write idle count',
+    collect() {
+      this.set(pgDbWrite.idleCount);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_write_waiting_count',
+    help: 'node postgres write waiting count',
+    collect() {
+      this.set(pgDbWrite.waitingCount);
+    },
+  });
+
   global.pgGaugeInitialized = true;
 }
