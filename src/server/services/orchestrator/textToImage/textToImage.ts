@@ -1,4 +1,4 @@
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import {
   formatGenerationResponse,

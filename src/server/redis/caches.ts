@@ -27,6 +27,7 @@ import { CachedObject, createCachedArray, createCachedObject } from '~/server/ut
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { fluxUltraAir } from '~/shared/constants/generation.constants';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -345,6 +346,7 @@ export const tagCache = createCachedObject<TagLookup>({
   ttl: CacheTTL.day,
 });
 
+const explicitCoveredModelAirs = [fluxUltraAir];
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
@@ -362,7 +364,11 @@ export const resourceDataCache = createCachedArray({
     ]);
 
     const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
-      const covered = generationCoverage?.covered ?? false;
+      const covered =
+        explicitCoveredModelAirs.some((air) =>
+          air.includes(`civitai:${result.model.id}@${result.id}`)
+        ) ||
+        (generationCoverage?.covered ?? false);
       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
         id: number;
         sizeKB: number;
