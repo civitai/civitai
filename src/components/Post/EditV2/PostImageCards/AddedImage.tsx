@@ -11,7 +11,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { CollectionMode, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { MediaType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -568,6 +568,36 @@ function EditDetail() {
                 </ul>
               )}
             </CustomCard>
+            {/* #endregion */}
+
+            {/* #region [thumbnail] */}
+            {image.type === MediaType.video && (
+              <CustomCard className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                      Thumbnail
+                    </h3>
+                    <InfoPopover
+                      type="hover"
+                      variant="transparent"
+                      size="sm"
+                      position="right"
+                      iconProps={{ size: 20 }}
+                    >
+                      The thumbnail is the image that represents your post. It is the first thing
+                      viewers see when they come across your post.
+                    </InfoPopover>
+                  </div>
+                  <Button className="text-sm uppercase" size="sm" variant="light" compact>
+                    Select
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Text>Thumbnail will be generated after post is published.</Text>
+                </div>
+              </CustomCard>
+            )}
             {/* #endregion */}
 
             {meta?.external && Object.keys(meta?.external).length > 0 && (
