@@ -72,6 +72,7 @@ import {
   browsingLevelLabels,
   browsingLevels,
 } from '~/shared/constants/browsingLevel.constants';
+import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -243,60 +244,6 @@ const ReviewCollection = () => {
 
 export default ReviewCollection;
 
-const CollectionItemNSFWLevelSelector = ({
-  collectionId,
-  collectionItemId,
-  nsfwLevel,
-  onNsfwLevelUpdated,
-}: {
-  collectionId: number;
-  collectionItemId: number;
-  nsfwLevel?: number;
-  onNsfwLevelUpdated?: (value: string) => void;
-}) => {
-  const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
-  const {
-    updateCollectionItemNsfwLevel,
-    updatingCollectionItemNsfwLevel,
-    updateCollectionItemNsfwLevelPayload,
-  } = useMutateCollection();
-
-  const handleNSFWLevelChange = (value: string) => {
-    updateCollectionItemNsfwLevel(
-      {
-        collectionItemId,
-        nsfwLevel: parseInt(value, 10),
-      },
-      {
-        onSuccess: async () => {
-          onNsfwLevelUpdated?.(value);
-        },
-      }
-    );
-  };
-
-  if (loadingCollection) return null;
-
-  const judgesCanApplyRatings = collection?.metadata?.judgesApplyBrowsingLevel ?? false;
-
-  if (!judgesCanApplyRatings || !permissions?.manage) return null;
-
-  return (
-    <SegmentedControl
-      value={nsfwLevel?.toString() ?? undefined}
-      onChange={handleNSFWLevelChange}
-      data={browsingLevels.map((level) => ({
-        value: level.toString(),
-        label: browsingLevelLabels[level],
-      }))}
-      disabled={
-        updatingCollectionItemNsfwLevel &&
-        updateCollectionItemNsfwLevelPayload?.collectionItemId === collectionItemId
-      }
-    />
-  );
-};
-
 const CollectionItemGridItem = ({
   data: collectionItem,
   collectionId,
@@ -319,7 +266,7 @@ const CollectionItemGridItem = ({
   const image = reviewData.image;
 
   return (
-     <Stack spacing={0}>
+    <Stack spacing={0}>
       <CollectionItemNSFWLevelSelector
         collectionId={collectionId}
         collectionItemId={collectionItem.id}
@@ -362,7 +309,7 @@ const CollectionItemGridItem = ({
                     target="_blank"
                     onClick={(e) => {
                       e.stopPropagation();
-                    }} 
+                    }}
                   >
                     <IconExternalLink
                       color="white"
@@ -404,7 +351,7 @@ const CollectionItemGridItem = ({
                           <Badge variant="filled" color="gray" size="xs">
                             {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
                           </Badge>
-                        )} 
+                        )}
                       </Stack>
                     </Group>
                     {safe ? (

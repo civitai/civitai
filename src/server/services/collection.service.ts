@@ -2117,22 +2117,27 @@ export async function checkUserOwnsCollectionAndItem({
 }
 
 export const setItemScore = async ({
-  itemId,
-  collectionId,
+  collectionItemId,
   userId,
   score,
 }: SetItemScoreInput & { userId: number }) => {
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: { id: true, mode: true },
+  const collectionItem = await dbRead.collectionItem.findUnique({
+    where: { id: collectionItemId },
+    select: {
+      id: true,
+      collection: {
+        select: { id: true, mode: true },
+      },
+    },
   });
-  if (!collection) throw throwNotFoundError('Collection not found');
-  if (collection.mode !== CollectionMode.Contest)
+  if (!collectionItem) throw throwNotFoundError('Collection item not found');
+  if (!collectionItem.collection) throw throwNotFoundError('Collection not found');
+  if (collectionItem.collection.mode !== CollectionMode.Contest)
     throw throwBadRequestError('This collection is not a contest collection');
 
   const itemScore = await dbWrite.collectionItemScore.upsert({
-    where: { userId_collectionItemId: { userId, collectionItemId: itemId } },
-    create: { userId, collectionItemId: itemId, score },
+    where: { userId_collectionItemId: { userId, collectionItemId: collectionItem.id } },
+    create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
 

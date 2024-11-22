@@ -239,8 +239,7 @@ export const removeCollectionItemInput = z.object({
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;
 export const setItemScoreInput = z.object({
-  collectionId: z.coerce.number(),
-  itemId: z.coerce.number(),
+  collectionItemId: z.coerce.number(),
   score: z.coerce.number().min(1).max(10),
 });
 

@@ -612,11 +612,15 @@ export const setItemScoreHandler = async ({
 }) => {
   const { user } = ctx;
   try {
+    const collectionItem = await getCollectionItemById({
+      id: input.collectionItemId,
+    });
     const permissions = await getUserCollectionPermissionsById({
-      id: input.collectionId,
+      id: collectionItem.collectionId,
       userId: user.id,
       isModerator: user.isModerator,
     });
+
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 

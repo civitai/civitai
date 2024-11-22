@@ -349,29 +349,9 @@ export const useMutateCollection = () => {
   };
 };
 
-export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
+export const useSetCollectionItemScore = () => {
   const queryUtils = trpc.useUtils();
   const setItemScoreMutation = trpc.collection.setItemScore.useMutation({
-    onSuccess: (result) => {
-      const { collectionItemId, userId, score } = result;
-      queryUtils.image.getContestCollectionDetails.setData(
-        { id: imageId },
-        produce((old) => {
-          if (!old) return;
-
-          const item = old.find((item) => item.id === collectionItemId);
-          if (!item) return;
-
-          const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
-          if (!existingScore) {
-            item.scores.push({ userId, score });
-            return;
-          }
-
-          existingScore.score = score;
-        })
-      );
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Failed to set item score',
@@ -380,8 +360,11 @@ export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
     },
   });
 
-  const setItemScoreHandler = (data: SetItemScoreInput) => {
-    return setItemScoreMutation.mutateAsync(data);
+  const setItemScoreHandler = (
+    data: SetItemScoreInput,
+    opts: Parameters<typeof setItemScoreMutation.mutateAsync>[1]
+  ) => {
+    return setItemScoreMutation.mutateAsync(data, opts);
   };
 
   return {
