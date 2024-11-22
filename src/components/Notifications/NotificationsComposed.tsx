@@ -115,6 +115,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
             icon={<IconSearch size={16} />}
             placeholder="Filter by message..."
             value={searchText}
+            maxLength={150}
             disabled={!notifications || notifications.length === 0}
             onChange={(event) => setSearchText(event.currentTarget.value)}
             rightSection={
