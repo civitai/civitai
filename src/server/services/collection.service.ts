@@ -2183,8 +2183,6 @@ export const setCollectionItemNsfwLevel = async ({
 
   const metadata = (collectionItem.collection.metadata ?? {}) as CollectionMetadataSchema;
 
-  console.log(metadata, collectionItem);
-
   if (!metadata?.judgesApplyBrowsingLevel) {
     throw throwBadRequestError('This collection does not support NSFW level assignment.');
   }

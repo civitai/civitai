@@ -143,8 +143,6 @@ export function PostDetailContent({ postId }: Props) {
     0
   );
 
-  console.log(images);
-
   return (
     <>
       <Meta

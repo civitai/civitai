@@ -98,7 +98,6 @@ export function ImageDetailProvider({
     queryUtils.image.getInfinite.setInfiniteData(
       { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
       produce((queryData) => {
-        console.log('queryData', queryData, 'pages', queryData?.pages, shouldFetchMany);
         if (!queryData?.pages?.length) return;
 
         for (const page of queryData.pages)

@@ -856,8 +856,6 @@ export const addPostImage = async ({
 
   const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
-  console.log(collectionMeta);
-
   const partialResult = await createImage({
     ...props,
     meta,
