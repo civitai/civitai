@@ -21,7 +21,6 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBack,
   IconChevronDown,
@@ -38,23 +37,24 @@ import {
 import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { LazyMotion } from 'motion/react';
 import * as m from 'motion/react-m';
-import React, { ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { isTypingOutput } from '~/server/schema/chat.schema';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -122,7 +122,7 @@ export function ExistingChat() {
   const { worker } = useSignalContext();
   const { state, setState } = useChatContext();
   const queryUtils = trpc.useUtils();
-  const mobile = useIsMobile();
+  const isMobile = useContainerSmallerThan(700);
   const theme = useMantineTheme();
 
   const lastReadRef = useRef<HTMLDivElement>(null);
@@ -377,7 +377,7 @@ export function ExistingChat() {
         }}
       >
         <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
-          {mobile && (
+          {isMobile && (
             <ActionIcon onClick={goBack}>
               <IconChevronLeft />
             </ActionIcon>
