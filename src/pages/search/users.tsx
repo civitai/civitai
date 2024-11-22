@@ -13,7 +13,7 @@ import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { UsersSearchIndexSortBy } from '~/components/Search/parsers/user.parser';
 import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
@@ -149,7 +149,7 @@ export function UserCard({ data }: { data: UserSearchIndexRecord }) {
   const { metrics } = data;
 
   return (
-    <Link href={`/user/${data.username}`} passHref>
+    <Link legacyBehavior href={`/user/${data.username}`} passHref>
       <Card component="a" p="xs" withBorder>
         <Stack spacing="xs">
           <Group position="apart" spacing={8}>

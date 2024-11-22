@@ -3,7 +3,6 @@ import { Text } from '@mantine/core';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { NextLink } from '@mantine/next';
 import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -14,6 +13,7 @@ import { useInView } from 'react-intersection-observer';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useDebouncer } from '~/utils/debouncer';
 import { isMobileDevice } from '~/hooks/useIsMobile';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type AdWrapperProps = Omit<React.HTMLAttributes<HTMLDivElement>, 'children'> & {
   width?: number;
@@ -55,14 +55,14 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
       {isClient && adsBlocked !== undefined && height && width && (
         <>
           {adsBlocked ? (
-            <NextLink href="/pricing" className="flex">
+            <Link href="/pricing" className="flex">
               <Image
                 src={`/images/support-us/${width}x${height}.jpg`}
                 alt="Please support civitai and creators by disabling adblock"
                 width={width}
                 height={height}
               />
-            </NextLink>
+            </Link>
           ) : (
             <div className="w-full overflow-hidden" key={item.id}>
               {visible && (typeof children === 'function' ? children({ isMobile }) : children)}
@@ -74,7 +74,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
               <div className="flex w-full justify-between">
                 {!isMember ? (
                   <Text
-                    component={NextLink}
+                    component={Link}
                     td="underline"
                     href="/pricing"
                     color="dimmed"
@@ -89,7 +89,7 @@ const AdWrapper = ({ children, className, width, height, style, ...props }: AdWr
 
                 {currentUser && (
                   <Text
-                    component={NextLink}
+                    component={Link}
                     td="underline"
                     href={`/ad-feedback?Username=${currentUser.username}`}
                     color="dimmed"

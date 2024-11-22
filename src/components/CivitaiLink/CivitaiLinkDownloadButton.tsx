@@ -1,5 +1,5 @@
 import { Button, Flex, Text, Anchor, createStyles } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type LinkDownloadButtonProps = {
   text: string;
@@ -23,7 +23,7 @@ export function CivitaiLinkDownloadButton({
         color="blue"
         size="lg"
         radius="xl"
-        component={NextLink}
+        component={Link}
         href={href}
         rel="nofollow noreferrer"
       >

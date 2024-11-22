@@ -49,7 +49,7 @@ import {
   useCollection,
 } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { formatDate, secondsAsMinutes } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
@@ -247,7 +247,7 @@ const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItem
         >
           <Group>
             {reviewData.url && (
-              <Link href={reviewData.url} passHref>
+              <Link legacyBehavior href={reviewData.url} passHref>
                 <ActionIcon
                   component="a"
                   variant="transparent"

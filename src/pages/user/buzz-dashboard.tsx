@@ -33,15 +33,18 @@ import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableR
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { useRouter } from 'next/router';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getLoginLink } from '~/utils/login-helpers';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import dynamic from 'next/dynamic';
+const RedeemCodeModal = dynamic(() =>
+  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
+);
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -216,7 +219,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <Text mt={-16} size="sm" mb="xs" align="right">
             Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">
+            <Text variant="link" td="underline" component={Link} href="/collections/3870938">
               Buzz Beggars Board
             </Text>
             .

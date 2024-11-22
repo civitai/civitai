@@ -20,7 +20,7 @@ import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/uti
 import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -231,7 +231,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               {category && (
                 <>
                   <Divider orientation="vertical" />
-                  <Link href={`/articles?view=feed&tags=${category.id}`} passHref>
+                  <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
@@ -250,7 +250,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
+                      <Link legacyBehavior key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
                         <Badge
                           component="a"
                           color="gray"

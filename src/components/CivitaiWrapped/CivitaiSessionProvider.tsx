@@ -1,4 +1,4 @@
-import { Session, SessionUser } from 'next-auth';
+import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { createContext, useContext, useEffect, useMemo } from 'react';
@@ -20,11 +20,11 @@ import { deleteCookie } from 'cookies-next';
 // });
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
-  const { data, update } = useSession();
+  const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
   const cookies = useCookies();
-  useDomainSync(data?.user as SessionUser);
+  useDomainSync(data?.user as SessionUser, status);
 
   const { disableHidden } = cookies;
 

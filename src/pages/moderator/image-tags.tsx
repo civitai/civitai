@@ -25,7 +25,7 @@ import {
   IconSquareOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useMemo } from 'react';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -289,7 +289,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
                     placeholder="empty"
                   />
                   {entityUrl && (
-                    <Link href={entityUrl} passHref>
+                    <Link legacyBehavior href={entityUrl} passHref>
                       <ActionIcon
                         component="a"
                         variant="transparent"

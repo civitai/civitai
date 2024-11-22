@@ -1,30 +1,75 @@
-import { Anchor, Button, ButtonProps, Code, Group, Stack, Text } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { Button, Text } from '@mantine/core';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRef, useState } from 'react';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
-import { env } from '~/env/client.mjs';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { IconArrowUp } from '@tabler/icons-react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
 
-const buttonProps: ButtonProps = {
-  size: 'xs',
-  variant: 'subtle',
-  color: 'gray',
-  px: 'xs',
-};
-
-const hash = env.NEXT_PUBLIC_GIT_HASH;
+const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
+  features?: (features: FeatureAccess) => boolean;
+})[] = [
+  {
+    href: '/creators-program',
+    color: 'blue',
+    children: 'Creators',
+  },
+  {
+    href: '/content/tos',
+    children: 'Terms of Service',
+  },
+  {
+    href: '/content/privacy',
+    children: 'Privacy',
+  },
+  {
+    href: '/safety',
+    children: 'Safety',
+    features: (features) => features.safety,
+  },
+  {
+    href: '/newsroom',
+    children: 'Newsroom',
+    features: (features) => features.newsroom,
+  },
+  {
+    href: '/github/wiki/REST-API-Reference',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'API',
+  },
+  {
+    href: 'https://status.civitai.com',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Status',
+  },
+  {
+    href: '/wiki',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Wiki',
+  },
+  {
+    href: '/education',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Education',
+  },
+  {
+    href: 'https://air.civitai.com',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Residency',
+  },
+];
 
 export function AppFooter() {
-  // const { classes, cx } = useStyles({ fixed });
-  const [showHash, setShowHash] = useState(false);
-  const mobile = useContainerSmallerThan('sm');
   const features = useFeatureFlags();
   const footerRef = useRef<HTMLElement | null>(null);
 
@@ -65,150 +110,33 @@ export function AppFooter() {
         )}
         style={{ scrollbarWidth: 'thin' }}
       >
-        <Text
-          weight={700}
-          sx={{ whiteSpace: 'nowrap', userSelect: 'none' }}
-          onDoubleClick={() => {
-            if (hash) setShowHash((x) => !x);
-          }}
-        >
+        <Text className="select-none text-nowrap font-bold">
           &copy; Civitai {new Date().getFullYear()}
         </Text>
-        {showHash && hash && (
-          <Stack spacing={2}>
-            <Text weight={500} size="xs" sx={{ lineHeight: 1.1 }}>
-              Site Version
-            </Text>
-            <Anchor
-              target="_blank"
-              href={`/github/commit/${hash}`}
-              w="100%"
-              sx={{ '&:hover': { textDecoration: 'none' } }}
-            >
-              <Code sx={{ textAlign: 'center', lineHeight: 1.1, display: 'block' }}>
-                {hash.substring(0, 7)}
-              </Code>
-            </Anchor>
-          </Stack>
-        )}
-        <Group spacing={0} sx={{ flexWrap: 'nowrap' }}>
-          {/* <Button
-            component={NextLink}
-            prefetch={false}
-            href="/content/careers"
-            {...buttonProps}
-            variant="subtle"
-            color="green"
-            px={mobile ? 5 : 'xs'}
-          >
-            Join Us 💼
-          </Button> */}
-          {/* <Button
-            component={NextLink}
-            prefetch={false}
-            href="/advertise-with-us"
-            {...buttonProps}
-            variant="subtle"
-            color="yellow"
-            target="_blank"
-            rel="nofollow noreferrer"
-            px={mobile ? 5 : 'xs'}
-          >
-            Advertise 📰
-          </Button> */}
-          <Button
-            component={NextLink}
-            prefetch={false}
-            href="/creators-program"
-            {...buttonProps}
-            color="blue"
-            px={mobile ? 5 : 'xs'}
-          >
-            Creators
-          </Button>
-          <Button
-            component={NextLink}
-            prefetch={false}
-            href="/content/tos"
-            {...buttonProps}
-            px={mobile ? 5 : 'xs'}
-          >
-            Terms of Service
-          </Button>
-          <Button
-            component={NextLink}
-            prefetch={false}
-            href="/content/privacy"
-            {...buttonProps}
-            px={mobile ? 5 : 'xs'}
-          >
-            Privacy
-          </Button>
-          {features.safety && (
-            <Button component={NextLink} href="/safety" prefetch={false} {...buttonProps}>
-              Safety
-            </Button>
-          )}
-          {features.newsroom && (
-            <Button component={NextLink} href="/newsroom" {...buttonProps}>
-              Newsroom
-            </Button>
-          )}
-          <Button
-            component="a"
-            href="/github/wiki/REST-API-Reference"
-            {...buttonProps}
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            API
-          </Button>
-          <Button
-            component="a"
-            href="https://status.civitai.com"
-            {...buttonProps}
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Status
-          </Button>
-          <Button
-            component="a"
-            href="/wiki"
-            {...buttonProps}
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Wiki
-          </Button>
-          <Button
-            component="a"
-            href="/education"
-            {...buttonProps}
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Education
-          </Button>
-          <Button
-            component="a"
-            href="https://air.civitai.com"
-            {...buttonProps}
-            target="_blank"
-            rel="nofollow noreferrer"
-          >
-            Residency
-          </Button>
+        <div className="flex items-center">
+          {footerLinks
+            .filter((item) => !item.features || item.features?.(features))
+            .map(({ features, ...props }, i) => (
+              <Button
+                key={i}
+                component={Link}
+                {...props}
+                className="px-2.5 @max-sm:px-1"
+                size="xs"
+                variant="subtle"
+                color="gray"
+              />
+            ))}
 
           <SocialLinks />
-        </Group>
-        <Group ml="auto" spacing={4} sx={{ flexWrap: 'nowrap' }}>
+        </div>
+        <div className="ml-auto flex items-center gap-1">
           <RoutedDialogLink name="support" state={{}} passHref>
             <Button component="a" pl={4} pr="xs" color="yellow" variant="light" size="xs">
               🛟 Support
             </Button>
           </RoutedDialogLink>
-        </Group>
+        </div>
       </div>
     </footer>
   );

@@ -12,7 +12,7 @@ import {
   Text,
 } from '@mantine/core';
 import { IconArrowRight } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { useQueryEventContributors } from './events.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
