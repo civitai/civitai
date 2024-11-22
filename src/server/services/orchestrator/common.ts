@@ -23,6 +23,7 @@ import {
   WORKFLOW_TAGS,
   allInjectableResourceIds,
   fluxModeOptions,
+  fluxUltraAir,
   formatGenerationResources,
   getBaseModelResourceTypes,
   getBaseModelSetType,
@@ -50,7 +51,7 @@ import {
 } from '~/server/services/orchestrator/types';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { generation } from '~/server/common/constants';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { z } from 'zod';
 import { extModeration } from '~/server/integrations/moderation';
@@ -132,6 +133,13 @@ export async function parseGenerateImageInput({
     if (originalParams.fluxMode === fluxModeOptions[0].value) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
+    }
+    if (originalParams.fluxMode === fluxUltraAir) {
+      originalParams.engine = 'flux-pro-raw';
+      delete originalParams.steps;
+      delete originalParams.cfgScale;
+      delete originalParams.negativePrompt;
+      delete originalParams.clipSkip;
     }
   } else {
     originalParams.fluxMode = undefined;
@@ -472,10 +480,6 @@ function formatTextToImageStep({
 }) {
   const { input, output, jobs } = step as TextToImageStep;
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const {
-    // resources: stepResources = [], // TODO - this should be ready to use in 30 days after launch
-    params,
-  } = metadata;
   const stepResources = getTextToImageAirs([input]);
 
   const resources = combineResourcesWithInputResource(allResources, getResources(step)).filter(
@@ -555,35 +559,48 @@ function formatTextToImageStep({
         }
       : {};
 
+  const params = {
+    baseModel,
+    prompt,
+    negativePrompt,
+    quantity,
+    engine: input.engine,
+    // controlNets: input.controlNets,
+    // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
+
+    width: input.width,
+    height: input.height,
+    seed: input.seed,
+    draft: isDraft,
+    nsfw: isNsfw,
+    workflow: 'txt2img',
+    //support using metadata params first (one of the quirks of draft mode makes this necessary)
+    clipSkip: metadata?.params?.clipSkip ?? input.clipSkip,
+    steps: metadata?.params?.steps ?? input.steps,
+    cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
+    sampler: metadata?.params?.sampler ?? sampler,
+    ...upscale,
+
+    fluxMode: metadata?.params?.fluxMode,
+  } as TextToImageParams;
+
+  if ('engine' in params) {
+    if (params.engine === 'flux-pro-raw') {
+      delete params.steps;
+      delete params.cfgScale;
+      delete params.clipSkip;
+      delete (params as any).draft;
+      delete (params as any).nsfw;
+    }
+  }
+
   return {
     $type: 'textToImage' as const,
     timeout: step.timeout,
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
-    params: {
-      baseModel,
-      prompt,
-      negativePrompt,
-      quantity,
-      // controlNets: input.controlNets,
-      // aspectRatio: getClosestAspectRatio(input.width, input.height, baseModel),
-
-      width: input.width,
-      height: input.height,
-      seed: input.seed,
-      draft: isDraft,
-      nsfw: isNsfw,
-      workflow: 'txt2img',
-      //support using metadata params first (one of the quirks of draft mode makes this necessary)
-      clipSkip: metadata?.params?.clipSkip ?? input.clipSkip,
-      steps: metadata?.params?.steps ?? input.steps,
-      cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
-      sampler: metadata?.params?.sampler ?? sampler,
-      ...upscale,
-
-      fluxMode: metadata?.params?.fluxMode,
-    } as TextToImageParams,
+    params,
     images,
     status: step.status,
     metadata: metadata,
@@ -643,11 +660,17 @@ export function formatComfyStep({
         }
       : {};
 
+  const data = { ...params!, ...upscale } as TextToImageParams;
+  // if(data.workflow === 'img2img-upscale"') {
+  //   delete (data as any).nsfw;
+  //   delete (data as any).
+  // }
+
   return {
     $type: 'comfy' as const,
     timeout: step.timeout,
     name: step.name,
-    params: { ...params!, ...upscale } as TextToImageParams,
+    params: data,
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,

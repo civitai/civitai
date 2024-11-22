@@ -8,9 +8,11 @@ import { UpscalePicker } from '~/components/ImageGeneration/GenerationForm/Upsca
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
+import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   GenerationResource,
+  getBaseModelSetType,
   getRoundedUpscaleSize,
   whatIfQueryOverrides,
 } from '~/shared/constants/generation.constants';
@@ -27,6 +29,7 @@ const schema = z.object({
 
 export function UpscaleImageModal({
   params: { aspectRatio, ...params },
+  resources,
 }: {
   resources: GenerationResource[];
   params: TextToImageInput;
@@ -56,13 +59,19 @@ export function UpscaleImageModal({
           <Loader />
         </div>
       ) : (
-        <UpscalImageForm params={{ ...params, ...size }} />
+        <UpscalImageForm params={{ ...params, ...size }} resources={resources} />
       )}
     </Modal>
   );
 }
 
-function UpscalImageForm({ params }: { params: TextToImageInput }) {
+function UpscalImageForm({
+  params: { engine, ...params },
+  resources,
+}: {
+  params: TextToImageInput;
+  resources: GenerationResource[];
+}) {
   const dialog = useDialogContext();
 
   const upscale = getRoundedUpscaleSize({ width: params.width * 1.5, height: params.height * 1.5 });
@@ -83,14 +92,17 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
     'upscaleHeight',
   ]);
 
+  const defaultModel =
+    generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
+      ?.checkpoint ?? resources[0];
+
   const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
     {
-      resources: [164821],
+      resources: [defaultModel.id],
       params: {
         ...params,
         ...whatIfQueryOverrides,
         quantity: 1,
-        baseModel: 'Other',
         upscaleWidth,
         upscaleHeight,
       },
@@ -113,11 +125,10 @@ function UpscalImageForm({ params }: { params: TextToImageInput }) {
   function handleSubmit(formData: z.infer<typeof schema>) {
     async function performTransaction() {
       await generateImage.mutateAsync({
-        resources: [{ id: 164821 }],
+        resources,
         params: {
           ...params,
           quantity: 1,
-          baseModel: 'Other',
           ...formData,
         },
       });

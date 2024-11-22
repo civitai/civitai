@@ -333,24 +333,31 @@ export function GeneratedImage({
               >
                 Delete
               </Menu.Item>
-              {!!img2imgWorkflows?.length && canImg2Img && (
+              {!!img2imgWorkflows?.length && (
                 <>
                   <Menu.Divider />
                   <Menu.Label>Image-to-image workflows</Menu.Label>
-                  {img2imgWorkflows?.map((workflow) => (
-                    <Menu.Item
-                      key={workflow.key}
-                      onClick={() => {
-                        if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
-                        else handleSelectWorkflow(workflow.key);
-                      }}
-                    >
-                      {workflow.name}
-                    </Menu.Item>
-                  ))}
+                  {img2imgWorkflows
+                    ?.filter((x) => x.key === 'img2img-upscale')
+                    .map((workflow) => (
+                      <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                        {workflow.name}
+                      </Menu.Item>
+                    ))}
+                  {canImg2Img &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key !== 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item
+                          key={workflow.key}
+                          onClick={() => handleSelectWorkflow(workflow.key)}
+                        >
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
                 </>
               )}
-              {!isVideo && img2vidConfigs && (
+              {!isVideo && !!img2vidConfigs?.length && (
                 <>
                   <Menu.Divider />
                   {img2vidConfigs.map(({ name, key, type }) => (
@@ -406,8 +413,7 @@ export function GeneratedImage({
             >
               <IconHeart size={16} />
             </ActionIcon>
-
-            {!!img2imgWorkflows?.length && canImg2Img && (
+            {!!img2imgWorkflows?.length && (
               <Menu
                 zIndex={400}
                 trigger="hover"
@@ -424,17 +430,24 @@ export function GeneratedImage({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown className={classes.improveMenu}>
-                  {img2imgWorkflows?.map((workflow) => (
-                    <Menu.Item
-                      key={workflow.key}
-                      onClick={() => {
-                        if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
-                        else handleSelectWorkflow(workflow.key);
-                      }}
-                    >
-                      {workflow.name}
-                    </Menu.Item>
-                  ))}
+                  {img2imgWorkflows
+                    ?.filter((x) => x.key === 'img2img-upscale')
+                    .map((workflow) => (
+                      <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                        {workflow.name}
+                      </Menu.Item>
+                    ))}
+                  {canImg2Img &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key !== 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item
+                          key={workflow.key}
+                          onClick={() => handleSelectWorkflow(workflow.key)}
+                        >
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
                   {img2vidConfigs?.map(({ name, key, type }) => (
                     <Menu.Item
                       key={key}

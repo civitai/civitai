@@ -67,11 +67,11 @@ export async function addApiKey({
 export async function getTemporaryUserApiKey(
   args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
 ) {
+  const date = new Date();
   const key = await addApiKey(args);
 
   if (args.maxAge) {
     const { userId, type, name } = args;
-    const date = new Date();
     await dbWrite.apiKey.deleteMany({ where: { userId, type, name, expiresAt: { lt: date } } });
   }
 
