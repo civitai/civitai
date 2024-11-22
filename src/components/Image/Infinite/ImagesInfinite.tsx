@@ -31,6 +31,7 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   useIndex?: boolean;
+  disableStoreFilters?: boolean;
 };
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -50,9 +51,14 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   useIndex,
+  disableStoreFilters = false,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
-  const filters = removeEmpty({ useIndex, withTags, ...imageFilters, ...filterOverrides });
+  const filters = removeEmpty({
+    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+    useIndex,
+    withTags,
+  });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
