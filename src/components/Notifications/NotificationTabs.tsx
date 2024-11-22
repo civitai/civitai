@@ -9,7 +9,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const categoryTabs: string[] = Object.values(NotificationCategory);
-const tabs = ['all', ...categoryTabs, 'announcements'];
+const tabs = ['all', 'announcements', ...categoryTabs];
 
 const useStyles = createStyles(() => ({
   tab: {
