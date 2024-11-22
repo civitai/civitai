@@ -27,6 +27,7 @@ export const homeBlockMetaSchema = z
       id: z.number(),
       limit: z.number().default(8),
       rows: z.number().default(2),
+      tagId: z.coerce.number().optional(),
     }),
     leaderboards: z.array(
       z.object({

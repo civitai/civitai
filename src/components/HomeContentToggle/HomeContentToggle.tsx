@@ -12,6 +12,7 @@ import {
   IconVideo,
   IconProps,
   IconCake,
+  IconMountain,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -58,6 +59,10 @@ const homeOptions: Record<string, HomeOption> = {
     url: '/bounties',
     icon: (props: IconProps) => <IconMoneybag {...props} />,
     grouped: true,
+  },
+  challenges: {
+    url: '/challenges',
+    icon: (props: IconProps) => <IconMountain {...props} />,
   },
   events: {
     url: '/events',
