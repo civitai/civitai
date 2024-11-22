@@ -210,13 +210,14 @@ export const useImageContestCollectionDetails = (
   filters: { id: number },
   options?: { enabled: boolean }
 ) => {
-  const { data: collectionItems, ...rest } = trpc.image.getContestCollectionDetails.useQuery(
+  const { data, ...rest } = trpc.image.getContestCollectionDetails.useQuery(
     { ...filters },
     { ...options }
   );
 
   return {
-    collectionItems,
+    collectionItems: data?.collectionItems ?? [],
+    post: data?.post ?? null,
     ...rest,
   };
 };
