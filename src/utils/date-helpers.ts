@@ -108,6 +108,12 @@ export function dateWithoutTimezone(date: Date) {
 }
 
 export function getThanksgivingDate(year: number) {
-  const thanksgiving = dayjs.utc(`${year}-11-01`).day(4).add(3, 'weeks');
+  // Start with November 1st of the given year
+  const novemberFirst = dayjs(new Date(year, 10, 1));
+  // Calculate the offset to the first Thursday
+  const offsetToThursday = (4 - novemberFirst.day() + 7) % 7;
+  // Add the offset to get the first Thursday, then add 21 days (3 weeks) to get the fourth Thursday
+  const thanksgiving = novemberFirst.add(offsetToThursday + 21, 'day');
+
   return thanksgiving.toDate();
 }
