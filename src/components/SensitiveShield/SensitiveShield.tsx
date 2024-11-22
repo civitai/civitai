@@ -25,8 +25,7 @@ export function SensitiveShield({
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
 
-  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading')
-    return <div className="hidden">{children}</div>;
+  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
   // this content is not available on this site
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)))
