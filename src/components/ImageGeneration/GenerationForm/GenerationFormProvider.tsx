@@ -21,7 +21,9 @@ import {
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  getIsFluxUltra,
   getSizeFromAspectRatio,
+  getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -61,7 +63,7 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true, width: true, height: true })
+  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
   .extend({
     tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
@@ -102,11 +104,19 @@ const formSchema = textToImageParamsSchema
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     aspectRatio: z.string(),
+    fluxUltraAspectRatio: z.string(),
+    fluxUltraRaw: z.boolean().optional(),
     // creatorTip: z.number().min(0).max(1).default(0.25).optional(),
     // civitaiTip: z.number().min(0).max(1).optional(),
   })
-  .transform((data) => {
-    const { height, width } = getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+  .transform(({ fluxUltraRaw, ...data }) => {
+    const isFluxUltra = getIsFluxUltra({ modelId: data.model.modelId, fluxMode: data.fluxMode });
+    const { height, width } = isFluxUltra
+      ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
+      : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+
+    if (fluxUltraRaw) data.engine = 'flux-pro-raw';
+    else data.engine = undefined;
     return {
       ...data,
       height,

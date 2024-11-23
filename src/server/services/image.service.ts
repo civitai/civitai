@@ -4379,3 +4379,19 @@ export async function queueImageSearchIndexUpdate({
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 }
+
+export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true },
+  });
+  if (!image || !image.postId) return null;
+
+  const post = await dbRead.post.findUnique({
+    where: { id: image.postId },
+    select: { title: true, detail: true },
+  });
+  if (!post) return null;
+
+  return post;
+}

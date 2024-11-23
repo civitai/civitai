@@ -93,7 +93,7 @@ const featureFlags = createFeatureFlags({
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
-  draftMode: ['mod'],
+  draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
