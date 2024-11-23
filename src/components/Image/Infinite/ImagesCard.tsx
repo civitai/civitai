@@ -61,8 +61,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
   return (
-    <TwCosmeticWrapper cosmetic={image.cosmetic?.data} ref={ref}>
-      <TwCard style={{ height }}>
+    <TwCosmeticWrapper cosmetic={image.cosmetic?.data}>
+      <TwCard style={{ height }} ref={ref} className="border">
         {inView && (
           <ImageGuard2 image={image} inView={inView}>
             {(safe) => (
@@ -77,7 +77,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       <EdgeMedia2
                         metadata={image.metadata}
                         src={image.url}
-                        className={cx(sharedClasses.image, { [classes.blocked]: isBlocked })}
+                        className={cx(sharedClasses.image, { ['opacity-30']: isBlocked })}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         skip={getSkipValue(image)}
@@ -154,34 +154,17 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         </Stack>
                       </Box>
                     ) : (
-                      <div className="absolute inset-x-1 bottom-1 flex items-center justify-end gap-1">
-                        {/* <Reactions
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                          tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                        }}
-                        targetUserId={image.user.id}
-                        readonly={!safe}
-                        className={classes.reactions}
-                      /> */}
+                      <div className="absolute bottom-1 right-1">
                         {data.hasMeta && (
                           <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                            <ActionIcon variant="transparent" size={30} component="span">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
+                            <IconInfoCircle
+                              color="white"
+                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                              opacity={0.8}
+                              strokeWidth={2.5}
+                              size={26}
+                              className="m-0.5"
+                            />
                           </ImageMetaPopover2>
                         )}
                       </div>
@@ -224,7 +207,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     }}
                     targetUserId={image.user.id}
                     readonly={!safe}
-                    className={cx(classes.reactions, 'justify-between p-2')}
+                    className={cx('justify-between p-2')}
                   />
                 </div>
               </>
@@ -258,17 +241,5 @@ const useStyles = createStyles((theme) => {
       gap: 6,
       padding: theme.spacing.xs,
     },
-    reactions: {
-      borderRadius: theme.radius.sm,
-      background:
-        theme.colorScheme === 'dark'
-          ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-          : theme.colors.gray[0],
-      // backdropFilter: 'blur(5px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-      padding: 4,
-    },
-
-    blocked: { opacity: 0.3 },
   };
 });

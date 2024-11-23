@@ -159,13 +159,14 @@ export function Reactions({
           readonly={readonly}
           available={available}
         />
-        {supportsBuzzTipping && targetUserId && !readonly && (
+        {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
             entityType={entityType}
             entityId={entityId}
             hideLoginPopover
+            readonly={readonly}
           />
         )}
       </div>
@@ -255,12 +256,12 @@ function ReactionBadge({
       color={color}
       compact
       classNames={{ label: 'flex gap-1' }}
-      {...(buttonStyling ? buttonStyling(reaction, hasReacted) : {})}
+      {...buttonStyling?.(reaction, hasReacted)}
     >
       <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
-      </Text>
-      {!hideReactionCount && <Text inherit>{count}</Text>}
+      </Text>{' '}
+      {!hideReactionCount && count}
       {/* {constants.availableReactions[reaction]} {!hideReactionCount && count} */}
     </Button>
   );
@@ -271,6 +272,7 @@ function BuzzTippingBadge({
   entityId,
   entityType,
   toUserId,
+  readonly,
   ...props
 }: {
   tippedAmountCount: number;
@@ -278,6 +280,7 @@ function BuzzTippingBadge({
   entityType: string;
   entityId: number;
   hideLoginPopover?: boolean;
+  readonly?: boolean;
 }) {
   const { buttonStyling } = useReactionSettingsContext();
   const theme = useMantineTheme();
@@ -291,26 +294,32 @@ function BuzzTippingBadge({
     return null;
   }
 
-  return (
+  const badge = (
+    <Badge
+      size="md"
+      radius="xs"
+      py={10}
+      px={3}
+      color="yellow.7"
+      variant="light"
+      {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
+      classNames={{ inner: 'flex gap-0.5 items-center' }}
+    >
+      <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+      <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+    </Badge>
+  );
+
+  return readonly ? (
+    badge
+  ) : (
     <InteractiveTipBuzzButton
       toUserId={toUserId}
       entityType={buzzTipEntryType}
       entityId={entityId}
       {...props}
     >
-      <Badge
-        size="md"
-        radius="xs"
-        py={10}
-        px={3}
-        color="yellow.7"
-        variant="light"
-        {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
-        classNames={{ inner: 'flex gap-0.5 items-center' }}
-      >
-        <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-        <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
-      </Badge>
+      {badge}
     </InteractiveTipBuzzButton>
   );
 }
