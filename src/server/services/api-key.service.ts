@@ -75,7 +75,10 @@ export async function getTemporaryUserApiKey(
 
   if (args.maxAge) {
     const { userId, type, name } = args;
-    await dbWrite.apiKey.deleteMany({ where: { userId, type, name, expiresAt: { lt: date } } });
+    await dbWrite.apiKey.deleteMany({
+      where: { userId, type, name, expiresAt: { lt: new Date(date.getTime() + 5000) } },
+    });
+    await dbWrite.apiKey.deleteMany({ where: { userId, type, name: 'generation-service' } });
   }
 
   return key;
