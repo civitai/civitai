@@ -31,11 +31,8 @@ import {
 import React, { useEffect, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { TrainingEditTagsModal } from '~/components/Training/Form/TrainingEditTagsModal';
-import {
-  blankTagStr,
-  getTextTagsAsList,
-  labelDescriptions,
-} from '~/components/Training/Form/TrainingImages';
+import { blankTagStr, labelDescriptions } from '~/components/Training/Form/TrainingImages';
+import { getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 import { constants } from '~/server/common/constants';
 import {
   defaultTrainingState,

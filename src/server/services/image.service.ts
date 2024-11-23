@@ -2096,17 +2096,18 @@ export const getImage = async ({
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
-          Prisma.sql`
-            (i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus")
-            OR
-            (p."collectionId" IS NOT NULL AND EXISTS (
-              SELECT 1 FROM "CollectionContributor" cc
-              WHERE cc."collectionId" = p."collectionId"
-                AND cc."userId" = ${userId}
-                AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
-            ))`,
+          Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          withoutPost
+            ? null
+            : Prisma.sql`
+              p."collectionId" IS NOT NULL AND EXISTS (
+                SELECT 1 FROM "CollectionContributor" cc
+                WHERE cc."collectionId" = p."collectionId"
+                  AND cc."userId" = ${userId}
+                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+              )`,
           Prisma.sql`i."userId" = ${userId}`,
-        ],
+        ].filter(isDefined),
         ' OR '
       )})`
     );
@@ -4377,4 +4378,20 @@ export async function queueImageSearchIndexUpdate({
 }) {
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+}
+
+export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true },
+  });
+  if (!image || !image.postId) return null;
+
+  const post = await dbRead.post.findUnique({
+    where: { id: image.postId },
+    select: { title: true, detail: true },
+  });
+  if (!post) return null;
+
+  return post;
 }

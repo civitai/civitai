@@ -157,8 +157,9 @@ export const samplersToSchedulers: Record<Sampler | 'undefined', string> = {
   undefined: 'undefined',
 };
 
+// !important - undefined maps to the same values as 'DPM++ 2M Karras'
 export const samplersToComfySamplers: Record<
-  Sampler,
+  Sampler | 'undefined',
   { sampler: string; scheduler: 'normal' | 'karras' | 'exponential' }
 > = {
   'Euler a': { sampler: 'euler_ancestral', scheduler: 'normal' },
@@ -187,6 +188,7 @@ export const samplersToComfySamplers: Record<
   PLMS: { sampler: 'plms', scheduler: 'normal' },
   UniPC: { sampler: 'uni_pc', scheduler: 'normal' },
   LCM: { sampler: 'lcm', scheduler: 'normal' },
+  undefined: { sampler: 'dpmpp_2m', scheduler: 'karras' },
 };
 
 // TODO - improve this
@@ -340,8 +342,10 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
     if (params[key]) params[key] = Math.min(params[key] ?? 0, generation.maxValues[key]);
   }
 
-  if (!params.aspectRatio && params.width && params.height)
+  if (!params.aspectRatio && params.width && params.height) {
     params.aspectRatio = getClosestAspectRatio(params.width, params.height, params.baseModel);
+    params.fluxUltraAspectRatio = getClosestFluxUltraAspectRatio(params.width, params.height);
+  }
 
   // handle SDXL ClipSkip
   // I was made aware that SDXL only works with clipSkip 2
@@ -479,11 +483,13 @@ export function getBaseModelResourceTypes(baseModel: string) {
   // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
+export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
   { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
+  { label: 'Ultra', value: fluxUltraAir },
 ];
 
 export function getBaseModelSetTypes({
@@ -556,3 +562,30 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
   },
 ];
 // #endregion
+
+export const fluxUltraAspectRatios = [
+  { label: 'Landscape - 21:9', width: 3136, height: 1344 },
+  { label: 'Landscape - 16:9', width: 2752, height: 1536 },
+  { label: 'Landscape - 4:3', width: 2368, height: 1792 },
+  { label: 'Square - 1:1', width: 2048, height: 2048 },
+  { label: 'Portrait - 3:4', width: 1792, height: 2368 },
+  { label: 'Portrait - 9:16', width: 1536, height: 2752 },
+  { label: 'Portrait - 9:21', width: 1344, height: 3136 },
+];
+const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
+
+export const fluxModelId = 618692;
+export function getIsFluxUltra({ modelId, fluxMode }: { modelId?: number; fluxMode?: string }) {
+  return modelId === fluxModelId && fluxMode === fluxUltraAir;
+}
+
+export function getSizeFromFluxUltraAspectRatio(value: number) {
+  return fluxUltraAspectRatios[value] ?? fluxUltraAspectRatios[defaultFluxUltraAspectRatioIndex];
+}
+
+export function getClosestFluxUltraAspectRatio(width: number, height: number) {
+  const ratios = fluxUltraAspectRatios.map((x) => x.width / x.height);
+  const closest = findClosest(ratios, width / height);
+  const index = ratios.indexOf(closest);
+  return `${index ?? defaultFluxUltraAspectRatioIndex}`;
+}

@@ -51,7 +51,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
+import { goBack, goNext, getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 
 import {
   TrainingImagesSwitchLabel,
@@ -159,13 +159,6 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
       </Text>
     </Stack>
   ),
-};
-
-export const getTextTagsAsList = (txt: string) => {
-  return txt
-    .split(',')
-    .map((c) => c.trim().toLowerCase())
-    .filter((c) => c.length > 0);
 };
 
 const LabelSelectModal = ({ modelId }: { modelId: number }) => {

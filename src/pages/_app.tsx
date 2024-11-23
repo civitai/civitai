@@ -38,7 +38,7 @@ import { RouterTransition } from '~/components/RouterTransition/RouterTransition
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
-import { isDev } from '~/env/other';
+import { isDev, isProd } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
@@ -168,7 +168,7 @@ function MyApp(props: CustomAppProps) {
                                             <GenerationProvider>
                                               <IntersectionObserverProvider>
                                                 <BaseLayout>
-                                                  <TrackPageView />
+                                                  {isProd && <TrackPageView />}
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}

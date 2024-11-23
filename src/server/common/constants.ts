@@ -657,6 +657,7 @@ export const generation = {
     upscale: 1.5,
     civitaiTip: 0,
     creatorTip: 0.25,
+    fluxUltraAspectRatio: '4',
     model: {
       id: 128713,
       name: '8',

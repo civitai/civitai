@@ -1,18 +1,26 @@
 import { NextApiResponse } from 'next';
-import client from 'prom-client';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { dbRead, dbWrite } from '~/server/db/client';
 import { EOL } from 'os';
+import client from 'prom-client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
   labels.podname = process.env.PODNAME;
 }
 
-client.collectDefaultMetrics({
-  register: client.register,
-  labels,
-});
+declare global {
+  // eslint-disable-next-line no-var
+  var collectMetricsInitialized: boolean;
+}
+
+if (!global.collectMetricsInitialized) {
+  client.collectDefaultMetrics({
+    register: client.register,
+    labels,
+  });
+  global.collectMetricsInitialized = true;
+}
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
   const metrics = await client.register.metrics();

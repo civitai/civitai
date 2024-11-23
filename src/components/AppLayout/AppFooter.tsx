@@ -119,6 +119,7 @@ export function AppFooter() {
             .map(({ features, ...props }, i) => (
               <Button
                 key={i}
+                component={Link}
                 {...props}
                 className="px-2.5 @max-sm:px-1"
                 size="xs"

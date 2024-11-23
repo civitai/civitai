@@ -1,4 +1,5 @@
 import {
+  Center,
   createStyles,
   Group,
   MantineSize,
@@ -8,33 +9,61 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconAward } from '@tabler/icons-react';
-import { IconAlertOctagon, IconBell } from '@tabler/icons-react';
+import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { MouseEvent } from 'react';
+import React, { MouseEvent, useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
+import { isDefined } from '~/utils/type-guards';
 
-export function NotificationList({ items, textSize = 'sm', truncate = true, onItemClick }: Props) {
+export function NotificationList({
+  items,
+  textSize = 'sm',
+  truncate = true,
+  onItemClick,
+  searchText,
+}: Props) {
   const router = useRouter();
   const { classes } = useStyles();
 
-  return (
-    <SimpleGrid cols={1} spacing={0}>
-      {items.map((notification) => {
-        const notificationDetails = notification.details as MixedObject;
+  const fullItems = useMemo(() => {
+    return items
+      .map((item) => {
+        const notificationDetails = item.details;
         const details =
           notificationDetails.type !== 'announcement'
             ? getNotificationMessage({
-                type: notification.type,
+                type: item.type,
                 details: notificationDetails,
               })
             : notificationDetails;
         if (!details) return null;
+
+        if (searchText && searchText.length > 0) {
+          if (!details.message.toLowerCase().includes(searchText.toLowerCase())) return null;
+        }
+        return { ...item, fullDetails: details };
+      })
+      .filter(isDefined);
+  }, [items, searchText]);
+
+  if (!fullItems.length) {
+    return (
+      <Center p="sm">
+        <Text>No results found.</Text>
+      </Center>
+    );
+  }
+
+  return (
+    <SimpleGrid cols={1} spacing={0}>
+      {fullItems.map((notification) => {
+        const notificationDetails = notification.details;
+        const details = notification.fullDetails;
 
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
@@ -51,7 +80,7 @@ export function NotificationList({ items, textSize = 'sm', truncate = true, onIt
             if (pathname !== notificationPathname) {
               router.push(notificationPathname).then(() =>
                 router.push(
-                    { pathname: notificationPathname, query: QS.parse(query) as any }, //eslint-disable-line
+                  { pathname: notificationPathname, query: QS.parse(query) as any } //eslint-disable-line
                 )
               );
             } else {
@@ -126,6 +155,7 @@ type Props = {
   onItemClick: (notification: NotificationGetAll['items'][number], keepOpened: boolean) => void;
   textSize?: MantineSize;
   truncate?: boolean;
+  searchText: string;
 };
 
 const useStyles = createStyles((theme) => ({

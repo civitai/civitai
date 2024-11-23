@@ -1,17 +1,16 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { dbWrite, dbRead } from '~/server/db/client';
+import client from 'prom-client';
+import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { logToAxiom } from '~/server/logging/client';
+import { metricsSearchClient } from '~/server/meilisearch/client';
+import { registerCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
-import { clickhouse } from '~/server/clickhouse/client';
-import { pingBuzzService } from '~/server/services/buzz.service';
-import { env } from '~/env/server.mjs';
-import { pgDbWrite } from '~/server/db/pgDb';
-import { metricsSearchClient } from '~/server/meilisearch/client';
-import { registerCounter } from '~/server/prom/client';
-import client from 'prom-client';
-import { isProd } from '~/env/other';
-import { logToAxiom } from '~/server/logging/client';
 
 function logError({ error, name, details }: { error: Error; name: string; details: unknown }) {
   if (isProd) {
@@ -49,7 +48,7 @@ const checkFns = {
     }));
   },
   async pgRead() {
-    return !!(await pgDbWrite.query('SELECT 1').catch((e) => {
+    return !!(await pgDbRead.query('SELECT 1').catch((e) => {
       logError({ error: e, name: 'pgRead', details: null });
       return false;
     }));

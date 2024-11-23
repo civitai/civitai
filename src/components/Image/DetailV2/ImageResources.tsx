@@ -53,44 +53,51 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Alert>There are no resources associated with this image</Alert>
       ) : (
         <ul className="flex list-none flex-col gap-0.5">
-          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => (
-            <li key={resource.id} className="flex flex-col">
-              <div className="flex items-center justify-between gap-3">
-                <Wrapper resource={resource}>
-                  <Text
-                    lineClamp={1}
-                    className={`${resource.modelId ? 'cursor-pointer underline' : ''}`}
-                  >
-                    {resource.modelName}
-                  </Text>
-                </Wrapper>
-                {resource.modelType && (
-                  <div className="flex gap-1">
-                    <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
-                    {!!resource.strength && (
-                      <Badge color="gray" variant="filled">
-                        {resource.strength}
-                      </Badge>
-                    )}
-                    {currentUser?.isModerator && (
-                      <RemoveResource imageId={imageId} resourceId={resource.id} />
-                    )}
-                  </div>
+          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => {
+            const href = resource.modelId
+              ? `/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
+                  resource.versionId
+                }`
+              : undefined;
+            return (
+              <li key={resource.id} className="flex flex-col">
+                <div className="flex items-center justify-between gap-3">
+                  <Wrapper resource={resource}>
+                    <Text
+                      lineClamp={1}
+                      className={`${resource.modelId ? 'cursor-pointer underline' : ''}`}
+                    >
+                      {resource.modelName}
+                    </Text>
+                  </Wrapper>
+                  {resource.modelType && (
+                    <div className="flex gap-1">
+                      <Badge color="blue">{getDisplayName(resource.modelType)}</Badge>
+                      {!!resource.strength && (
+                        <Badge color="gray" variant="filled">
+                          {resource.strength}
+                        </Badge>
+                      )}
+                      {currentUser?.isModerator && (
+                        <RemoveResource imageId={imageId} resourceId={resource.id} />
+                      )}
+                    </div>
+                  )}
+                </div>
+                {resource.versionName && (
+                  <Wrapper resource={resource}>
+                    <Text
+                      lineClamp={1}
+                      color="dimmed"
+                      className={`text-xs ${resource.modelId ? 'cursor-pointer' : ''}`}
+                    >
+                      {resource.versionName}
+                    </Text>
+                  </Wrapper>
                 )}
-              </div>
-              {resource.versionName && (
-                <Wrapper resource={resource}>
-                  <Text
-                    lineClamp={1}
-                    color="dimmed"
-                    className={`text-xs ${resource.modelId ? 'cursor-pointer' : ''}`}
-                  >
-                    {resource.versionName}
-                  </Text>
-                </Wrapper>
-              )}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
       {resources.length > LIMIT && (
@@ -121,9 +128,8 @@ const Wrapper = ({
       href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
         resource.versionId
       }`}
-      passHref
     >
-      {cloneElement(children, { component: 'a' })}
+      {children}
     </Link>
   );
 };
