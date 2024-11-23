@@ -135,7 +135,6 @@ export async function parseGenerateImageInput({
       originalParams.cfgScale = 1;
     }
     if (originalParams.fluxMode === fluxUltraAir) {
-      originalParams.engine = 'flux-pro-raw';
       delete originalParams.steps;
       delete originalParams.cfgScale;
       delete originalParams.negativePrompt;
@@ -582,16 +581,15 @@ function formatTextToImageStep({
     ...upscale,
 
     fluxMode: metadata?.params?.fluxMode,
+    fluxUltraRaw: input.engine === 'flux-pro-raw',
   } as TextToImageParams;
 
-  if ('engine' in params) {
-    if (params.engine === 'flux-pro-raw') {
-      delete params.steps;
-      delete params.cfgScale;
-      delete params.clipSkip;
-      delete (params as any).draft;
-      delete (params as any).nsfw;
-    }
+  if (resources.some((x) => x.air === fluxUltraAir)) {
+    delete params.steps;
+    delete params.cfgScale;
+    delete params.clipSkip;
+    delete (params as any).draft;
+    delete (params as any).nsfw;
   }
 
   return {

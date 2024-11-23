@@ -276,14 +276,11 @@ export function GenerationFormContent() {
   };
 
   const [hasMinorResources, setHasMinorResources] = useState(false);
-  const [isFluxUltra, setIsFluxUltra] = useState(false);
+
   useEffect(() => {
     const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources([model, ...resources, vae].filter((x) => x?.minor).length > 0);
-      }
-      if (name === 'fluxMode') {
-        setIsFluxUltra(getIsFluxUltra({ modelId: model?.modelId, fluxMode }));
       }
     });
     return () => {
@@ -323,6 +320,7 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
+          const isFluxUltra = getIsFluxUltra({ modelId: model?.modelId, fluxMode });
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -733,6 +731,22 @@ export function GenerationFormContent() {
                     label="Negative Prompt"
                     onKeyDown={promptKeyHandler}
                     autosize
+                  />
+                )}
+                {isFluxUltra && (
+                  <InputSwitch
+                    name="fluxUltraRaw"
+                    labelPosition="left"
+                    label={
+                      <div className="relative flex items-center gap-1">
+                        <Input.Label>Raw mode</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                          Generates images with a more natural, less synthetic aesthetic, enhancing
+                          diversity in human subjects and improving the realism of nature
+                          photography.
+                        </InfoPopover>
+                      </div>
+                    }
                   />
                 )}
 

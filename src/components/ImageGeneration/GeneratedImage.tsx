@@ -337,13 +337,14 @@ export function GeneratedImage({
                 <>
                   <Menu.Divider />
                   <Menu.Label>Image-to-image workflows</Menu.Label>
-                  {img2imgWorkflows
-                    ?.filter((x) => x.key === 'img2img-upscale')
-                    .map((workflow) => (
-                      <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
-                        {workflow.name}
-                      </Menu.Item>
-                    ))}
+                  {!isVideo &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key === 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
                   {canImg2Img &&
                     img2imgWorkflows
                       ?.filter((x) => x.key !== 'img2img-upscale')
@@ -430,13 +431,14 @@ export function GeneratedImage({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown className={classes.improveMenu}>
-                  {img2imgWorkflows
-                    ?.filter((x) => x.key === 'img2img-upscale')
-                    .map((workflow) => (
-                      <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
-                        {workflow.name}
-                      </Menu.Item>
-                    ))}
+                  {!isVideo &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key === 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
                   {canImg2Img &&
                     img2imgWorkflows
                       ?.filter((x) => x.key !== 'img2img-upscale')

@@ -105,14 +105,18 @@ const formSchema = textToImageParamsSchema
     remixSimilarity: z.number().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
+    fluxUltraRaw: z.boolean().optional(),
     // creatorTip: z.number().min(0).max(1).default(0.25).optional(),
     // civitaiTip: z.number().min(0).max(1).optional(),
   })
-  .transform((data) => {
+  .transform(({ fluxUltraRaw, ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.modelId, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
+
+    if (fluxUltraRaw) data.engine = 'flux-pro-raw';
+    else data.engine = undefined;
     return {
       ...data,
       height,

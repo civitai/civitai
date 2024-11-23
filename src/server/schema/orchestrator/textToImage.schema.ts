@@ -46,6 +46,7 @@ export const textToImageParamsSchema = z.object({
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
+  fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
 });
