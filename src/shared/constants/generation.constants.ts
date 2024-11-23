@@ -24,7 +24,7 @@ export const WORKFLOW_TAGS = {
 };
 
 export const generationServiceCookie = {
-  name: 'generation-service',
+  name: 'generation-token',
   maxAge: 3600,
 };
 
