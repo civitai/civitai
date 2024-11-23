@@ -1,3 +1,4 @@
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
@@ -16,7 +17,7 @@ export const dailyChallengeConfig = {
   entryPrize: { buzz: 400, points: 10 } as Prize,
   reviewAmount: { min: 8, max: 12 },
   finalReviewAmount: 10,
-  resourceCosmeticId: 1,
+  resourceCosmeticId: null,
 };
 
 export type Prize = {
@@ -43,7 +44,7 @@ type DailyChallengeDetails = {
   coverUrl: string;
 };
 async function getChallengeDetails(articleId: number) {
-  return dbRead.$queryRaw<DailyChallengeDetails>`
+  const rows = await dbRead.$queryRaw<DailyChallengeDetails[]>`
     SELECT
       a."id" as "articleId",
       (a.metadata->>'theme') as "theme",
@@ -57,13 +58,34 @@ async function getChallengeDetails(articleId: number) {
     FROM "Article" a
     WHERE a.id = ${articleId}
   `;
+
+  return rows[0];
 }
 export async function setCurrentChallenge(articleId: number) {
   const challenge = await getChallengeDetails(articleId);
   await redis.packed.set(REDIS_KEYS.DAILY_CHALLENGE.DETAILS, challenge);
 }
 export async function getCurrentChallenge() {
-  return redis.packed.get<DailyChallengeDetails>(REDIS_KEYS.DAILY_CHALLENGE.DETAILS);
+  const challenge = await redis.packed.get<DailyChallengeDetails>(
+    REDIS_KEYS.DAILY_CHALLENGE.DETAILS
+  );
+  if (!challenge) {
+    // If the challenge is not set, we need to find the most recent approved challenge
+    const [article] = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT
+        ci."articleId" as id
+      FROM "CollectionItem" ci
+      WHERE
+        ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
+        AND ci."status" = 'ACCEPTED'
+      ORDER BY ci."createdAt" DESC
+      LIMIT 1
+    `;
+    if (!article) return null;
+    setCurrentChallenge(article.id);
+    return getCurrentChallenge();
+  }
+  return challenge;
 }
 export async function getUpcomingChallenge() {
   const results = await dbRead.$queryRaw<{ articleId: number }[]>`

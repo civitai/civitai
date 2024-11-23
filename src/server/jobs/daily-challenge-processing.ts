@@ -18,7 +18,7 @@ import {
 import dayjs from 'dayjs';
 import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { getRandomInt } from '~/utils/number-helpers';
+import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { upsertComment } from '~/server/services/commentsv2.service';
@@ -27,8 +27,16 @@ import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { withRetries } from '~/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { markdownToHtml } from '~/utils/markdown-helpers';
+import { createLogger } from '~/utils/logging';
+
+const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
 export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * * *', async () => {
+  // Stop if we already have an upcoming challenge
+  const upcomingChallenge = await getUpcomingChallenge();
+  if (upcomingChallenge) return;
+
   // Get date of the challenge (should be the next day if it's past 11pm UTC)
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   const challengeDate = dayjs().utc().add(addDays, 'day').startOf('day').toDate();
@@ -41,18 +49,18 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
       WHERE "collectionId" = ${config.collectionId}
-      AND "status" = 'ACCEPTED'
+      AND ci."status" = 'ACCEPTED'
     `;
 
   //Get Users on Cooldown ⚠️
   const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
       SELECT DISTINCT
-        cast(a.metadata->>'userId' as int) as "userId"
+        cast(a.metadata->'userId' as int) as "userId"
       FROM "CollectionItem" ci
       JOIN "Article" a ON a.id = ci."modelId"
-      WHERE ci."collectionId" = ${config.collectionId}
+      WHERE ci."collectionId" = ${config.challengeCollectionId}
       AND a."status" = 'Published'
-      AND a."publishedAt" > now() - interval ${config.cooldownPeriod}
+      AND a."publishedAt" > now() - ${config.cooldownPeriod}::interval
     `;
 
   // Remove users on cooldown
@@ -69,7 +77,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
       WHERE "collectionId" = ${config.collectionId}
-      AND "status" = 'ACCEPTED'
+      AND ci."status" = 'ACCEPTED'
       AND m."userId" = ${randomUser.userId}
     `;
 
@@ -107,6 +115,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       userId: config.challengeRunnerUserId,
       read: CollectionReadConfiguration.Private,
       write: CollectionReadConfiguration.Private,
+      type: 'Image',
       mode: 'Contest',
       metadata: {
         modelId: resource.modelId,
@@ -127,7 +136,12 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   // Setup Article
   // ----------------------------------------------
   // Generate article
-  const articleDetails = await generateArticle({ resource, image, collectionId: collection.id });
+  const articleDetails = await generateArticle({
+    resource,
+    image,
+    collectionId: collection.id,
+    challengeDate,
+  });
 
   // Create article
   const article = await dbWrite.article.create({
@@ -151,16 +165,18 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     },
     select: { id: true },
   });
+  log('Article created:', article);
 
   // Add to challenge collection
   await dbWrite.collectionItem.create({
     data: {
-      collectionId: config.collectionId,
+      collectionId: config.challengeCollectionId,
       articleId: article.id,
       addedById: config.challengeRunnerUserId,
       status: 'REVIEW',
     },
   });
+  log('Added to challenge collection');
 });
 
 export const processDailyChallengeEntries = createJob(
@@ -170,11 +186,12 @@ export const processDailyChallengeEntries = createJob(
     // Get current challenge
     const currentChallenge = await getCurrentChallenge();
     if (!currentChallenge) return;
+    log('Processing entries for challenge:', currentChallenge);
 
     // Update pending entries
     // ----------------------------------------------
     // Set their status to 'REJECTED' if they are not safe or don't have a required resource
-    await dbWrite.$executeRaw`
+    const reviewedCount = await dbWrite.$executeRaw`
       WITH source AS (
         SELECT
         i.id,
@@ -184,7 +201,7 @@ export const processDailyChallengeEntries = createJob(
         )}) AND ir."imageId" = i.id) as "hasResource"
         FROM "CollectionItem" ci
         JOIN "Image" i ON i.id = ci."imageId"
-        WHERE ci."collectionId" = ${config.collectionId}
+        WHERE ci."collectionId" = ${currentChallenge.collectionId}
         AND ci.status = 'REVIEW'
         AND i."nsfwLevel" != 0
       )
@@ -197,6 +214,7 @@ export const processDailyChallengeEntries = createJob(
       FROM source s
       WHERE s.id = ci."imageId";
     `;
+    log('Reviewed entries:', reviewedCount);
 
     // Rate new entries
     // ----------------------------------------------
@@ -208,6 +226,7 @@ export const processDailyChallengeEntries = createJob(
       WHERE id = ${currentChallenge.articleId}
     `;
     const lastReviewedAt = new Date(article.reviewedAt);
+    log('Last reviewed at:', lastReviewedAt);
 
     // Get entries approved since last reviewed
     const reviewing = Date.now();
@@ -220,10 +239,11 @@ export const processDailyChallengeEntries = createJob(
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
       JOIN "User" u ON u.id = i."userId"
-      WHERE ci."collectionId" = ${config.collectionId}
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci.status = 'ACCEPTED'
       AND ci."reviewedAt" >= ${lastReviewedAt}
     `;
+    log('Recent entries:', recentEntries.length);
 
     // Randomly select entries to review up to the limit
     let toReviewCount = getRandomInt(config.reviewAmount.min, config.reviewAmount.max);
@@ -236,43 +256,57 @@ export const processDailyChallengeEntries = createJob(
       toReview.push(entry);
       toReviewCount--;
     }
+    log('Entries to review:', toReview.length);
 
     // Rate entries
     const tasks = toReview.map((entry) => async () => {
-      const review = await generateReview({
-        theme: currentChallenge.theme,
-        creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
-      });
+      try {
+        log('Reviewing entry:', entry);
+        const review = await generateReview({
+          theme: currentChallenge.theme,
+          creator: entry.username,
+          imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
+        });
+        log('Review prepared', entry.imageId, review);
 
-      // Send comment
-      await upsertComment({
-        userId: config.challengeRunnerUserId,
-        entityType: 'image',
-        entityId: entry.imageId,
-        content: review.comment,
-      });
+        // Send comment
+        await upsertComment({
+          userId: config.challengeRunnerUserId,
+          entityType: 'image',
+          entityId: entry.imageId,
+          content: review.comment,
+        });
+        log('Comment sent', entry.imageId);
 
-      // Send reaction
-      await toggleReaction({
-        entityType: 'image',
-        entityId: entry.imageId,
-        reaction: review.reaction,
-        userId: config.challengeRunnerUserId,
-      });
+        // Send reaction
+        try {
+          await toggleReaction({
+            entityType: 'image',
+            entityId: entry.imageId,
+            reaction: review.reaction,
+            userId: config.challengeRunnerUserId,
+          });
+          log('Reaction sent', entry.imageId);
+        } catch (error) {
+          log('Failed to send reaction', entry.imageId, review.reaction);
+        }
 
-      // Add tag and score note to collection item
-      const note = JSON.stringify({
-        score: review.score,
-        summary: review.summary,
-      });
-      await dbWrite.$executeRaw`
-        UPDATE "CollectionItem"
-        SET "tagId" = ${config.judgedTagId}, note = ${note}
-        WHERE
-          "collectionId" = ${currentChallenge.collectionId}
-          AND "imageId" = ${entry.imageId};
-      `;
+        // Add tag and score note to collection item
+        const note = JSON.stringify({
+          score: review.score,
+          summary: review.summary,
+        });
+        await dbWrite.$executeRaw`
+          UPDATE "CollectionItem"
+          SET "tagId" = ${config.judgedTagId}, note = ${note}
+          WHERE
+            "collectionId" = ${currentChallenge.collectionId}
+            AND "imageId" = ${entry.imageId};
+        `;
+        log('Tag and note added', entry.imageId);
+      } catch (error) {
+        log('Failed to review entry', entry.imageId, error);
+      }
     });
     await limitConcurrency(tasks, 5);
 
@@ -280,34 +314,54 @@ export const processDailyChallengeEntries = createJob(
     // ----------------------------------------------
     // Get users that have recently added new entries
     const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
-    const earnedPrizes = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
-      SELECT
-      i."userId",
-      COUNT(*) as count
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      WHERE
-        ci."collectionId" = ${currentChallenge.collectionId}
-        AND ci.status = 'ACCEPTED'
-        AND i."userId" IN (${Prisma.join(userIds)})
-      GROUP BY 1
-      HAVING COUNT(*) >= ${config.entryPrizeRequirement};
-    `;
+    if (userIds.length > 0) {
+      const earnedPrizes = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+        SELECT
+        i."userId",
+        COUNT(*) as count
+        FROM "CollectionItem" ci
+        JOIN "Image" i ON i.id = ci."imageId"
+        WHERE
+          ci."collectionId" = ${currentChallenge.collectionId}
+          AND ci.status = 'ACCEPTED'
+          AND i."userId" IN (${Prisma.join(userIds)})
+        GROUP BY 1
+        HAVING COUNT(*) >= ${config.entryPrizeRequirement};
+      `;
+      log('Earned prizes:', earnedPrizes.length);
 
-    const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        earnedPrizes.map(({ userId }) => ({
-          type: TransactionType.Reward,
-          toAccountId: userId,
-          fromAccountId: 0, // central bank
-          amount: config.entryPrize.buzz,
-          description: `Challenge Entry Prize: ${dateStr}`,
-          externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
-          toAccountType: 'generation',
-        }))
-      )
-    );
+      if (earnedPrizes.length > 0) {
+        const dateStr = dayjs(currentChallenge.date).format('YYYY-MM-DD');
+        await withRetries(() =>
+          createBuzzTransactionMany(
+            earnedPrizes.map(({ userId }) => ({
+              type: TransactionType.Reward,
+              toAccountId: userId,
+              fromAccountId: 0, // central bank
+              amount: config.entryPrize.buzz,
+              description: `Challenge Entry Prize: ${dateStr}`,
+              externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
+              toAccountType: 'generation',
+            }))
+          )
+        );
+        log('Prizes sent');
+
+        // Notify them
+        await createNotification({
+          type: 'challenge-participation',
+          category: NotificationCategory.System,
+          key: `challenge-participation:${currentChallenge.articleId}`,
+          userIds: earnedPrizes.map((entry) => entry.userId),
+          details: {
+            articleId: currentChallenge.articleId,
+            challengeName: currentChallenge.title,
+            prize: config.entryPrize.buzz,
+          },
+        });
+        log('Users notified');
+      }
+    }
 
     // Update last review time
     // ----------------------------------------------
@@ -316,6 +370,7 @@ export const processDailyChallengeEntries = createJob(
       SET metadata = metadata::jsonb || '{"reviewedAt": ${reviewing}}'
       WHERE id = ${currentChallenge.articleId};
     `);
+    log('Last reviewed at updated');
   }
 );
 
@@ -330,6 +385,8 @@ export const pickDailyChallengeWinners = createJob(
       return;
     }
 
+    log('Picking winners for challenge:', currentChallenge);
+
     // Close challenge
     // ----------------------------------------------
     await dbWrite.$executeRaw`
@@ -337,6 +394,7 @@ export const pickDailyChallengeWinners = createJob(
       SET write = 'Private'::"CollectionWriteConfiguration"
       WHERE id = ${currentChallenge.collectionId};
     `;
+    log('Collection closed');
 
     // Pick Winners
     // ----------------------------------------------
@@ -349,7 +407,7 @@ export const pickDailyChallengeWinners = createJob(
         ci.note,
         (
           SELECT
-          COALESCE(SUM("metricValue"), 0)
+          CAST(COALESCE(SUM("metricValue"), 0) as int)
           FROM "EntityMetric"
           WHERE
             "entityType" = 'Image'
@@ -359,10 +417,11 @@ export const pickDailyChallengeWinners = createJob(
       FROM "CollectionItem" ci
       JOIN "Image" i ON i.id = ci."imageId"
       JOIN "User" u ON u.id = i."userId"
-      JOIN "EntryMetric"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci."tagId" = ${config.judgedTagId}
+      AND ci.status = 'ACCEPTED'
     `;
+    log('Judged entries:', judgedEntriesRaw?.length);
     if (!judgedEntriesRaw.length) {
       await startNextChallenge();
       return;
@@ -400,6 +459,7 @@ export const pickDailyChallengeWinners = createJob(
     }
 
     // Send to LLM for final judgement
+    log('Sending entries for final judgement');
     const { winners, process, outcome } = await generateWinners({
       theme: currentChallenge.theme,
       entries: toFinalJudgement.map((entry) => ({
@@ -411,24 +471,66 @@ export const pickDailyChallengeWinners = createJob(
 
     // Map winners to entries
     const winningEntries = winners
-      .map((winner) => {
+      .map((winner, i) => {
         const entry = toFinalJudgement.find((e) => e.username === winner.creator);
         if (!entry) return null;
         return {
           ...entry,
+          position: i + 1,
+          prize: config.prizes[i].buzz,
           reason: winner.reason,
         };
       })
       .filter(isDefined);
+    const winnerUserIds = winningEntries.map((entry) => entry.userId);
 
-    // TODO - Update Article with winners, process/outcome, and metadata
+    // Update Article with winners, process/outcome, and metadata
+    const updateContent = await markdownToHtml(`## Challenge Complete!
+${process}
+
+## Winners
+${winningEntries
+  .map(
+    (entry) => `### ${asOrdinal(entry.position)}. [${entry.username}](/user/${entry.username})
+${entry.reason}
+
+**[View Entry](/images/${entry.imageId})**
+`
+  )
+  .join('\n')}
+
+${outcome}
+
+---`);
+
     await dbWrite.$executeRaw`
       UPDATE "Article"
-      SET metadata = metadata::jsonb || '{"status": "complete"}'
+      SET
+        metadata = metadata::jsonb || '{"status": "complete", "winners": ${Prisma.raw(
+          JSON.stringify(winnerUserIds)
+        )} }',
+        content = CONCAT(${updateContent}, content),
+        title = CONCAT('Completed: ', title)
       WHERE id = ${currentChallenge.articleId};
     `;
+    log('Article updated');
 
-    // TODO - Send notifications to winners
+    // Send notifications to winners
+    for (const entry of winningEntries) {
+      await createNotification({
+        type: 'challenge-winner',
+        category: NotificationCategory.System,
+        key: `challenge-winner:${currentChallenge.articleId}`,
+        userId: entry.userId,
+        details: {
+          articleId: currentChallenge.articleId,
+          challengeName: currentChallenge.title,
+          position: entry.position,
+          prize: entry.prize,
+        },
+      });
+    }
+    log('Winners notified');
 
     // Send prizes to winners
     // ----------------------------------------------
@@ -446,6 +548,7 @@ export const pickDailyChallengeWinners = createJob(
         }))
       )
     );
+    log('Prizes sent');
 
     // Start next challenge
     // ----------------------------------------------
@@ -505,7 +608,7 @@ async function getCoverOfModel(modelId: number) {
     JOIN "Post" p ON p.id = i."postId"
     JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
     JOIN "Model" m ON m.id = mv."modelId"
-    WHERE m.id = 577283
+    WHERE m.id = ${modelId}
     AND p."userId" = m."userId"
     AND i."nsfwLevel" = 1
     ORDER BY mv.index, p.id, i.index
@@ -519,6 +622,7 @@ async function getCoverOfModel(modelId: number) {
 async function startNextChallenge() {
   const upcomingChallenge = await getUpcomingChallenge();
   if (!upcomingChallenge) return;
+  log('Starting next challenge');
 
   // Open collection
   await dbWrite.$executeRaw`
@@ -527,6 +631,7 @@ async function startNextChallenge() {
         read = 'Public'::"CollectionReadConfiguration"
     WHERE id = ${upcomingChallenge.collectionId};
   `;
+  log('Collection opened');
 
   // Publish article
   await dbWrite.$executeRaw`
@@ -537,30 +642,35 @@ async function startNextChallenge() {
       metadata = metadata::jsonb || '{"status": "active"}'
     WHERE id = ${upcomingChallenge.articleId};
   `;
+  log('Article published');
 
   // Accept Collection Item in Challenge Collection
   await dbWrite.$executeRaw`
     UPDATE "CollectionItem"
     SET status = 'ACCEPTED'
-    WHERE "collectionId" = ${config.collectionId}
+    WHERE "collectionId" = ${config.challengeCollectionId}
     AND "articleId" = ${upcomingChallenge.articleId};
   `;
+  log('Collection item accepted');
 
   // Give cosmetic to resource owner
-  await dbWrite.$executeRaw`
-    INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
-    SELECT
-      "userId",
-      ${config.resourceCosmeticId},
-      now(),
-      now(),
-      id,
-      'Model',
-      id,
-      'Model'
-    FROM "Model"
-    WHERE id = ${upcomingChallenge.modelId};
-  `;
+  if (config.resourceCosmeticId) {
+    await dbWrite.$executeRaw`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt", "forId", "forType", "equippedToId", "equippedToType")
+      SELECT
+        "userId",
+        ${config.resourceCosmeticId},
+        now(),
+        now(),
+        id,
+        'Model',
+        id,
+        'Model'
+      FROM "Model"
+      WHERE id = ${upcomingChallenge.modelId};
+    `;
+    log('Cosmetic given');
+  }
 
   // Set as current challenge
   await setCurrentChallenge(upcomingChallenge.articleId);
@@ -568,12 +678,6 @@ async function startNextChallenge() {
 
 // Types
 // ----------------------------------------------
-type ResourceDetails = {
-  id: number;
-  creator: string;
-  title: string;
-};
-
 type RecentEntry = {
   imageId: number;
   userId: number;

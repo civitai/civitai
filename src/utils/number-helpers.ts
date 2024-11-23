@@ -25,6 +25,20 @@ export function formatToLeastDecimals(value: number, decimals = 2) {
   return parseFloat(value.toFixed(decimals));
 }
 
+export function asOrdinal(n: number) {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const value = n % 100;
+
+  // Handle special cases like 11th, 12th, 13th
+  if (value >= 11 && value <= 13) {
+    return n + 'th';
+  }
+
+  // Use the last digit to determine the suffix
+  const lastDigit = n % 10;
+  return n + (suffixes[lastDigit] || 'th');
+}
+
 export function formatSeconds(seconds: number) {
   if (seconds === 0) return '0 seconds';
 
