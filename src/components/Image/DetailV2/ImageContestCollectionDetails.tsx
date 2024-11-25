@@ -179,7 +179,7 @@ export const ImageContestCollectionDetails = ({
                     )}
 
                     <Text>
-                      Share the link to your submission in the and have your friends react on it.
+                      Share the link to your submission in the contest and have your friends react on it.
                       This could help you win the contest and the Community Choice award.
                     </Text>
                     <Text>
