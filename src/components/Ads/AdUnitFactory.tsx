@@ -19,13 +19,15 @@ function AdUnitContent({
   adUnit,
   sizes,
   lazyLoad,
+  id: initialId,
 }: {
   adUnit: string;
   sizes?: AdSize[];
   lazyLoad?: boolean;
+  id?: string;
 }) {
-  const loadedRef = useRef(false);
-  const [id, setId] = useState<string | null>(null);
+  const loadedRef = useRef(!initialId ? false : true);
+  const [id, setId] = useState<string | null>(initialId ?? null);
 
   useEffect(() => {
     if (loadedRef.current) return;
@@ -80,6 +82,7 @@ function AdWrapper({
   withFeedback,
   lazyLoad,
   className,
+  id,
 }: {
   adUnit: string;
   sizes?: AdSize[] | null;
@@ -87,6 +90,7 @@ function AdWrapper({
   withFeedback?: boolean;
   lazyLoad?: boolean;
   className?: string;
+  id?: string;
 }) {
   const { adsBlocked, ready, isMember } = useAdsContext();
 
@@ -104,7 +108,7 @@ function AdWrapper({
       {adsBlocked ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
       ) : ready && adSizes !== undefined ? (
-        <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} lazyLoad={lazyLoad} />
+        <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} lazyLoad={lazyLoad} id={id} />
       ) : null}
       {withFeedback && !isMember && (
         <>
@@ -130,6 +134,7 @@ export function adUnitFactory(factoryArgs: {
   adUnit: string;
   sizes?: AdSize[] | null;
   lutSizes?: AdSizeLUT[];
+  id?: string;
 }) {
   return function AdUnit({
     lazyLoad,

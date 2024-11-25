@@ -9,7 +9,6 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { IconArrowUp } from '@tabler/icons-react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
-import { AdUnitOutstream } from '~/components/Ads/AdUnit';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
@@ -87,9 +86,6 @@ export function AppFooter() {
       className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
       style={!showFooter ? { transform: 'translateY(var(--footer-height))' } : undefined}
     >
-      <div className="absolute bottom-[var(--footer-height)]">
-        <AdUnitOutstream />
-      </div>
       <ChatPortal showFooter={showFooter} />
       <div className="absolute bottom-[var(--footer-height)] right-2 group-[.no-scroll]:right-4">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">

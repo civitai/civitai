@@ -7,6 +7,7 @@ import {
   useContext,
   useState,
 } from 'react';
+import { AdUnitOutstream } from '~/components/Ads/AdUnit';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
@@ -48,7 +49,12 @@ export const ChatContextProvider = ({
 export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   const { state } = useChatContext();
 
-  if (!state.open) return null;
+  if (!state.open)
+    return (
+      <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
+        <AdUnitOutstream />
+      </div>
+    );
 
   return (
     <div
