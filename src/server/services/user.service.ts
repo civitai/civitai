@@ -717,7 +717,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // nb: doing this because these fields are technically nullable, but prisma
   // likes returning them as undefined. that messes with the typing.
-  const userMeta = (response.meta ?? {}) as UserMeta;
+  const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
 
   const user = {
     ...response,
@@ -737,10 +737,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     autoplayGifs: response.autoplayGifs ?? undefined,
     leaderboardShowcase: response.leaderboardShowcase ?? undefined,
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-    meta: {
-      ...userMeta,
-      banDetails: undefined,
-    },
+    meta: userMeta,
     banDetails: getUserBanDetails({ meta: userMeta }),
   };
 

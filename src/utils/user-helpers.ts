@@ -1,6 +1,13 @@
-import dayjs from 'dayjs';
 import { banReasonDetails } from '~/server/common/constants';
+import { BanReasonCode } from '~/server/common/enums';
 import { UserMeta } from '~/server/schema/user.schema';
+import { removeEmpty } from '~/utils/object-helpers';
+
+export type UserBanDetails = {
+  banReasonCode?: BanReasonCode;
+  banReason?: string;
+  bannedReasonDetails?: string;
+};
 
 export const getUserBanDetails = ({
   meta,
@@ -8,16 +15,15 @@ export const getUserBanDetails = ({
 }: {
   meta?: UserMeta;
   isModerator?: boolean;
-}) => {
-  if (!meta) return {};
-
+}): UserBanDetails | undefined => {
+  if (!meta?.banDetails) return;
   const { banDetails } = meta;
 
-  return {
+  return removeEmpty({
     banReasonCode: isModerator ? banDetails?.reasonCode : undefined,
     banReason: banDetails?.reasonCode
       ? banReasonDetails[banDetails.reasonCode].publicBanReasonLabel
       : undefined,
     bannedReasonDetails: banDetails?.detailsExternal,
-  };
+  });
 };
