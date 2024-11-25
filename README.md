@@ -39,65 +39,63 @@ We've built this project using a combination of modern web technologies, includi
 
 ## Getting Started
 
-To get a local copy up and running follow these simple example steps.
+<details open>
+<summary>To get a local copy up and running, follow these steps.</summary>
 
 ### Prerequisites
 
 First, make sure that you have the following installed on your machine:
-- Node.js (version 18 or later)
-- Docker (for running the database)
+- Node.js (version 20 or later)
+- Docker (for running the database and services)
+- Make (optional, for easier initial setup)
 
 > We recommend you have installed `nvm` in order to set the right node version to run this project
 > ```sh
-> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash
+> curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
 > ```
 
 ### Installation
 
 1. Clone the repository to your local machine.
-1. Run `npm install` in the project directory to install the necessary dependencies.
-1. Spin up required services with `docker-compose up -d`
-    * Note: In addition to postgres and redis, this will also run maildev for email and minio for s3 storage with all necessary buckets automatically created, minio and maildev are not strictly needed but are preferred for testing and development purposes.
-1. Create your `.env` by making a copy of the contents from `.env-example` file.
-    * Most default values are configured to work with the docker-compose setup, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
+2. Choose one:
+   * Run `make init`
+      * This command will do a few things:
+        * Creates a starter `env` file
+        * Installs npm packages
+        * Spins up docker containers
+        * Runs any additional database migrations
+        * Creates some dummy seed data
+        * Populates metrics and meilisearch
+        * Initializes prisma
+        * Runs the server
+      * Please report any issues with these commands to us on [discord][discord-url]
+      * If you see an error about `cross-env` not being found, make sure `node_modules/.bin` is added to your path:
+        * `export PATH="$PATH:$(realpath node_modules/.bin)"`
+   * Use dev-containers
+     * TODO: instructions here
+3. Edit the `.env.development` file
+    * Most default values are configured to work out of the box, with the exception of the S3 upload key and secret. To generate those, navigate to the minio web interface at [http://localhost:9000](http://localhost:9000) with the default username and password `minioadmin`, and then navigate to the "Access Keys" tab. Click "Create Access Key" and copy the generated key and secret into the `.env` file.
     * Set `WEBHOOK_TOKEN` to a random string of your choice. This will be used to authenticate requests to the webhook endpoint.
-    * Comment out or remove
-      * `CLICKHOUSE_HOST`
-      * `CLICKHOUSE_USERNAME`
-      * `CLICKHOUSE_PASSWORD`
-      * `CLICKHOUSE_TRACKER_URL`
     * Add a random string of your choice to the email properties to allow user registration
       * `EMAIL_USER`
       * `EMAIL_PASS`
       * `EMAIL_FROM` (Valid email format needed)
-    * Replace `ORCHESTRATOR_ENDPOINT` url with http://localhost
-    * Set `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` to a random string of your choice. This functions as a bypass as stripe credentials are internal
-    * Add http://localhost as the value to the following fields
-      * `RESOURCE_RECOMMENDER_URL`
-      * `NOTIFICATION_DB_URL`
-      * `NOTIFICATION_DB_REPLICA_URL`
-1. Run `npm run db:migrate` to run all database migrations.
-1. Run `npm run db:generate` to generate the prisma client.
-1. Start the development server by running `npm run dev`.
-1. Visit the page `http://localhost:3000/api/webhooks/run-jobs?token=WEBHOOK_TOKEN&run=update-metrics` to start the metrics update job (make sure to substitute `WEBHOOK_TOKEN`)
-1. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
+4. Finally, visit [http://localhost:3000](http://localhost:3000) to see the website.
     * Note that account creation will run emails through maildev, which can be accessed at [http://localhost:1080](http://localhost:1080).
-    * Also note that Cloudflare credentials are necessary in order for image uploads to work.
 
-### Important Scripts
-```sh
-docker-compose up -d # Spin up db, redis, maildev, and minio
+### Altering your user
+- First, create an account for yourself as you normally would through the UI.
+- You may wish to set yourself up as a moderator. To do so:
+  - Use a database editor (like [DataGrip](https://www.jetbrains.com/datagrip/)) or connect directly to the DB (`PGPASSWORD=postgres psql -h localhost -p 15432 -U postgres civitai`)
+  - Find your user (by email or username), and change `isModerator` to `true`
 
-npm run dev # Start the dev environment
+### Known limitations
 
-npm run db:migrate -- --name migration-name # Create a database migration with prisma after updating the schema
-
-npm run db:generate # Generates local prisma client
-
-npm run db:ui # Start Prisma Studio to manage the database content
-
-npm run build # Build the NextJS project
-```
+Services that require external input will currently not work locally. These include:
+  - Orchestration (Generation, Training)
+  - Signals (Chat, Notifications, other real-time updates)
+  - Buzz
+</details>
 
 ## Contributing
 
@@ -107,12 +105,24 @@ If you have a suggestion that would make this better, please fork the repo and c
 Don't forget to give the project a star! Thanks again!
 
 1. Fork the repository to your own GitHub account.
-1. Create a new branch for your changes.
-1. Make your changes to the code.
-1. Commit your changes and push the branch to your forked repository.
-1. Open a pull request on our repository.
+2. Create a new branch for your changes.
+3. Make your changes to the code.
+4. Commit your changes and push the branch to your forked repository.
+5. Open a pull request on our repository.
 
 If you would like to be more involved, consider joining the **Community Development Team**! For more information on the team as well as how to join, see [Calling All Developers: Join Civitai's Community Development Team](https://civitai.com/articles/7782).
+
+### Data Migrations
+
+Over the course of development, you may need to change the structure of the database. To do this:
+
+1. Make your changes to the `schema.prisma` file
+2. Create a folder in the `prisma/migrations folder` named with the convention `YYYYMMDDHHmmss_brief_description_here`
+3. In this folder, create a file called `migration.sql`
+4. In that file, put your sql changes
+   * These are usually simple sql commands like `ALTER TABLE ...`
+5. Run `make run-migrations`
+6. If you are adding/changing a column or table, please try to keep the `gen_seed.ts` file up to date with these changes
 
 ## Sponsors
 

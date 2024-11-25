@@ -11,12 +11,13 @@ const s3Domain = (env.S3_IMAGE_UPLOAD_ENDPOINT ?? env.S3_UPLOAD_ENDPOINT).replac
 );
 
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
-  const session = await getServerAuthSession({ req, res });
-  const userId = session?.user?.id;
-  if (!userId || session.user?.bannedAt || session.user?.muted) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
+  try {
+    const session = await getServerAuthSession({ req, res });
+    const userId = session?.user?.id;
+    if (!userId || session.user?.bannedAt || session.user?.muted) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
 
   const imageKey = randomUUID();
   const fileExt = req.body.filename?.split('.').pop();
@@ -40,5 +41,9 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     }));
   }
 
-  res.status(200).json(result);
+    res.status(200).json(result);
+  } catch (error) {
+    const e = error as Error;
+    return res.status(500).json({ error: e.message });
+  }
 }

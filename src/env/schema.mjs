@@ -8,19 +8,17 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 
-
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
  */
 export const serverSchema = z.object({
   DATABASE_URL: z.string().url(),
-  DATABASE_PG_URL: z.string().url().optional(),
   DATABASE_REPLICA_URL: z.string().url(),
   DATABASE_REPLICA_LONG_URL: z.string().url().optional(),
+  DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.string().url(),
   NOTIFICATION_DB_REPLICA_URL: z.string().url(),
-  DATABASE_SSL_CA: z.string().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
@@ -58,10 +56,6 @@ export const serverSchema = z.object({
   EMAIL_PASS: z.string(),
   EMAIL_FROM: z.string(),
   S3_UPLOAD_KEY: z.string(),
-  S3_ORIGINS: z.preprocess((value) => {
-    const str = String(value);
-    return str.split(',');
-  }, z.array(z.string().url()).optional()),
   S3_UPLOAD_SECRET: z.string(),
   S3_UPLOAD_REGION: z.string(),
   S3_UPLOAD_ENDPOINT: z.string().url(),
@@ -75,9 +69,8 @@ export const serverSchema = z.object({
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
   S3_IMAGE_CACHE_BUCKET_OLD: z.string().optional(),
-  RATE_LIMITING: zc.booleanString,
-  CF_ACCOUNT_ID: z.string(),
-  CF_IMAGES_TOKEN: z.string(),
+  CF_ACCOUNT_ID: z.string().optional(),
+  CF_IMAGES_TOKEN: z.string().optional(),
   CF_API_TOKEN: z.string().optional(),
   CF_ZONE_ID: z.string().optional(),
   JOB_TOKEN: z.string(),
@@ -87,7 +80,6 @@ export const serverSchema = z.object({
   SCANNING_TOKEN: z.string(),
   UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
   UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
-  SHOW_SFW_IN_NSFW: zc.booleanString,
   LOGGING: commaDelimitedStringArray(),
   IMAGE_SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
@@ -98,7 +90,6 @@ export const serverSchema = z.object({
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   ORCHESTRATOR_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
-  GENERATION_CALLBACK_HOST: z.string().url().optional(),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
@@ -156,11 +147,8 @@ export const serverSchema = z.object({
   PAYPAL_API_URL: z.string().url().optional(),
   PAYPAL_SECRET: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().optional(),
-  MEDIA_TAGGER_ENDPOINT: z.string().url().optional(),
   S3_VAULT_BUCKET: z.string().optional(),
   HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
-  DRAFT_MODE_PROVIDERS: commaDelimitedStringArray().optional(),
-  DRAFT_MODE_PRIORITY: z.coerce.number().optional(),
   FRESHDESK_JWT_SECRET: z.string().optional(),
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
@@ -194,9 +182,9 @@ export const serverSchema = z.object({
   TIPALTI_API_URL: z.string().optional(),
   TIPALTI_API_CLIENT_ID: z.string().optional(),
   TIPALTI_API_SECRET: z.string().optional(),
-   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
-   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
-   TIPALTI_API_TOKEN_URL: z.string().optional(),
+  TIPALTI_API_CODE_VERIFIER: z.string().optional(),
+  TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
+  TIPALTI_API_TOKEN_URL: z.string().optional(),
 });
 
 /**
@@ -206,15 +194,13 @@ export const serverSchema = z.object({
  */
 export const clientSchema = z.object({
   NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
-  NEXT_PUBLIC_IMAGE_LOCATION: z.string(),
+  NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.string().url() : z.string().url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.string().url().optional(),
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
-  NEXT_PUBLIC_POSTHOG_KEY: z.string().optional(),
-  NEXT_PUBLIC_POSTHOG_HOST: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
   NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
@@ -222,11 +208,9 @@ export const clientSchema = z.object({
   NEXT_PUBLIC_POST_LOOKUP_URL: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
-  NEXT_PUBLIC_UI_CATEGORY_VIEWS: zc.booleanString.default(true),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: zc.booleanString.default(true),
   NEXT_PUBLIC_LOG_TRPC: zc.booleanString.default(false),
-  NEXT_PUBLIC_RECAPTCHA_KEY: z.string(),
-  NEXT_PUBLIC_ADS: zc.booleanString.default(false),
+  NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.string().url().optional(),
   NEXT_PUBLIC_SERVER_DOMAIN_GREEN: z.string().optional(),
@@ -255,8 +239,6 @@ export const clientEnv = {
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  NEXT_PUBLIC_POSTHOG_KEY: process.env.NEXT_PUBLIC_POSTHOG_KEY,
-  NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
   NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
   NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
@@ -264,11 +246,9 @@ export const clientEnv = {
   NEXT_PUBLIC_POST_LOOKUP_URL: process.env.NEXT_PUBLIC_POST_LOOKUP_URL,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
-  NEXT_PUBLIC_UI_CATEGORY_VIEWS: process.env.NEXT_PUBLIC_UI_CATEGORY_VIEWS !== 'false',
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES !== 'false',
   NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC !== 'false',
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
-  NEXT_PUBLIC_ADS: process.env.NEXT_PUBLIC_ADS === 'true',
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,
   NEXT_PUBLIC_SERVER_DOMAIN_GREEN: process.env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,

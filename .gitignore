@@ -40,10 +40,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
-/postgres
+# docker volumes
+/postgres*
 /redis
 /minio
-/clickhouse
+/clickhouse*
+/undefined
+/.docker
+/prisma_pit
 
 # Meilisearch
 /meilisearch

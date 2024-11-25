@@ -1,63 +1,129 @@
-version: '3.9'
 services:
-  db:
+  prisma-pit:
     image: postgres:alpine
-    container_name: db
     ports:
-      - 5432:5432
+      - "15433:5432"
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=modelshare
       - POSTGRES_DB=postgres
     volumes:
-      - ./postgres/data:/var/lib/postgresql/data
+      - prisma_pit:/var/lib/postgresql/data
     restart: unless-stopped
+
+  db:
+    image: postgres:alpine
+    ports:
+      - "15432:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=civitai
+    volumes:
+      - ./docker-init/postgres:/docker-entrypoint-initdb.d
+      - postgres:/var/lib/postgresql/data
+
+  notif:
+    image: postgres:alpine
+    ports:
+      - "15434:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - ./docker-init/notification:/docker-entrypoint-initdb.d
+      - postgres_notif:/var/lib/postgresql/data
+
   redis:
     image: redis:alpine
-    container_name: redis
     command: redis-server --requirepass "redis"
-    ports:
-      - 6379:6379
-    volumes:
-      - ./redis/data:/data
     restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis:/data
+
   minio:
     image: minio/minio
-    container_name: minio
     ports:
-      - 9000:9000
-      - 9001:9001
+      - "9000:9000"
+      - "9001:9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
-      - ./minio/data:/data
+      - minio:/data
     command: minio server /data --console-address ":9001"
     restart: unless-stopped
+
   meilisearch:
-    image: getmeili/meilisearch:v1.2
-    container_name: meilisearch
+    image: getmeili/meilisearch:v1.11
     ports:
-      - 7700:7700
+      - "7700:7700"
     volumes:
-      - ./meilisearch/data:/meili_data
+      - meilisearch:/meili_data
     environment:
       - MEILI_MASTER_KEY=meilisearch
+
   createbuckets:
     image: minio/mc
-    container_name: createbuckets
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c " /usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/settled && /usr/bin/mc policy set public minio/settled && exit 0"
-    restart: unless-stopped
+      /bin/sh -c "/usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/images && /usr/bin/mc policy set public minio/images && exit 0"
+
   maildev:
     image: maildev/maildev
-    container_name: maildev
     environment:
       - MAILDEV_SMTP_PORT=1025
       - MAILDEV_WEB_PORT=1080
     ports:
-      - 1025:1025
-      - 1080:1080
+      - "1025:1025"
+      - "1080:1080"
     restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.4
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "18123:8123"
+      - "19000:9000"
+    volumes:
+      - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
+      - clickhouse:/var/lib/clickhouse
+      - clickhouse_server:/var/log/clickhouse-server
+
+#  ngrok:
+#    image: ngrok/ngrok:latest
+#    restart: unless-stopped
+#    command:
+#      - "start"
+#      - "--all"
+#      - "--config"
+#      - "/etc/ngrok.yml"
+#    volumes:
+#      - ./docker-init/ngrok/config.yaml:/etc/ngrok.yml
+#    ports:
+#      - "8080:8080"
+#      - "4040:4040"
+#    environment:
+#      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+
+  image-stub:
+    build: dev-tools/image-stub
+    ports:
+      - "5001:3000"
+    environment:
+      NODE_ENV: development
+
+volumes:
+  prisma_pit:
+  postgres:
+  postgres_notif:
+  redis:
+  minio:
+  meilisearch:
+  clickhouse:
+  clickhouse_server:

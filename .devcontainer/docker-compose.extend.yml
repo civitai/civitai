@@ -1,0 +1,29 @@
+version: '3'
+services:
+  civitai:
+    image: mcr.microsoft.com/devcontainers/typescript-node:1-20
+    volumes:
+      # Mounts the project folder to '/workspace'. While this file is in .devcontainer,
+      # mounts are relative to the first file in the list, which is a level up.
+      - .:/workspace:cached
+
+    # Overrides default command so things don't shut down after the process ends.
+    command: /bin/sh -c "while sleep 1000; do :; done"
+
+    environment:
+      DATABASE_URL: 'postgresql://postgres:postgres@db:5432/civitai'
+      DATABASE_REPLICA_URL: 'postgresql://postgres:postgres@db:5432/civitai'
+      DARKPIT_URL: 'postgresql://modelshare:postgres@db:5432/postgres'
+      DARKPIT_SHADOW_URL: 'postgresql://modelshare:postgres@db:5432/postgres'
+      NOTIFICATION_DB_URL: 'postgresql://postgres:postgres@notif:5432/postgres'
+      NOTIFICATION_DB_REPLICA_URL: 'postgresql://postgres:postgres@notif:5432/postgres'
+      REDIS_URL: 'redis://:redis@redis:6379'
+      CLICKHOUSE_HOST: 'http://clickhouse:8123'
+      # CLICKHOUSE_TRACKER_URL: 'https://clickhouse-tracker-dev.civitai.com'
+      SEARCH_HOS: 'http://meilisearch:7700'
+      NEXT_PUBLIC_SEARCH_HOST: 'http://meilisearch:7700'
+      METRICS_SEARCH_HOST: 'http://meilisearch:7700'
+      S3_UPLOAD_ENDPOINT: 'http://minio:9000'
+      S3_IMAGE_UPLOAD_ENDPOINT: 'http://minio:9000'
+      # NEXT_PUBLIC_IMAGE_LOCATION: ''
+      EMAIL_HOST: 'maildev'

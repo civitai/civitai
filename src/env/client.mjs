@@ -1,5 +1,10 @@
 // @ts-check
+import * as dotenv from 'dotenv';
 import { clientEnv, clientSchema } from './schema.mjs';
+
+if (process.env.NODE_ENV === 'development') {
+  dotenv.config({ path: ['.env.development.local', '.env.local', '.env.development', '.env'] });
+}
 
 const _clientEnv = clientSchema.safeParse(clientEnv);
 

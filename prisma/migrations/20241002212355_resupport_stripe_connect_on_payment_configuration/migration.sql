@@ -17,7 +17,7 @@ ADD COLUMN   "meta" JSONB NOT NULL DEFAULT '{}';
 INSERT INTO "UserPaymentConfiguration" ("userId", "stripeAccountId", "stripeAccountStatus", "stripePaymentsEnabled")
 SELECT "userId", "connectedAccountId", "status", "payoutsEnabled"
 FROM "UserStripeConnect";
- 
+
  -- DropForeignKey
 ALTER TABLE "UserStripeConnect" DROP CONSTRAINT "UserStripeConnect_userId_fkey";
 

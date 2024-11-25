@@ -43,6 +43,7 @@
     // "**/*.tsx",
     // "**/*.cjs",
     "**/*.mjs",
+    "scripts",
     "src",
     ".next/types/**/*.ts"
   ],

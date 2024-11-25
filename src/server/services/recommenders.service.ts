@@ -7,7 +7,7 @@ import { RecommendationRequest } from '~/server/schema/recommenders.schema';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export function getRecommendations(params: RecommendationRequest) {
-  return recommendersCaller.getRecommendationsForResource(params);
+  return recommendersCaller().getRecommendationsForResource(params);
 }
 
 export async function toggleResourceRecommendation({
