@@ -44,6 +44,7 @@ function AdUnitContent({
           lazyLoad,
           sizes,
         };
+        console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }
