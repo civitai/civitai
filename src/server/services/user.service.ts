@@ -681,7 +681,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // Get from cache
   // ----------------------------------
-  const cacheKey = `session:data:${userId}`;
+  const cacheKey = `session:data2:${userId}`;
   const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
   if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
 
