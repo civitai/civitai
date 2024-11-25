@@ -80,7 +80,8 @@ export function Reactions({
   readonly,
   targetUserId,
   className,
-}: ReactionsProps & { className?: string; targetUserId?: number }) {
+  showAll: initialShowAll,
+}: ReactionsProps & { className?: string; targetUserId?: number; showAll?: boolean }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -133,7 +134,7 @@ export function Reactions({
           }
         }}
       >
-        {!hasAllReactions && !readonly && (
+        {!initialShowAll && !hasAllReactions && !readonly && (
           <Button
             variant="subtle"
             size="xs"
@@ -155,7 +156,7 @@ export function Reactions({
           metrics={metrics}
           entityType={entityType}
           entityId={entityId}
-          noEmpty={!showAll}
+          noEmpty={!(initialShowAll ?? showAll)}
           readonly={readonly}
           available={available}
         />

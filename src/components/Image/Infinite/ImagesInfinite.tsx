@@ -93,6 +93,10 @@ export function ImagesInfiniteContent({
                 const height = data?.height ?? 450;
                 return { width, height };
               }}
+              adjustHeight={({ height }) => {
+                const imageHeight = Math.max(Math.min(height, 600), 150);
+                return imageHeight + 38;
+              }}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCard}
               itemId={(data) => data.id}

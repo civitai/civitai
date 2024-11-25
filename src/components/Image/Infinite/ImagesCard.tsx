@@ -208,6 +208,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     targetUserId={image.user.id}
                     readonly={!safe}
                     className={cx('justify-between p-2')}
+                    // showAll
                   />
                 </div>
               </>
