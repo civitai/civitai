@@ -39,16 +39,19 @@ export async function getUserApiKeys({
   return keys.filter((x) => x.name !== generationServiceCookie.name);
 }
 
-export async function addApiKey({
-  name,
-  scope,
-  userId,
-  maxAge,
-  type,
-}: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }) {
+export async function addApiKey(
+  {
+    name,
+    scope,
+    userId,
+    maxAge,
+    type,
+  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType },
+  date = new Date()
+) {
   const key = generateKey();
   const secret = generateSecretHash(key);
-  const expiresAt = maxAge ? new Date(new Date().getTime() + maxAge * 1000) : undefined;
+  const expiresAt = maxAge ? new Date(date.getTime() + maxAge * 1000) : undefined;
 
   await dbWrite.apiKey.create({
     data: {
@@ -68,11 +71,14 @@ export async function getTemporaryUserApiKey(
   args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
 ) {
   const date = new Date();
-  const key = await addApiKey(args);
+  const key = await addApiKey(args, date);
 
   if (args.maxAge) {
     const { userId, type, name } = args;
-    await dbWrite.apiKey.deleteMany({ where: { userId, type, name, expiresAt: { lt: date } } });
+    await dbWrite.apiKey.deleteMany({
+      where: { userId, type, name, expiresAt: { lt: new Date(date.getTime() + 30000) } },
+    });
+    await dbWrite.apiKey.deleteMany({ where: { userId, type, name: 'generation-service' } });
   }
 
   return key;
