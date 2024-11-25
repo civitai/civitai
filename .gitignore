@@ -61,4 +61,4 @@ ca-certificate.crt
 # IDE
 *~
 
-src/pages/api/*.json
+src/pages/api/admin/*.json

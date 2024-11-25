@@ -1,18 +1,13 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { chunk } from 'lodash-es';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import data from './data.json';
-import { withRetries } from '~/utils/errorHandling';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getUserById } from '~/server/services/user.service';
-import { select } from 'slate';
 import { ChatMessageType } from '@prisma/client';
-
-const targetUsers = [18085];
+import targetUsers from './data.json';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const batches = chunk(targetUsers, 10000);
