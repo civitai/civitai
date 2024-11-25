@@ -28,8 +28,11 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
 import { generationPanel } from '~/store/generation.store';
+import dynamic from 'next/dynamic';
+const RedeemCodeModal = dynamic(() =>
+  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
+);
 
 const useStyles = createStyles((theme) => ({
   featureCard: {

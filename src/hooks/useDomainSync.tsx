@@ -14,11 +14,11 @@ async function getSyncToken(syncAccount: ColorDomain = 'blue') {
   });
   if (!res.ok) return null;
   const data = await res.json();
-  return data as { token: EncryptedDataSchema; userId: number; username: string; };
+  return data as { token: EncryptedDataSchema; userId: number; username: string };
 }
 
 let isSyncing = false;
-export function useDomainSync(currentUser: SessionUser | undefined) {
+export function useDomainSync(currentUser: SessionUser | undefined, status: string) {
   const { swapAccount } = useAccountContext();
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export function useDomainSync(currentUser: SessionUser | undefined) {
     const syncColor = searchParams.get('sync-account') as ColorDomain | null;
     if (!syncColor) return;
     const syncDomain = colorDomains[syncColor];
-    if (!syncDomain || host === syncDomain) return;
+    if (!syncDomain || host === syncDomain || status === 'loading') return;
 
     getSyncToken(syncColor).then((data) => {
       if (!data) return;
@@ -45,5 +45,5 @@ export function useDomainSync(currentUser: SessionUser | undefined) {
         swapAccount(token).catch(() => {});
       }, 1000);
     });
-  }, []);
+  }, [status]);
 }

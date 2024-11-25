@@ -1,6 +1,6 @@
 import { Box, Button, CloseButton, Table, Text, useMantineTheme } from '@mantine/core';
 import { useLocalStorage, useSessionStorage } from '@mantine/hooks';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, {
   FC,
   Key,

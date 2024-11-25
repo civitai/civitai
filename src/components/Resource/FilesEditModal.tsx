@@ -1,6 +1,6 @@
 import { Anchor, Center, Container, Group, Loader, Modal, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -30,7 +30,7 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
           </Center>
         ) : modelVersion ? (
           <Stack spacing="xl">
-            <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
+            <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
               <Anchor size="xs">
                 <Group spacing={4}>
                   <IconArrowLeft size={12} />

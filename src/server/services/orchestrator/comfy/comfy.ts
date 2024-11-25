@@ -32,7 +32,9 @@ export async function createComfyStep(
 
   // additional params modifications
   const { sampler, scheduler } =
-    samplersToComfySamplers[params.sampler as keyof typeof samplersToComfySamplers];
+    samplersToComfySamplers[
+      (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
+    ];
 
   const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
     ...params,

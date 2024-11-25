@@ -1,5 +1,5 @@
 import { ActionIcon, Menu } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -42,7 +42,7 @@ export function ModerationNav() {
       ]
         .filter((i) => !i.hidden)
         .map((link) => (
-          <Menu.Item key={link.href} component={NextLink} href={link.href}>
+          <Menu.Item key={link.href} component={Link} href={link.href}>
             {link.label}
           </Menu.Item>
         )),

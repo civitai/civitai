@@ -14,7 +14,7 @@ export const textToImageParamsSchema = z.object({
     .nonempty('Prompt cannot be empty')
     .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  cfgScale: z.coerce.number().min(1).max(30),
+  cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z
     .string()
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
@@ -22,7 +22,7 @@ export const textToImageParamsSchema = z.object({
     }),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).optional(),
   clipSkip: z.coerce.number().max(3).optional(),
-  steps: z.coerce.number().min(1).max(100),
+  steps: z.coerce.number().min(1).max(100).optional(),
   quantity: z.coerce
     .number()
     .max(20)
@@ -30,6 +30,7 @@ export const textToImageParamsSchema = z.object({
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
+  fluxUltraAspectRatio: z.string().optional(),
   baseModel: z.enum(baseModelSetTypes),
   width: z.number(),
   height: z.number(),
@@ -45,7 +46,9 @@ export const textToImageParamsSchema = z.object({
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
+  fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
+  engine: z.string().optional(),
 });
 // #endregion
 

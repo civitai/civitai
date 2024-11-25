@@ -1,5 +1,5 @@
 import { Button, Image, Loader, Menu, Modal, Text } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useMutatePaddle } from '~/components/Paddle/util';

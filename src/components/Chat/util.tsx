@@ -1,8 +1,8 @@
 import { Anchor, Text } from '@mantine/core';
 import type { IntermediateRepresentation, OptFn, Opts } from 'linkifyjs';
-import Link from 'next/link';
 import React, { ReactElement } from 'react';
 import { constants } from '~/server/common/constants';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export const getLinkHref = (href: string | undefined) => {
   if (!href) return;
@@ -47,7 +47,7 @@ const renderLink: OptFn<(ir: IntermediateRepresentation) => ReactElement | undef
 
   return (
     // TODO: In a perfect world, we wouldn't be relying on Mantine here.
-    <Link href={modHref} passHref {...props}>
+    <Link legacyBehavior href={modHref} passHref {...props}>
       <Text variant="link" component="a" sx={{ textDecoration: 'underline', color: 'unset' }}>
         {content}
       </Text>

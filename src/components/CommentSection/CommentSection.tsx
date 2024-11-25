@@ -13,15 +13,14 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { closeAllModals } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconLock } from '@tabler/icons-react';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useRef, useState } from 'react';
 import { z } from 'zod';
 
 import { CommentSectionItem } from '~/components/CommentSection/CommentSectionItem';
-import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
+import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Form, InputRTE, useForm } from '~/libs/form';

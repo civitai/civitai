@@ -19,9 +19,13 @@ export const FeatureFlagsProvider = ({
   flags?: FeatureAccess;
 }) => {
   const session = useSession();
-  const [flags] = useState(
+  const [flags, setFlags] = useState(
     initialFlags ?? getFeatureFlags({ user: session.data?.user, host: location.host })
   );
+
+  useEffect(() => {
+    setFlags(getFeatureFlags({ user: session.data?.user, host: location.host }));
+  }, [session.data?.expires]);
 
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
     undefined,

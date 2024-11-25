@@ -27,7 +27,7 @@ import {
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
@@ -51,7 +51,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
+import { goBack, goNext, getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
 
 import {
   TrainingImagesSwitchLabel,
@@ -159,13 +159,6 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
       </Text>
     </Stack>
   ),
-};
-
-export const getTextTagsAsList = (txt: string) => {
-  return txt
-    .split(',')
-    .map((c) => c.trim().toLowerCase())
-    .filter((c) => c.length > 0);
 };
 
 const LabelSelectModal = ({ modelId }: { modelId: number }) => {
@@ -1334,7 +1327,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     Your dataset is temporarily stored for the purposes of training. After training
                     is complete, the dataset is removed. By default, it is not public. Read our{' '}
                     <Text
-                      component={NextLink}
+                      component={Link}
                       variant="link"
                       href="/content/training/data-policy"
                       target="_blank"

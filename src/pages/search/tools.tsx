@@ -26,7 +26,7 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { slugit } from '~/utils/string-helpers';

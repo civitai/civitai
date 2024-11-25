@@ -13,9 +13,9 @@ const breakpoints = {
 module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
   darkMode: 'selector',
+  important: 'body',
   theme: {
     screens: breakpoints,
-    important: '#__next',
     extend: {
       textShadow: {
         sm: '0 1px 2px var(--tw-shadow-color)',

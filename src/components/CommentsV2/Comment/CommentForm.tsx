@@ -5,7 +5,7 @@ import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/com
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
-import { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditor';
+import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { IconLock } from '@tabler/icons-react';
 import {

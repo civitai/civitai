@@ -4,7 +4,6 @@ import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { getTextTagsAsList } from '~/components/Training/Form/TrainingImages';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -59,6 +58,13 @@ export const minsToHours = (n: number) => {
   const m = `${minutes} min${minutes === 1 ? '' : 's'}`;
 
   return `${h}${m}`;
+};
+
+export const getTextTagsAsList = (txt: string) => {
+  return txt
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => c.length > 0);
 };
 
 // these could use the current route to determine?

@@ -13,7 +13,6 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { CollectionType, ModelStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
@@ -64,6 +63,7 @@ import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuIt
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles((theme, _, getRef) => {
@@ -395,7 +395,7 @@ export function AmbientModelCard({ data, height }: Props) {
           frameDecoration={data.cosmetic}
         >
           {inView && (
-            <NextLink
+            <Link
               href={href}
               className={classes.link}
               style={{ height }}
@@ -575,7 +575,7 @@ export function AmbientModelCard({ data, height }: Props) {
                 </>
               )}
               {/* </Freeze> */}
-            </NextLink>
+            </Link>
           )}
         </MasonryCard>
       </Indicator>
