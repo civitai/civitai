@@ -63,7 +63,7 @@ export const AdUnitSide_3 = adUnitFactory({
   ],
 });
 
-export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream' });
+export const AdUnitOutstream = adUnitFactory({ adUnit: 'outstream', sizes: null });
 
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',

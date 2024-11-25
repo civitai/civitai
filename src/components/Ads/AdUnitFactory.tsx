@@ -1,6 +1,6 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { CSSObject, Text, createStyles } from '@mantine/core';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { NextLink } from '@mantine/next';
@@ -82,7 +82,7 @@ function AdWrapper({
   className,
 }: {
   adUnit: string;
-  sizes?: AdSize[];
+  sizes?: AdSize[] | null;
   lutSizes?: AdSizeLUT[];
   withFeedback?: boolean;
   lazyLoad?: boolean;
@@ -102,9 +102,9 @@ function AdWrapper({
       )}
     >
       {adsBlocked ? (
-        <SupportUsImage sizes={adSizes} />
-      ) : ready ? (
-        <AdUnitContent adUnit={adUnit} sizes={adSizes} lazyLoad={lazyLoad} />
+        <SupportUsImage sizes={adSizes ?? undefined} />
+      ) : ready && adSizes !== undefined ? (
+        <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} lazyLoad={lazyLoad} />
       ) : null}
       {withFeedback && !isMember && (
         <>
@@ -128,7 +128,7 @@ function AdWrapper({
 
 export function adUnitFactory(factoryArgs: {
   adUnit: string;
-  sizes?: AdSize[];
+  sizes?: AdSize[] | null;
   lutSizes?: AdSizeLUT[];
 }) {
   return function AdUnit({
@@ -160,7 +160,7 @@ function getMaxHeight(sizes: AdSize[]) {
 }
 
 const useAdWrapperStyles = createStyles(
-  (theme, { sizes, lutSizes }: { sizes?: AdSize[]; lutSizes?: AdSizeLUT[] }) => ({
+  (theme, { sizes, lutSizes }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[] }) => ({
     root: {
       minHeight: sizes ? getMaxHeight(sizes) : undefined,
       ...lutSizes?.reduce<Record<string, CSSObject>>((acc, [[minWidth, maxWidth], sizes]) => {
@@ -179,12 +179,12 @@ const useAdWrapperStyles = createStyles(
   })
 );
 
-function useAdSizes({ sizes, lutSizes }: { sizes?: AdSize[]; lutSizes?: AdSizeLUT[] }) {
+function useAdSizes({ sizes, lutSizes }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[] }) {
   const ref = useScrollAreaRef();
-  const [adSizes, setAdSizes] = useState<AdSize[]>();
+  const [adSizes, setAdSizes] = useState<AdSize[] | null | undefined>(undefined);
 
   useEffect(() => {
-    if (sizes) setAdSizes(sizes);
+    if (sizes || sizes === null) setAdSizes(sizes);
     else if (lutSizes) {
       const width = ref?.current?.clientWidth ?? window.innerWidth;
       const adSizes = lutSizes
