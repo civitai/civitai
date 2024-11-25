@@ -1,4 +1,5 @@
-import { Avatar, Button, CloseButton, Modal, Paper, Text } from '@mantine/core';
+import { Anchor, Avatar, Button, CloseButton, Modal, Paper, Text } from '@mantine/core';
+import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useQueryCurrentChallenge } from '~/components/Challenges/challenge.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -30,7 +31,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
 
   const header = (
     <div
-      className="flex h-2/5 w-full justify-between p-5"
+      className="flex h-[150px] w-full justify-between p-5 md:h-[205px]"
       style={
         challenge
           ? {
@@ -84,7 +85,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
       ) : challenge ? (
         <>
           {header}
-          <div className="flex flex-col gap-4 p-5">
+          <div className="flex flex-col gap-8 p-5">
             <div className="flex gap-2">
               <Avatar
                 src="/images/civbot-judge.png"
@@ -98,6 +99,13 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
                 shadow="sm"
               >
                 <Text size="lg">{challenge.invitation}</Text>
+                <Text size="lg">
+                  Click{' '}
+                  <Link href={`/articles/${challenge.articleId}`} passHref>
+                    <Anchor onClick={handleClose}>here</Anchor>
+                  </Link>{' '}
+                  to read the full article for rules and prizes.
+                </Text>
               </Paper>
             </div>
 
