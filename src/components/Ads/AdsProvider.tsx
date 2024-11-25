@@ -38,7 +38,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
-  const adsEnabled = features.adsEnabled && (allowAds || !isMember);
+  // const adsEnabled = features.adsEnabled && (allowAds || !isMember);
+  const adsEnabled = false;
   // const [cmpLoaded, setCmpLoaded] = useState(false);
 
   // const readyRef = useRef<boolean>();
