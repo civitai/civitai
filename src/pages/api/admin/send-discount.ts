@@ -9,7 +9,7 @@ import { getUserById } from '~/server/services/user.service';
 import { ChatMessageType } from '@prisma/client';
 // import targetUsers from './data.json';
 
-const targetUsers = [];
+const targetUsers: number[] = [];
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const batches = chunk(targetUsers, 10000);
