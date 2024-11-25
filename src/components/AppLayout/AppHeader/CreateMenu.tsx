@@ -14,19 +14,7 @@ export function CreateMenu() {
   const features = useFeatureFlags();
   const isMobile = useIsMobile({ breakpoint: 'md' });
 
-  return isMobile ? (
-    <GenerateButton
-      variant="light"
-      py={8}
-      px={12}
-      h="auto"
-      radius="sm"
-      mode="toggle"
-      compact
-      className="inline-block md:hidden"
-      data-activity="create:navbar"
-    />
-  ) : (
+  return (
     <Menu
       position="bottom"
       offset={5}
@@ -35,10 +23,11 @@ export function CreateMenu() {
       openDelay={400}
       zIndex={constants.imageGeneration.drawerZIndex + 2}
       withinPortal
+      disabled={isMobile}
     >
       <Menu.Target>
         {features.imageGeneration ? (
-          <div className="hide-mobile flex items-center">
+          <div className="flex items-center">
             <GenerateButton
               variant="light"
               py={8}
@@ -51,6 +40,7 @@ export function CreateMenu() {
               sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
               compact
               data-activity="create:navbar"
+              className="h-auto px-3 py-2 @md:pr-1"
             />
             <Button
               variant="light"
@@ -59,18 +49,13 @@ export function CreateMenu() {
               h="auto"
               radius="sm"
               sx={() => ({ borderTopLeftRadius: 0, borderBottomLeftRadius: 0 })}
+              className="@max-md:hidden"
             >
               <IconChevronDown stroke={2} size={20} />
             </Button>
           </div>
         ) : (
-          <Button
-            className="hide-mobile flex @max-md:hidden"
-            variant="filled"
-            color="green"
-            size="xs"
-            pl={5}
-          >
+          <Button className="flex @max-md:hidden" variant="filled" color="green" size="xs" pl={5}>
             <IconPlus size={16} /> New
           </Button>
         )}

@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Avatar,
-  Burger,
   Button,
   Divider,
   Popover,
@@ -51,6 +50,7 @@ import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { create } from 'zustand';
 import { useHotkeys } from '@mantine/hooks';
+import { Burger } from '~/components/AppLayout/AppHeader/Burger';
 
 const useMenuStore = create<{
   open: boolean;
@@ -93,27 +93,20 @@ export function UserMenu() {
       closeOnClickOutside={false}
     >
       <Popover.Target>
-        {!isMobile ? (
-          <UnstyledButton
-            onClick={toggle}
-            className={clsx('flex items-center gap-2 rounded-[32px] @max-md:hidden', {
+        <UnstyledButton onClick={toggle} className="@md:rounded-[32px] @max-md:p-1.5" type="button">
+          <div
+            className={clsx('flex items-center gap-2 @max-md:hidden', {
               ['hidden']: !currentUser,
             })}
           >
             <UserAvatar user={creator ?? currentUser} size="md" />
             {features.buzz && currentUser && <UserBuzz pr="sm" />}
-          </UnstyledButton>
-        ) : (
-          <Burger
-            opened={open}
-            onClick={toggle}
-            size="sm"
-            className={clsx({ ['@md:hidden']: !!currentUser })}
-          />
-        )}
+          </div>
+          <Burger opened={open} size="sm" className={clsx({ ['@md:hidden']: !!currentUser })} />
+        </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown
-        className="flex flex-col p-0 @md:max-h-[calc(90vh-var(--header-height))] @max-md:mt-3 @max-md:h-[calc(100%-var(--header-height))]"
+        className="flex flex-col p-0 @md:max-h-[calc(90vh-var(--header-height))] @max-md:mt-5 @max-md:h-[calc(100%-var(--header-height))]"
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();

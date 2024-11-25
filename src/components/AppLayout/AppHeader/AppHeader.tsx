@@ -64,7 +64,7 @@ export function AppHeader({
       </div>
 
       <Grid
-        className={clsx('flex h-full items-center justify-between px-2 @md:px-4', {
+        className={clsx('flex h-full flex-nowrap items-center justify-between px-2 @md:px-4', {
           ['hidden']: showSearch,
         })}
         m={0}
@@ -81,7 +81,7 @@ export function AppHeader({
             {/* <EventButton /> */}
           </div>
         </Grid.Col>
-        <Grid.Col span={6} md={5} className="@max-md:hidden">
+        <Grid.Col span={6} md={4} className="@max-md:hidden">
           {renderSearchComponent({ onSearchDone, isMobile: false })}
         </Grid.Col>
         <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
