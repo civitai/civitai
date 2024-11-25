@@ -48,7 +48,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
       }
     >
       {challenge ? (
-        <div className="flex flex-col gap-0">
+        <div className="flex flex-col gap-0 self-end">
           <Text size="xl" color="white" lineClamp={2} weight={600}>
             {challenge.title}
           </Text>
@@ -99,14 +99,17 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
                 shadow="sm"
               >
                 <Text size="lg">{challenge.invitation}</Text>
-                <Text size="lg">
-                  Click{' '}
-                  <Link href={`/articles/${challenge.articleId}`} passHref>
-                    <Anchor onClick={handleClose}>here</Anchor>
-                  </Link>{' '}
-                  to read the full article for rules and prizes.
-                </Text>
               </Paper>
+            </div>
+
+            <div className="-mt-6 ml-auto">
+              <Text size="sm">
+                Click{' '}
+                <Link href={`/articles/${challenge.articleId}`} passHref>
+                  <Anchor onClick={handleClose}>here</Anchor>
+                </Link>{' '}
+                to read the full article for rules and prizes.
+              </Text>
             </div>
 
             <div className="flex md:justify-end">

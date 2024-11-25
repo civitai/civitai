@@ -1,5 +1,5 @@
 import { ActionIcon, Indicator } from '@mantine/core';
-import { IconMountain } from '@tabler/icons-react';
+import { IconTrophy } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useQueryCurrentChallenge } from '~/components/Challenges/challenge.utils';
 import { ChallengeInvitation } from '~/components/Challenges/ChallengeInvitation';
@@ -29,11 +29,11 @@ export function ChallengeIndicator() {
       <ActionIcon
         size="lg"
         className={clsx(!dismissed && 'animate-wiggle')}
-        color={!dismissed ? 'yellow' : 'dark'}
+        color={!dismissed ? 'teal' : 'dark'}
         variant={!dismissed ? 'filled' : 'transparent'}
         onClick={handleOpen}
       >
-        <IconMountain size={20} color="currentColor" />
+        <IconTrophy size={20} color="currentColor" />
       </ActionIcon>
     </Indicator>
   );

@@ -12,7 +12,7 @@ import {
   IconVideo,
   IconProps,
   IconCake,
-  IconMountain,
+  IconTrophy,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -62,7 +62,7 @@ const homeOptions: Record<string, HomeOption> = {
   },
   challenges: {
     url: '/challenges',
-    icon: (props: IconProps) => <IconMountain {...props} />,
+    icon: (props: IconProps) => <IconTrophy {...props} />,
   },
   events: {
     url: '/events',
