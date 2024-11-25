@@ -106,7 +106,7 @@ export function UserMenu() {
         </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown
-        className="flex flex-col p-0 @md:max-h-[calc(90vh-var(--header-height))] @max-md:mt-5 @max-md:h-[calc(100%-var(--header-height))]"
+        className="flex flex-col p-0 @max-md:mt-5 @max-md:h-[calc(100%-var(--header-height))]"
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
@@ -146,7 +146,7 @@ function PopoverContent() {
   useHotkeys([['Escape', handleClose]]);
 
   return (
-    <div ref={ref} className="flex h-full flex-1 flex-col">
+    <div ref={ref} className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]">
       {userSwitching ? <AccountSwitcher /> : <UserMenuContent />}
     </div>
   );
