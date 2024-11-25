@@ -31,7 +31,7 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } f
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconSearch, IconTrash } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
-import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { uniqBy } from 'lodash-es';
 import { DatePicker } from '@mantine/dates';
 import dayjs from 'dayjs';
