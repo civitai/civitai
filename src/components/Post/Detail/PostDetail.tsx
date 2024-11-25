@@ -106,7 +106,7 @@ export function PostDetailContent({ postId }: Props) {
       pending: true,
     },
     {
-      applyHiddenPreferences: requiresCollectionJudgement ? false : true,
+      applyHiddenPreferences: !requiresCollectionJudgement,
     }
   );
 
